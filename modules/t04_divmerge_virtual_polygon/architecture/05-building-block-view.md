@@ -117,10 +117,15 @@
 - `final_publish`
   - `accepted / rejected` 二态验收
   - `divmerge_virtual_anchor_surface*` 发布层与 summary / audit
+- `intersection_match`
+  - 基于 `t04_swsd_rcsd_relation_evidence.json` 生成 `intersection_match_t04.geojson`
+  - 与可选 T07 / T03 intersection match 做 SWSD-RCSD 1:1 cardinality 校验
+  - 输出 `intersection_match_t04_summary.json` 与 cardinality error audit
 - `nodes_publish`
   - downstream `nodes.gpkg` copy-on-write 发布
   - 只更新 selected / effective case 的 representative node `is_anchor`
   - T04 私有写回值域：`accepted -> yes`，Step8 fallback relation 成功 -> `fail4_fallback`，其余 `rejected / runtime_failed / formal result missing -> fail4`
+  - 消费 `intersection_match` 的 T04 one-target-to-many rollback rows，将对应 representative node 追加回滚为 `is_anchor=no`
   - `nodes_anchor_update_audit.csv/json` 与 `step7_consistency_report.json` 的 nodes 一致性检查
 - `outputs`
   - case 级文件

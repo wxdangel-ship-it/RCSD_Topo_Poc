@@ -4,7 +4,7 @@ from pathlib import Path
 
 import fiona
 import pytest
-from shapely.geometry import shape
+from shapely.geometry import LineString, shape
 
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.association_loader import (
     load_association_case_specs,
@@ -46,6 +46,20 @@ def _rcsd_node_covered(case_root: Path, case_id: str, node_id: str, polygon) -> 
     raise AssertionError(f"missing RCSDNode {node_id}")
 
 
+def _rcsd_line_cover_ratio(case_root: Path, case_id: str, left_node_id: str, right_node_id: str, polygon) -> float:
+    points = {}
+    with fiona.open(case_root / case_id / "rcsdnode.gpkg") as src:
+        for feature in src:
+            properties = dict(feature["properties"])
+            node_id = str(properties.get("id"))
+            if node_id in {left_node_id, right_node_id}:
+                points[node_id] = shape(feature["geometry"])
+    if set(points) != {left_node_id, right_node_id}:
+        raise AssertionError(f"missing RCSDNode pair: {left_node_id}, {right_node_id}")
+    line = LineString([points[left_node_id], points[right_node_id]])
+    return line.intersection(polygon).length / line.length if polygon is not None and line.length > 0.0 else 0.0
+
+
 def test_real_case_762905_single_sided_strong_rcsdnode_is_kept_inside_final_polygon(tmp_path: Path) -> None:
     case_id = "762905"
     if not (REAL_T03_ROOT / case_id).is_dir():
@@ -79,6 +93,8 @@ def test_real_case_762905_single_sided_strong_rcsdnode_is_kept_inside_final_poly
         "5384380731228487",
         "5384380731228527",
     ]
+    assert step6_result.extra_status_fields["semantic_intra_rcsdnode_line_count"] == 2
+    assert step6_result.extra_status_fields["semantic_intra_rcsdnode_line_cover_ratio"] == pytest.approx(1.0)
     for node_id in [
         "5384380731228487",
         "5384380731228505",
@@ -86,6 +102,54 @@ def test_real_case_762905_single_sided_strong_rcsdnode_is_kept_inside_final_poly
         "5384380731228501",
     ]:
         assert _rcsd_node_covered(REAL_T03_ROOT, case_id, node_id, polygon)
+    assert _rcsd_line_cover_ratio(
+        REAL_T03_ROOT,
+        case_id,
+        "5384380731228505",
+        "5384380731228487",
+        polygon,
+    ) == pytest.approx(1.0)
+    assert _rcsd_line_cover_ratio(
+        REAL_T03_ROOT,
+        case_id,
+        "5384380731228501",
+        "5384380731228527",
+        polygon,
+    ) == pytest.approx(1.0)
+
+
+def test_real_case_21497119_single_sided_terminal_rcsdroad_anchors(tmp_path: Path) -> None:
+    case_id = "21497119"
+    if not (REAL_T03_ROOT / case_id).is_dir():
+        pytest.skip(f"missing decoded T03 case: {REAL_T03_ROOT / case_id}")
+
+    step3_root = tmp_path / "step3"
+    _write_step3_for_case(REAL_T03_ROOT, step3_root, case_id)
+    specs, _ = load_association_case_specs(
+        case_root=REAL_T03_ROOT,
+        case_ids=[case_id],
+        exclude_case_ids=[],
+    )
+    association_context = load_association_context(case_spec=specs[0], step3_root=step3_root)
+    association_case_result = build_association_case_result(association_context)
+    finalization_context = FinalizationContext(
+        association_context=association_context,
+        association_case_result=association_case_result,
+    )
+    step6_result = build_step6_result(finalization_context)
+    step7_result = build_step7_result(finalization_context, step6_result)
+
+    assert association_context.step3_status_doc["step3_state"] == "review"
+    assert association_case_result.association_class == "A"
+    assert association_case_result.extra_status_fields["required_rcsdnode_ids"] == ["5384380731228527"]
+    assert association_case_result.extra_status_fields["required_rcsdroad_ids"] == ["5384380731228263"]
+    assert association_case_result.extra_status_fields["required_rcsdnode_gate_audit"]["5384380731228527"][
+        "gate_reason"
+    ] == "single_sided_required_core_terminal_degree1_anchor_review"
+    assert step6_result.geometry_established is True
+    assert step6_result.extra_status_fields["semantic_intra_rcsdnode_line_count"] == 0
+    assert step7_result.step7_state == "accepted"
+    assert step7_result.reason == "step7_accepted_with_upstream_step3_visual_risk"
 
 
 def test_real_case_520394575_support_only_fragmented_surface_stays_rejected(tmp_path: Path) -> None:

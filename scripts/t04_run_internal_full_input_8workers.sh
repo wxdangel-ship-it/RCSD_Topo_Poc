@@ -11,6 +11,8 @@ DRIVEZONE_PATH="${DRIVEZONE_PATH:-/mnt/d/TestData/POC_Data/patch_all/DriveZone.g
 DIVSTRIPZONE_PATH="${DIVSTRIPZONE_PATH:-/mnt/d/TestData/POC_Data/patch_all/DivStripZone.gpkg}"
 RCSDROAD_PATH="${RCSDROAD_PATH:-/mnt/d/TestData/POC_Data/RC4/RCSDRoad.gpkg}"
 RCSDNODE_PATH="${RCSDNODE_PATH:-/mnt/d/TestData/POC_Data/RC4/RCSDNode.gpkg}"
+INTERSECTION_MATCH_T07_PATH="${INTERSECTION_MATCH_T07_PATH:-}"
+INTERSECTION_MATCH_T03_PATH="${INTERSECTION_MATCH_T03_PATH:-}"
 
 NODES_LAYER="${NODES_LAYER:-}"
 NODES_CRS="${NODES_CRS:-}"
@@ -75,6 +77,14 @@ for path_var in NODES_PATH ROADS_PATH DRIVEZONE_PATH DIVSTRIPZONE_PATH RCSDROAD_
   fi
 done
 
+for path_var in INTERSECTION_MATCH_T07_PATH INTERSECTION_MATCH_T03_PATH; do
+  path_value="${!path_var}"
+  if [[ -n "$path_value" && ! -f "$path_value" ]]; then
+    echo "[BLOCK] $path_var does not exist: $path_value" >&2
+    exit 2
+  fi
+done
+
 if [[ "$DEBUG_FLAG" != "--debug" && "$DEBUG_FLAG" != "--no-debug" ]]; then
   echo "[BLOCK] DEBUG_FLAG must be --debug or --no-debug: $DEBUG_FLAG" >&2
   exit 2
@@ -123,10 +133,13 @@ echo "[RUN] RUN_ROOT=$OUT_ROOT/$RUN_ID"
 echo "[RUN] WORKERS=$WORKERS MAX_CASES=${MAX_CASES:-<all eligible cases>}"
 echo "[RUN] DEBUG_FLAG=$DEBUG_FLAG RESUME=$RESUME RETRY_FAILED=$RETRY_FAILED PERF_AUDIT=$PERF_AUDIT"
 echo "[RUN] VISUAL_CHECK_DIR=$VISUAL_CHECK_DIR"
+echo "[RUN] INTERSECTION_MATCH_T07_PATH=${INTERSECTION_MATCH_T07_PATH:-<not provided>}"
+echo "[RUN] INTERSECTION_MATCH_T03_PATH=${INTERSECTION_MATCH_T03_PATH:-<not provided>}"
 echo "[RUN] CASE_SCAN=$CASE_SCAN CASE_SCAN_THRESHOLD=$CASE_SCAN_THRESHOLD"
 echo "[RUN] Candidate discovery: representative node, has_evd=yes, is_anchor=no, kind_2 in {8,16,128}."
 
 export NODES_PATH ROADS_PATH DRIVEZONE_PATH DIVSTRIPZONE_PATH RCSDROAD_PATH RCSDNODE_PATH
+export INTERSECTION_MATCH_T07_PATH INTERSECTION_MATCH_T03_PATH
 export NODES_LAYER NODES_CRS ROADS_LAYER ROADS_CRS DRIVEZONE_LAYER DRIVEZONE_CRS
 export DIVSTRIPZONE_LAYER DIVSTRIPZONE_CRS RCSDROAD_LAYER RCSDROAD_CRS RCSDNODE_LAYER RCSDNODE_CRS
 export OUT_ROOT RUN_ID WORKERS MAX_CASES DEBUG_FLAG VISUAL_CHECK_DIR
@@ -153,6 +166,8 @@ artifacts = run_t04_internal_full_input(
     divstripzone_path=os.environ["DIVSTRIPZONE_PATH"],
     rcsdroad_path=os.environ["RCSDROAD_PATH"],
     rcsdnode_path=os.environ["RCSDNODE_PATH"],
+    intersection_match_t07_path=os.environ.get("INTERSECTION_MATCH_T07_PATH") or None,
+    intersection_match_t03_path=os.environ.get("INTERSECTION_MATCH_T03_PATH") or None,
     out_root=os.environ["OUT_ROOT"],
     run_id=os.environ["RUN_ID"],
     workers=int(os.environ["WORKERS"]),

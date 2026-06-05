@@ -268,6 +268,7 @@ T04 采用“业务主链 + 工程编排层”的分工：
 - case 级 `step7_status.json / step7_audit.json / final_review.png`。
 - batch / full-input 级 `divmerge_virtual_anchor_surface.gpkg`、rejected layer、summary、audit、`step7_rejected_index.*`、`step7_consistency_report.json`。
 - downstream `nodes.gpkg`、`nodes_anchor_update_audit.csv/json`。
+- final relation `intersection_match_t04.geojson`、`intersection_match_t04_summary.json`、`intersection_match_t04_cardinality_errors.csv/json`。
 
 实现策略：
 
@@ -275,11 +276,13 @@ T04 采用“业务主链 + 工程编排层”的分工：
 - `divmerge_virtual_anchor_surface.gpkg` 只发布 `final_state = accepted` 的 surface candidate；rejected layer / reject stub 仅用于定位与审计。
 - 发布层与 summary 应保留或可追溯 `mainnodeid / kind_2 / junction_type / patch_id / final_state`，为后续 T05 映射做准备。
 - 由 `nodes_publish.py` 在 Step7 closeout 后消费最终状态，基于输入 `nodes.gpkg` 做 copy-on-write，只更新当前 selected / effective case 的 representative node `is_anchor`。
+- 由 `intersection_match.py` 基于 T04 relation evidence 发布 `intersection_match_t04.geojson`，并与可选 T07 / T03 intersection match 做 SWSD/RCSD 1:1 cardinality 校验；启用 T07/T03 外部校验输入后，T04 自身 one-target-to-many 冲突必须从输出关系中压制，并把对应 representative node 回滚为 `is_anchor = no`。
 - nodes 写回固定为 `accepted -> yes`，Step8 fallback relation 成功 -> `fail4_fallback`，其余 `rejected / runtime_failed / formal result missing -> fail4`。
 
 边界：
 
 - `divmerge_virtual_anchor_surface.gpkg` 是 T04 几何真值；`nodes.gpkg` 是 downstream 状态索引层。
+- `intersection_match_t04.geojson` 是 T04 对下游发布的 SWSD-RCSD 语义路口关系层；它不改变 Step1-7 构面算法，只在 final closeout 做关系校验与必要回滚。
 - Step7 不新增最终 `review / review_required` 状态；不确定性只留在审计材料中。
 
 ## 9. 工程编排层

@@ -79,6 +79,8 @@ class _GuardFailure:
 
 
 def _optional_path(value: str | Path | None) -> Path | None:
+    if value is None or str(value).strip() == "":
+        return None
     return normalize_runtime_path(value) if value is not None else None
 
 
@@ -202,7 +204,17 @@ def _write_summary(
         "nodes_updated_to_yes_count": nodes_outputs.get("nodes_updated_to_yes_count"),
         "nodes_updated_to_fail4_count": nodes_outputs.get("nodes_updated_to_fail4_count"),
         "nodes_updated_to_fail4_fallback_count": nodes_outputs.get("nodes_updated_to_fail4_fallback_count"),
+        "nodes_updated_to_no_count": nodes_outputs.get("nodes_updated_to_no_count"),
         "nodes_consistency_passed": nodes_outputs.get("nodes_consistency_passed"),
+        "intersection_match_t04_path": nodes_outputs.get("intersection_match_t04_path"),
+        "intersection_match_t04_summary_path": nodes_outputs.get("intersection_match_t04_summary_path"),
+        "intersection_match_t04_cardinality_errors_csv": nodes_outputs.get(
+            "intersection_match_t04_cardinality_errors_csv_path"
+        ),
+        "intersection_match_t04_cardinality_errors_json": nodes_outputs.get(
+            "intersection_match_t04_cardinality_errors_json_path"
+        ),
+        "intersection_match_t04_summary": nodes_outputs.get("intersection_match_t04_summary"),
         "relation_fallback": step7_outputs.get("relation_fallback", {}),
         **visual_outputs,
     }
@@ -241,6 +253,8 @@ def run_t04_internal_full_input(
     divstripzone_path: str | Path,
     rcsdroad_path: str | Path,
     rcsdnode_path: str | Path,
+    intersection_match_t07_path: str | Path | None = None,
+    intersection_match_t03_path: str | Path | None = None,
     out_root: str | Path = DEFAULT_OUT_ROOT,
     run_id: str | None = None,
     workers: int = 8,
@@ -282,6 +296,8 @@ def run_t04_internal_full_input(
         "rcsdroad_path": normalize_runtime_path(rcsdroad_path),
         "rcsdnode_path": normalize_runtime_path(rcsdnode_path),
     }
+    resolved_intersection_match_t07_path = _optional_path(intersection_match_t07_path)
+    resolved_intersection_match_t03_path = _optional_path(intersection_match_t03_path)
     max_workers = max(1, int(workers or 1))
     rerun_cleaned_before_write = False
     if run_root.exists() and not (resume or retry_failed):
@@ -422,6 +438,18 @@ def run_t04_internal_full_input(
             resume_requested=resume,
             retry_failed_requested=retry_failed,
         )
+        preflight_doc["relation_validation_inputs"] = {
+            "intersection_match_t07_path": (
+                str(resolved_intersection_match_t07_path)
+                if resolved_intersection_match_t07_path is not None
+                else ""
+            ),
+            "intersection_match_t03_path": (
+                str(resolved_intersection_match_t03_path)
+                if resolved_intersection_match_t03_path is not None
+                else ""
+            ),
+        }
         write_json(run_root / "preflight.json", preflight_doc)
         candidate_artifacts = write_candidate_artifacts(
             run_root=run_root,
@@ -691,6 +719,8 @@ def run_t04_internal_full_input(
             fallback_success_case_ids=relation_fallback_outputs["fallback_success_case_ids"],
             fallback_reason_by_case=relation_fallback_outputs["fallback_reason_by_case"],
             fallback_base_id_by_case=relation_fallback_outputs["fallback_base_id_by_case"],
+            intersection_match_t07_path=resolved_intersection_match_t07_path,
+            intersection_match_t03_path=resolved_intersection_match_t03_path,
         )
         augment_step7_consistency_report(
             consistency_report_path=Path(str(step7_outputs["consistency_report_path"])),

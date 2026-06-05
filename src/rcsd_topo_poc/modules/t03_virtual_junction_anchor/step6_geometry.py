@@ -30,6 +30,7 @@ TARGET_NODE_BUFFER_M = 5.5
 SUPPORT_ONLY_SEAM_BRIDGE_BUFFER_M = 9.0
 REQUIRED_NODE_BUFFER_M = 5.5
 REQUIRED_ROAD_BUFFER_M = 6.0
+SEMANTIC_INTRA_LINE_BUFFER_M = 5.5
 FOREIGN_MASK_BUFFER_M = 1.0
 LEGAL_SPACE_TOLERANCE_M = 0.6
 NODE_COVER_TOLERANCE_M = 1.0
@@ -655,6 +656,135 @@ def _required_node_records(finalization_context: FinalizationContext) -> list[No
     step1 = finalization_context.association_context.step1_context
     required_ids = set(finalization_context.association_case_result.extra_status_fields.get("required_rcsdnode_ids") or [])
     return [node for node in step1.rcsd_nodes if node.node_id in required_ids]
+
+
+def _semantic_group_id(node: NodeRecord) -> str:
+    mainnodeid = None if node.mainnodeid in {None, "", "0"} else str(node.mainnodeid)
+    return mainnodeid or node.node_id
+
+
+def _local_required_semantic_member_records(
+    finalization_context: FinalizationContext,
+    local_required_nodes: Iterable[NodeRecord],
+) -> list[NodeRecord]:
+    local_required_items = list(local_required_nodes)
+    required_group_ids = {_semantic_group_id(node) for node in local_required_items}
+    if not required_group_ids:
+        return []
+    gate_audit = finalization_context.association_case_result.extra_status_fields.get("required_rcsdnode_gate_audit") or {}
+    related_group_audit = (
+        finalization_context.association_case_result.extra_status_fields.get("related_rcsdnode_group_audit") or {}
+    )
+    terminal_group_ids = {
+        str(group_id)
+        for group_id, row in gate_audit.items()
+        if row.get("gate_reason") == "single_sided_required_core_terminal_degree1_anchor_review"
+    }
+    overflow_ids = {
+        str(node_id)
+        for node_id in (
+            finalization_context.association_case_result.extra_status_fields.get(
+                "t_mouth_strong_related_overflow_rcsdnode_ids"
+            )
+            or []
+        )
+        if node_id is not None and str(node_id) != ""
+    }
+    local_required_ids = {node.node_id for node in local_required_items}
+    step4_doc = finalization_context.association_case_result.audit_doc.get("step4") or {}
+    candidate_ids = {
+        str(node_id)
+        for node_id in (step4_doc.get("candidate_rcsdnode_ids") or [])
+        if node_id is not None and str(node_id) != ""
+    }
+    node_by_id = {
+        str(node.node_id): node
+        for node in finalization_context.association_context.step1_context.rcsd_nodes
+    }
+    seen_ids: set[str] = set()
+    members: list[NodeRecord] = []
+
+    def add_member_id(node_id: object, *, group_id: str) -> None:
+        node_key = str(node_id)
+        if node_key in seen_ids or node_key in overflow_ids:
+            return
+        if group_id in terminal_group_ids and node_key not in local_required_ids:
+            return
+        node = node_by_id.get(node_key)
+        if node is None:
+            return
+        seen_ids.add(node_key)
+        members.append(node)
+
+    audited_group_ids: set[str] = set()
+    for group_id, row in gate_audit.items():
+        group_key = str(group_id)
+        required_member_ids = {
+            str(node_id)
+            for node_id in (row.get("required_member_rcsdnode_ids") or [])
+            if node_id is not None and str(node_id) != ""
+        }
+        if group_key not in required_group_ids and not (required_member_ids & local_required_ids):
+            continue
+        audited_group_ids.add(group_key)
+        if group_key in terminal_group_ids:
+            member_ids = required_member_ids
+        else:
+            member_ids = {
+                str(node_id)
+                for node_id in (row.get("member_rcsdnode_ids") or required_member_ids)
+                if node_id is not None and str(node_id) != ""
+            }
+        for node_id in member_ids:
+            add_member_id(node_id, group_id=group_key)
+
+    for group_id, row in related_group_audit.items():
+        group_key = str(group_id)
+        if group_key in audited_group_ids:
+            continue
+        member_ids = {
+            str(node_id)
+            for node_id in (row.get("member_rcsdnode_ids") or [])
+            if node_id is not None and str(node_id) != ""
+        }
+        if group_key not in required_group_ids and not (member_ids & local_required_ids):
+            continue
+        for node_id in member_ids:
+            add_member_id(node_id, group_id=group_key)
+
+    for node in finalization_context.association_context.step1_context.rcsd_nodes:
+        if node.node_id not in candidate_ids and node.node_id not in local_required_ids:
+            continue
+        group_id = _semantic_group_id(node)
+        if group_id in required_group_ids:
+            add_member_id(node.node_id, group_id=group_id)
+
+    for node in local_required_items:
+        add_member_id(node.node_id, group_id=_semantic_group_id(node))
+    return members
+
+
+def _semantic_intra_rcsdnode_line_geometry(nodes: Iterable[NodeRecord]) -> BaseGeometry | None:
+    groups: dict[str, list[NodeRecord]] = defaultdict(list)
+    for node in nodes:
+        groups[_semantic_group_id(node)].append(node)
+    lines: list[LineString] = []
+    for group_nodes in groups.values():
+        for index, left in enumerate(group_nodes):
+            left_point = left.geometry if isinstance(left.geometry, Point) else left.geometry.representative_point()
+            for right in group_nodes[index + 1:]:
+                right_point = right.geometry if isinstance(right.geometry, Point) else right.geometry.representative_point()
+                if left_point.distance(right_point) <= 1e-6:
+                    continue
+                lines.append(LineString([(left_point.x, left_point.y), (right_point.x, right_point.y)]))
+    return _union_geometries(lines)
+
+
+def _semantic_intra_rcsdnode_line_count(nodes: Iterable[NodeRecord]) -> int:
+    groups: dict[str, int] = defaultdict(int)
+    for node in nodes:
+        groups[_semantic_group_id(node)] += 1
+    return sum(count * (count - 1) // 2 for count in groups.values())
 
 
 def _selected_road_records(finalization_context: FinalizationContext) -> list[RoadRecord]:
@@ -1429,6 +1559,20 @@ def build_step6_result(
         direction_boundary_geometry,
         geometry_cache=geometry_cache,
     )
+    local_required_semantic_members = _local_required_semantic_member_records(
+        finalization_context,
+        local_required_nodes,
+    )
+    semantic_intra_line_geometry = _semantic_intra_rcsdnode_line_geometry(local_required_semantic_members)
+    semantic_intra_line_cover_geometry = _cached_line_buffers(
+        semantic_intra_line_geometry,
+        SEMANTIC_INTRA_LINE_BUFFER_M,
+        geometry_cache=geometry_cache,
+    )
+    if semantic_intra_line_cover_geometry is not None:
+        direction_boundary_geometry = _union_geometries(
+            [direction_boundary_geometry, semantic_intra_line_cover_geometry]
+        )
     required_node_cover_geometry = _point_buffers(local_required_nodes, REQUIRED_NODE_BUFFER_M)
     required_road_cover_geometry = _cached_line_buffers(
         local_required_road_geometry,
@@ -1441,6 +1585,7 @@ def build_step6_result(
             support_only_seam_bridge_geometry,
             required_node_cover_geometry,
             required_road_cover_geometry,
+            semantic_intra_line_cover_geometry,
         ]
     )
     anchor_geometries = [
@@ -1448,6 +1593,7 @@ def build_step6_result(
         support_only_seam_bridge_geometry,
         required_node_cover_geometry,
         required_road_cover_geometry,
+        semantic_intra_line_cover_geometry,
     ]
     anchor_union_geometry = _union_geometries(anchor_geometries)
     anchor_keep_geometry = (
@@ -1464,6 +1610,7 @@ def build_step6_result(
                 support_only_seam_bridge_geometry,
                 required_node_cover_geometry,
                 required_road_cover_geometry,
+                semantic_intra_line_cover_geometry,
             ]
         )
     )
@@ -1505,6 +1652,14 @@ def build_step6_result(
     if final_polygon is not None and foreign_mask_geometry is not None:
         final_polygon = _clean_geometry(final_polygon.difference(foreign_mask_geometry))
         final_polygon = _retain_components_touching_keep_geometry(final_polygon, anchor_keep_geometry)
+    if final_polygon is not None and semantic_intra_line_cover_geometry is not None:
+        final_polygon = _clean_geometry(_union_geometries([final_polygon, semantic_intra_line_cover_geometry]))
+        final_polygon = _clean_geometry(final_polygon.intersection(allowed_space_tolerance_geometry))
+        final_polygon = _clean_geometry(final_polygon.intersection(direction_boundary_geometry))
+        final_polygon = _retain_components_touching_keep_geometry(final_polygon, anchor_keep_geometry)
+        if final_polygon is not None and foreign_mask_geometry is not None:
+            final_polygon = _clean_geometry(final_polygon.difference(foreign_mask_geometry))
+            final_polygon = _retain_components_touching_keep_geometry(final_polygon, anchor_keep_geometry)
     _accumulate_stage_timer(stage_timers, "step6_finalize_cleanup", perf_counter() - cleanup_started_perf)
 
     validation_started_perf = perf_counter()
@@ -1536,10 +1691,6 @@ def build_step6_result(
         selected_road_core_geometry,
         final_line_cover_geometry,
     )
-    semantic_junction_cover_ok = (
-        target_node_cover_ratio >= 1.0
-        and selected_core_cover_ratio >= SELECTED_ROAD_CORE_MIN_RATIO
-    )
     required_rc_node_cover_ratio = _node_cover_ratio_with_cover_geometry(
         local_required_nodes,
         final_node_cover_geometry,
@@ -1548,9 +1699,20 @@ def build_step6_result(
         local_required_road_geometry,
         final_line_cover_geometry,
     )
+    semantic_intra_line_cover_ratio = _line_coverage_ratio_with_cover_geometry(
+        semantic_intra_line_geometry,
+        final_polygon,
+    )
+    semantic_intra_line_cover_ok = semantic_intra_line_cover_ratio >= 0.999999
+    semantic_junction_cover_ok = (
+        target_node_cover_ratio >= 1.0
+        and selected_core_cover_ratio >= SELECTED_ROAD_CORE_MIN_RATIO
+        and semantic_intra_line_cover_ok
+    )
     required_rc_cover_ok = (
         required_rc_node_cover_ratio >= 1.0
         and required_rc_line_cover_ratio >= LINE_COVER_MIN_RATIO
+        and semantic_intra_line_cover_ok
     )
     legal_escape_area_m2 = 0.0
     direction_escape_area_m2 = 0.0
@@ -1663,6 +1825,11 @@ def build_step6_result(
             "required_rc_cover_ok": required_rc_cover_ok,
             "required_rc_node_cover_ratio": round(required_rc_node_cover_ratio, 6),
             "required_rc_line_cover_ratio": round(required_rc_line_cover_ratio, 6),
+            "semantic_intra_rcsdnode_line_cover_ratio": round(semantic_intra_line_cover_ratio, 6),
+            "semantic_intra_rcsdnode_line_cover_ok": semantic_intra_line_cover_ok,
+            "semantic_intra_rcsdnode_line_count": _semantic_intra_rcsdnode_line_count(
+                local_required_semantic_members
+            ),
             "within_legal_space_ok": within_legal_space_ok,
             "within_direction_boundary_ok": within_direction_boundary_ok,
             "foreign_exclusion_ok": foreign_exclusion_ok,
@@ -1685,6 +1852,7 @@ def build_step6_result(
         "selected_road_core_cover_ratio": round(selected_core_cover_ratio, 6),
         "required_rc_node_cover_ratio": round(required_rc_node_cover_ratio, 6),
         "required_rc_line_cover_ratio": round(required_rc_line_cover_ratio, 6),
+        "semantic_intra_rcsdnode_line_cover_ratio": round(semantic_intra_line_cover_ratio, 6),
         "foreign_overlap_area_m2": round(foreign_overlap_area_m2, 6),
     }
     extra_status_fields = {
@@ -1697,6 +1865,11 @@ def build_step6_result(
         "selected_road_core_cover_ratio": round(selected_core_cover_ratio, 6),
         "required_rc_node_cover_ratio": round(required_rc_node_cover_ratio, 6),
         "required_rc_line_cover_ratio": round(required_rc_line_cover_ratio, 6),
+        "semantic_intra_rcsdnode_line_cover_ratio": round(semantic_intra_line_cover_ratio, 6),
+        "semantic_intra_rcsdnode_line_cover_ok": semantic_intra_line_cover_ok,
+        "semantic_intra_rcsdnode_line_count": _semantic_intra_rcsdnode_line_count(
+            local_required_semantic_members
+        ),
         "foreign_overlap_area_m2": round(foreign_overlap_area_m2, 6),
         "required_rcsdnode_ids": list(association_case_result.extra_status_fields.get("required_rcsdnode_ids") or []),
         "required_rcsdroad_ids": list(association_case_result.extra_status_fields.get("required_rcsdroad_ids") or []),

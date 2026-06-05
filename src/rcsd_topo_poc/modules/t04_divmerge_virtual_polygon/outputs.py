@@ -899,7 +899,17 @@ def write_summary(
                 "nodes_updated_to_yes_count": nodes_outputs.get("nodes_updated_to_yes_count"),
                 "nodes_updated_to_fail4_count": nodes_outputs.get("nodes_updated_to_fail4_count"),
                 "nodes_updated_to_fail4_fallback_count": nodes_outputs.get("nodes_updated_to_fail4_fallback_count"),
+                "nodes_updated_to_no_count": nodes_outputs.get("nodes_updated_to_no_count"),
                 "nodes_consistency_passed": nodes_outputs.get("nodes_consistency_passed"),
+                "intersection_match_t04_path": nodes_outputs.get("intersection_match_t04_path"),
+                "intersection_match_t04_summary_path": nodes_outputs.get("intersection_match_t04_summary_path"),
+                "intersection_match_t04_cardinality_errors_csv": nodes_outputs.get(
+                    "intersection_match_t04_cardinality_errors_csv_path"
+                ),
+                "intersection_match_t04_cardinality_errors_json": nodes_outputs.get(
+                    "intersection_match_t04_cardinality_errors_json_path"
+                ),
+                "intersection_match_t04_summary": nodes_outputs.get("intersection_match_t04_summary"),
             }
         )
     output_path = run_root / "summary.json"

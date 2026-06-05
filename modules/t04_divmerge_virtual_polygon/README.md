@@ -112,6 +112,19 @@ scripts/t04_export_text_bundle_internal_multi_mainnodeids.sh \
 - `nodes.gpkg`
 - `nodes_anchor_update_audit.csv`
 - `nodes_anchor_update_audit.json`
+- `intersection_match_t04.geojson`
+- `intersection_match_t04_summary.json`
+- `intersection_match_t04_cardinality_errors.csv/json`
+
+full-input 若需要与 T07 / T03 既有关系做最终 1:1 校验，可在现有脚本上追加：
+
+```bash
+INTERSECTION_MATCH_T07_PATH=/path/to/intersection_match_t07.geojson \
+INTERSECTION_MATCH_T03_PATH=/path/to/intersection_match_t03.geojson \
+scripts/t04_run_internal_full_input_8workers.sh
+```
+
+提供 T07/T03 输入后，若校验发现同一 SWSD 对多个 RCSD，或同一 RCSD 对多个 SWSD，冲突关系不会进入 `intersection_match_t04.geojson`；T04 自身建立的一 SWSD 多 RCSD 关系会把对应 representative node 回滚为 `is_anchor=no`，并追加到 `nodes_anchor_update_audit.*`。
 
 典型 review 输出：
 

@@ -44,6 +44,7 @@ OPPOSITE_RC_ROAD_MIN_DIRECTION_SIM = 0.85
 OPPOSITE_RC_ROAD_MIN_REVERSE_DIRECTION_DOT = 0.85
 OPPOSITE_RC_NODE_MAX_CORRIDOR_DISTANCE_M = 10.0
 OPPOSITE_RC_ROAD_MAX_PROTECTED_OVERLAP_M = 3.0
+RCSD_SEMANTIC_BRIDGE_MAX_TARGET_DISTANCE_M = 6.0
 DIRECTION_MODE = "t02_direction_plus_bidirectional_junction_trace"
 
 
@@ -796,6 +797,58 @@ def _build_mst_edges(points: list[Point]) -> list[LineString]:
         visited.add(target_index)
         remaining.remove(target_index)
     return edges
+
+
+def _build_rcsd_semantic_bridge_support(
+    context: Step1Context,
+    *,
+    blocker_geometry: BaseGeometry | None,
+) -> tuple[BaseGeometry | None, list[dict[str, Any]]]:
+    target_geometry = unary_union([_point_like(node.geometry) for node in context.target_group.nodes])
+    groups: dict[str, list[Point]] = defaultdict(list)
+    node_ids_by_group: dict[str, list[str]] = defaultdict(list)
+    for node in context.rcsd_nodes:
+        if node.mainnodeid in {None, "", "0"}:
+            continue
+        groups[str(node.mainnodeid)].append(_point_like(node.geometry))
+        node_ids_by_group[str(node.mainnodeid)].append(node.node_id)
+
+    geometries: list[BaseGeometry] = []
+    records: list[dict[str, Any]] = []
+    for group_id, points in groups.items():
+        if len(points) < 2:
+            continue
+        node_ids = node_ids_by_group[group_id]
+        for index, left in enumerate(points):
+            for right_index in range(index + 1, len(points)):
+                right = points[right_index]
+                if left.distance(right) <= 1e-6:
+                    continue
+                line = LineString([left, right])
+                distance_to_target = float(line.distance(target_geometry))
+                if distance_to_target > RCSD_SEMANTIC_BRIDGE_MAX_TARGET_DISTANCE_M:
+                    continue
+                support = _extract_polygon_geometry(
+                    line.buffer(NODE_BUFFER_M, cap_style=2, join_style=2).intersection(context.drivezone_geometry)
+                )
+                if support is None:
+                    continue
+                if blocker_geometry is not None:
+                    support = _extract_polygon_geometry(support.difference(blocker_geometry))
+                    if support is None:
+                        continue
+                geometries.append(support)
+                records.append(
+                    {
+                        "group_id": group_id,
+                        "from_node_id": node_ids[index],
+                        "to_node_id": node_ids[right_index],
+                        "distance_to_target_m": round(distance_to_target, 6),
+                        "line_length_m": round(line.length, 6),
+                        "buffer_m": NODE_BUFFER_M,
+                    }
+                )
+    return _extract_polygon_geometry(unary_union(geometries)) if geometries else None, records
 
 
 def _build_foreign_mst_masks(context: Step1Context) -> tuple[BaseGeometry | None, list[dict[str, Any]]]:
@@ -1751,6 +1804,19 @@ def build_step3_case_result(
         context,
         blocker_geometry=None,
     )
+    rcsd_semantic_bridge_protection_geometry, rcsd_semantic_bridge_records = _build_rcsd_semantic_bridge_support(
+        context,
+        blocker_geometry=None,
+    )
+    bridge_protection_geometry = _extract_polygon_geometry(
+        unary_union(
+            [
+                geometry
+                for geometry in (bridge_protection_geometry, rcsd_semantic_bridge_protection_geometry)
+                if geometry is not None
+            ]
+        )
+    )
     branch_frontier_road_ids, junction_related_road_ids, adjacent_seed_records = _build_branch_frontier(
         context,
         through_node_ids=shared_through_node_ids,
@@ -1885,7 +1951,19 @@ def build_step3_case_result(
         context,
         blocker_geometry=blocker_union,
     )
-    hard_candidate_parts = [geometry for geometry in (hard_candidate_support_geometry, bridge_hard_support) if geometry is not None]
+    rcsd_semantic_bridge_hard_support, rcsd_semantic_bridge_hard_records = _build_rcsd_semantic_bridge_support(
+        context,
+        blocker_geometry=blocker_union,
+    )
+    hard_candidate_parts = [
+        geometry
+        for geometry in (
+            hard_candidate_support_geometry,
+            bridge_hard_support,
+            rcsd_semantic_bridge_hard_support,
+        )
+        if geometry is not None
+    ]
     hard_candidate_with_bridge = _extract_polygon_geometry(unary_union(hard_candidate_parts)) if hard_candidate_parts else None
 
     hard_path_validation_started_perf = perf_counter()
@@ -1915,7 +1993,11 @@ def build_step3_case_result(
     )
     cleanup_preview_parts = [
         geometry
-        for geometry in (cleanup_preview_source_geometry, bridge_protection_geometry)
+        for geometry in (
+            cleanup_preview_source_geometry,
+            bridge_protection_geometry,
+            rcsd_semantic_bridge_protection_geometry,
+        )
         if geometry is not None
     ]
     cleanup_preview_geometry = _extract_polygon_geometry(unary_union(cleanup_preview_parts)) if cleanup_preview_parts else None
@@ -2036,6 +2118,7 @@ def build_step3_case_result(
         "adjacent_junction_cut_suppressed": adjacent_suppressed_records,
         "foreign_object_masks": foreign_object_records,
         "foreign_mst_masks": foreign_mst_records,
+        "rcsd_semantic_bridge_records": rcsd_semantic_bridge_hard_records,
         "growth_limits": growth_limits,
         **rule_d_fallback_fields,
         "cleanup_dependency": cleanup_dependency,
@@ -2068,6 +2151,9 @@ def build_step3_case_result(
         "adjacent_junction_cut_protection_applied": rule_a_protection_fields["target_core_protection_applied"],
         "adjacent_junction_cut_protection_reason": rule_a_protection_fields["target_core_protection_reason"],
         **bridge_hard_fields,
+        "rcsd_semantic_bridge_applied": bool(rcsd_semantic_bridge_hard_records),
+        "rcsd_semantic_bridge_count": len(rcsd_semantic_bridge_hard_records),
+        "rcsd_semantic_bridge_max_target_distance_m": RCSD_SEMANTIC_BRIDGE_MAX_TARGET_DISTANCE_M,
         **shared_two_in_two_out_fields,
         **drivezone_metrics,
     }
@@ -2123,6 +2209,9 @@ def build_step3_case_result(
             "direction_mode": DIRECTION_MODE,
             **rule_d_fallback_fields,
             **bridge_hard_fields,
+            "rcsd_semantic_bridge_applied": bool(rcsd_semantic_bridge_hard_records),
+            "rcsd_semantic_bridge_count": len(rcsd_semantic_bridge_hard_records),
+            "rcsd_semantic_bridge_max_target_distance_m": RCSD_SEMANTIC_BRIDGE_MAX_TARGET_DISTANCE_M,
             **shared_two_in_two_out_fields,
             **single_sided_direction_resolution,
             **rcsd_opposite_fallback,

@@ -25,6 +25,7 @@ T04 当前正式承接：
   - rejected / summary / audit / consistency report
   - downstream `nodes.gpkg` 与 `nodes_anchor_update_audit.csv/json`
   - `t04_swsd_rcsd_relation_evidence.csv/json`
+  - `intersection_match_t04.geojson`
 
 正式边界：
 
@@ -474,6 +475,30 @@ T04 downstream `nodes.gpkg` 只正式更新 `is_anchor`：
 
 `fail4_fallback` 是 T04 downstream nodes 私有关系补齐状态，表示不生产新的 T04 路口面但已确认 SWSD-RCSD 语义路口关系；`fail4` 仍表示 T04 失败且未 fallback 成功。二者均不改变 T03 的 `fail3` 语义。
 
+### 3.11 Intersection match finalization
+
+T04 final closeout 必须基于 `t04_swsd_rcsd_relation_evidence.json` 中 `status_suggested = 0` 且 `base_id_candidate` 为有效非零 RCSD 语义路口 ID 的记录，发布 `intersection_match_t04.geojson`。
+
+`intersection_match_t04.geojson`：
+
+- 输出 CRS 为 `CRS84`。
+- 每条 feature 表示一条已确认的 SWSD 语义路口到 RCSD 语义路口关系。
+- 字段至少包含 `target_id / base_id / status / level / is_highway / source_module / source_case_id / relation_source / relation_state / reason`。
+- `target_id` 为 SWSD 语义路口 ID，`base_id` 为 RCSD 语义路口 ID，`status = 0` 表示成功关系。
+
+构建时可选消费：
+
+- `intersection_match_t07.geojson`
+- `intersection_match_t03.geojson`
+
+校验规则：
+
+- T07 / T03 / T04 合并后的成功关系中，同一个 SWSD `target_id` 不得对应多个 RCSD `base_id`。
+- T07 / T03 / T04 合并后的成功关系中，同一个 RCSD `base_id` 不得对应多个 SWSD `target_id`。
+- 命中冲突时必须输出 `intersection_match_t04_cardinality_errors.csv/json` 与 `intersection_match_t04_summary.json`；`intersection_match_t04_summary.json.relation_cardinality_passed = false`。未提供 T07/T03 外部输入时，T04 自身 relation evidence 的 cardinality 结果只作为 final relation 审计，不提升为 Step7 consistency failure。
+- 任一 cardinality 冲突涉及的 T04 `target_id` 不进入 `intersection_match_t04.geojson`。
+- 启用 T07/T03 外部校验输入后，若冲突类型为 `one_target_to_many_base` 且该关系由 T04 建立，必须取消该 SWSD 语义路口已建立关系，并把 T04 输出 `nodes.gpkg` 中对应 representative node 的 `is_anchor` 回滚为 `no`；回滚必须追加到 `nodes_anchor_update_audit.csv/json`。
+
 ## 4. Outputs
 
 ### 4.1 Run root 输出
@@ -500,6 +525,10 @@ batch / full-input run root 至少包含：
 - `nodes_anchor_update_audit.json`
 - `t04_swsd_rcsd_relation_evidence.csv`
 - `t04_swsd_rcsd_relation_evidence.json`
+- `intersection_match_t04.geojson`
+- `intersection_match_t04_summary.json`
+- `intersection_match_t04_cardinality_errors.csv`
+- `intersection_match_t04_cardinality_errors.json`
 
 internal full-input review PNG 输出按运行模式区分：
 
@@ -686,6 +715,13 @@ accepted surface 主层与 summary 至少应保留或可追溯：
 - 只有 RCSDRoad / RCSDNode 支持但不构成 RCSD 语义路口时，必须输出 `rcsd_present_not_junction / status_suggested = 1`，不得伪造成成功匹配。
 - `surface_candidate_present = 1` 仅表示存在 T04 accepted surface candidate；它不等同于最终 SWSD-RCSD semantic junction 匹配成功。
 
+`intersection_match_t04.geojson`：
+
+- 属于 T04 final closeout 对下游的最终 SWSD-RCSD 语义路口关系输出。
+- 输入依据是 T04 relation evidence 中的成功关系，并与 T07 / T03 已发布的 intersection match 做 1:1 cardinality 校验。
+- 若存在同一 SWSD 对多个 RCSD，或同一 RCSD 对多个 SWSD，冲突关系不得进入输出 GeoJSON，并必须在 `intersection_match_t04_cardinality_errors.*` 中可追溯。
+- 启用 T07/T03 外部校验输入后，T04 自身导致的同一 SWSD 对多个 RCSD 冲突必须把该 SWSD representative node 回滚为 `is_anchor = no`。
+
 ### 4.8 Downstream nodes 输出
 
 `nodes.gpkg`：
@@ -709,6 +745,8 @@ accepted surface 主层与 summary 至少应保留或可追溯：
 - `fallback_base_id_candidate`
 - `fallback_relation_state`
 - `reason`
+
+若 `intersection_match_t04` 在 T07/T03 外部校验输入下触发 T04 自身 one-target-to-many rollback，audit 必须追加一条 `new_is_anchor = no` 的记录，`reason = intersection_match_t04_one_target_to_many_base` 或等价可追溯原因。
 
 `nodes_anchor_update_audit.json` 至少包含：
 
@@ -746,6 +784,13 @@ repo 级包装脚本：
 - `scripts/t04_watch_internal_full_input.sh`
 - `scripts/t04_run_internal_full_input_innernet_flat_review.sh`
 - `scripts/t04_fallback_postprocess_existing.sh`：postprocess-existing 内网脚本；以既有 T04 run root 为参数，补齐 fallback relation evidence 并把成功 fallback 的 representative node 写为 `fail4_fallback`；不重跑 Step1-7、不生成新路口面。
+
+`scripts/t04_run_internal_full_input_8workers.sh` 额外支持可选环境变量：
+
+- `INTERSECTION_MATCH_T07_PATH`
+- `INTERSECTION_MATCH_T03_PATH`
+
+这两个输入只用于 `intersection_match_t04.geojson` 构建时的跨模块 relation cardinality 校验，不改变 Step1-7 构面算法。
 
 这些脚本已登记，但不构成新的 CLI 子命令；不得通过本模块文档暗示新增 repo 官方入口。
 

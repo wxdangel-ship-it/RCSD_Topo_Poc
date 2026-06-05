@@ -170,7 +170,8 @@ Step1 不负责最终正确性判断，也不负责几何生成。
 5. foreign MST 补充切断规则：对存在拓扑干扰但不直接落在当前 local patch 的对象，用 MST 方式补充约束。
 6. must-cover 规则：当前 case 的核心语义对象必须被合法空间覆盖，否则直接暴露为异常。
 7. single-sided opposite-side guard 规则：单侧 T 型场景下要抑制对向误扩张。
-8. no-silent-fallback 规则：关键道路集缺失时必须显式失败，不能隐式放宽。
+8. RCSD 语义组直连保护规则：若同一非空 `mainnodeid` 的 RCSDNode 之间直线连接区域靠近当前目标语义路口，Step3 可将该直连 corridor 作为合法空间保护证据；该保护必须受 DriveZone、blocker 与审计字段约束，不得静默突破 foreign / adjacent cut。
+9. no-silent-fallback 规则：关键道路集缺失时必须显式失败，不能隐式放宽。
 
 冻结前置校验：
 
@@ -283,6 +284,7 @@ node 类 `excluded / foreign` 当前保留在审计层，不进入本轮 hard su
 - final geometry 不得突破 directional boundary。
 - `required RC must-cover` 当前只对 directional boundary 内的 local required RC 成立。
 - directional boundary 外的 related RCSDRoad / RCSDNode 不得作为 accepted 的硬失败条件。
+- 对 Step4 已确认的 local required RCSD 语义组，Step6 的 `semantic_junction_cover_ok / required_rc_cover_ok` 还必须覆盖同组 RCSDNode 之间的直线连接区域；成员来源限于 Step4 审计过的 candidate / local required 语义成员，`single-sided overflow node` 与 terminal degree-1 特例的非本地成员不得被隐式提升为 must-cover。
 - `association_class=B` 的 support-only case 允许在目标节点附近增加局部 seam bridge，以修补中心连接缝隙；该 bridge 仍必须受 legal space、directional boundary 与 hard negative mask 共同约束，不能成为跨路口扩张通道。
 - 当前正式契约不冻结 Step6 solver 常量、阈值与具体构面参数。
 
@@ -490,6 +492,7 @@ internal full-input review PNG 输出按运行模式区分：
 - `primary_root_cause / secondary_root_cause`
 - `semantic_junction_cover_ok`
 - `required_rc_cover_ok`
+- `semantic_intra_rcsdnode_line_cover_ok / semantic_intra_rcsdnode_line_cover_ratio / semantic_intra_rcsdnode_line_count`
 - `within_legal_space_ok`
 - `within_direction_boundary_ok`
 - `foreign_exclusion_ok`

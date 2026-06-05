@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
@@ -13,6 +14,7 @@ from rcsd_topo_poc.modules.t00_utility_toolbox.gpkg_update import copy_gpkg_and_
 from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import write_csv
 
 from ._runtime_shared import LoadedFeature, normalize_id, read_vector_layer_strict
+from .intersection_match import write_intersection_match_t04
 from .provenance import provenance_doc
 
 
@@ -148,6 +150,8 @@ def write_t04_nodes_outputs(
     fallback_success_case_ids: Iterable[str] | None = None,
     fallback_reason_by_case: Mapping[str, str] | None = None,
     fallback_base_id_by_case: Mapping[str, str] | None = None,
+    intersection_match_t07_path: str | Path | None = None,
+    intersection_match_t03_path: str | Path | None = None,
 ) -> dict[str, Any]:
     features = list(source_node_features)
     cases = _selected_case_docs(selected_cases)
@@ -274,19 +278,35 @@ def write_t04_nodes_outputs(
     }
     write_json(audit_json_path, audit_payload)
 
+    intersection_match_outputs = write_intersection_match_t04(
+        run_root=run_root,
+        intersection_match_t07_path=intersection_match_t07_path,
+        intersection_match_t03_path=intersection_match_t03_path,
+    )
+    rollback_update_result = _apply_intersection_match_t04_node_rollbacks(
+        nodes_output_path=nodes_path,
+        audit_csv_path=audit_csv_path,
+        audit_json_path=audit_json_path,
+        rollback_rows=intersection_match_outputs["intersection_match_t04_rollback_rows"],
+    )
+    audit_payload = json.loads(audit_json_path.read_text(encoding="utf-8"))
+
     return {
         "nodes_path": str(nodes_path),
         "nodes_anchor_update_audit_csv_path": str(audit_csv_path),
         "nodes_anchor_update_audit_json_path": str(audit_json_path),
-        "nodes_total_update_count": len(audit_rows),
+        "nodes_total_update_count": audit_payload["total_update_count"],
         "nodes_updated_to_yes_count": audit_payload["updated_to_yes_count"],
         "nodes_updated_to_fail4_count": audit_payload["updated_to_fail4_count"],
         "nodes_updated_to_fail4_fallback_count": audit_payload["updated_to_fail4_fallback_count"],
+        "nodes_updated_to_no_count": audit_payload.get("updated_to_no_count", 0),
         "nodes_updated_feature_count": len(updated_feature_node_ids),
         "nodes_consistency_passed": nodes_consistency_passed,
         "nodes_missing_case_ids": [],
         "nodes_mismatch_case_ids": mismatch_case_ids,
         "nodes_update_result": nodes_update_result,
+        **intersection_match_outputs,
+        "intersection_match_t04_rollback_result": rollback_update_result,
     }
 
 
@@ -297,6 +317,8 @@ def write_t04_nodes_outputs_for_case_packages(
     artifacts: Iterable[Any],
     failed_case_ids: Iterable[str],
     input_dataset_id: str | None = None,
+    intersection_match_t07_path: str | Path | None = None,
+    intersection_match_t03_path: str | Path | None = None,
 ) -> dict[str, Any]:
     specs = list(case_specs)
     failure_status_by_case = {
@@ -310,7 +332,92 @@ def write_t04_nodes_outputs_for_case_packages(
         artifacts=list(artifacts),
         failure_status_by_case=failure_status_by_case,
         input_dataset_id=input_dataset_id,
+        intersection_match_t07_path=intersection_match_t07_path,
+        intersection_match_t03_path=intersection_match_t03_path,
     )
+
+
+def _write_t04_nodes_audit_outputs(
+    *,
+    audit_csv_path: Path,
+    audit_json_path: Path,
+    rows: list[dict[str, Any]],
+    payload: dict[str, Any],
+) -> None:
+    write_csv(audit_csv_path, rows, T04_NODES_AUDIT_FIELDNAMES)
+    payload["total_update_count"] = len(rows)
+    payload["updated_to_yes_count"] = sum(1 for row in rows if row["new_is_anchor"] == T04_NODES_ACCEPTED_VALUE)
+    payload["updated_to_fail4_count"] = sum(1 for row in rows if row["new_is_anchor"] == T04_NODES_FAILED_VALUE)
+    payload["updated_to_fail4_fallback_count"] = sum(
+        1 for row in rows if row["new_is_anchor"] == T04_NODES_FALLBACK_VALUE
+    )
+    payload["updated_to_no_count"] = sum(1 for row in rows if row["new_is_anchor"] == "no")
+    payload["rows"] = rows
+    write_json(audit_json_path, payload)
+
+
+def _apply_intersection_match_t04_node_rollbacks(
+    *,
+    nodes_output_path: Path,
+    audit_csv_path: Path,
+    audit_json_path: Path,
+    rollback_rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    if not rollback_rows:
+        return {"requested_update_count": 0, "sqlite_changed_row_count": 0}
+    audit_payload = json.loads(audit_json_path.read_text(encoding="utf-8")) if audit_json_path.is_file() else {}
+    audit_rows = [dict(row) for row in audit_payload.get("rows", []) if isinstance(row, dict)]
+    previous_value_by_node_id = {
+        str(row.get("representative_node_id")): row.get("new_is_anchor")
+        for row in audit_rows
+        if row.get("representative_node_id") not in (None, "")
+    }
+    updates_by_node_id = {
+        str(row["representative_node_id"]): "no"
+        for row in rollback_rows
+        if str(row.get("representative_node_id") or "").strip()
+    }
+    temp_nodes_path = nodes_output_path.with_name(f".{nodes_output_path.stem}.intersection_match_t04_tmp{nodes_output_path.suffix}")
+    shutil.copy2(nodes_output_path, temp_nodes_path)
+    try:
+        rollback_update_result = copy_gpkg_and_update_field_by_id(
+            source_path=temp_nodes_path,
+            output_path=nodes_output_path,
+            updates_by_id=updates_by_node_id,
+            id_field="id",
+            update_field="is_anchor",
+        )
+    finally:
+        if temp_nodes_path.exists():
+            temp_nodes_path.unlink()
+
+    for row in rollback_rows:
+        representative_node_id = str(row.get("representative_node_id") or "")
+        audit_rows.append(
+            {
+                "case_id": row.get("case_id") or row.get("target_id") or representative_node_id,
+                "representative_node_id": representative_node_id,
+                "mainnodeid": row.get("target_id") or row.get("case_id") or representative_node_id,
+                "previous_is_anchor": previous_value_by_node_id.get(representative_node_id, ""),
+                "new_is_anchor": "no",
+                "step7_state": row.get("step7_state") or "",
+                "fallback_base_id_candidate": "",
+                "fallback_relation_state": "",
+                "reason": row.get("reason") or "intersection_match_t04_one_target_to_many_base",
+            }
+        )
+    audit_payload["intersection_match_t04_rollback_result"] = rollback_update_result
+    audit_payload["intersection_match_t04_rollback_case_ids"] = sorted(
+        {str(row.get("case_id") or row.get("target_id") or "") for row in rollback_rows if row},
+        key=sort_patch_key,
+    )
+    _write_t04_nodes_audit_outputs(
+        audit_csv_path=audit_csv_path,
+        audit_json_path=audit_json_path,
+        rows=audit_rows,
+        payload=audit_payload,
+    )
+    return rollback_update_result
 
 
 def augment_step7_consistency_report(
@@ -330,6 +437,19 @@ def augment_step7_consistency_report(
             "nodes_updated_to_yes_count": nodes_outputs.get("nodes_updated_to_yes_count"),
             "nodes_updated_to_fail4_count": nodes_outputs.get("nodes_updated_to_fail4_count"),
             "nodes_updated_to_fail4_fallback_count": nodes_outputs.get("nodes_updated_to_fail4_fallback_count"),
+            "nodes_updated_to_no_count": nodes_outputs.get("nodes_updated_to_no_count"),
+            "intersection_match_t04_path": nodes_outputs.get("intersection_match_t04_path"),
+            "intersection_match_t04_summary_path": nodes_outputs.get("intersection_match_t04_summary_path"),
+            "intersection_match_t04_cardinality_passed": (
+                nodes_outputs.get("intersection_match_t04_summary") or {}
+            ).get("relation_cardinality_passed"),
+            "intersection_match_t04_cardinality_error_count": (
+                nodes_outputs.get("intersection_match_t04_summary") or {}
+            ).get("relation_cardinality_error_count"),
+            "intersection_match_t04_rollback_result": nodes_outputs.get("intersection_match_t04_rollback_result"),
+            "intersection_match_t04_rollback_target_ids": (
+                nodes_outputs.get("intersection_match_t04_summary") or {}
+            ).get("rollback_target_ids"),
             "nodes_updated_feature_count": nodes_outputs.get("nodes_updated_feature_count"),
             "nodes_consistency_passed": nodes_passed,
             "nodes_missing_case_ids": list(nodes_outputs.get("nodes_missing_case_ids") or []),

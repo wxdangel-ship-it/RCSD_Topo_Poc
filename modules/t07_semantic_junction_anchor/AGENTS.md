@@ -27,6 +27,7 @@
 - `kind_2` 是当前唯一正式类型判断字段；不兼容 `Kind_2`。
 - `kind_2` 判断以语义路口代表 node 为准。
 - Step1 仅处理代表 node `kind_2 in {4, 8, 16, 64, 128, 2048}` 的语义路口。
+- Step1 对处理范围内语义路口，必须组内所有 node 均落入或接触 `DriveZone` 才写 `has_evd = yes`；任一组内 node 未命中则写 `has_evd = no`。
 - 不在上述集合内的语义路口，代表 node 的 `has_evd / is_anchor / anchor_reason` 均保持或写为 `NULL`。
 - `has_evd / is_anchor / anchor_reason` 只写代表 node；从属 node 空值不是失败或未处理结果。
 - Step3 处理代表 node `kind_2 in {4, 8, 16, 2048}` 的语义路口，先用 Step2 surface 1V1 推导关系，再对 `has_evd = yes / is_anchor = no` 的候选使用 T05 relation 主表补充关系。

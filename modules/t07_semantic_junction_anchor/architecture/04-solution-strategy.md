@@ -7,7 +7,7 @@
 3. 按 `mainnodeid` 组装语义路口；空 `mainnodeid` 退化为 singleton。
 4. 识别代表 node；多节点组要求 `id == mainnodeid`。
 5. Step1 按代表 node `kind_2` 过滤处理范围。
-6. Step1 对处理范围内语义路口执行 `DriveZone` intersects/touches 判定。
+6. Step1 对处理范围内语义路口执行全组 node 的 `DriveZone` intersects/touches 判定，只有组内所有 node 均命中才写 `has_evd = yes`。
 7. Step2 仅对 `has_evd = yes` 的语义路口执行 `RCSDIntersection` 判定。
 8. Step2 先将 `kind_2 = 64 / 128` 写为基础 `no / NULL`，将 `kind_2 = 2048` 按“全组 node 命中同一个且唯一 `RCSDIntersection`”判定基础 `yes / t` 或 `no / NULL`。
 9. Step2 对处理范围内类型形成 `RCSDIntersection -> SWSD 语义路口` 反向索引；同一面对应多个 SWSD 语义路口时，对代表 node `kind_2 in {4, 8, 16, 64, 128, 2048}` 统一做 `fail2` 覆盖。

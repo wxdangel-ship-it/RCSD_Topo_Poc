@@ -338,11 +338,15 @@ def test_tool4_consumes_optional_tool6_qc_and_outputs_roads(tmp_path: Path) -> N
         _node("cross_t", 4, 100.0, 0.0),
         _node("cross_non", 4, 140.0, 0.0),
         _node("skip_cross", 4, 180.0, 0.0),
+        _node("cross_diverge", 4, 220.0, 0.0),
+        _node("cross_merge", 4, 260.0, 0.0),
     ]
     roads = [
         _road("r-div-merge", "div", "merge", [(0.0, 0.0), (60.0, 0.0)]),
         _road("r-cross-t", "cross_t", "skip_cross", [(100.0, 0.0), (180.0, 0.0)]),
         _road("r-cross-non", "cross_non", "skip_cross", [(140.0, 0.0), (180.0, 0.0)]),
+        _road("r-cross-diverge", "cross_diverge", "skip_cross", [(220.0, 0.0), (180.0, 0.0)]),
+        _road("r-cross-merge", "cross_merge", "skip_cross", [(260.0, 0.0), (180.0, 0.0)]),
     ]
     write_gpkg(nodes_gpkg, nodes, crs_text="EPSG:3857")
     write_gpkg(roads_gpkg, roads, crs_text="EPSG:3857")
@@ -434,6 +438,40 @@ def test_tool4_consumes_optional_tool6_qc_and_outputs_roads(tmp_path: Path) -> N
                 "audit_json": "{}",
                 "是否修复": "0",
             },
+            {
+                "error_id": "cross_diverge",
+                "error_group_id": "cross_diverge",
+                "error_type": "错误交叉路口_分歧路口",
+                "semantic_node_id": "cross_diverge",
+                "source_node_id": "cross_diverge",
+                "role": "cross_diverge",
+                "kind_2": "4",
+                "in_degree": "1",
+                "out_degree": "2",
+                "paired_semantic_node_id": "",
+                "related_node_ids": "cross_diverge",
+                "related_road_ids": "",
+                "reason": "kind_2_4_oneway_roads_in_degree_1_out_degree_ge_2",
+                "audit_json": "{}",
+                "是否修复": "1",
+            },
+            {
+                "error_id": "cross_merge",
+                "error_group_id": "cross_merge",
+                "error_type": "错误交叉路口_合流路口",
+                "semantic_node_id": "cross_merge",
+                "source_node_id": "cross_merge",
+                "role": "cross_merge",
+                "kind_2": "4",
+                "in_degree": "2",
+                "out_degree": "1",
+                "paired_semantic_node_id": "",
+                "related_node_ids": "cross_merge",
+                "related_road_ids": "",
+                "reason": "kind_2_4_oneway_roads_out_degree_1_in_degree_ge_2",
+                "audit_json": "{}",
+                "是否修复": "1",
+            },
         ],
     )
 
@@ -475,20 +513,27 @@ def test_tool4_consumes_optional_tool6_qc_and_outputs_roads(tmp_path: Path) -> N
     assert nodes_fix["cross_t"]["kind_2"] == 2048
     assert nodes_fix["cross_non"]["kind_2"] == 1
     assert nodes_fix["skip_cross"]["kind_2"] == 4
-    assert set(roads_fix) == {"r-cross-t", "r-cross-non"}
+    assert nodes_fix["cross_diverge"]["kind_2"] == 16
+    assert nodes_fix["cross_merge"]["kind_2"] == 8
+    assert set(roads_fix) == {"r-cross-t", "r-cross-non", "r-cross-diverge", "r-cross-merge"}
     assert {
         "tool6_qc_repair:g1:div",
         "tool6_qc_repair:g1:merge",
         "tool6_qc_repair:cross_t:cross_t",
         "tool6_qc_repair:cross_non:cross_non",
+        "tool6_qc_repair:cross_diverge:cross_diverge",
+        "tool6_qc_repair:cross_merge:cross_merge",
     }.issubset(set(audit_rows))
     assert audit_rows["tool6_qc_repair:g1:merge"]["audit_role"] == "member"
     summary = json.loads(summary_output.read_text(encoding="utf-8"))
-    assert summary["counts"]["tool6_qc_feature_count"] == 5
-    assert summary["counts"]["tool6_repair_count"] == 4
+    repair_rule_by_node = {row["source_node_id"]: row["repair_rule"] for row in summary["repairs"]}
+    assert repair_rule_by_node["cross_diverge"] == "tool6_cross_diverge_to_kind_16"
+    assert repair_rule_by_node["cross_merge"] == "tool6_cross_merge_to_kind_8"
+    assert summary["counts"]["tool6_qc_feature_count"] == 7
+    assert summary["counts"]["tool6_repair_count"] == 6
     assert summary["counts"]["tool6_skipped_count"] == 1
     assert summary["counts"]["deleted_road_count"] == 1
-    assert summary["counts"]["roads_output_feature_count"] == 2
+    assert summary["counts"]["roads_output_feature_count"] == 4
     assert summary["deleted_road_ids"] == ["r-div-merge"]
 
 

@@ -62,6 +62,7 @@ def _road_feature(
     formway: int = 0,
     sgrade: str | None = None,
     segmentid: str | None = None,
+    segment_build_source: str | None = None,
 ) -> dict:
     return {
         "properties": {
@@ -73,6 +74,7 @@ def _road_feature(
             "formway": formway,
             "sgrade": sgrade,
             "segmentid": segmentid,
+            "segment_build_source": segment_build_source,
         },
         "geometry": LineString(coords),
     }
@@ -560,6 +562,116 @@ def test_oneway_completion_builds_unpaired_oneway_with_final_fallback(tmp_path: 
     assert artifacts.summary["final_fallback_segment_count"] == 1
     assert artifacts.summary["final_fallback_road_count"] == 1
     assert artifacts.summary["unsegmented_road_count"] == 0
+
+
+def test_oneway_completion_builds_residual_bidirectional_road_with_final_fallback(tmp_path: Path) -> None:
+    node_path = tmp_path / "nodes.geojson"
+    road_path = tmp_path / "roads.geojson"
+    out_root = tmp_path / "out"
+
+    write_geojson(
+        node_path,
+        [
+            _node_feature(1, 0.0, 0.0, kind_2=4, grade_2=1, closed_con=2),
+            _node_feature(2, 1.0, 0.0, kind_2=4, grade_2=1, closed_con=2),
+        ],
+    )
+    write_geojson(
+        road_path,
+        [
+            _road_feature("residual_dual", 1, 2, [(0.0, 0.0), (1.0, 0.0)], direction=1, road_kind=3),
+        ],
+    )
+
+    artifacts = run_step5_oneway_segment_completion(
+        step5_artifacts=_build_step5_artifacts(node_path, road_path),
+        out_root=out_root,
+        run_id="fallback_residual_dual",
+        debug=False,
+    )
+
+    road_props = _road_props_by_id(artifacts.refreshed_roads_path)
+    assert road_props["residual_dual"]["segmentid"] == "1_2"
+    assert road_props["residual_dual"]["sgrade"] == "0-2双"
+    assert road_props["residual_dual"]["segment_build_source"] == "oneway_single_road_fallback"
+    assert artifacts.summary["dead_end_segment_count"] == 0
+    assert artifacts.summary["final_fallback_segment_count"] == 1
+    assert artifacts.summary["final_fallback_road_count"] == 1
+    assert artifacts.summary["final_fallback_summary"]["bidirectional_built_road_count"] == 1
+    assert artifacts.summary["unsegmented_road_count"] == 0
+
+
+def test_oneway_completion_merges_near_side_attachment_segment_into_high_grade_main(tmp_path: Path) -> None:
+    node_path = tmp_path / "nodes.geojson"
+    road_path = tmp_path / "roads.geojson"
+
+    write_geojson(
+        node_path,
+        [
+            _node_feature(1, 0.0, 0.0, kind_2=4, grade_2=1, closed_con=2),
+            _node_feature(2, 10.0, 0.0, kind_2=4, grade_2=1, closed_con=2),
+            _node_feature(3, 20.0, 0.0, kind_2=4, grade_2=1, closed_con=2),
+            _node_feature(4, 10.0, 10.0, kind_2=4, grade_2=2, closed_con=2),
+            _node_feature(5, 10.0, 80.0, kind_2=4, grade_2=2, closed_con=2),
+        ],
+    )
+    write_geojson(
+        road_path,
+        [
+            _road_feature(
+                "main_a",
+                1,
+                2,
+                [(0.0, 0.0), (10.0, 0.0)],
+                direction=0,
+                sgrade="0-0双",
+                segmentid="1_3",
+                segment_build_source="step4_high_grade_terminal_demotion",
+            ),
+            _road_feature(
+                "main_b",
+                2,
+                3,
+                [(10.0, 0.0), (20.0, 0.0)],
+                direction=0,
+                sgrade="0-0双",
+                segmentid="1_3",
+                segment_build_source="step4_high_grade_terminal_demotion",
+            ),
+            _road_feature("near_side", 2, 4, [(10.0, 0.0), (10.0, 10.0)], direction=0, sgrade="0-2双", segmentid="2_4"),
+            _road_feature("far_side", 2, 5, [(10.0, 0.0), (10.0, 80.0)], direction=0, sgrade="0-2双", segmentid="2_5"),
+        ],
+    )
+
+    artifacts = run_step5_oneway_segment_completion(
+        step5_artifacts=_build_step5_artifacts(node_path, road_path),
+        out_root=tmp_path / "out",
+        run_id="side_attachment_merge",
+        debug=False,
+    )
+
+    road_props = _road_props_by_id(artifacts.refreshed_roads_path)
+    assert road_props["near_side"]["segmentid"] == "1_3"
+    assert road_props["near_side"]["sgrade"] == "0-0双"
+    assert road_props["near_side"]["segment_build_source"] == "side_attachment_merge"
+    assert road_props["near_side"]["pre_merge_segmentid"] == "2_4"
+    assert road_props["near_side"]["pre_merge_sgrade"] == "0-2双"
+    assert road_props["far_side"]["segmentid"] == "2_5"
+    assert road_props["far_side"]["sgrade"] == "0-2双"
+
+    merge_summary = artifacts.summary["side_attachment_merge_summary"]
+    assert merge_summary["merged_segment_count"] == 1
+    assert merge_summary["merged_road_count"] == 1
+    assert merge_summary["skipped_distance_count"] == 1
+
+    step6_artifacts = run_step6_segment_aggregation(
+        road_path=artifacts.refreshed_roads_path,
+        node_path=artifacts.refreshed_nodes_path,
+        out_root=tmp_path / "step6",
+        run_id="side_attachment_merge_step6",
+    )
+    assert step6_artifacts.summary["segment_count"] == 2
+    assert step6_artifacts.summary["segment_error_count"] == 0
 
 
 def test_oneway_completion_excludes_dead_end_leaf_formway_128_and_right_turn_only(tmp_path: Path) -> None:

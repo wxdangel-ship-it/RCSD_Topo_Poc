@@ -24,7 +24,7 @@ strict input read -> semantic junction assembly -> representative node selection
 ### Step1
 
 - 判断代表 node `kind_2` 是否属于 `{4, 8, 16, 64, 128, 2048}`。
-- 只对处理范围内语义路口执行 `DriveZone` 命中。
+- 只对处理范围内语义路口执行全组 node `DriveZone` 命中判定；所有 node 均命中才写 `yes`。
 - 写代表 node `has_evd`。
 
 ### Step2

@@ -397,3 +397,82 @@ def test_dual_carriageway_separation_keeps_long_unmatched_tail_blocked() -> None
     )
 
     assert separation_m > 50.0
+
+
+def test_dual_carriageway_gate_uses_semantic_endpoint_internal_width() -> None:
+    roads = {
+        road.road_id: road
+        for road in [
+            _road("ab", "A1", "B1", direction=2, coords=((0.0, 70.0), (100.0, 70.0))),
+            _road("ba", "B1", "A2", direction=2, coords=((100.0, 0.0), (0.0, 0.0))),
+        ]
+    }
+    forward_path = step2_trunk_utils.DirectedPath(
+        node_ids=("A", "B"),
+        road_ids=("ab",),
+        total_length=100.0,
+    )
+    reverse_path = step2_trunk_utils.DirectedPath(
+        node_ids=("B", "A"),
+        road_ids=("ba",),
+        total_length=100.0,
+    )
+    candidate = step2_trunk_utils.TrunkCandidate(
+        forward_path=forward_path,
+        reverse_path=reverse_path,
+        road_ids=("ab", "ba"),
+        signed_area=7000.0,
+        total_length=200.0,
+        left_turn_road_ids=(),
+        max_dual_carriageway_separation_m=70.0,
+    )
+    context = step1_pair_poc.Step1GraphContext(
+        physical_nodes={
+            "A1": step1_pair_poc.NodeRecord("A1", "A", 4, 1, 4, 1, 2, Point(0.0, 0.0), {}),
+            "A2": step1_pair_poc.NodeRecord("A2", "A", 4, 1, 4, 1, 2, Point(0.0, 80.0), {}),
+            "B1": step1_pair_poc.NodeRecord("B1", "B", 4, 1, 4, 1, 2, Point(100.0, 0.0), {}),
+        },
+        roads=roads,
+        semantic_nodes={
+            "A": step1_pair_poc.SemanticNodeRecord(
+                "A",
+                "A1",
+                ("A1", "A2"),
+                4,
+                1,
+                4,
+                1,
+                2,
+                Point(0.0, 0.0),
+                {},
+            ),
+            "B": step1_pair_poc.SemanticNodeRecord("B", "B1", ("B1",), 4, 1, 4, 1, 2, Point(100.0, 0.0), {}),
+        },
+        physical_to_semantic={"A1": "A", "A2": "A", "B1": "B"},
+        directed={},
+        blocked={},
+        orphan_ref_count=0,
+        graph_audit_events=[],
+    )
+    pair = _pair(
+        "S2:A__B",
+        a_node_id="A",
+        b_node_id="B",
+        forward_path_node_ids=("A", "B"),
+        forward_path_road_ids=("ab",),
+        reverse_path_node_ids=("B", "A"),
+        reverse_path_road_ids=("ba",),
+    )
+
+    gate_limit_m = step2_trunk_utils._dual_separation_gate_limit_m(pair, context)
+    passed, failed = step2_trunk_utils._split_dual_separation_candidates(
+        [candidate],
+        gate_limit_m=gate_limit_m,
+    )
+    support_info = step2_trunk_utils._dual_separation_support_info(candidate, gate_limit_m=gate_limit_m)
+
+    assert gate_limit_m == 80.0
+    assert passed == [candidate]
+    assert failed == []
+    assert support_info["dual_carriageway_separation_gate_limit_m"] == 80.0
+    assert support_info["dual_carriageway_base_gate_limit_m"] == 50.0

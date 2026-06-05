@@ -955,7 +955,7 @@ def run_t07_step1_has_evd(
             continue
 
         counts["processed_kind2_count"] += 1
-        has_evd = "yes" if any(prepared_drivezone.intersects(record.geometry) for record in group.group_nodes) else "no"
+        has_evd = "yes" if all(prepared_drivezone.intersects(record.geometry) for record in group.group_nodes) else "no"
         representative_props["has_evd"] = has_evd
         if has_evd == "yes":
             counts["has_evd_yes_count"] += 1

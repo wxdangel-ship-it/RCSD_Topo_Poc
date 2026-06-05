@@ -273,6 +273,53 @@ def test_step4_historical_boundary_is_injected_into_seed_and_terminate(tmp_path:
     assert (artifacts.out_root / "S2" / "endpoint_pool_summary.json").is_file()
 
 
+def test_step4_historical_boundary_prefers_validated_pairs_over_endpoint_pool(tmp_path: Path) -> None:
+    input_dir = tmp_path / "input_validated_priority"
+    input_dir.mkdir()
+    s2_dir = input_dir / "S2"
+    s2_dir.mkdir()
+    (s2_dir / "validated_pairs.csv").write_text(
+        "pair_id,a_node_id,b_node_id\nS2:300__301,300,301\n",
+        encoding="utf-8",
+    )
+    (s2_dir / "endpoint_pool.csv").write_text(
+        "node_id,source_tags\n300,S2\n301,S2\n999,S2\n",
+        encoding="utf-8",
+    )
+
+    node_path = input_dir / "nodes.geojson"
+    road_path = input_dir / "roads.geojson"
+    out_root = tmp_path / "out_validated_priority"
+
+    write_geojson(
+        node_path,
+        [
+            _node_feature(1, 0.0, 0.0, grade_2=2, kind_2=2048, closed_con=2),
+            _node_feature(2, 1.0, 0.0, grade_2=0, kind_2=0, closed_con=0),
+            _node_feature(300, 2.0, 0.0, grade_2=0, kind_2=0, closed_con=0),
+            _node_feature(301, 3.0, 0.0, grade_2=0, kind_2=0, closed_con=0),
+        ],
+    )
+    write_geojson(
+        road_path,
+        [
+            _road_feature("r12", 1, 2, 0, [[0.0, 0.0], [1.0, 0.0]]),
+            _road_feature("r23", 2, 300, 0, [[1.0, 0.0], [2.0, 0.0]]),
+        ],
+    )
+
+    artifacts = run_step4_residual_graph(
+        road_path=road_path,
+        node_path=node_path,
+        out_root=out_root,
+        run_id="step4_validated_priority",
+    )
+
+    strategy_doc = json.loads((artifacts.out_root / "step4_strategy.json").read_text(encoding="utf-8"))
+    assert strategy_doc["hard_stop_node_ids"] == ["300", "301"]
+    assert "999" not in strategy_doc["force_seed_node_ids"]
+
+
 def test_step4_does_not_keep_kind1_pseudojunction_boundary_created_only_by_right_turn_lane(
     tmp_path: Path,
 ) -> None:
@@ -425,13 +472,14 @@ def test_step4_segment_body_assignments_suffix_when_colliding_with_existing_segm
         ],
     )
 
-    road_to_segmentid, _, overlap_resolution_count = _parse_segment_body_assignments(
+    road_to_segmentid, road_to_pair_id, _, overlap_resolution_count = _parse_segment_body_assignments(
         segment_body_path,
         reserved_segmentids={"1_3"},
     )
 
     assert road_to_segmentid["r1"] == "1_3_1"
     assert road_to_segmentid["r2"] == "1_3_1"
+    assert road_to_pair_id == {"r1": "STEP4:1__3", "r2": "STEP4:1__3"}
     assert overlap_resolution_count == 0
 
 
@@ -512,11 +560,12 @@ def test_step4_segment_body_assignments_resolve_duplicate_roads_by_pair_priority
         ],
     )
 
-    road_to_segmentid, pair_endpoints, overlap_resolution_count = _parse_segment_body_assignments(segment_body_path)
+    road_to_segmentid, road_to_pair_id, pair_endpoints, overlap_resolution_count = _parse_segment_body_assignments(segment_body_path)
 
     assert pair_endpoints["STEP4:1__3"] == ("1", "3")
     assert pair_endpoints["STEP4:5__7"] == ("5", "7")
     assert road_to_segmentid["r_shared"] == "5_7"
     assert road_to_segmentid["r_a"] == "1_3"
     assert road_to_segmentid["r_b"] == "5_7"
+    assert road_to_pair_id["r_shared"] == "STEP4:5__7"
     assert overlap_resolution_count == 1

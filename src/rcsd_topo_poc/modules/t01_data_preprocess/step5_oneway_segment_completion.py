@@ -5,9 +5,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional, Union
 
-from shapely.geometry import LineString, MultiLineString
+from shapely.geometry import LineString, MultiLineString, Point
 from shapely.geometry.base import BaseGeometry
-from shapely.ops import linemerge
+from shapely.ops import linemerge, unary_union
 
 from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import (
     first_existing_vector_path,
@@ -34,6 +34,7 @@ from rcsd_topo_poc.modules.t01_data_preprocess.working_layers import (
     get_road_segmentid,
     get_road_sgrade,
     is_allowed_road_kind,
+    MAX_SIDE_ACCESS_DISTANCE_M,
     set_road_segmentid,
     set_road_sgrade,
 )
@@ -55,7 +56,11 @@ DEAD_END_BIDIRECTIONAL_BUNDLE_TYPE = "bidirectional"
 DEAD_END_ONEWAY_PAIR_BUNDLE_TYPE = "reciprocal_oneway"
 FINAL_FALLBACK_PHASE_ID = "oneway-single-road-fallback"
 FINAL_FALLBACK_SEGMENT_GRADE = "0-2单"
+FINAL_FALLBACK_BIDIRECTIONAL_SEGMENT_GRADE = "0-2双"
 FINAL_FALLBACK_BUILD_SOURCE = "oneway_single_road_fallback"
+SIDE_ATTACHMENT_MERGE_PHASE_ID = "side-attachment-merge"
+SIDE_ATTACHMENT_MERGE_BUILD_SOURCE = "side_attachment_merge"
+SIDE_ATTACHMENT_MAIN_SEGMENT_GRADE = "0-0双"
 DEAD_END_ANCHOR_KIND_VALUES = frozenset({4, 64, 128, 2048})
 DEAD_END_ANCHOR_GRADE_VALUES = frozenset({1, 2, 3})
 DEAD_END_ANCHOR_CLOSED_CON_VALUES = frozenset({2, 3})
@@ -594,6 +599,26 @@ def _collect_phase_candidate_road_ids(
     return candidate_road_ids
 
 
+def _collect_final_fallback_candidate_road_ids(
+    *,
+    roads: list[RoadFeatureRecord],
+    road_properties_map: dict[str, dict[str, Any]],
+) -> set[str]:
+    candidate_road_ids: set[str] = set()
+    for road in roads:
+        props = road_properties_map[road.road_id]
+        if get_road_segmentid(props):
+            continue
+        if _is_formway_128(props):
+            continue
+        if _is_right_turn_only_road(props):
+            continue
+        if road.direction not in {0, 1, 2, 3}:
+            continue
+        candidate_road_ids.add(road.road_id)
+    return candidate_road_ids
+
+
 def _is_dead_end_effective_road(road: RoadFeatureRecord, properties: dict[str, Any]) -> bool:
     if _is_formway_128(properties) or _is_right_turn_only_road(properties):
         return False
@@ -652,6 +677,207 @@ def _directed_oneway_semantic_endpoints(
     if road.direction == 3:
         return enode_group, snode_group
     return None
+
+
+def _single_road_fallback_semantic_endpoints(
+    road: RoadFeatureRecord,
+    physical_to_semantic: dict[str, str],
+) -> Optional[tuple[str, str]]:
+    if road.direction in {2, 3}:
+        return _directed_oneway_semantic_endpoints(road, physical_to_semantic)
+    if road.direction in {0, 1}:
+        return _road_semantic_endpoints(road, physical_to_semantic)
+    return None
+
+
+def _single_road_fallback_sgrade(road: RoadFeatureRecord) -> str:
+    if road.direction in {0, 1}:
+        return FINAL_FALLBACK_BIDIRECTIONAL_SEGMENT_GRADE
+    return FINAL_FALLBACK_SEGMENT_GRADE
+
+
+def _parse_segment_pair_nodes(segmentid: str) -> Optional[tuple[str, str]]:
+    parts = [part.strip() for part in segmentid.split("_")]
+    if len(parts) == 2 and parts[0] and parts[1]:
+        return parts[0], parts[1]
+    if len(parts) == 3 and parts[0] and parts[1] and parts[2].isdigit():
+        return parts[0], parts[1]
+    return None
+
+
+def _iter_line_parts(geometry: BaseGeometry) -> tuple[LineString, ...]:
+    if isinstance(geometry, LineString):
+        return (geometry,)
+    if isinstance(geometry, MultiLineString):
+        return tuple(part for part in geometry.geoms if isinstance(part, LineString) and not part.is_empty)
+    return ()
+
+
+def _iter_sample_points(geometry: BaseGeometry, *, sample_step_m: float) -> tuple[Point, ...]:
+    points: list[Point] = []
+    for part in _iter_line_parts(geometry):
+        coords = [(float(x), float(y)) for x, y in part.coords]
+        if len(coords) < 2:
+            continue
+        for start, end in zip(coords, coords[1:]):
+            dx = end[0] - start[0]
+            dy = end[1] - start[1]
+            segment_length = math.hypot(dx, dy)
+            if segment_length <= 0.0:
+                continue
+            sample_count = max(3, math.ceil(segment_length / sample_step_m) + 1)
+            for sample_index in range(sample_count):
+                fraction = sample_index / (sample_count - 1)
+                points.append(Point(start[0] + dx * fraction, start[1] + dy * fraction))
+    return tuple(points)
+
+
+def _max_sampled_distance_m(source_geometry: BaseGeometry, target_geometry: BaseGeometry) -> Optional[float]:
+    if source_geometry.is_empty or target_geometry.is_empty:
+        return None
+    sample_points = _iter_sample_points(
+        source_geometry,
+        sample_step_m=MAX_SIDE_ACCESS_DISTANCE_M / 2.0,
+    )
+    if not sample_points:
+        return None
+    return max(float(point.distance(target_geometry)) for point in sample_points)
+
+
+def _build_current_segment_infos(
+    *,
+    roads: list[RoadFeatureRecord],
+    road_properties_map: dict[str, dict[str, Any]],
+    physical_to_semantic: dict[str, str],
+) -> dict[str, dict[str, Any]]:
+    grouped_road_ids: dict[str, list[str]] = {}
+    road_by_id = {road.road_id: road for road in roads}
+    for road in roads:
+        segmentid = get_road_segmentid(road_properties_map[road.road_id])
+        if segmentid is None:
+            continue
+        grouped_road_ids.setdefault(segmentid, []).append(road.road_id)
+
+    segment_infos: dict[str, dict[str, Any]] = {}
+    for segmentid, road_ids in grouped_road_ids.items():
+        pair_nodes = _parse_segment_pair_nodes(segmentid)
+        if pair_nodes is None:
+            continue
+        semantic_node_ids: set[str] = set()
+        sgrades: set[str] = set()
+        geometries: list[BaseGeometry] = []
+        for road_id in road_ids:
+            road = road_by_id[road_id]
+            for node_id in (road.snodeid, road.enodeid):
+                semantic_node_id = physical_to_semantic.get(node_id)
+                if semantic_node_id is not None:
+                    semantic_node_ids.add(semantic_node_id)
+            sgrade = get_road_sgrade(road_properties_map[road_id])
+            if sgrade is not None:
+                sgrades.add(sgrade)
+            geometries.append(road.geometry)
+        if not geometries:
+            continue
+        segment_infos[segmentid] = {
+            "road_ids": tuple(sorted(road_ids, key=_sort_key)),
+            "pair_nodes": set(pair_nodes),
+            "semantic_node_ids": semantic_node_ids,
+            "sgrades": sgrades,
+            "geometry": unary_union(geometries),
+        }
+    return segment_infos
+
+
+def _run_side_attachment_merge(
+    *,
+    roads: list[RoadFeatureRecord],
+    road_properties_map: dict[str, dict[str, Any]],
+    physical_to_semantic: dict[str, str],
+) -> dict[str, Any]:
+    segment_infos = _build_current_segment_infos(
+        roads=roads,
+        road_properties_map=road_properties_map,
+        physical_to_semantic=physical_to_semantic,
+    )
+    main_segment_ids = [
+        segmentid
+        for segmentid, info in sorted(segment_infos.items(), key=lambda item: _sort_key(item[0]))
+        if info["sgrades"] == {SIDE_ATTACHMENT_MAIN_SEGMENT_GRADE}
+    ]
+
+    merged_rows: list[dict[str, Any]] = []
+    skipped_no_attachment_count = 0
+    skipped_distance_count = 0
+    skipped_high_grade_candidate_count = 0
+    for candidate_segmentid, candidate_info in sorted(segment_infos.items(), key=lambda item: _sort_key(item[0])):
+        if candidate_segmentid in main_segment_ids:
+            continue
+        if candidate_info["sgrades"] == {SIDE_ATTACHMENT_MAIN_SEGMENT_GRADE}:
+            skipped_high_grade_candidate_count += 1
+            continue
+
+        best_match: Optional[tuple[float, str, tuple[str, ...]]] = None
+        for main_segmentid in main_segment_ids:
+            main_info = segment_infos[main_segmentid]
+            attachment_node_ids = tuple(
+                sorted(candidate_info["pair_nodes"] & main_info["semantic_node_ids"], key=_sort_key)
+            )
+            if not attachment_node_ids:
+                continue
+            distance_m = _max_sampled_distance_m(candidate_info["geometry"], main_info["geometry"])
+            if distance_m is None:
+                continue
+            if distance_m > MAX_SIDE_ACCESS_DISTANCE_M:
+                continue
+            current_match = (distance_m, main_segmentid, attachment_node_ids)
+            if best_match is None or current_match < best_match:
+                best_match = current_match
+
+        if best_match is None:
+            if any(
+                candidate_info["pair_nodes"] & segment_infos[main_segmentid]["semantic_node_ids"]
+                for main_segmentid in main_segment_ids
+            ):
+                skipped_distance_count += 1
+            else:
+                skipped_no_attachment_count += 1
+            continue
+
+        distance_m, main_segmentid, attachment_node_ids = best_match
+        for road_id in candidate_info["road_ids"]:
+            props = road_properties_map[road_id]
+            props["pre_merge_segmentid"] = get_road_segmentid(props)
+            props["pre_merge_sgrade"] = get_road_sgrade(props)
+            props["pre_merge_segment_build_source"] = props.get("segment_build_source")
+            props["segment_build_source"] = SIDE_ATTACHMENT_MERGE_BUILD_SOURCE
+            props["side_attachment_merged_into_segmentid"] = main_segmentid
+            props["side_attachment_merge_distance_m"] = round(distance_m, 3)
+            props["side_attachment_merge_nodes"] = ",".join(attachment_node_ids)
+            set_road_segmentid(props, main_segmentid)
+            set_road_sgrade(props, SIDE_ATTACHMENT_MAIN_SEGMENT_GRADE)
+        merged_rows.append(
+            {
+                "from_segmentid": candidate_segmentid,
+                "to_segmentid": main_segmentid,
+                "road_count": len(candidate_info["road_ids"]),
+                "road_ids": ",".join(candidate_info["road_ids"]),
+                "attachment_node_ids": ",".join(attachment_node_ids),
+                "max_sampled_distance_m": round(distance_m, 3),
+            }
+        )
+
+    return {
+        "phase_id": SIDE_ATTACHMENT_MERGE_PHASE_ID,
+        "distance_gate_m": MAX_SIDE_ACCESS_DISTANCE_M,
+        "main_segment_count": len(main_segment_ids),
+        "candidate_segment_count": len(segment_infos) - len(main_segment_ids),
+        "merged_segment_count": len(merged_rows),
+        "merged_road_count": sum(row["road_count"] for row in merged_rows),
+        "merged_segments": merged_rows,
+        "skipped_no_attachment_count": skipped_no_attachment_count,
+        "skipped_distance_count": skipped_distance_count,
+        "skipped_high_grade_candidate_count": skipped_high_grade_candidate_count,
+    }
 
 
 def _resolve_dead_end_bundle_type(
@@ -795,22 +1021,25 @@ def _run_final_oneway_fallback(
     physical_to_semantic: dict[str, str],
     used_segmentids: set[str],
 ) -> tuple[list[OnewayBuiltSegment], dict[str, Any]]:
-    candidate_road_ids = _collect_phase_candidate_road_ids(
+    candidate_road_ids = _collect_final_fallback_candidate_road_ids(
         roads=roads,
         road_properties_map=road_properties_map,
     )
     built_segments: list[OnewayBuiltSegment] = []
     assigned_road_ids: set[str] = set()
     skipped_missing_endpoint_count = 0
+    bidirectional_built_road_count = 0
+    oneway_built_road_count = 0
 
     for road in sorted(roads, key=lambda item: _sort_key(item.road_id)):
         if road.road_id not in candidate_road_ids:
             continue
-        endpoints = _directed_oneway_semantic_endpoints(road, physical_to_semantic)
+        endpoints = _single_road_fallback_semantic_endpoints(road, physical_to_semantic)
         if endpoints is None:
             skipped_missing_endpoint_count += 1
             continue
         start_node_id, end_node_id = endpoints
+        sgrade = _single_road_fallback_sgrade(road)
         segmentid = _allocate_unique_segmentid(
             a_node_id=start_node_id,
             b_node_id=end_node_id,
@@ -819,13 +1048,17 @@ def _run_final_oneway_fallback(
         )
         props = road_properties_map[road.road_id]
         set_road_segmentid(props, segmentid)
-        set_road_sgrade(props, FINAL_FALLBACK_SEGMENT_GRADE)
+        set_road_sgrade(props, sgrade)
         props["segment_build_source"] = FINAL_FALLBACK_BUILD_SOURCE
         assigned_road_ids.add(road.road_id)
+        if road.direction in {0, 1}:
+            bidirectional_built_road_count += 1
+        else:
+            oneway_built_road_count += 1
         built_segments.append(
             OnewayBuiltSegment(
                 phase_id=FINAL_FALLBACK_PHASE_ID,
-                sgrade=FINAL_FALLBACK_SEGMENT_GRADE,
+                sgrade=sgrade,
                 start_node_id=start_node_id,
                 end_node_id=end_node_id,
                 segmentid=segmentid,
@@ -838,9 +1071,12 @@ def _run_final_oneway_fallback(
     return built_segments, {
         "phase_id": FINAL_FALLBACK_PHASE_ID,
         "sgrade": FINAL_FALLBACK_SEGMENT_GRADE,
+        "bidirectional_sgrade": FINAL_FALLBACK_BIDIRECTIONAL_SEGMENT_GRADE,
         "candidate_road_count": len(candidate_road_ids),
         "built_segment_count": len(built_segments),
         "new_segment_road_count": len(assigned_road_ids),
+        "oneway_built_road_count": oneway_built_road_count,
+        "bidirectional_built_road_count": bidirectional_built_road_count,
         "road_kind_1_built_road_count": sum(
             1
             for road_id in assigned_road_ids
@@ -1156,6 +1392,12 @@ def run_step5_oneway_segment_completion(
     )
     all_built_segments.extend(final_fallback_segments)
 
+    side_attachment_merge_summary = _run_side_attachment_merge(
+        roads=roads,
+        road_properties_map=road_properties_map,
+        physical_to_semantic=physical_to_semantic,
+    )
+
     group_to_allowed_road_ids = _build_group_to_allowed_road_ids(
         roads=roads,
         road_properties_map=road_properties_map,
@@ -1239,6 +1481,7 @@ def run_step5_oneway_segment_completion(
         "phase_summaries": phase_summaries,
         "dead_end_summary": dead_end_summary,
         "final_fallback_summary": final_fallback_summary,
+        "side_attachment_merge_summary": side_attachment_merge_summary,
         "built_segment_count": len(all_built_segments),
         "built_segment_road_count": sum(len(segment.road_ids) for segment in all_built_segments),
         "road_kind_1_built_road_count": sum(
@@ -1253,6 +1496,8 @@ def run_step5_oneway_segment_completion(
         "dead_end_oneway_pair_segment_count": dead_end_summary["oneway_pair_segment_count"],
         "final_fallback_segment_count": final_fallback_summary["built_segment_count"],
         "final_fallback_road_count": final_fallback_summary["new_segment_road_count"],
+        "side_attachment_merged_segment_count": side_attachment_merge_summary["merged_segment_count"],
+        "side_attachment_merged_road_count": side_attachment_merge_summary["merged_road_count"],
         "unsegmented_road_count": unsegmented_summary["unsegmented_road_count"],
         "unsegmented_excluded_formway_128_count": unsegmented_summary["excluded_formway_128_count"],
         "unsegmented_formway_bit7_or_bit8_count": unsegmented_summary[

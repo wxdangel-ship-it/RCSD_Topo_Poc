@@ -1054,7 +1054,7 @@ def _run_phase(
     segment_body_path = first_existing_vector_path(phase_dir, "segment_body_roads.gpkg", "segment_body_roads.geojson")
     if segment_body_path is None:
         raise ValueError(f"Step5 phase segment body output is missing under '{phase_dir}'.")
-    road_to_segmentid, _, _ = _parse_segment_body_assignments(
+    road_to_segmentid, _, _, _ = _parse_segment_body_assignments(
         segment_body_path,
         reserved_segmentids=reserved_segmentids,
     )
@@ -1453,8 +1453,8 @@ def run_step5_staged_residual_graph(
     historical_boundary_ids, historical_boundary_source_map = collect_endpoint_pool_mainnodes(
         base_dir=input_parent,
         source_specs=(
-            ("S2", ("S2/endpoint_pool.csv", "S2/validated_pairs.csv")),
-            ("STEP4", ("STEP4/endpoint_pool.csv", "step4_endpoint_pool.csv", "STEP4/validated_pairs.csv", "step4_validated_pairs.csv")),
+            ("S2", ("S2/validated_pairs.csv", "S2/endpoint_pool.csv")),
+            ("STEP4", ("STEP4/validated_pairs.csv", "step4_validated_pairs.csv", "STEP4/endpoint_pool.csv", "step4_endpoint_pool.csv")),
         ),
     )
 

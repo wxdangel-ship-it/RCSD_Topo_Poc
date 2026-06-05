@@ -50,6 +50,7 @@ Step3 内网脚本默认读取最近一次 T07 Step2 `nodes.gpkg`、T05 Phase2 `
 - 多节点组代表 node 必须满足 `id == mainnodeid`。
 - `has_evd / is_anchor / anchor_reason` 只写代表 node。
 - `kind_2` 不在 `{4, 8, 16, 64, 128, 2048}` 时，三个业务字段均为 `NULL`。
+- 处理范围内语义路口必须组内所有 node 均落入或接触 `DriveZone` 才写 `has_evd = yes`；任一组内 node 未命中则写 `has_evd = no`。
 - `has_evd = yes` 才进入 Step2。
 - Step2 对 `kind_2 = 64 / 128` 基础判定写 `is_anchor = no / anchor_reason = NULL`，后续由专项规则处理；若同一个 `RCSDIntersection` 面对应多个 SWSD 语义路口，仍被 `fail2` 覆盖。
 - Step2 对 `kind_2 = 2048` 仅在该组所有 node 均命中同一个且唯一的 `RCSDIntersection` 时基础判定写 `is_anchor = yes / anchor_reason = t`；否则写 `is_anchor = no / anchor_reason = NULL`；若同一个 `RCSDIntersection` 面对应多个 SWSD 语义路口，仍被 `fail2` 覆盖。

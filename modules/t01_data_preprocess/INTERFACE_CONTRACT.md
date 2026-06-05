@@ -176,7 +176,8 @@
 - gates：
   - `MAX_DUAL_CARRIAGEWAY_SEPARATION_M = 50.0`
   - `MAX_SIDE_ACCESS_DISTANCE_M = 50.0`
-- `MAX_DUAL_CARRIAGEWAY_SEPARATION_M` 作用于双向主干 road-body 间距；测距前剔除 forward / reverse path 两端 `5m` 短挂接区，避免 T 型路口端点八字挂接误触发主干超距；剔除后仍超过 `50m` 时返回 `dual_carriageway_separation_exceeded`。
+- 双向主干 road-body 间距有效门限为 `max(MAX_DUAL_CARRIAGEWAY_SEPARATION_M, pair 两端语义路口内部成员节点最大距离)`。
+- 测距前剔除 forward / reverse path 两端 `5m` 短挂接区，避免 T 型路口端点八字挂接误触发主干超距；剔除后仍超过有效门限时返回 `dual_carriageway_separation_exceeded`。
 
 ### 5.2 T 型路口竖向阻断
 - 仅对应 `kind_2 = 2048`
@@ -188,6 +189,8 @@
 ### 5.3 历史高等级边界
 - 更低等级构段不得跨越更高等级轮次中已成立的段边界语义路口。
 - 当前轮 `terminate / hard-stop` 必须并入历史高等级边界 `mainnode`。
+- 历史高等级边界优先来自上一轮 `validated_pairs.csv` 的已成立 Segment 端点；仅在旧产物缺失 validated 文件时回退读取 `endpoint_pool.csv`。
+- 上一轮未成段的潜在 `seed / terminate` 不作为当前轮 hard-stop，可按当前轮输入规则参与搜索，并在 `continue_after_terminal_candidate` 下继续追溯。
 
 ### 5.4 分歧 / 合流局部续行
 - 作用阶段：
@@ -251,11 +254,13 @@
   - `kind_2 in {4,64,2048}`
   - `closed_con in {2,3}`
 - 当前轮合法 terminate 集合与输入集合一致。
-- 并入历史高等级边界端点。
+- 并入历史高等级边界端点，来源遵守 §5.3。
 - 工作图剔除已有非空 `segmentid` 的 road。
 - 阶段结束后立即刷新 `nodes / roads`。
 - Step4 新构成 road：
-  - `sgrade = 0-1双`
+  - 默认 `sgrade = 0-1双`
+  - 若 validated pair 两端代表语义路口 `grade_2` 均为 `1`，直接写 `sgrade = 0-0双`
+  - 上述 `0-0双` road 同时写 `segment_build_source = step4_high_grade_terminal_demotion`，用于 Step6 审计识别其允许穿越中间高等级分歧 / 合流语义节点
 
 ### 5.9 Step5A / Step5B / Step5C
 - 三个子阶段按顺序执行。
@@ -269,7 +274,7 @@
   - 且满足以下之一：
     - `kind_2 in {4,64,2048}` 且 `grade_2 in {1,2}`
     - `kind_2 in {4,64}` 且 `grade_2 = 3`
-- 并入 `S2 + Step4` 历史高等级边界端点。
+- 并入 `S2 + Step4` 历史高等级边界端点，来源遵守 §5.3。
 - 新构成 road：
   - `sgrade = 0-2双`
 
@@ -279,7 +284,7 @@
   - `closed_con in {2,3}`
   - `kind_2 in {4,64,2048}`
   - `grade_2 in {1,2,3}`
-- 并入 `S2 + Step4` 历史高等级边界端点。
+- 并入 `S2 + Step4` 历史高等级边界端点，来源遵守 §5.3。
 - Step5A 新端点只做 hard-stop，不回注入 Step5B 的 `seed / terminate`。
 - 新构成 road：
   - `sgrade = 0-2双`
@@ -343,15 +348,29 @@
     - `segment_build_source = dead_end_leaf`
     - `leaf_node_id = <leaf semantic node id>`
     - `dead_end_bundle_type in {bidirectional, reciprocal_oneway}`
-- final one-way fallback：
+- final single-road fallback：
   - 在常规单向 terminate-to-terminate 与 dead-end leaf 补段之后、`Step6` 之前执行
-  - 只处理仍未构段、`direction in {2,3}`、非 `formway = 128`、非右转专用道，且两端可解析到 semantic endpoint 的 road
-  - 不放宽前序 phase terminate 规则；phase 不闭合、端点 phase 不一致或同 semantic group 的 residual 单向 road 只在本阶段兜底
+  - 处理仍未构段、`direction in {0,1,2,3}`、非 `formway = 128`、非右转专用道，且两端可解析到 semantic endpoint 的 road
+  - 不放宽前序 phase terminate 规则；phase 不闭合、端点 phase 不一致、同 semantic group residual road，或未满足 dead-end leaf 的双向 residual road，只在本阶段兜底
   - 每条 road 形成一个单 road Segment
-  - 新构成 road：`sgrade = 0-2单`
+  - 新构成单向 road：`sgrade = 0-2单`
+  - 新构成双向 road：`sgrade = 0-2双`
   - 新构成 road 写入审计 / 发布保护字段：
     - `segment_build_source = oneway_single_road_fallback`
-  - `oneway_segment_summary.json` 必须输出 `final_fallback_segment_count` 与 `final_fallback_road_count`
+  - `oneway_segment_summary.json` 必须输出 `final_fallback_segment_count`、`final_fallback_road_count`、`oneway_built_road_count` 与 `bidirectional_built_road_count`
+- final side-attachment merge：
+  - 在 final single-road fallback 之后、`Step6` 之前执行
+  - 主 Segment 必须为当前已构成的 `sgrade = 0-0双`
+  - 候选 Segment 必须已经有 `segmentid`，且至少一个 pair node 挂接到主 Segment 覆盖的语义节点
+  - 候选 Segment 自身几何到主 Segment 几何的最大采样距离必须 `<= MAX_SIDE_ACCESS_DISTANCE_M`
+  - 满足条件时，将候选 Segment road 改写到主 Segment：
+    - `segmentid = <main segmentid>`
+    - `sgrade = 0-0双`
+    - `segment_build_source = side_attachment_merge`
+    - 保留 `pre_merge_segmentid / pre_merge_sgrade / pre_merge_segment_build_source`
+    - 写入 `side_attachment_merged_into_segmentid / side_attachment_merge_distance_m / side_attachment_merge_nodes`
+  - 普通 `0-0双` 候选 Segment 不作为被并入对象，避免跨主走廊级联合并
+  - `oneway_segment_summary.json` 必须输出 `side_attachment_merge_summary`、`side_attachment_merged_segment_count` 与 `side_attachment_merged_road_count`
 - 新增 runner 对外产物：
   - `oneway_segment_roads.gpkg`
   - `oneway_segment_build_table.csv`
@@ -406,6 +425,7 @@
     - `grade_2 = 1`
     - 且 `kind_2 = 4`
     则输出到 `segment_error.gpkg`
+  - 例外：若该 Segment 的 road 来源包含 `segment_build_source = step4_high_grade_terminal_demotion`，表示 Step4 已按两端高等级语义端点形成完整走廊，内部 `grade_2 = 1, kind_2 = 4` 节点视为可穿越的中间分歧 / 合流语义节点；该情况不输出 `grade_kind_conflict`，但必须在 `segment_summary.json` 统计 `grade_kind_conflict_waived_count`，并在 `segment_build_table.csv` 记录豁免节点
 - typed error layers：
   - `segment_error_s_grade_conflict.gpkg` 仅包含 `sgrade` 冲突类记录
   - `segment_error_grade_kind_conflict.gpkg` 仅包含 `grade/kind` 冲突类记录

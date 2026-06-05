@@ -227,6 +227,44 @@ def test_tool6_flags_cross_with_one_or_two_incident_roads_as_non_cross(tmp_path:
     assert summary["counts"]["error_count_by_type"] == {"错误交叉路口_非交叉路口": 2}
 
 
+def test_tool6_flags_oneway_cross_as_diverge_or_merge(tmp_path: Path) -> None:
+    nodes = [
+        _node("cross_diverge", 4, 0.0, 0.0),
+        _node("div_in", 1, -10.0, 0.0),
+        _node("div_out_a", 1, 10.0, 0.0),
+        _node("div_out_b", 1, 0.0, -10.0),
+        _node("cross_merge", 4, 100.0, 0.0),
+        _node("merge_in_a", 1, 90.0, 0.0),
+        _node("merge_in_b", 1, 100.0, -10.0),
+        _node("merge_out", 1, 110.0, 0.0),
+    ]
+    roads = [
+        _road("r-div-in", "div_in", "cross_diverge", [(-10.0, 0.0), (0.0, 0.0)]),
+        _road("r-div-out-a", "cross_diverge", "div_out_a", [(0.0, 0.0), (10.0, 0.0)]),
+        _road("r-div-out-b", "cross_diverge", "div_out_b", [(0.0, 0.0), (0.0, -10.0)]),
+        _road("r-merge-in-a", "merge_in_a", "cross_merge", [(90.0, 0.0), (100.0, 0.0)]),
+        _road("r-merge-in-b", "merge_in_b", "cross_merge", [(100.0, -10.0), (100.0, 0.0)]),
+        _road("r-merge-out", "cross_merge", "merge_out", [(100.0, 0.0), (110.0, 0.0)]),
+    ]
+
+    csv_rows, gpkg_rows, summary = _run_tool6(tmp_path, case_name="oneway_cross_divmerge", nodes=nodes, roads=roads)
+
+    by_node = {row["semantic_node_id"]: row for row in csv_rows}
+    assert by_node["cross_diverge"]["error_type"] == "错误交叉路口_分歧路口"
+    assert by_node["cross_diverge"]["role"] == "cross_diverge"
+    assert by_node["cross_diverge"]["reason"] == "kind_2_4_oneway_roads_in_degree_1_out_degree_ge_2"
+    assert _audit(by_node["cross_diverge"])["suggested_fix_kind_2"] == 16
+    assert by_node["cross_merge"]["error_type"] == "错误交叉路口_合流路口"
+    assert by_node["cross_merge"]["role"] == "cross_merge"
+    assert by_node["cross_merge"]["reason"] == "kind_2_4_oneway_roads_out_degree_1_in_degree_ge_2"
+    assert _audit(by_node["cross_merge"])["suggested_fix_kind_2"] == 8
+    assert len(gpkg_rows) == 2
+    assert summary["counts"]["error_count_by_type"] == {
+        "错误交叉路口_分歧路口": 1,
+        "错误交叉路口_合流路口": 1,
+    }
+
+
 def test_tool6_two_angle_nonparallel_cross_candidate_is_not_error(tmp_path: Path) -> None:
     nodes = [
         _node("cross", 4, 0.0, 0.0),
@@ -287,6 +325,39 @@ def test_tool6_angle_groups_use_local_endpoint_geometry(tmp_path: Path) -> None:
     assert csv_rows == []
     assert gpkg_rows == []
     assert summary["counts"]["error_feature_count"] == 0
+
+
+def test_tool6_detects_t_when_vertical_pair_bends_near_endpoint(tmp_path: Path) -> None:
+    nodes = [
+        _node("cross", 4, 0.0, 0.0),
+        _node("west", 1, -100.0, 0.0),
+        _node("east", 1, 100.0, 0.0),
+        _node("south", 1, 0.0, -100.0),
+    ]
+    roads = [
+        _road("r-horizontal-in", "west", "cross", [(-100.0, 0.0), (0.0, 0.0)]),
+        _road("r-horizontal-out", "cross", "east", [(0.0, 0.0), (100.0, 0.0)]),
+        _road("r-vertical-in", "south", "cross", [(0.0, -100.0), (-20.0, 0.0), (0.0, 0.0)]),
+        _road("r-vertical-out", "cross", "south", [(0.0, 0.0), (20.0, 0.0), (0.0, -100.0)]),
+    ]
+
+    csv_rows, gpkg_rows, summary = _run_tool6(tmp_path, case_name="curved_endpoint_t", nodes=nodes, roads=roads)
+
+    assert len(csv_rows) == 1
+    row = csv_rows[0]
+    assert row["semantic_node_id"] == "cross"
+    assert row["error_type"] == "错误交叉路口_T型路口"
+    assert row["reason"] == "kind_2_4_matches_t_junction_pattern"
+    audit = _audit(row)
+    assert audit["outward_angle_group_count"] == 2
+    assert audit["t_pattern_source"] == "same_remote_semantic_full_road_vector"
+    assert audit["same_remote_semantic_id"] == "south"
+    assert audit["vertical_in_road_id"] == "r-vertical-in"
+    assert audit["vertical_out_road_id"] == "r-vertical-out"
+    assert audit["horizontal_in_road_id"] == "r-horizontal-in"
+    assert audit["horizontal_out_road_id"] == "r-horizontal-out"
+    assert len(gpkg_rows) == 1
+    assert summary["counts"]["error_count_by_type"] == {"错误交叉路口_T型路口": 1}
 
 
 def test_tool6_three_angle_cross_candidate_is_not_error_unless_t(tmp_path: Path) -> None:

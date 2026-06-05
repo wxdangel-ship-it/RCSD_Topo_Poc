@@ -40,6 +40,7 @@ STEP6_ERROR_TYPE_GRADE_KIND_CONFLICT = "grade_kind_conflict"
 STEP6_ONEWAY_SEGMENT_GRADE_VALUES = ("0-0单", "0-1单", "0-2单")
 STEP6_S_GRADE_PRIORITY_ORDER = ("0-0双", "0-0单", "0-1双", "0-1单", "0-2双", "0-2单")
 DEAD_END_BUILD_SOURCE = "dead_end_leaf"
+STEP6_HIGH_GRADE_DEMOTION_BUILD_SOURCE = "step4_high_grade_terminal_demotion"
 STEP6_ERROR_LAYER_FILENAMES = {
     STEP6_ERROR_TYPE_S_GRADE_CONFLICT: "segment_error_s_grade_conflict.gpkg",
     STEP6_ERROR_TYPE_GRADE_KIND_CONFLICT: "segment_error_grade_kind_conflict.gpkg",
@@ -76,6 +77,8 @@ class SegmentRecord:
     dead_end_leaf: bool
     error_type: Optional[str]
     error_desc: Optional[str]
+    grade_kind_conflict_waived: bool
+    grade_kind_conflict_waived_nodes: tuple[str, ...]
 
 
 def _build_default_run_id(now: Optional[datetime] = None) -> str:
@@ -301,6 +304,10 @@ def _collect_segment_records(
             _normalize_text(properties.get("segment_build_source")) == DEAD_END_BUILD_SOURCE
             for properties in segment_road_properties
         )
+        high_grade_demotion_source = any(
+            _normalize_text(properties.get("segment_build_source")) == STEP6_HIGH_GRADE_DEMOTION_BUILD_SOURCE
+            for properties in segment_road_properties
+        )
 
         sgrade_values = {
             _normalize_text(get_road_sgrade(properties))
@@ -403,12 +410,18 @@ def _collect_segment_records(
                 )
                 if _coerce_int(current_node_props.get("grade_2")) == 1 and _coerce_int(current_node_props.get("kind_2")) == 4:
                     conflicting_nodes.append(semantic_node_id)
-            if conflicting_nodes:
+            conflicting_node_ids = tuple(sorted(set(conflicting_nodes), key=_sort_key))
+            grade_kind_conflict_waived = bool(conflicting_node_ids and high_grade_demotion_source)
+            grade_kind_conflict_waived_nodes = conflicting_node_ids if grade_kind_conflict_waived else ()
+            if conflicting_node_ids and not grade_kind_conflict_waived:
                 error_type = STEP6_ERROR_TYPE_GRADE_KIND_CONFLICT
                 error_desc = (
                     "sgrade='0-0双' segment contains junc_nodes with grade_2=1 and kind_2=4: "
-                    + ",".join(conflicting_nodes)
+                    + ",".join(conflicting_node_ids)
                 )
+        else:
+            grade_kind_conflict_waived = False
+            grade_kind_conflict_waived_nodes = ()
 
         segment_records.append(
             SegmentRecord(
@@ -426,6 +439,8 @@ def _collect_segment_records(
                 dead_end_leaf=dead_end_leaf,
                 error_type=error_type,
                 error_desc=error_desc,
+                grade_kind_conflict_waived=grade_kind_conflict_waived,
+                grade_kind_conflict_waived_nodes=grade_kind_conflict_waived_nodes,
             )
         )
 
@@ -529,6 +544,9 @@ def _write_step6_outputs(
         "grade_kind_conflict_count": sum(
             1 for record in segment_records if record.error_type == STEP6_ERROR_TYPE_GRADE_KIND_CONFLICT
         ),
+        "grade_kind_conflict_waived_count": sum(
+            1 for record in segment_records if record.grade_kind_conflict_waived
+        ),
         "output_files": [
             segment_path.name,
             inner_nodes_path.name,
@@ -552,6 +570,8 @@ def _write_step6_outputs(
             "sgrade_new": record.sgrade_new,
             "sgrade_conflict_values": _join_ids(record.sgrade_conflict_values),
             "dead_end_leaf": record.dead_end_leaf,
+            "grade_kind_conflict_waived": record.grade_kind_conflict_waived,
+            "grade_kind_conflict_waived_nodes": _join_ids(record.grade_kind_conflict_waived_nodes),
             "adjust_reason": record.adjust_reason,
             "error_type": record.error_type,
             "has_error": record.error_type is not None,
@@ -571,6 +591,8 @@ def _write_step6_outputs(
             "sgrade_new",
             "sgrade_conflict_values",
             "dead_end_leaf",
+            "grade_kind_conflict_waived",
+            "grade_kind_conflict_waived_nodes",
             "adjust_reason",
             "error_type",
             "has_error",

@@ -1417,11 +1417,13 @@ def _collect_trunk_candidates(
 
 def _split_dual_separation_candidates(
     candidates: list[TrunkCandidate],
+    *,
+    gate_limit_m: float = MAX_DUAL_CARRIAGEWAY_SEPARATION_M,
 ) -> tuple[list[TrunkCandidate], list[TrunkCandidate]]:
     passed: list[TrunkCandidate] = []
     failed: list[TrunkCandidate] = []
     for candidate in candidates:
-        if candidate.max_dual_carriageway_separation_m <= MAX_DUAL_CARRIAGEWAY_SEPARATION_M:
+        if candidate.max_dual_carriageway_separation_m <= gate_limit_m:
             passed.append(candidate)
         else:
             failed.append(candidate)
@@ -1434,9 +1436,38 @@ def _best_dual_separation_failure(candidates: list[TrunkCandidate]) -> Optional[
     return min(candidates, key=lambda item: (item.max_dual_carriageway_separation_m, item.total_length))
 
 
-def _dual_separation_support_info(candidate: Optional[TrunkCandidate]) -> dict[str, Any]:
+def _semantic_node_internal_width_m(node_id: str, context: Step1GraphContext) -> float:
+    semantic_node = context.semantic_nodes.get(node_id)
+    if semantic_node is None or len(semantic_node.member_node_ids) < 2:
+        return 0.0
+    geometries = [
+        context.physical_nodes[member_node_id].geometry
+        for member_node_id in semantic_node.member_node_ids
+        if member_node_id in context.physical_nodes
+    ]
+    max_distance_m = 0.0
+    for index, left_geometry in enumerate(geometries):
+        for right_geometry in geometries[index + 1 :]:
+            max_distance_m = max(max_distance_m, float(left_geometry.distance(right_geometry)))
+    return max_distance_m
+
+
+def _dual_separation_gate_limit_m(pair: PairRecord, context: Step1GraphContext) -> float:
+    return max(
+        MAX_DUAL_CARRIAGEWAY_SEPARATION_M,
+        _semantic_node_internal_width_m(pair.a_node_id, context),
+        _semantic_node_internal_width_m(pair.b_node_id, context),
+    )
+
+
+def _dual_separation_support_info(
+    candidate: Optional[TrunkCandidate],
+    *,
+    gate_limit_m: float = MAX_DUAL_CARRIAGEWAY_SEPARATION_M,
+) -> dict[str, Any]:
     return {
-        "dual_carriageway_separation_gate_limit_m": MAX_DUAL_CARRIAGEWAY_SEPARATION_M,
+        "dual_carriageway_separation_gate_limit_m": gate_limit_m,
+        "dual_carriageway_base_gate_limit_m": MAX_DUAL_CARRIAGEWAY_SEPARATION_M,
         "dual_carriageway_max_separation_m": (
             candidate.max_dual_carriageway_separation_m if candidate is not None else None
         ),
@@ -1926,9 +1957,11 @@ def _evaluate_kind_2_128_local_corridor_choices(
     if candidate is None:
         return None
 
+    dual_gate_limit_m = _dual_separation_gate_limit_m(pair, context)
     terminal_local_corridor = _kind_2_128_local_corridor_is_terminal(pair, candidate)
     support_info = {
         **_kind_2_128_local_corridor_support_info(candidate),
+        **_dual_separation_support_info(candidate, gate_limit_m=dual_gate_limit_m),
         "kind_2_128_local_corridor_terminal": terminal_local_corridor,
         "kind_2_128_local_corridor_terminal_min_node_count": (
             KIND2_128_LOCAL_CORRIDOR_TERMINAL_MIN_NODE_COUNT
@@ -1945,7 +1978,10 @@ def _evaluate_kind_2_128_local_corridor_choices(
             "left_turn_road_ids": list(candidate.left_turn_road_ids),
         }
 
-    passed_candidates, failed_candidates = _split_dual_separation_candidates([candidate])
+    passed_candidates, failed_candidates = _split_dual_separation_candidates(
+        [candidate],
+        gate_limit_m=dual_gate_limit_m,
+    )
     passed_candidates, tjunction_blocked = _split_tjunction_vertical_tracking_candidates(
         pair,
         candidates=passed_candidates,
@@ -2007,6 +2043,7 @@ def _evaluate_trunk_choices(
     formway_mode: str,
     left_turn_formway_bit: int,
 ) -> tuple[list[_TrunkEvaluationChoice], Optional[str], tuple[str, ...], dict[str, Any]]:
+    dual_gate_limit_m = _dual_separation_gate_limit_m(pair, context)
     collapsed_candidate: Optional[TrunkCandidate] = None
     collapsed_warnings: tuple[str, ...] = ()
     collapsed_failed_candidate: Optional[TrunkCandidate] = None
@@ -2022,7 +2059,7 @@ def _evaluate_trunk_choices(
         )
         if (
             collapsed_candidate is not None
-            and collapsed_candidate.max_dual_carriageway_separation_m > MAX_DUAL_CARRIAGEWAY_SEPARATION_M
+            and collapsed_candidate.max_dual_carriageway_separation_m > dual_gate_limit_m
         ):
             collapsed_failed_candidate = collapsed_candidate
             collapsed_candidate = None
@@ -2045,17 +2082,23 @@ def _evaluate_trunk_choices(
             _TrunkEvaluationChoice(
                 candidate=collapsed_candidate,
                 warning_codes=collapsed_warnings,
-                support_info=_dual_separation_support_info(collapsed_candidate),
+                support_info=_dual_separation_support_info(collapsed_candidate, gate_limit_m=dual_gate_limit_m),
             )
-        ], None, collapsed_warnings, _dual_separation_support_info(collapsed_candidate)
+        ], None, collapsed_warnings, _dual_separation_support_info(
+            collapsed_candidate,
+            gate_limit_m=dual_gate_limit_m,
+        )
     if mirrored_candidate is not None:
         return [
             _TrunkEvaluationChoice(
                 candidate=mirrored_candidate,
                 warning_codes=mirrored_warnings,
-                support_info=_dual_separation_support_info(mirrored_candidate),
+                support_info=_dual_separation_support_info(mirrored_candidate, gate_limit_m=dual_gate_limit_m),
             )
-        ], None, mirrored_warnings, _dual_separation_support_info(mirrored_candidate)
+        ], None, mirrored_warnings, _dual_separation_support_info(
+            mirrored_candidate,
+            gate_limit_m=dual_gate_limit_m,
+        )
 
     kind2_128_local_corridor_result = _evaluate_kind_2_128_local_corridor_choices(
         pair,
@@ -2163,8 +2206,14 @@ def _evaluate_trunk_choices(
             left_turn_formway_bit=left_turn_formway_bit,
             allow_bidirectional_overlap=True,
         )
-        strict_passed_candidates, strict_failed_candidates = _split_dual_separation_candidates(strict_candidates)
-        base_passed_candidates, base_failed_candidates = _split_dual_separation_candidates(base_candidates)
+        strict_passed_candidates, strict_failed_candidates = _split_dual_separation_candidates(
+            strict_candidates,
+            gate_limit_m=dual_gate_limit_m,
+        )
+        base_passed_candidates, base_failed_candidates = _split_dual_separation_candidates(
+            base_candidates,
+            gate_limit_m=dual_gate_limit_m,
+        )
         strict_passed_candidates = _prefer_same_endpoint_direct_bidirectional_candidates(
             pair,
             candidates=strict_passed_candidates,
@@ -2218,7 +2267,7 @@ def _evaluate_trunk_choices(
                 _TrunkEvaluationChoice(
                     candidate=candidate,
                     warning_codes=(),
-                    support_info=_dual_separation_support_info(candidate),
+                    support_info=_dual_separation_support_info(candidate, gate_limit_m=dual_gate_limit_m),
                 )
                 for candidate in strict_passed_candidates
             ]
@@ -2232,11 +2281,14 @@ def _evaluate_trunk_choices(
         )
         if budget_audit is not None:
             return [], "trunk_search_budget_exceeded", (), {
-                **_dual_separation_support_info(None),
+                **_dual_separation_support_info(None, gate_limit_m=dual_gate_limit_m),
                 **budget_audit,
             }
         if base_passed_candidates:
-            return [], "left_turn_only_polluted_trunk", (), _dual_separation_support_info(base_passed_candidates[0])
+            return [], "left_turn_only_polluted_trunk", (), _dual_separation_support_info(
+                base_passed_candidates[0],
+                gate_limit_m=dual_gate_limit_m,
+            )
         if strict_tjunction_blocked or base_tjunction_blocked:
             support_info = (strict_tjunction_blocked or base_tjunction_blocked)[0][1]
             return [], "t_junction_vertical_tracking", (), support_info
@@ -2252,12 +2304,21 @@ def _evaluate_trunk_choices(
                 or base_failed_candidates
                 or ([collapsed_failed_candidate] if collapsed_failed_candidate else [])
             )
-            return [], "dual_carriageway_separation_exceeded", (), _dual_separation_support_info(failure_candidate)
+            return [], "dual_carriageway_separation_exceeded", (), _dual_separation_support_info(
+                failure_candidate,
+                gate_limit_m=dual_gate_limit_m,
+            )
         if strict_clockwise_only or base_clockwise_only:
-            return [], "only_clockwise_loop", (), _dual_separation_support_info(None)
-        return [], "no_valid_trunk", (), _dual_separation_support_info(None)
+            return [], "only_clockwise_loop", (), _dual_separation_support_info(
+                None,
+                gate_limit_m=dual_gate_limit_m,
+            )
+        return [], "no_valid_trunk", (), _dual_separation_support_info(None, gate_limit_m=dual_gate_limit_m)
 
-    base_passed_candidates, base_failed_candidates = _split_dual_separation_candidates(base_candidates)
+    base_passed_candidates, base_failed_candidates = _split_dual_separation_candidates(
+        base_candidates,
+        gate_limit_m=dual_gate_limit_m,
+    )
     base_passed_candidates = _prefer_same_endpoint_direct_bidirectional_candidates(
         pair,
         candidates=base_passed_candidates,
@@ -2292,7 +2353,7 @@ def _evaluate_trunk_choices(
         )
         if budget_audit is not None:
             return [], "trunk_search_budget_exceeded", (), {
-                **_dual_separation_support_info(None),
+                **_dual_separation_support_info(None, gate_limit_m=dual_gate_limit_m),
                 **budget_audit,
             }
         if base_tjunction_blocked:
@@ -2305,17 +2366,20 @@ def _evaluate_trunk_choices(
             failure_candidate = _best_dual_separation_failure(
                 base_failed_candidates or ([collapsed_failed_candidate] if collapsed_failed_candidate else [])
             )
-            return [], "dual_carriageway_separation_exceeded", (), _dual_separation_support_info(failure_candidate)
+            return [], "dual_carriageway_separation_exceeded", (), _dual_separation_support_info(
+                failure_candidate,
+                gate_limit_m=dual_gate_limit_m,
+            )
         if base_clockwise_only:
-            return [], "only_clockwise_loop", (), _dual_separation_support_info(None)
-        return [], "no_valid_trunk", (), _dual_separation_support_info(None)
+            return [], "only_clockwise_loop", (), _dual_separation_support_info(None, gate_limit_m=dual_gate_limit_m)
+        return [], "no_valid_trunk", (), _dual_separation_support_info(None, gate_limit_m=dual_gate_limit_m)
 
     warnings: tuple[str, ...] = ()
     choices = [
         _TrunkEvaluationChoice(
             candidate=candidate,
             warning_codes=("formway_unreliable_warning",) if formway_mode == "audit_only" and candidate.left_turn_road_ids else (),
-            support_info=_dual_separation_support_info(candidate),
+            support_info=_dual_separation_support_info(candidate, gate_limit_m=dual_gate_limit_m),
         )
         for candidate in base_passed_candidates
     ]

@@ -81,6 +81,8 @@
   - 若输入 Tool6 成果中 `error_type = 错误分歧合流路口` 且同组记录 `是否修复 = 1`，将分歧和合流涉及 node 的 `mainnodeid` 写为原分歧 node id，原分歧 node `kind_2 = 2048`，原合流 node `kind_2 = 0 / grade_2 = 0`，并从 Roads 输出中删除原分歧与合流语义路口之间的直连 Road。
   - 若输入 Tool6 成果中 `error_type = 错误交叉路口_T型路口` 且 `是否修复 = 1`，对应 mainnode `kind_2 = 2048`。
   - 若输入 Tool6 成果中 `error_type = 错误交叉路口_非交叉路口` 且 `是否修复 = 1`，对应 mainnode `kind_2 = 1`。
+  - 若输入 Tool6 成果中 `error_type = 错误交叉路口_分歧路口` 且 `是否修复 = 1`，对应 mainnode `kind_2 = 16`。
+  - 若输入 Tool6 成果中 `error_type = 错误交叉路口_合流路口` 且 `是否修复 = 1`，对应 mainnode `kind_2 = 8`。
 - 异常豁免：
   - 若语义路口存在提前右转 Road，Tool4 对该语义路口执行入度 / 出度复算时不计入提前右转 Road；提前右转 Road 以 `formway bit7 = 128` 判定。
   - 若语义路口存在辅路 Road，Tool4 对该语义路口执行入度 / 出度复算时不计入辅路 Road；辅路 Road 以 `road.kind` 任一 `|` 分隔 token 的后两位为 `0a` 判定，大小写不敏感。
@@ -135,11 +137,13 @@
   - 命中输出 `error_type = 错误分歧合流路口`，同一组连续分合流默认输出 diverge/merge 两条 node 质检记录并共享 `error_group_id`。
 - 交叉路口类型质检：
   - 识别所有 `kind_2 = 4` 的语义路口；若该语义路口关联 Road 数为 `1` 或 `2`，优先输出 `error_type = 错误交叉路口_非交叉路口`。
-  - 其余交叉路口候选继续要求 `in_degree = 2 / out_degree = 2`。
+  - 若候选关联 Road 均为单向 Road，且 `in_degree = 1 / out_degree >= 2`，则输出 `error_type = 错误交叉路口_分歧路口`；若 `out_degree = 1 / in_degree >= 2`，则输出 `error_type = 错误交叉路口_合流路口`。
+  - 未命中低关联、分歧路口或合流路口规则的其余交叉候选，继续要求 `in_degree = 2 / out_degree = 2` 才进入后续交叉 / T 型模式判定。
   - 若进入和退出 road 在路口处忽略道路方向后形成四个不同外侧角度方向，则视为真实交叉路口，不输出错误。
   - 若关联 road 只有两条双向 road，则输出 `error_type = 错误交叉路口_非交叉路口`。
   - 若忽略道路方向后只有两个外侧角度方向，两个角度方向均具备一进一出关系，且两组方向为平行路关系，则输出 `error_type = 错误交叉路口_非交叉路口`。
   - 若符合 T 型路口特征：横方向为一条单向进入 road 与一条单向退出 road，竖方向为双向平行单向 road 或一条双向 road，且竖方向 road 位于横方向前进方向右侧，则输出 `error_type = 错误交叉路口_T型路口`。
+  - 对 `kind_2 = 4 / in_degree = 2 / out_degree = 2` 且端点 20m 外侧角度只聚成两个方向组的候选，若存在一进一出的竖方向 Road 指向同一远端语义路口，且基于 Road 全长方向向量满足竖方向平行、剩余横方向一进一出近似共线、竖方向在横方向右侧，则同样输出 `error_type = 错误交叉路口_T型路口`；该 fallback 仅用于处理路口端点短距离弯出导致的 T 型漏判，audit 中以 `t_pattern_source = same_remote_semantic_full_road_vector` 标识。
   - 三个外侧角度方向的候选只能输出 `错误交叉路口_T型路口` 或不输出；两个外侧角度方向的候选只能在上述明确条件下输出 `错误交叉路口_T型路口 / 错误交叉路口_非交叉路口`，否则不输出。
   - 交叉路口错误输出的 `audit_json` 必须包含 `outward_angle_group_count / outward_angle_threshold_degrees / outward_vector_source / outward_vector_trace_distance_m / angle_groups`；角度方向使用 road 几何在路口端点向外延伸 `20m` 的局部向量，不直接使用进入 / 退出通行方向；每个 angle group 必须记录 `road_ids / has_in / has_out / members / merge_reasons`，用于追溯角度方向合并原因。
 - summary 必须记录输入、输出、参数、字段解析、CRS、错误类型计数、suppressed 连续分合流候选与性能字段。

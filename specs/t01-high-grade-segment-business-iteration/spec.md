@@ -36,9 +36,10 @@ T01 在局部 XS3 用例中把高等级走廊切成多个局部 Segment，典型
 - FR-006: summary MUST 输出 final fallback 中单向与双向 built road 数量。
 - FR-007: Step4 若在两个 `grade_2=1` 语义端点之间构成双向 Segment，MUST 写 `sgrade=0-0双` 与 `segment_build_source=step4_high_grade_terminal_demotion`。
 - FR-008: Step6 对上述 Step4 标记 Segment 的中间 `grade_2=1, kind_2=4` 分歧 / 合流节点 MUST 审计豁免 `grade_kind_conflict`；普通 `0-0双` Segment 的同类冲突仍 MUST 输出错误。
-- FR-009: final side-attachment merge MUST 在 final fallback 后、Step6 前执行，将已构段、挂接到 `0-0双` 主 Segment、且候选自身到主 Segment 最大采样距离 `<= MAX_SIDE_ACCESS_DISTANCE_M` 的单向 / 双向候选 Segment 并入主 Segment。
+- FR-009: final side-attachment merge MUST 在 final fallback 后、Step6 前执行，按候选 Segment 之间的 pair node 连通关系形成候选连通分量；候选之间仅通过非主 Segment 覆盖节点连通，共享同一个主 Segment 挂接点不得把多个孤立侧支合成一个分量；只有候选分量整体对同一个 `0-0双` 主 Segment 至少有两个挂接语义节点，且候选分量几何被主 Segment 的 `MAX_SIDE_ACCESS_DISTANCE_M` buffer 覆盖时，才允许整体并入主 Segment。
 - FR-010: final side-attachment merge MUST 保留 `pre_merge_segmentid / pre_merge_sgrade / pre_merge_segment_build_source`，并输出 `side_attachment_merge_summary`、`side_attachment_merged_segment_count` 与 `side_attachment_merged_road_count`。
 - FR-011: 双向主干上下行间距门限 MUST 使用 `max(50m, pair 两端语义路口内部成员节点最大距离)`，普通路段保持 50m，端点语义路口更宽时允许以该宽度作为有效门限。
+- FR-012: final side-attachment merge 若候选连通分量可被多个 `0-0双` 主 Segment 包含，MUST 按挂接点数量多优先、距离短次优先、`segmentid` 稳定兜底进行仲裁，并输出仲裁审计；仅单点挂接主 Segment、不能经候选分量回挂形成首尾闭环的孤立候选 MUST 保留原 Segment。
 
 ## 非功能需求
 

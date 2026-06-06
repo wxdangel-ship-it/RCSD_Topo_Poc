@@ -61,6 +61,7 @@ FINAL_FALLBACK_BUILD_SOURCE = "oneway_single_road_fallback"
 SIDE_ATTACHMENT_MERGE_PHASE_ID = "side-attachment-merge"
 SIDE_ATTACHMENT_MERGE_BUILD_SOURCE = "side_attachment_merge"
 SIDE_ATTACHMENT_MAIN_SEGMENT_GRADE = "0-0双"
+SIDE_ATTACHMENT_MIN_MAIN_ATTACHMENT_COUNT = 2
 DEAD_END_ANCHOR_KIND_VALUES = frozenset({4, 64, 128, 2048})
 DEAD_END_ANCHOR_GRADE_VALUES = frozenset({1, 2, 3})
 DEAD_END_ANCHOR_CLOSED_CON_VALUES = frozenset({2, 3})
@@ -744,6 +745,12 @@ def _max_sampled_distance_m(source_geometry: BaseGeometry, target_geometry: Base
     return max(float(point.distance(target_geometry)) for point in sample_points)
 
 
+def _is_within_side_access_buffer(source_geometry: BaseGeometry, target_geometry: BaseGeometry) -> bool:
+    if source_geometry.is_empty or target_geometry.is_empty:
+        return False
+    return bool(target_geometry.buffer(MAX_SIDE_ACCESS_DISTANCE_M).covers(source_geometry))
+
+
 def _build_current_segment_infos(
     *,
     roads: list[RoadFeatureRecord],
@@ -788,6 +795,97 @@ def _build_current_segment_infos(
     return segment_infos
 
 
+def _build_candidate_segment_components(
+    *,
+    candidate_segment_ids: list[str],
+    segment_infos: dict[str, dict[str, Any]],
+    connector_excluded_node_ids: set[str],
+) -> list[tuple[str, ...]]:
+    node_to_segment_ids: dict[str, set[str]] = {}
+    for segmentid in candidate_segment_ids:
+        for node_id in segment_infos[segmentid]["pair_nodes"]:
+            if node_id in connector_excluded_node_ids:
+                continue
+            node_to_segment_ids.setdefault(node_id, set()).add(segmentid)
+
+    components: list[tuple[str, ...]] = []
+    visited: set[str] = set()
+    for seed_segmentid in candidate_segment_ids:
+        if seed_segmentid in visited:
+            continue
+        stack = [seed_segmentid]
+        component: set[str] = set()
+        while stack:
+            segmentid = stack.pop()
+            if segmentid in visited:
+                continue
+            visited.add(segmentid)
+            component.add(segmentid)
+            for node_id in segment_infos[segmentid]["pair_nodes"]:
+                if node_id in connector_excluded_node_ids:
+                    continue
+                for next_segmentid in node_to_segment_ids.get(node_id, set()):
+                    if next_segmentid not in visited:
+                        stack.append(next_segmentid)
+        components.append(tuple(sorted(component, key=_sort_key)))
+    return components
+
+
+def _build_component_info(
+    *,
+    component_segment_ids: tuple[str, ...],
+    segment_infos: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
+    road_ids: list[str] = []
+    pair_nodes: set[str] = set()
+    geometries: list[BaseGeometry] = []
+    for segmentid in component_segment_ids:
+        info = segment_infos[segmentid]
+        road_ids.extend(info["road_ids"])
+        pair_nodes.update(info["pair_nodes"])
+        geometries.append(info["geometry"])
+    return {
+        "segment_ids": component_segment_ids,
+        "road_ids": tuple(sorted(set(road_ids), key=_sort_key)),
+        "pair_nodes": pair_nodes,
+        "geometry": unary_union(geometries),
+    }
+
+
+def _prune_component_to_attachment_core(
+    *,
+    component_segment_ids: tuple[str, ...],
+    segment_infos: dict[str, dict[str, Any]],
+    attachment_node_ids: set[str],
+) -> list[tuple[str, ...]]:
+    active_segment_ids = set(component_segment_ids)
+    while active_segment_ids:
+        degree_by_node: dict[str, int] = {}
+        for segmentid in active_segment_ids:
+            for node_id in segment_infos[segmentid]["pair_nodes"]:
+                degree_by_node[node_id] = degree_by_node.get(node_id, 0) + 1
+
+        removable_segment_ids = {
+            segmentid
+            for segmentid in active_segment_ids
+            if any(
+                degree_by_node.get(node_id, 0) == 1 and node_id not in attachment_node_ids
+                for node_id in segment_infos[segmentid]["pair_nodes"]
+            )
+        }
+        if not removable_segment_ids:
+            break
+        active_segment_ids -= removable_segment_ids
+
+    if not active_segment_ids:
+        return []
+    return _build_candidate_segment_components(
+        candidate_segment_ids=sorted(active_segment_ids, key=_sort_key),
+        segment_infos=segment_infos,
+        connector_excluded_node_ids=set(),
+    )
+
+
 def _run_side_attachment_merge(
     *,
     roads: list[RoadFeatureRecord],
@@ -805,46 +903,122 @@ def _run_side_attachment_merge(
         if info["sgrades"] == {SIDE_ATTACHMENT_MAIN_SEGMENT_GRADE}
     ]
 
-    merged_rows: list[dict[str, Any]] = []
+    candidate_segment_ids = [
+        segmentid
+        for segmentid, info in sorted(segment_infos.items(), key=lambda item: _sort_key(item[0]))
+        if segmentid not in main_segment_ids and info["sgrades"] != {SIDE_ATTACHMENT_MAIN_SEGMENT_GRADE}
+    ]
+    base_candidate_components = _build_candidate_segment_components(
+        candidate_segment_ids=candidate_segment_ids,
+        segment_infos=segment_infos,
+        connector_excluded_node_ids=set(),
+    )
+
     skipped_no_attachment_count = 0
     skipped_distance_count = 0
     skipped_high_grade_candidate_count = 0
+    skipped_insufficient_attachment_count = 0
+    skipped_overlapping_component_count = 0
+    evaluated_candidate_component_count = 0
     for candidate_segmentid, candidate_info in sorted(segment_infos.items(), key=lambda item: _sort_key(item[0])):
-        if candidate_segmentid in main_segment_ids:
-            continue
-        if candidate_info["sgrades"] == {SIDE_ATTACHMENT_MAIN_SEGMENT_GRADE}:
+        if candidate_segmentid not in main_segment_ids and candidate_info["sgrades"] == {SIDE_ATTACHMENT_MAIN_SEGMENT_GRADE}:
             skipped_high_grade_candidate_count += 1
-            continue
 
-        best_match: Optional[tuple[float, str, tuple[str, ...]]] = None
-        for main_segmentid in main_segment_ids:
-            main_info = segment_infos[main_segmentid]
-            attachment_node_ids = tuple(
-                sorted(candidate_info["pair_nodes"] & main_info["semantic_node_ids"], key=_sort_key)
+    matches_by_component: dict[tuple[str, ...], list[dict[str, Any]]] = {}
+    for main_segmentid in main_segment_ids:
+        main_info = segment_infos[main_segmentid]
+        main_semantic_node_ids = set(main_info["semantic_node_ids"])
+        for base_component_segment_ids in base_candidate_components:
+            base_component_info = _build_component_info(
+                component_segment_ids=base_component_segment_ids,
+                segment_infos=segment_infos,
             )
-            if not attachment_node_ids:
-                continue
-            distance_m = _max_sampled_distance_m(candidate_info["geometry"], main_info["geometry"])
-            if distance_m is None:
-                continue
-            if distance_m > MAX_SIDE_ACCESS_DISTANCE_M:
-                continue
-            current_match = (distance_m, main_segmentid, attachment_node_ids)
-            if best_match is None or current_match < best_match:
-                best_match = current_match
-
-        if best_match is None:
-            if any(
-                candidate_info["pair_nodes"] & segment_infos[main_segmentid]["semantic_node_ids"]
-                for main_segmentid in main_segment_ids
-            ):
-                skipped_distance_count += 1
-            else:
+            base_attachment_node_ids = set(base_component_info["pair_nodes"] & main_semantic_node_ids)
+            if not base_attachment_node_ids:
                 skipped_no_attachment_count += 1
-            continue
+                continue
+            if len(base_attachment_node_ids) < SIDE_ATTACHMENT_MIN_MAIN_ATTACHMENT_COUNT:
+                skipped_insufficient_attachment_count += 1
+                continue
 
-        distance_m, main_segmentid, attachment_node_ids = best_match
-        for road_id in candidate_info["road_ids"]:
+            pruned_components = _prune_component_to_attachment_core(
+                component_segment_ids=base_component_segment_ids,
+                segment_infos=segment_infos,
+                attachment_node_ids=base_attachment_node_ids,
+            )
+            if not pruned_components:
+                skipped_insufficient_attachment_count += 1
+                continue
+            for component_segment_ids in pruned_components:
+                evaluated_candidate_component_count += 1
+                component_info = _build_component_info(
+                    component_segment_ids=component_segment_ids,
+                    segment_infos=segment_infos,
+                )
+                attachment_node_ids = tuple(sorted(component_info["pair_nodes"] & main_semantic_node_ids, key=_sort_key))
+                if len(attachment_node_ids) < SIDE_ATTACHMENT_MIN_MAIN_ATTACHMENT_COUNT:
+                    skipped_insufficient_attachment_count += 1
+                    continue
+                distance_m = _max_sampled_distance_m(component_info["geometry"], main_info["geometry"])
+                if distance_m is None or not _is_within_side_access_buffer(
+                    component_info["geometry"],
+                    main_info["geometry"],
+                ):
+                    skipped_distance_count += 1
+                    continue
+                matches_by_component.setdefault(component_segment_ids, []).append(
+                    {
+                        "component_segment_ids": component_segment_ids,
+                        "component_info": component_info,
+                        "main_segmentid": main_segmentid,
+                        "attachment_node_ids": attachment_node_ids,
+                        "attachment_count": len(attachment_node_ids),
+                        "distance_m": distance_m,
+                    }
+                )
+
+    arbitrated_rows: list[dict[str, Any]] = []
+    selected_matches: list[dict[str, Any]] = []
+    for component_segment_ids, matches in sorted(matches_by_component.items(), key=lambda item: tuple(_sort_key(v) for v in item[0])):
+        matches.sort(key=lambda item: (-item["attachment_count"], item["distance_m"], _sort_key(item["main_segmentid"])))
+        chosen = matches[0]
+        if len(matches) > 1:
+            arbitrated_rows.append(
+                {
+                    "candidate_segmentid": ",".join(component_segment_ids),
+                    "chosen_main_segmentid": chosen["main_segmentid"],
+                    "chosen_attachment_count": chosen["attachment_count"],
+                    "chosen_distance_m": round(chosen["distance_m"], 3),
+                    "matched_main_segmentids": ",".join(match["main_segmentid"] for match in matches),
+                    "match_attachment_counts": ",".join(str(match["attachment_count"]) for match in matches),
+                    "match_distances_m": ",".join(f"{match['distance_m']:.3f}" for match in matches),
+                }
+            )
+        selected_matches.append(chosen)
+
+    selected_matches.sort(
+        key=lambda item: (
+            -item["attachment_count"],
+            item["distance_m"],
+            _sort_key(item["main_segmentid"]),
+            tuple(_sort_key(value) for value in item["component_segment_ids"]),
+        )
+    )
+
+    merged_rows: list[dict[str, Any]] = []
+    assigned_segment_ids: set[str] = set()
+    for match in selected_matches:
+        component_segment_ids = match["component_segment_ids"]
+        if set(component_segment_ids) & assigned_segment_ids:
+            skipped_overlapping_component_count += 1
+            continue
+        assigned_segment_ids.update(component_segment_ids)
+        component_info = match["component_info"]
+        main_segmentid = match["main_segmentid"]
+        attachment_node_ids = match["attachment_node_ids"]
+        attachment_count = match["attachment_count"]
+        distance_m = match["distance_m"]
+        for road_id in component_info["road_ids"]:
             props = road_properties_map[road_id]
             props["pre_merge_segmentid"] = get_road_segmentid(props)
             props["pre_merge_sgrade"] = get_road_sgrade(props)
@@ -857,11 +1031,14 @@ def _run_side_attachment_merge(
             set_road_sgrade(props, SIDE_ATTACHMENT_MAIN_SEGMENT_GRADE)
         merged_rows.append(
             {
-                "from_segmentid": candidate_segmentid,
+                "from_segmentid": ",".join(component_segment_ids),
+                "from_segmentids": ",".join(component_segment_ids),
                 "to_segmentid": main_segmentid,
-                "road_count": len(candidate_info["road_ids"]),
-                "road_ids": ",".join(candidate_info["road_ids"]),
+                "segment_count": len(component_segment_ids),
+                "road_count": len(component_info["road_ids"]),
+                "road_ids": ",".join(component_info["road_ids"]),
                 "attachment_node_ids": ",".join(attachment_node_ids),
+                "attachment_node_count": attachment_count,
                 "max_sampled_distance_m": round(distance_m, 3),
             }
         )
@@ -869,14 +1046,23 @@ def _run_side_attachment_merge(
     return {
         "phase_id": SIDE_ATTACHMENT_MERGE_PHASE_ID,
         "distance_gate_m": MAX_SIDE_ACCESS_DISTANCE_M,
+        "distance_gate_mode": "main_segment_buffer_covers_candidate_geometry",
         "main_segment_count": len(main_segment_ids),
         "candidate_segment_count": len(segment_infos) - len(main_segment_ids),
-        "merged_segment_count": len(merged_rows),
+        "candidate_component_count": len(base_candidate_components),
+        "evaluated_candidate_component_count": evaluated_candidate_component_count,
+        "min_main_attachment_count": SIDE_ATTACHMENT_MIN_MAIN_ATTACHMENT_COUNT,
+        "merged_component_count": len(merged_rows),
+        "merged_segment_count": sum(row["segment_count"] for row in merged_rows),
         "merged_road_count": sum(row["road_count"] for row in merged_rows),
         "merged_segments": merged_rows,
         "skipped_no_attachment_count": skipped_no_attachment_count,
         "skipped_distance_count": skipped_distance_count,
         "skipped_high_grade_candidate_count": skipped_high_grade_candidate_count,
+        "skipped_insufficient_attachment_count": skipped_insufficient_attachment_count,
+        "skipped_overlapping_component_count": skipped_overlapping_component_count,
+        "multi_main_match_candidate_count": len(arbitrated_rows),
+        "arbitrated_segments": arbitrated_rows,
     }
 
 

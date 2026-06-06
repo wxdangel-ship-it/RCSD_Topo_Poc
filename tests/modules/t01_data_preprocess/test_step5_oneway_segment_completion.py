@@ -60,22 +60,26 @@ def _road_feature(
     direction: int = 2,
     road_kind: int = 2,
     formway: int = 0,
+    kind: str | None = None,
     sgrade: str | None = None,
     segmentid: str | None = None,
     segment_build_source: str | None = None,
 ) -> dict:
+    properties = {
+        "id": road_id,
+        "snodeid": snodeid,
+        "enodeid": enodeid,
+        "direction": direction,
+        "road_kind": road_kind,
+        "formway": formway,
+        "sgrade": sgrade,
+        "segmentid": segmentid,
+        "segment_build_source": segment_build_source,
+    }
+    if kind is not None:
+        properties["kind"] = kind
     return {
-        "properties": {
-            "id": road_id,
-            "snodeid": snodeid,
-            "enodeid": enodeid,
-            "direction": direction,
-            "road_kind": road_kind,
-            "formway": formway,
-            "sgrade": sgrade,
-            "segmentid": segmentid,
-            "segment_build_source": segment_build_source,
-        },
+        "properties": properties,
         "geometry": LineString(coords),
     }
 
@@ -601,7 +605,7 @@ def test_oneway_completion_builds_residual_bidirectional_road_with_final_fallbac
     assert artifacts.summary["unsegmented_road_count"] == 0
 
 
-def test_oneway_completion_merges_near_side_attachment_segment_into_high_grade_main(tmp_path: Path) -> None:
+def test_oneway_completion_merges_two_attachment_side_segment_into_high_grade_main(tmp_path: Path) -> None:
     node_path = tmp_path / "nodes.geojson"
     road_path = tmp_path / "roads.geojson"
 
@@ -638,7 +642,24 @@ def test_oneway_completion_merges_near_side_attachment_segment_into_high_grade_m
                 segmentid="1_3",
                 segment_build_source="step4_high_grade_terminal_demotion",
             ),
-            _road_feature("near_side", 2, 4, [(10.0, 0.0), (10.0, 10.0)], direction=0, sgrade="0-2双", segmentid="2_4"),
+            _road_feature(
+                "near_side_a",
+                2,
+                4,
+                [(10.0, 0.0), (10.0, 10.0)],
+                direction=0,
+                sgrade="0-2双",
+                segmentid="2_3",
+            ),
+            _road_feature(
+                "near_side_b",
+                4,
+                3,
+                [(10.0, 10.0), (20.0, 0.0)],
+                direction=0,
+                sgrade="0-2双",
+                segmentid="2_3",
+            ),
             _road_feature("far_side", 2, 5, [(10.0, 0.0), (10.0, 80.0)], direction=0, sgrade="0-2双", segmentid="2_5"),
         ],
     )
@@ -651,18 +672,23 @@ def test_oneway_completion_merges_near_side_attachment_segment_into_high_grade_m
     )
 
     road_props = _road_props_by_id(artifacts.refreshed_roads_path)
-    assert road_props["near_side"]["segmentid"] == "1_3"
-    assert road_props["near_side"]["sgrade"] == "0-0双"
-    assert road_props["near_side"]["segment_build_source"] == "side_attachment_merge"
-    assert road_props["near_side"]["pre_merge_segmentid"] == "2_4"
-    assert road_props["near_side"]["pre_merge_sgrade"] == "0-2双"
+    assert road_props["near_side_a"]["segmentid"] == "1_3"
+    assert road_props["near_side_a"]["sgrade"] == "0-0双"
+    assert road_props["near_side_a"]["segment_build_source"] == "side_attachment_merge"
+    assert road_props["near_side_a"]["pre_merge_segmentid"] == "2_3"
+    assert road_props["near_side_a"]["pre_merge_sgrade"] == "0-2双"
+    assert road_props["near_side_b"]["segmentid"] == "1_3"
+    assert road_props["near_side_b"]["sgrade"] == "0-0双"
+    assert road_props["near_side_b"]["segment_build_source"] == "side_attachment_merge"
+    assert road_props["near_side_b"]["pre_merge_segmentid"] == "2_3"
     assert road_props["far_side"]["segmentid"] == "2_5"
     assert road_props["far_side"]["sgrade"] == "0-2双"
 
     merge_summary = artifacts.summary["side_attachment_merge_summary"]
+    assert merge_summary["distance_gate_mode"] == "main_segment_buffer_covers_candidate_geometry"
     assert merge_summary["merged_segment_count"] == 1
-    assert merge_summary["merged_road_count"] == 1
-    assert merge_summary["skipped_distance_count"] == 1
+    assert merge_summary["merged_road_count"] == 2
+    assert merge_summary["min_main_attachment_count"] == 2
 
     step6_artifacts = run_step6_segment_aggregation(
         road_path=artifacts.refreshed_roads_path,
@@ -672,6 +698,195 @@ def test_oneway_completion_merges_near_side_attachment_segment_into_high_grade_m
     )
     assert step6_artifacts.summary["segment_count"] == 2
     assert step6_artifacts.summary["segment_error_count"] == 0
+
+
+def test_oneway_completion_rejects_isolated_single_attachment_candidates(tmp_path: Path) -> None:
+    node_path = tmp_path / "nodes.geojson"
+    road_path = tmp_path / "roads.geojson"
+
+    write_geojson(
+        node_path,
+        [
+            _node_feature(1, 0.0, 0.0, kind_2=4, grade_2=1, closed_con=2),
+            _node_feature(2, 10.0, 0.0, kind_2=4, grade_2=1, closed_con=2),
+            _node_feature(3, 20.0, 0.0, kind_2=4, grade_2=1, closed_con=2),
+            _node_feature(4, 10.0, 10.0, kind_2=16, grade_2=2, closed_con=2),
+            _node_feature(5, 10.0, 12.0, kind_2=2048, grade_2=2, closed_con=2),
+            _node_feature(6, 10.0, 14.0, kind_2=16, grade_2=2, closed_con=2),
+        ],
+    )
+    write_geojson(
+        road_path,
+        [
+            _road_feature("main_a", 1, 2, [(0.0, 0.0), (10.0, 0.0)], direction=0, sgrade="0-0双", segmentid="1_3"),
+            _road_feature("main_b", 2, 3, [(10.0, 0.0), (20.0, 0.0)], direction=0, sgrade="0-0双", segmentid="1_3"),
+            _road_feature(
+                "single_ramp",
+                2,
+                4,
+                [(10.0, 0.0), (10.0, 10.0)],
+                direction=2,
+                kind="060a",
+                sgrade="0-1单",
+                segmentid="2_4",
+            ),
+            _road_feature(
+                "single_link",
+                2,
+                5,
+                [(10.0, 0.0), (10.0, 12.0)],
+                direction=2,
+                kind="0601",
+                sgrade="0-1单",
+                segmentid="2_5",
+            ),
+            _road_feature(
+                "fallback_ramp",
+                2,
+                6,
+                [(10.0, 0.0), (10.0, 14.0)],
+                direction=2,
+                kind="0601",
+                sgrade="0-2单",
+                segmentid="2_6",
+                segment_build_source="oneway_single_road_fallback",
+            ),
+        ],
+    )
+
+    artifacts = run_step5_oneway_segment_completion(
+        step5_artifacts=_build_step5_artifacts(node_path, road_path),
+        out_root=tmp_path / "out",
+        run_id="side_attachment_reject_ramp",
+        debug=False,
+    )
+
+    road_props = _road_props_by_id(artifacts.refreshed_roads_path)
+    assert road_props["single_ramp"]["segmentid"] == "2_4"
+    assert road_props["single_ramp"]["sgrade"] == "0-1单"
+    assert road_props["single_ramp"].get("segment_build_source") is None
+    assert road_props["single_link"]["segmentid"] == "2_5"
+    assert road_props["single_link"]["sgrade"] == "0-1单"
+    assert road_props["single_link"].get("segment_build_source") is None
+    assert road_props["fallback_ramp"]["segmentid"] == "2_6"
+    assert road_props["fallback_ramp"]["sgrade"] == "0-2单"
+    assert road_props["fallback_ramp"]["segment_build_source"] == "oneway_single_road_fallback"
+
+    merge_summary = artifacts.summary["side_attachment_merge_summary"]
+    assert merge_summary["merged_segment_count"] == 0
+    assert merge_summary["skipped_insufficient_attachment_count"] == 1
+
+
+def test_oneway_completion_allows_connected_candidate_component_with_two_main_attachments(tmp_path: Path) -> None:
+    node_path = tmp_path / "nodes.geojson"
+    road_path = tmp_path / "roads.geojson"
+
+    write_geojson(
+        node_path,
+        [
+            _node_feature(1, 0.0, 0.0, kind_2=4, grade_2=1, closed_con=2),
+            _node_feature(2, 10.0, 0.0, kind_2=4, grade_2=1, closed_con=2),
+            _node_feature(3, 20.0, 0.0, kind_2=4, grade_2=1, closed_con=2),
+            _node_feature(4, 10.0, 10.0, kind_2=2048, grade_2=2, closed_con=2),
+        ],
+    )
+    write_geojson(
+        road_path,
+        [
+            _road_feature("main_a", 1, 2, [(0.0, 0.0), (10.0, 0.0)], direction=0, sgrade="0-0双", segmentid="1_3"),
+            _road_feature("main_b", 2, 3, [(10.0, 0.0), (20.0, 0.0)], direction=0, sgrade="0-0双", segmentid="1_3"),
+            _road_feature(
+                "side_a",
+                2,
+                4,
+                [(10.0, 0.0), (10.0, 10.0)],
+                direction=2,
+                kind="060a",
+                sgrade="0-1单",
+                segmentid="2_4",
+            ),
+            _road_feature(
+                "side_b",
+                4,
+                3,
+                [(10.0, 10.0), (20.0, 0.0)],
+                direction=2,
+                kind="060a",
+                sgrade="0-1单",
+                segmentid="4_3",
+            ),
+        ],
+    )
+
+    artifacts = run_step5_oneway_segment_completion(
+        step5_artifacts=_build_step5_artifacts(node_path, road_path),
+        out_root=tmp_path / "out",
+        run_id="side_attachment_connected_component",
+        debug=False,
+    )
+
+    road_props = _road_props_by_id(artifacts.refreshed_roads_path)
+    assert road_props["side_a"]["segmentid"] == "1_3"
+    assert road_props["side_a"]["segment_build_source"] == "side_attachment_merge"
+    assert road_props["side_b"]["segmentid"] == "1_3"
+    assert road_props["side_b"]["segment_build_source"] == "side_attachment_merge"
+
+    merge_summary = artifacts.summary["side_attachment_merge_summary"]
+    assert merge_summary["merged_component_count"] == 1
+    assert merge_summary["merged_segment_count"] == 2
+    assert merge_summary["merged_road_count"] == 2
+    assert merge_summary["merged_segments"][0]["from_segmentids"] == "2_4,4_3"
+    assert merge_summary["merged_segments"][0]["attachment_node_ids"] == "2,3"
+
+
+def test_oneway_completion_arbitrates_multi_main_side_attachment_by_attachment_count(tmp_path: Path) -> None:
+    node_path = tmp_path / "nodes.geojson"
+    road_path = tmp_path / "roads.geojson"
+
+    write_geojson(
+        node_path,
+        [
+            _node_feature(1, 0.0, 0.0, kind_2=4, grade_2=1, closed_con=2),
+            _node_feature(2, 10.0, 0.0, kind_2=4, grade_2=1, closed_con=2),
+            _node_feature(3, 20.0, 0.0, kind_2=4, grade_2=1, closed_con=2),
+            _node_feature(4, 10.0, 10.0, kind_2=4, grade_2=1, closed_con=2),
+            _node_feature(5, 20.0, 10.0, kind_2=4, grade_2=1, closed_con=2),
+        ],
+    )
+    write_geojson(
+        road_path,
+        [
+            _road_feature("main_a", 1, 2, [(0.0, 0.0), (10.0, 0.0)], direction=0, sgrade="0-0双", segmentid="1_3"),
+            _road_feature("main_b", 2, 3, [(10.0, 0.0), (20.0, 0.0)], direction=0, sgrade="0-0双", segmentid="1_3"),
+            _road_feature("main_e", 2, 4, [(10.0, 0.0), (10.0, 10.0)], direction=0, sgrade="0-0双", segmentid="1_4"),
+            _road_feature("main_c", 2, 4, [(10.0, 0.0), (10.0, 10.0)], direction=0, sgrade="0-0双", segmentid="2_5"),
+            _road_feature("main_d", 4, 5, [(10.0, 10.0), (20.0, 10.0)], direction=0, sgrade="0-0双", segmentid="2_5"),
+            _road_feature(
+                "candidate",
+                2,
+                4,
+                [(10.0, 0.0), (10.0, 10.0)],
+                direction=2,
+                kind="0601",
+                sgrade="0-1单",
+                segmentid="2_4",
+            ),
+        ],
+    )
+
+    artifacts = run_step5_oneway_segment_completion(
+        step5_artifacts=_build_step5_artifacts(node_path, road_path),
+        out_root=tmp_path / "out",
+        run_id="side_attachment_arbitration",
+        debug=False,
+    )
+
+    road_props = _road_props_by_id(artifacts.refreshed_roads_path)
+    assert road_props["candidate"]["segmentid"] == "1_4"
+    merge_summary = artifacts.summary["side_attachment_merge_summary"]
+    assert merge_summary["multi_main_match_candidate_count"] == 1
+    assert merge_summary["arbitrated_segments"][0]["candidate_segmentid"] == "2_4"
+    assert merge_summary["arbitrated_segments"][0]["chosen_main_segmentid"] == "1_4"
 
 
 def test_oneway_completion_excludes_dead_end_leaf_formway_128_and_right_turn_only(tmp_path: Path) -> None:

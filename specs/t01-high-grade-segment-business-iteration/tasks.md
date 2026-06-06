@@ -11,4 +11,4 @@
 - [x] T009 增加双向主干动态间距门限：`max(50m, pair 两端语义路口内部成员节点最大距离)`。
 - [x] T010 运行 T01 相关单元测试。
 - [x] T011 运行 XS2 / XS3 全链路 release 回归并对比 baseline。
-- [x] T012 评估是否还需要额外 arbitration 调整。
+- [x] T012 收紧 final side-attachment merge，按候选 Segment 连通分量整体判断至少两点回挂主 Segment，并增加多主 Segment 仲裁审计。

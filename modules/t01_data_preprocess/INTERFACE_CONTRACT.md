@@ -361,8 +361,10 @@
 - final side-attachment merge：
   - 在 final single-road fallback 之后、`Step6` 之前执行
   - 主 Segment 必须为当前已构成的 `sgrade = 0-0双`
-  - 候选 Segment 必须已经有 `segmentid`，且至少一个 pair node 挂接到主 Segment 覆盖的语义节点
-  - 候选 Segment 自身几何到主 Segment 几何的最大采样距离必须 `<= MAX_SIDE_ACCESS_DISTANCE_M`
+  - 候选 Segment 必须已经有 `segmentid`，且候选 Segment 之间按 pair node 连通形成候选连通分量；分量连通只使用非主 Segment 覆盖节点，共享同一个主 Segment 挂接点不得把多个孤立侧支合成一个分量
+  - 候选连通分量整体必须至少以两个语义节点挂接到同一个主 Segment 覆盖的语义节点；仅单点挂接、不能经候选分量回挂形成首尾闭环的孤立候选必须保留原 Segment
+  - 候选连通分量自身几何必须被主 Segment 几何的 `MAX_SIDE_ACCESS_DISTANCE_M` buffer 覆盖；最大采样距离只作为审计和仲裁距离指标输出
+  - 同一候选连通分量可匹配多个主 Segment 时，按挂接点数量多优先、最大采样距离短次优先、`segmentid` 字典序稳定兜底进行仲裁
   - 满足条件时，将候选 Segment road 改写到主 Segment：
     - `segmentid = <main segmentid>`
     - `sgrade = 0-0双`
@@ -370,7 +372,7 @@
     - 保留 `pre_merge_segmentid / pre_merge_sgrade / pre_merge_segment_build_source`
     - 写入 `side_attachment_merged_into_segmentid / side_attachment_merge_distance_m / side_attachment_merge_nodes`
   - 普通 `0-0双` 候选 Segment 不作为被并入对象，避免跨主走廊级联合并
-  - `oneway_segment_summary.json` 必须输出 `side_attachment_merge_summary`、`side_attachment_merged_segment_count` 与 `side_attachment_merged_road_count`
+  - `oneway_segment_summary.json` 必须输出 `side_attachment_merge_summary`、`side_attachment_merged_segment_count`、`side_attachment_merged_road_count`、候选连通分量数、挂接不足跳过数与多主 Segment 仲裁审计
 - 新增 runner 对外产物：
   - `oneway_segment_roads.gpkg`
   - `oneway_segment_build_table.csv`

@@ -69,7 +69,7 @@
 - Road-only 投影点靠近 RCSDRoad 端点时必须复用已有端点 RCSDNode 或审计失败，不得生成极短 road 段。
 - `target_id` 必须唯一，一个 SWSD 语义路口只输出一条 relation。
 - 成功关系必须通过 cardinality QC：不得存在 `1:N` 的 `target_id -> base_id` 挂接，不得存在 `N:1` 的 `base_id <- target_id` 挂接。
-- Cardinality QC 错误必须输出 `relation_cardinality_errors.csv/json`，并给出 `introduced_by_module / source_modules / source_case_ids / scenes / reasons` 归因信息。
+- Cardinality QC 错误必须输出 `relation_cardinality_errors.csv/json`，并给出 `introduced_by_module / source_modules / source_case_ids / scenes / reasons` 归因信息；错误 relation 必须从 `intersection_match_all.geojson` 主表剔除。
 - `level = grade - 1`，缺失、为空或非法时为 `-1`。
 - `is_highway = closed_con - 1`，缺失、为空或非法时为 `-1`。
 - 多个 `base_id` 无法合并时必须 blocking error，不得输出多条 relation，也不得写成普通失败关系。

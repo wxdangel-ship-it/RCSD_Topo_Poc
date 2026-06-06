@@ -91,7 +91,7 @@ Phase 2 不重新融合路口面，不修改 Phase 1 `junction_anchor_surface.gp
 
 ## 8. Phase 2 场景策略
 
-- T07 existing RCSDIntersection / 历史路口锚定 evidence：若提供 `status_suggested = 0` 与可用 `base_id_candidate`，直接建立关系；历史锚定 relation-only target 即使没有 Phase 1 surface，也进入 `intersection_match_all.geojson`。
+- T07/T03/T04 已产出的成功 relation evidence：若提供 `status_suggested = 0` 与可用 `base_id_candidate`，Phase 2 优先直接消费该关系，不再用同 row 的 `required_rcsdnode_ids` 重新归组；历史锚定 relation-only target 即使没有 Phase 1 surface，也进入 `intersection_match_all.geojson`。
 - T02 existing RCSDIntersection evidence：旧批次兼容路径，若提供可用 `base_id_candidate`，直接建立关系。
 - T03-A：`required_rcsdnode_ids` 为 1 时直接关系；多个时归组，组内所有 node `mainnodeid` 填主 node id。
 - T03 existing role mismatch：只有 `base_id_candidate / required_rcsdnode_ids` 明确指向 RCSD 语义路口时才直接关系；`association_class=B` 不自动等于该场景。

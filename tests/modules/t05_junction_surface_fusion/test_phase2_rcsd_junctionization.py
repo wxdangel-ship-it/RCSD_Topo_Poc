@@ -234,6 +234,33 @@ def test_t07_direct_relation_takes_precedence_over_t03_road_only_split(tmp_path:
     assert len(read_vector_layer(artifacts.rcsdroad_split_path).features) == 0
 
 
+def test_upstream_base_id_candidate_takes_precedence_over_required_node_grouping(tmp_path: Path) -> None:
+    artifacts = _run_phase2(
+        tmp_path,
+        surface_features=[_surface("902")],
+        swsd_nodes=[_node(902, 0, 0, mainnodeid="902")],
+        rcsd_roads=[_road(1, (-10, 0), (20, 0))],
+        rcsd_nodes=[_node(1, -10, 0), _node(2, 20, 0), _node(60, 5, 0), _node(61, 8, 0)],
+        t03_rows=[
+            {
+                "target_id": "902",
+                "case_id": "902",
+                "junction_type": "center_junction",
+                "association_class": "A",
+                "required_rcsdnode_ids": "60|61",
+                "step7_state": "accepted",
+                "base_id_candidate": "60",
+                "status_suggested": 0,
+                "relation_state": "success_required_rcsd_junction",
+            }
+        ],
+    )
+
+    relation = _relation_features(artifacts.relation_geojson_path)[0]
+    assert relation["properties"]["base_id"] == 60
+    assert len(read_vector_layer(artifacts.rcsdnode_grouped_path).features) == 0
+
+
 def test_no_related_rcsd_outputs_failure_with_base_id_zero(tmp_path: Path) -> None:
     artifacts = _run_phase2(
         tmp_path,
@@ -797,6 +824,9 @@ def test_relation_cardinality_qc_reports_many_targets_to_one_base(tmp_path: Path
     summary = _summary(artifacts)
     assert summary["relation_cardinality_error_count"] == 1
     assert summary["many_target_to_one_base_count"] == 1
+    assert summary["relation_cardinality_removed_target_count"] == 2
+    assert summary["relation_cardinality_removed_relation_count"] == 2
+    assert _relation_features(artifacts.relation_geojson_path) == []
     assert summary["consistency"]["relation_cardinality_passed"] is False
     assert summary["passed"] is False
     error_rows = json.loads(artifacts.relation_cardinality_errors_json_path.read_text(encoding="utf-8"))["rows"]

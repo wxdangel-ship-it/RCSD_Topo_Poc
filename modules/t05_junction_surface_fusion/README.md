@@ -165,7 +165,7 @@ artifacts = run_t05_export_junctionization_bundle(
 
 `intersection_match_all.geojson` 中 `target_id` 必须唯一，一个 SWSD 语义路口只输出一条 relation。多个 RCSD 候选可合并时先归组；无法合并时写 `blocking_errors.*`，不在主表中输出该 `target_id`。`level` 使用 final nodes 的 `grade - 1`，`is_highway` 使用 `closed_con - 1`；缺失或非法时填 `-1`。
 
-Phase 2 内置最终 relation 基数质检。若成功关系中存在同一 `target_id` 对多个 `base_id`、多个 `target_id` 对同一 `base_id`，或重复 success target，模块会输出 `relation_cardinality_errors.csv/json`。错误行包含 `introduced_by_module / source_modules / source_case_ids / scenes / reasons`，用于判断是 T07/T03/T04 evidence 引入，还是 T05 聚合逻辑引入；存在错误时 `summary.passed = false`。
+Phase 2 内置最终 relation 基数质检。若成功关系中存在同一 `target_id` 对多个 `base_id`、多个 `target_id` 对同一 `base_id`，或重复 success target，模块会输出 `relation_cardinality_errors.csv/json`。错误行包含 `introduced_by_module / source_modules / source_case_ids / scenes / reasons`，用于判断是 T07/T03/T04 evidence 引入，还是 T05 聚合逻辑引入；相关错误关系会从 `intersection_match_all.geojson` 主表剔除，存在错误时 `summary.passed = false`。
 
 Road-only 场景中，若投影点距离 RCSDRoad 起终点小于 `min_endpoint_gap_m`，Phase 2 不生成极短 split 段，改为复用对应 `snodeid / enodeid` 的已有 RCSDNode；多个端点节点命中同一 SWSD 路口时先归组，再输出唯一 relation。
 
@@ -179,7 +179,7 @@ Road-only 场景中，若投影点距离 RCSDRoad 起终点小于 `min_endpoint_
 
 `module_relation_audit_summary.csv/json` 按 `T07 / T02_INPUT / T03 / T04` 统计输入 evidence 总量与四类结果：前置失败无关联、前置成功且有 RCSD 语义路口、前置成功且有 RCSDRoad、前置成功但无 RCSD 关联。每类记录 relation 成功数、失败数、缺失 relation 数与 blocking error 数，用于验证最终关系生产是否符合预期。
 
-T07 历史路口锚定成果与 T03/T04 relation evidence 同构。若 `t07_swsd_rcsd_relation_evidence.*` 中某个 target 提供 `status_suggested = 0` 且 `base_id_candidate` 为有效 RCSD 语义路口主 node id 或 group id，Phase 2 作为 direct relation 处理；即使该 target 没有 Phase 1 surface，也会进入 `intersection_match_all.geojson`。
+T07 历史路口锚定成果与 T03/T04 relation evidence 同构。若 T07/T03/T04 evidence 中某个 target 提供 `status_suggested = 0` 且 `base_id_candidate` 为有效 RCSD 语义路口主 node id 或 group id，Phase 2 优先作为 direct relation 消费，不再用同 row 的 `required_rcsdnode_ids` 重新归组；即使 T07 target 没有 Phase 1 surface，也会进入 `intersection_match_all.geojson`。
 
 ## T03 Evidence 补齐
 

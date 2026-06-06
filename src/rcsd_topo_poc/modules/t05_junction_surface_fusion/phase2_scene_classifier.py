@@ -94,6 +94,17 @@ def classify_evidence(evidence: Phase2Evidence, *, junction_type: str) -> SceneD
             multi_base_relation=len(base_ids) > 1,
         )
 
+    if base_ids and status_suggested == "0":
+        return SceneDecision(
+            scene=SCENE_DIRECT,
+            action="direct_relation",
+            reason=relation_state or "base_id_candidate_present",
+            source_module=source,
+            source_case_id=case_id,
+            base_id_candidates=base_ids,
+            multi_base_relation=len(base_ids) > 1,
+        )
+
     if required_nodes:
         if len(required_nodes) == 1:
             return SceneDecision(
@@ -111,17 +122,6 @@ def classify_evidence(evidence: Phase2Evidence, *, junction_type: str) -> SceneD
             source_module=source,
             source_case_id=case_id,
             rcsdnode_ids=required_nodes,
-        )
-
-    if base_ids and status_suggested == "0":
-        return SceneDecision(
-            scene=SCENE_DIRECT,
-            action="direct_relation",
-            reason=relation_state or "base_id_candidate_present",
-            source_module=source,
-            source_case_id=case_id,
-            base_id_candidates=base_ids,
-            multi_base_relation=len(base_ids) > 1,
         )
 
     if source == SOURCE_T04 and junction_type == "complex_divmerge" and len(selected_nodes) > 1:

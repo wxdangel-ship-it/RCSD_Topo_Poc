@@ -88,6 +88,29 @@ def relation_cardinality_summary(error_rows: list[dict[str, str]]) -> dict[str, 
     }
 
 
+def relation_cardinality_error_target_ids(error_rows: list[dict[str, str]]) -> set[str]:
+    target_ids: set[str] = set()
+    for row in error_rows:
+        target_ids.update(_parts(row.get("related_target_ids")))
+        target_ids.update(_parts(row.get("target_id")))
+    return target_ids
+
+
+def filter_cardinality_error_relations(
+    relation_features: list[dict[str, Any]],
+    error_rows: list[dict[str, str]],
+) -> tuple[list[dict[str, Any]], set[str], int]:
+    target_ids = relation_cardinality_error_target_ids(error_rows)
+    if not target_ids:
+        return relation_features, set(), 0
+    filtered = [
+        feature
+        for feature in relation_features
+        if _text((feature.get("properties") or {}).get("target_id")) not in target_ids
+    ]
+    return filtered, target_ids, len(relation_features) - len(filtered)
+
+
 def _success_relation_rows(relation_features: list[dict[str, Any]]) -> list[dict[str, str]]:
     rows: list[dict[str, str]] = []
     for feature in relation_features:

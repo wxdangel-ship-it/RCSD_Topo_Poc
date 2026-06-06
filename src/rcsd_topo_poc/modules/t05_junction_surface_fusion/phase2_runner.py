@@ -28,7 +28,8 @@ from .phase2_models import (
 from .phase2_node_grouping import apply_mainnodeid_grouping, choose_primary_node_id
 from .phase2_outputs import write_phase2_outputs
 from .phase2_projection import project_points_to_active_roads, projection_points_for_decision
-from .phase2_relation import failure_relation_feature, success_relation_feature
+from .phase2_relation import failure_relation_feature, relation_properties, success_relation_feature
+from .phase2_relation_cardinality import build_relation_cardinality_errors, filter_cardinality_error_relations
 from .phase2_roundabout import build_roundabout_aggregations
 from .phase2_scene_classifier import (
     SOURCE_T02_INPUT,
@@ -536,6 +537,29 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
     )
     blocking_errors.extend(duplicate_blocking_rows)
     audit_rows.extend(duplicate_audit_rows)
+    relation_cardinality_input_features = [
+        {"properties": relation_properties(feature), "geometry": feature.get("geometry")}
+        for feature in relation_features
+    ]
+    relation_cardinality_errors = build_relation_cardinality_errors(
+        relation_features=relation_cardinality_input_features,
+        audit_rows=audit_rows,
+    )
+    (
+        filtered_relation_cardinality_features,
+        relation_cardinality_removed_target_ids,
+        relation_cardinality_removed_relation_count,
+    ) = filter_cardinality_error_relations(relation_cardinality_input_features, relation_cardinality_errors)
+    if relation_cardinality_removed_target_ids:
+        kept_target_ids = {
+            _text((feature.get("properties") or {}).get("target_id"))
+            for feature in filtered_relation_cardinality_features
+        }
+        relation_features = [
+            feature
+            for feature in relation_features
+            if _text((feature.get("properties") or {}).get("target_id")) in kept_target_ids
+        ]
     module_relation_audit_rows = _module_relation_audit_summary(
         evidence_rows=evidence_rows,
         source_input_counts={
@@ -580,6 +604,9 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
         blocking_errors=blocking_errors,
         module_relation_audit_rows=module_relation_audit_rows,
         original_split_road_ids=original_split_road_ids,
+        relation_cardinality_errors=relation_cardinality_errors,
+        relation_cardinality_removed_target_ids=relation_cardinality_removed_target_ids,
+        relation_cardinality_removed_relation_count=relation_cardinality_removed_relation_count,
         performance={
             "data_volume": data_volume,
             "plan": plan_stats,

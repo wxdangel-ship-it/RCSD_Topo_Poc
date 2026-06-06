@@ -18,6 +18,7 @@ from .phase2_relation import relation_properties
 from .phase2_relation_cardinality import (
     RELATION_CARDINALITY_ERROR_FIELDS,
     build_relation_cardinality_errors,
+    filter_cardinality_error_relations,
     relation_cardinality_summary,
 )
 
@@ -57,6 +58,9 @@ def write_phase2_outputs(
     blocking_errors: list[dict[str, Any]],
     module_relation_audit_rows: list[dict[str, Any]],
     original_split_road_ids: set[int],
+    relation_cardinality_errors: list[dict[str, str]] | None = None,
+    relation_cardinality_removed_target_ids: set[str] | None = None,
+    relation_cardinality_removed_relation_count: int = 0,
     performance: dict[str, Any] | None = None,
     progress_logger: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
@@ -82,10 +86,25 @@ def write_phase2_outputs(
         {"properties": relation_properties(feature), "geometry": feature.get("geometry")}
         for feature in relation_features
     ]
-    relation_cardinality_errors = build_relation_cardinality_errors(
-        relation_features=relation_output_features,
-        audit_rows=audit_rows,
-    )
+    if relation_cardinality_errors is None:
+        relation_cardinality_errors = build_relation_cardinality_errors(
+            relation_features=relation_output_features,
+            audit_rows=audit_rows,
+        )
+        (
+            relation_output_features,
+            relation_cardinality_removed_target_ids,
+            relation_cardinality_removed_relation_count,
+        ) = filter_cardinality_error_relations(relation_output_features, relation_cardinality_errors)
+    else:
+        relation_cardinality_removed_target_ids = set(relation_cardinality_removed_target_ids or set())
+        if relation_cardinality_removed_target_ids:
+            relation_output_features, _, removed_count = filter_cardinality_error_relations(
+                relation_output_features,
+                relation_cardinality_errors,
+            )
+            if not relation_cardinality_removed_relation_count:
+                relation_cardinality_removed_relation_count = removed_count
     performance_data = dict(performance or {})
     output_timings_sec: dict[str, float] = dict(performance_data.get("output_timings_sec") or {})
     output_sizes_bytes: dict[str, int] = dict(performance_data.get("output_sizes_bytes") or {})
@@ -261,6 +280,8 @@ def write_phase2_outputs(
         blocking_errors=blocking_errors,
         module_relation_audit_rows=module_relation_audit_rows,
         relation_cardinality_errors=relation_cardinality_errors,
+        relation_cardinality_removed_target_ids=relation_cardinality_removed_target_ids,
+        relation_cardinality_removed_relation_count=relation_cardinality_removed_relation_count,
         original_split_road_ids=original_split_road_ids,
         performance=performance_data,
         output_paths={
@@ -344,6 +365,8 @@ def _summary(
     blocking_errors: list[dict[str, Any]],
     module_relation_audit_rows: list[dict[str, Any]],
     relation_cardinality_errors: list[dict[str, str]],
+    relation_cardinality_removed_target_ids: set[str],
+    relation_cardinality_removed_relation_count: int,
     original_split_road_ids: set[int],
     performance: dict[str, Any],
 ) -> dict[str, Any]:
@@ -378,6 +401,8 @@ def _summary(
         "audit_row_count": len(audit_rows),
         "blocking_error_count": len(blocking_errors),
         **cardinality_summary,
+        "relation_cardinality_removed_target_count": len(relation_cardinality_removed_target_ids),
+        "relation_cardinality_removed_relation_count": relation_cardinality_removed_relation_count,
         "module_relation_audit_summary": module_relation_audit_rows,
         "passed": consistency["passed"],
         "crs": {"process": "EPSG:3857", "intersection_match_all": "CRS84"},

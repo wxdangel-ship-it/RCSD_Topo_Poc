@@ -103,7 +103,7 @@ def test_retained_geometry_must_stay_inside_swsd_buffer_scope() -> None:
     assert result.rcsd_outside_swsd_buffer_ratio > 0.1
 
 
-def test_retained_geometry_fails_when_absolute_outside_length_exceeds_scope_even_with_low_ratio() -> None:
+def test_retained_geometry_allows_absolute_outside_length_when_ratio_is_low() -> None:
     extractor = BufferSegmentExtractor(
         rcsd_road_features=[
             _road("slightly_overlong", 10, 20, [(0, 0), (1035, 0)]),
@@ -119,8 +119,8 @@ def test_retained_geometry_fails_when_absolute_outside_length_exceeds_scope_even
         config=BufferExtractionConfig(buffer_distance_m=10, min_road_overlap_ratio=0.2),
     )
 
-    assert not result.ok
-    assert result.reason == "retained_geometry_outside_swsd_buffer_scope"
+    assert result.ok
+    assert result.reason == "passed"
     assert result.rcsd_outside_swsd_buffer_length_m > 20
     assert result.rcsd_outside_swsd_buffer_ratio < 0.1
 
@@ -148,7 +148,7 @@ def test_swsd_geometry_must_be_covered_by_retained_rcsd_buffer_scope() -> None:
     assert result.swsd_uncovered_by_rcsd_ratio > 0.1
 
 
-def test_swsd_geometry_fails_when_absolute_uncovered_length_exceeds_scope_even_with_low_ratio() -> None:
+def test_swsd_geometry_allows_absolute_uncovered_length_when_ratio_is_low() -> None:
     extractor = BufferSegmentExtractor(
         rcsd_road_features=[
             _road("slightly_short", 10, 20, [(0, 0), (965, 0)]),
@@ -164,8 +164,8 @@ def test_swsd_geometry_fails_when_absolute_uncovered_length_exceeds_scope_even_w
         config=BufferExtractionConfig(buffer_distance_m=10, min_road_overlap_ratio=0.2),
     )
 
-    assert not result.ok
-    assert result.reason == "swsd_geometry_not_covered_by_retained_rcsd"
+    assert result.ok
+    assert result.reason == "passed"
     assert result.swsd_uncovered_by_rcsd_length_m > 20
     assert result.swsd_uncovered_by_rcsd_ratio < 0.1
 
@@ -436,6 +436,33 @@ def test_dual_corridor_retains_internal_uturn_between_retained_nodes() -> None:
     assert result.ok
     assert set(result.retained_road_ids) == {"forward_a", "forward_b", "reverse_a", "reverse_b", "middle_uturn"}
     assert "middle_uturn" in result.retained_road_ids
+
+
+def test_dual_corridor_retains_internal_non_uturn_edge_between_retained_nodes() -> None:
+    extractor = BufferSegmentExtractor(
+        rcsd_road_features=[
+            _road("forward_a", 10, 30, [(0, 0), (50, 0)], direction=2),
+            _road("forward_b", 30, 20, [(50, 0), (100, 0)], direction=2),
+            _road("reverse_a", 20, 40, [(100, 2), (50, 2)], direction=2),
+            _road("reverse_b", 40, 10, [(50, 2), (0, 2)], direction=2),
+            _road("middle_link", 30, 40, [(50, 0), (50, 2)], direction=2, formway=1),
+            _road("side_branch", 30, 50, [(50, 0), (50, 20)], direction=2, formway=1),
+        ],
+        rcsd_node_features=[_node(10, 0, 0), _node(20, 100, 0), _node(30, 50, 0), _node(40, 50, 2), _node(50, 50, 20)],
+    )
+
+    result = extractor.extract(
+        segment_geometry=LineString([(0, 0), (100, 0)]),
+        relation=RelationCheck(True, ["10", "20"], []),
+        optional_allowed_rcsd_nodes=[],
+        all_relation_base_ids={"10", "20"},
+        require_bidirectional=True,
+        config=BufferExtractionConfig(buffer_distance_m=10),
+    )
+
+    assert result.ok
+    assert set(result.retained_road_ids) == {"forward_a", "forward_b", "reverse_a", "reverse_b", "middle_link"}
+    assert "side_branch" not in result.retained_road_ids
 
 
 def test_single_swsd_requires_at_least_one_directed_pair_path() -> None:

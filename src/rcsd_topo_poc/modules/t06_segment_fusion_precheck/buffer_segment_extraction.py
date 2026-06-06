@@ -13,7 +13,7 @@ from shapely.strtree import STRtree
 from .graph_builders import Edge, NodeCanonicalizer
 from .parsing import ParseError, normalize_id
 from .relation_mapping import RelationCheck
-from .road_attributes import is_advance_right_turn_road, is_uturn_road
+from .road_attributes import is_advance_right_turn_road
 
 
 @dataclass(frozen=True)
@@ -175,6 +175,9 @@ class BufferSegmentExtractor:
             pair_nodes,
             directed_nodes,
             reference_geometry=segment_geometry,
+            reference_buffer_geometry=buffer_geometry,
+            max_mismatch_ratio=cfg.max_geometry_buffer_mismatch_ratio,
+            min_mismatch_length_m=cfg.min_geometry_buffer_mismatch_length_m,
             require_directed_pair=require_directed_pair,
             require_bidirectional=require_bidirectional,
         )
@@ -638,6 +641,9 @@ def _build_corridor_subgraph(
     directed_pair_nodes: list[str],
     *,
     reference_geometry: BaseGeometry | None,
+    reference_buffer_geometry: BaseGeometry | None = None,
+    max_mismatch_ratio: float = 0.1,
+    min_mismatch_length_m: float = 20.0,
     require_directed_pair: bool,
     require_bidirectional: bool,
 ) -> list[Edge]:
@@ -670,7 +676,14 @@ def _build_corridor_subgraph(
 
     selected_edges = [edge for edge in edges if edge.edge_id in selected_edge_ids]
     if require_bidirectional:
-        selected_edges = _include_internal_uturn_edges(edges, selected_edges)
+        selected_edges = _include_internal_corridor_edges(
+            edges,
+            selected_edges,
+            required_nodes=set(required_nodes),
+            reference_buffer_geometry=reference_buffer_geometry,
+            max_mismatch_ratio=max_mismatch_ratio,
+            min_mismatch_length_m=min_mismatch_length_m,
+        )
     return selected_edges
 
 
@@ -875,7 +888,15 @@ def _required_shortcut_penalty(edge: Edge, length: float, reference_geometry: Ba
     return max(10000.0, float(reference_geometry.length) * 100.0)
 
 
-def _include_internal_uturn_edges(edges: list[Edge], selected_edges: list[Edge]) -> list[Edge]:
+def _include_internal_corridor_edges(
+    edges: list[Edge],
+    selected_edges: list[Edge],
+    *,
+    required_nodes: set[str],
+    reference_buffer_geometry: BaseGeometry | None,
+    max_mismatch_ratio: float,
+    min_mismatch_length_m: float,
+) -> list[Edge]:
     retained_nodes = _nodes_from_edges(selected_edges)
     selected_edge_ids = {edge.edge_id for edge in selected_edges}
     result = list(selected_edges)
@@ -884,11 +905,51 @@ def _include_internal_uturn_edges(edges: list[Edge], selected_edges: list[Edge])
             continue
         if edge.source not in retained_nodes or edge.target not in retained_nodes:
             continue
-        if not is_uturn_road(edge.properties):
+        if edge.source in required_nodes and edge.target in required_nodes:
+            continue
+        if not _edge_within_buffer_scope(
+            edge,
+            reference_buffer_geometry=reference_buffer_geometry,
+            max_mismatch_ratio=max_mismatch_ratio,
+            min_mismatch_length_m=min_mismatch_length_m,
+        ):
             continue
         result.append(edge)
         selected_edge_ids.add(edge.edge_id)
     return result
+
+
+def _edge_within_buffer_scope(
+    edge: Edge,
+    *,
+    reference_buffer_geometry: BaseGeometry | None,
+    max_mismatch_ratio: float,
+    min_mismatch_length_m: float,
+) -> bool:
+    geometry = edge.geometry
+    if reference_buffer_geometry is None or reference_buffer_geometry.is_empty or geometry is None or geometry.is_empty:
+        return True
+    length = float(geometry.length)
+    if length <= 0:
+        return True
+    outside_length = float(geometry.difference(reference_buffer_geometry).length)
+    outside_ratio = outside_length / length
+    return not _mismatch_exceeds_threshold(
+        outside_length,
+        outside_ratio,
+        max_mismatch_ratio=max_mismatch_ratio,
+        min_mismatch_length_m=min_mismatch_length_m,
+    )
+
+
+def _mismatch_exceeds_threshold(
+    mismatch_length: float,
+    mismatch_ratio: float,
+    *,
+    max_mismatch_ratio: float,
+    min_mismatch_length_m: float,
+) -> bool:
+    return mismatch_ratio > max_mismatch_ratio and mismatch_length > min_mismatch_length_m
 
 
 def _nodes_from_edges(edges: list[Edge]) -> set[str]:
@@ -983,9 +1044,19 @@ def _retained_geometry_buffer_coverage_status(
     rcsd_outside_ratio = rcsd_outside_length / retained_length if retained_length > 0 else 0.0
     swsd_uncovered_ratio = swsd_uncovered_length / segment_length if segment_length > 0 else 0.0
     issue = None
-    if rcsd_outside_ratio > max_mismatch_ratio or rcsd_outside_length > min_mismatch_length_m:
+    if _mismatch_exceeds_threshold(
+        rcsd_outside_length,
+        rcsd_outside_ratio,
+        max_mismatch_ratio=max_mismatch_ratio,
+        min_mismatch_length_m=min_mismatch_length_m,
+    ):
         issue = "retained_geometry_outside_swsd_buffer_scope"
-    elif swsd_uncovered_ratio > max_mismatch_ratio or swsd_uncovered_length > min_mismatch_length_m:
+    elif _mismatch_exceeds_threshold(
+        swsd_uncovered_length,
+        swsd_uncovered_ratio,
+        max_mismatch_ratio=max_mismatch_ratio,
+        min_mismatch_length_m=min_mismatch_length_m,
+    ):
         issue = "swsd_geometry_not_covered_by_retained_rcsd"
     return _GeometryCoverageStatus(
         issue=issue,

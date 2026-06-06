@@ -103,10 +103,11 @@ def run_t06_step2_extract_rcsd_segments(
             special_swsd_junction_types,
             swsd_node_canonicalizer,
         )
-        segment_special_junctions[segment_id] = special_junction_ids
-        for special_junction_id in special_junction_ids:
-            if segment_id not in special_junction_segments[special_junction_id]:
-                special_junction_segments[special_junction_id].append(segment_id)
+        segment_special_junctions[segment_id] = special_junction_ids if _special_gate_applies_to_segment(pair_nodes) else []
+        if _special_gate_applies_to_segment(pair_nodes):
+            for special_junction_id in special_junction_ids:
+                if segment_id not in special_junction_segments[special_junction_id]:
+                    special_junction_segments[special_junction_id].append(segment_id)
         relation_junc_nodes = _relation_required_junc_nodes(junc_nodes, junc_kind2_exempt_nodes)
         all_base_ids_for_segment = all_base_ids - _accepted_base_ids_for_nodes(junc_kind2_exempt_nodes, relation_map)
         unexpected_base_ids_for_segment = _unexpected_base_ids_for_segment([*pair_nodes, *junc_nodes], relation_map)
@@ -444,6 +445,10 @@ def _segment_special_junction_ids(
         seen.add(semantic_id)
         result.append(semantic_id)
     return result
+
+
+def _special_gate_applies_to_segment(pair_nodes: list[str]) -> bool:
+    return len(set(pair_nodes)) >= 2
 
 
 def _rcsd_semantic_node_ids(features: list[dict[str, Any]], canonicalizer: NodeCanonicalizer) -> dict[str, list[str]]:

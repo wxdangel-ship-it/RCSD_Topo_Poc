@@ -377,6 +377,8 @@ def test_step5c_adaptive_context_keeps_historical_kind1_only_by_history_and_demo
         _node_feature(11, 21.0, 0.0, grade_2=0, kind_2=0, closed_con=0),
         _node_feature(12, 30.0, 1.0, grade_2=0, kind_2=0, closed_con=0),
         _node_feature(13, 31.0, 0.0, grade_2=0, kind_2=0, closed_con=0),
+        _node_feature(14, 40.0, 0.0, grade_2=2, kind_2=128, closed_con=2),
+        _node_feature(15, 41.0, 0.0, grade_2=0, kind_2=0, closed_con=0),
     ]
     road_features = [
         _road_feature("r15", 1, 5, 0, [[0.0, 0.0], [0.0, 1.0]]),
@@ -388,6 +390,7 @@ def test_step5c_adaptive_context_keeps_historical_kind1_only_by_history_and_demo
         _road_feature("r311", 3, 11, 0, [[20.0, 0.0], [21.0, 0.0]]),
         _road_feature("r412", 4, 12, 0, [[30.0, 0.0], [30.0, 1.0]]),
         _road_feature("r413", 4, 13, 0, [[30.0, 0.0], [31.0, 0.0]]),
+        _road_feature("r1415", 14, 15, 0, [[40.0, 0.0], [41.0, 0.0]]),
     ]
     nodes = [_node_record(feature) for feature in node_features]
     roads = [_road_record(feature) for feature in road_features]
@@ -398,11 +401,11 @@ def test_step5c_adaptive_context_keeps_historical_kind1_only_by_history_and_demo
         historical_seed_node_ids={"1"},
         historical_seed_source_map={"1": ("STEP5B",)},
     )
-    assert adaptive_context.rolling_endpoint_pool_ids == ("1", "3", "4")
-    assert adaptive_context.current_input_candidate_ids == ("3", "4")
+    assert adaptive_context.rolling_endpoint_pool_ids == ("1", "3", "4", "14")
+    assert adaptive_context.current_input_candidate_ids == ("3", "4", "14")
     assert adaptive_context.protected_hard_stop_ids == ("3",)
     assert adaptive_context.demotable_endpoint_ids == ("1", "4")
-    assert adaptive_context.actual_terminate_barrier_ids == ("3",)
+    assert adaptive_context.actual_terminate_barrier_ids == ("3", "14")
     audit_by_node_id = {row["node_id"]: row for row in adaptive_context.demote_audit_rows}
     assert audit_by_node_id["1"]["is_historical_endpoint"] is True
     assert audit_by_node_id["1"]["is_current_input_candidate"] is False

@@ -16,6 +16,7 @@
 - Tool6：Nodes 类型质检，基于语义路口入出度、连续分歧合流 T 型候选与交叉路口候选规则输出人工质检 CSV 与 `node_error_tool6.gpkg`，不改写输入 Nodes/Roads。
 - Tool7：交通限制显性化，基于 SW C 表 `CondType=1` 与 SW Road `inLinkID / outLinkID` 构建显性 restriction LineString，输出 `EPSG:3857` GPKG。
 - Tool8：Laneinfo 箭头显性化，基于 SW Laneinfo `LinkID / Seq_Nm / Arrow_Dir / Lane_Dir` 与 SW Road `direction` 构建 Road 方向级显性 arrow LineString，输出 `EPSG:3857` GPKG。
+- Tool9：RCSD 数据清理，基于道路面覆盖 / 相交关系过滤 RCSDNode 语义组与 RCSDRoad 起终点拓扑，输出 `EPSG:3857` GPKG。
 
 ## 允许改动范围
 
@@ -30,6 +31,7 @@
 - `scripts/t08_tool6_nodes_type_qc.py`
 - `scripts/t08_tool7_traffic_restriction.py`
 - `scripts/t08_tool8_lane_arrow.py`
+- `scripts/t08_tool9_rcsd_cleaning.py`
 - 与 T08 登记、入口登记直接相关的项目级文档
 
 ## 禁做事项

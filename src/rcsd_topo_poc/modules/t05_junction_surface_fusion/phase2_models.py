@@ -47,6 +47,16 @@ MODULE_RELATION_AUDIT_FIELDS = [
     "overall_failure_count",
 ]
 
+SWSDNODE_YES_NR_AUDIT_FIELDS = [
+    "target_id",
+    "node_id",
+    "has_evd_before",
+    "is_anchor_before",
+    "has_evd_after",
+    "is_anchor_after",
+    "reason",
+]
+
 JUNCTIONIZATION_AUDIT_FIELDS = [
     "target_id",
     "surface_id",
@@ -139,6 +149,9 @@ class T05Phase2Artifacts:
     blocking_errors_json_path: Path
     module_relation_audit_csv_path: Path
     module_relation_audit_json_path: Path
+    swsdnode_out_path: Path
+    swsdnode_yes_nr_audit_csv_path: Path
+    swsdnode_yes_nr_audit_json_path: Path
     relation_cardinality_errors_csv_path: Path
     relation_cardinality_errors_json_path: Path
     summary_path: Path

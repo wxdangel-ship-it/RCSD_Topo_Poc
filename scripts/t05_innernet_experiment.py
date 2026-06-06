@@ -133,10 +133,13 @@ def main() -> int:
                 "phase2": {
                     "run_root": str(phase2.run_root),
                     "relation": str(phase2.relation_geojson_path),
+                    "swsdnode_out": str(phase2.swsdnode_out_path),
+                    "swsdnode_yes_nr_audit": str(phase2.swsdnode_yes_nr_audit_csv_path),
                     "summary": str(phase2.summary_path),
                     "relation_count": phase2.relation_count,
                     "success_count": phase2.success_count,
                     "failure_count": phase2.failure_count,
+                    "swsdnode_yes_nr_count": phase2_summary.get("swsdnode_yes_nr_count"),
                     "blocking_error_count": phase2_summary.get("blocking_error_count"),
                     "passed": phase2_summary.get("passed"),
                     "performance": phase2_summary.get("performance"),

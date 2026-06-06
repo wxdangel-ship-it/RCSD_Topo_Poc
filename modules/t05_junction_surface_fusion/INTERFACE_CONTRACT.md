@@ -228,10 +228,13 @@ Phase 2 输出：
 - `intersection_match_all.geojson`，CRS 为 CRS84 / WGS84 lon-lat，字段固定为 `target_id / base_id / status / level / is_highway`。
 - `rcsdroad_out.gpkg`、`rcsdnode_out.gpkg`。
 - `rcsdroad_split.gpkg`、`rcsdnode_generated.gpkg`、`rcsdnode_grouped.gpkg`。
-- `rcsd_junctionization_audit.csv/json`、`intersection_match_all_audit.csv/json`、`blocking_errors.csv/json`、`relation_cardinality_errors.csv/json`、`summary.json`。
+- `swsdnode_out.gpkg`：final SWSD `nodes.gpkg` 的 copy-on-write 标记输出。
+- `rcsd_junctionization_audit.csv/json`、`intersection_match_all_audit.csv/json`、`blocking_errors.csv/json`、`relation_cardinality_errors.csv/json`、`swsdnode_yes_nr_audit.csv/json`、`summary.json`。
 - `module_relation_audit_summary.csv/json`：按 T07/T02/T03/T04 输入与场景统计最终关系生产效果。
 
 Phase 2 失败统一 `status = 1`、`base_id = 0`。成功关系的 `base_id` 必须是 RCSD 语义路口主 node id，不得写普通 RCSDRoad id。T03-A 多 RCSDNode 与 T04 complex 多 RCSDNode 先归组再建关系；T03 road-only 与 T04 fallback road-only 才进入 RCSDRoad split。被 split 的原始 RCSDRoad 不进入 active `rcsdroad_out.gpkg`。
+
+若某个 SWSD 语义路口在 Phase 2 审计中确认 `no_related_rcsd`，且对应 SWSD node 原始 `has_evd = yes / is_anchor = yes`，`swsdnode_out.gpkg` 中这两个字段必须改写为 `yes_nr`，表示 not RCSD；输入 `nodes.gpkg` 不得原地修改，标记明细写入 `swsdnode_yes_nr_audit.csv/json`。
 
 Road-only 投影点落在 RCSDRoad 起终点 `min_endpoint_gap_m` 范围内时，不打断 road，不新增 RCSDNode；Phase 2 复用最近端点的 `snodeid / enodeid` 对应 RCSDNode 作为语义路口候选。若命中多个端点 RCSDNode，则按主 RCSDNode 选择规则归组后输出唯一 relation；若端点 RCSDNode 缺失，则保持失败并写 audit。
 

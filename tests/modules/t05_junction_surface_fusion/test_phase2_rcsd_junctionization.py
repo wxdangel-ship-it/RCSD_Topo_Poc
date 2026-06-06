@@ -265,7 +265,7 @@ def test_no_related_rcsd_outputs_failure_with_base_id_zero(tmp_path: Path) -> No
     artifacts = _run_phase2(
         tmp_path,
         surface_features=[_surface("200")],
-        swsd_nodes=[_node(200, 0, 0, mainnodeid="200")],
+        swsd_nodes=[_node(200, 0, 0, mainnodeid="200", has_evd="yes", is_anchor="yes")],
         rcsd_roads=[_road(1, (-10, 0), (10, 0))],
         rcsd_nodes=[_node(1, -10, 0), _node(2, 10, 0)],
         t03_rows=[
@@ -286,6 +286,22 @@ def test_no_related_rcsd_outputs_failure_with_base_id_zero(tmp_path: Path) -> No
     assert relation["properties"]["base_id"] == 0
     coords = relation["geometry"]["coordinates"]
     assert coords[0] == coords[1]
+    swsdnode_props = _layer_props(artifacts.swsdnode_out_path)[0]
+    assert swsdnode_props["has_evd"] == "yes_nr"
+    assert swsdnode_props["is_anchor"] == "yes_nr"
+    audit_rows = json.loads(artifacts.swsdnode_yes_nr_audit_json_path.read_text(encoding="utf-8"))["rows"]
+    assert audit_rows == [
+        {
+            "target_id": "200",
+            "node_id": "200",
+            "has_evd_before": "yes",
+            "is_anchor_before": "yes",
+            "has_evd_after": "yes_nr",
+            "is_anchor_after": "yes_nr",
+            "reason": "no_related_rcsd",
+        }
+    ]
+    assert _summary(artifacts)["swsdnode_yes_nr_count"] == 1
 
 
 def test_t04_fail4_fallback_relation_without_surface_outputs_success(tmp_path: Path) -> None:

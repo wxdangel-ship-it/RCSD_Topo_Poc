@@ -572,6 +572,10 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
         relation_features=relation_features,
         blocking_errors=blocking_errors,
     )
+    swsdnode_out_features, swsdnode_yes_nr_audit_rows = _swsdnode_yes_nr_outputs(
+        swsd_nodes=swsd_nodes,
+        audit_rows=audit_rows,
+    )
 
     write_started = perf_counter()
     log("writing outputs")
@@ -600,6 +604,8 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
         split_road_features=list(split_road_features_by_id.values()),
         generated_node_features=generated_node_features,
         grouped_node_features=grouped_node_features,
+        swsdnode_out_features=swsdnode_out_features,
+        swsdnode_yes_nr_audit_rows=swsdnode_yes_nr_audit_rows,
         audit_rows=audit_rows,
         blocking_errors=blocking_errors,
         module_relation_audit_rows=module_relation_audit_rows,
@@ -638,6 +644,9 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
         blocking_errors_json_path=outputs["blocking_errors_json_path"],
         module_relation_audit_csv_path=outputs["module_relation_audit_csv_path"],
         module_relation_audit_json_path=outputs["module_relation_audit_json_path"],
+        swsdnode_out_path=outputs["swsdnode_out_path"],
+        swsdnode_yes_nr_audit_csv_path=outputs["swsdnode_yes_nr_audit_csv_path"],
+        swsdnode_yes_nr_audit_json_path=outputs["swsdnode_yes_nr_audit_json_path"],
         relation_cardinality_errors_csv_path=outputs["relation_cardinality_errors_csv_path"],
         relation_cardinality_errors_json_path=outputs["relation_cardinality_errors_json_path"],
         summary_path=outputs["summary_path"],
@@ -1123,6 +1132,65 @@ def _module_relation_audit_summary(
     return rows
 
 
+def _swsdnode_yes_nr_outputs(
+    *,
+    swsd_nodes: list[dict[str, Any]],
+    audit_rows: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    no_rcsd_targets = {
+        _text(row.get("target_id"))
+        for row in audit_rows
+        if _text(row.get("target_id"))
+        and _text(row.get("scene")) == SCENE_NO_RCSD
+        and _int_text(row.get("status")) == str(STATUS_FAILURE)
+        and _text(row.get("reason")) == "no_related_rcsd"
+    }
+    output_features: list[dict[str, Any]] = []
+    audit: list[dict[str, Any]] = []
+    for node in swsd_nodes:
+        feature = _copy_feature(node)
+        props = feature.setdefault("properties", {})
+        target_id = _swsd_node_target_id(props)
+        has_evd_key = _property_key(props, "has_evd")
+        is_anchor_key = _property_key(props, "is_anchor")
+        has_evd_before = props.get(has_evd_key) if has_evd_key else None
+        is_anchor_before = props.get(is_anchor_key) if is_anchor_key else None
+        if (
+            target_id in no_rcsd_targets
+            and has_evd_key
+            and is_anchor_key
+            and _text(has_evd_before).lower() == "yes"
+            and _text(is_anchor_before).lower() == "yes"
+        ):
+            props[has_evd_key] = "yes_nr"
+            props[is_anchor_key] = "yes_nr"
+            audit.append(
+                {
+                    "target_id": target_id,
+                    "node_id": _text(_field_value(props, "id")),
+                    "has_evd_before": has_evd_before,
+                    "is_anchor_before": is_anchor_before,
+                    "has_evd_after": "yes_nr",
+                    "is_anchor_after": "yes_nr",
+                    "reason": "no_related_rcsd",
+                }
+            )
+        output_features.append(feature)
+    return output_features, audit
+
+
+def _swsd_node_target_id(props: dict[str, Any]) -> str:
+    return _text(_field_value(props, "mainnodeid") or _field_value(props, "id"))
+
+
+def _property_key(props: dict[str, Any], field_name: str) -> str | None:
+    expected = field_name.lower()
+    for key in props:
+        if str(key).lower() == expected:
+            return key
+    return None
+
+
 def _module_audit_scenario(decision: Any) -> str:
     if decision.scene in {SCENE_DIRECT, SCENE_GROUP_EXISTING}:
         return "pre_success_rcsd_semantic_relation"
@@ -1489,6 +1557,13 @@ def _list_values(value: Any) -> list[Any]:
     if isinstance(value, (list, tuple, set)):
         return list(value)
     return [part.strip() for part in str(value).replace(",", "|").split("|") if part.strip()]
+
+
+def _int_text(value: Any) -> str:
+    try:
+        return str(int(value))
+    except (TypeError, ValueError):
+        return _text(value)
 
 
 def _text(value: Any) -> str:

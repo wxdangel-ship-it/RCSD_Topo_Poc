@@ -189,6 +189,26 @@
 - summary 必须记录输入、输出、参数、字段解析、CRS、Lane 记录数、SW Road id 索引规模、缺失 Link 数、无效方向 / 几何 / 空 arrow 计数、arrow 输出计数与性能字段。
 - 所有输入、输出路径必须通过参数提供。
 
+### Tool9：RCSD 数据清理
+
+- 输入一：RCSDNode GPKG，依赖字段 `id`，可选字段 `mainnodeid`。
+- 输入二：RCSDRoad GPKG，依赖字段 `id / snodeid / enodeid`。
+- 输入三：道路面 GPKG，必须包含 Polygon / MultiPolygon 几何。
+- 输出：
+  - `rcsdnode_clean_tool9.gpkg`
+  - `rcsdroad_clean_tool9.gpkg`
+  - `rcsd_clean_summary_tool9.json`
+- 输出 CRS：`EPSG:3857`。
+- 处理规则：
+  - RCSDNode 默认使用 `covers` 判定是否被道路面覆盖，因此位于道路面边界上的 node 默认保留；如需严格内部包含，可通过 `--node-predicate contains` 切换。
+  - 若 node 的 `mainnodeid` 为空或 `0`，按该 node 自身作为单节点组判定。
+  - 若 node 的 `mainnodeid` 非空且非 `0`，按 `mainnodeid` 聚合为语义路口组；只有该组所有 node 均被道路面覆盖 / 包含时，整组 node 才保留，否则整组删除。
+  - RCSDRoad 先按几何与道路面相交判定候选；不相交的 Road 删除。
+  - 相交候选 Road 继续校验 `snodeid / enodeid`：只有起终点 node 均在最终保留 node 集合内时，该 Road 才保留。
+- 输出边界：Tool9 copy-on-write 输出清理后的 RCSDNode / RCSDRoad 与 summary，不修改输入 RCSDNode / RCSDRoad / 道路面。
+- summary 必须记录输入、输出、参数、字段解析、CRS、node 覆盖计数、语义组保留 / 删除计数、Road 相交计数、端点过滤计数、输出 bounds 与性能字段。
+- 所有输入、输出路径必须通过参数提供。
+
 ## 2. EntryPoints
 
 运行前先在 repo root 执行：
@@ -282,6 +302,17 @@ Tool8：
   --swnode-gpkg /mnt/d/TestData/POC_Data/first_layer_road_net_v0/SW/A200-2025M12-node.gpkg \
   --swroad-gpkg /mnt/d/TestData/POC_Data/first_layer_road_net_v0/SW/A200-2025M12-road.gpkg \
   --arrow-output /mnt/d/TestData/POC_Data/first_layer_road_net_v0/SW/sw_arrow_tool8.gpkg
+```
+
+Tool9：
+
+```bash
+.venv/bin/python scripts/t08_tool9_rcsd_cleaning.py \
+  --rcsdnode-gpkg /mnt/d/TestData/POC_Data/input/RCSDNode.gpkg \
+  --rcsdroad-gpkg /mnt/d/TestData/POC_Data/input/RCSDRoad.gpkg \
+  --road-surface-gpkg /mnt/d/TestData/POC_Data/input/road_surface.gpkg \
+  --nodes-output /mnt/d/TestData/POC_Data/t08_preprocess/rcsd/rcsdnode_clean_tool9.gpkg \
+  --roads-output /mnt/d/TestData/POC_Data/t08_preprocess/rcsd/rcsdroad_clean_tool9.gpkg
 ```
 
 ## 3. Tool1 Params
@@ -401,7 +432,21 @@ Tool8：
 - `--swnode-default-crs / --swroad-default-crs`：输入缺失 CRS 时使用；Laneinfo 非空间时不需要 CRS。
 - `--progress-interval`：可选控制台进度输出间隔，默认每 `10000` 条输出 Road 方向 arrow 记录输出一次。
 
-## 11. Acceptance
+## 11. Tool9 Params
+
+- `--rcsdnode-gpkg`：RCSDNode 输入 GPKG。
+- `--rcsdroad-gpkg`：RCSDRoad 输入 GPKG。
+- `--road-surface-gpkg`：道路面输入 GPKG。
+- `--nodes-output`：清理后的 RCSDNode 输出 GPKG，文件名必须以 `_tool9.gpkg` 结尾。
+- `--roads-output`：清理后的 RCSDRoad 输出 GPKG，文件名必须以 `_tool9.gpkg` 结尾。
+- `--rcsdnode-layer / --rcsdroad-layer / --road-surface-layer`：可选输入图层名。
+- `--summary-output`：可选 summary JSON 输出路径，文件名必须以 `_tool9.json` 结尾。
+- `--target-epsg`：最终输出 EPSG，默认 `3857`。
+- `--rcsdnode-default-crs / --rcsdroad-default-crs / --road-surface-default-crs`：输入缺失 CRS 时使用。
+- `--node-predicate`：node 与道路面空间关系判定，默认 `covers`，可选 `contains`。
+- `--progress-interval`：可选控制台进度输出间隔，默认每 `10000` 条 Road 记录输出一次。
+
+## 12. Acceptance
 
 1. Tool1 支持 SHP / GeoJSON 转 GPKG 与 GPKG 转 GeoJSON，所有输出均为输入目录下追加 `_tool1` 的目标格式文件。
 2. Tool2 只接受 GPKG 输入。
@@ -424,6 +469,9 @@ Tool8：
 19. Tool7 仅输出 `CondType = 1` 且 in/out Link 均存在于 SW Road 的 restriction，输出记录继承 C 表业务字段，几何能解释 Link 端点重叠与非重叠连接。
 20. Tool8 输出 `sw_arrow_tool8.gpkg` 且 GPKG CRS 为 `EPSG:3857`。
 21. Tool8 仅输出 `LinkID` 存在于 SW Road 的 Laneinfo 记录；同一 `LinkID + Lane_Dir` 只输出一条记录，`Arrow_Dir` 按 `Seq_Nm` 顺序拆分并重新用逗号拼接为 `arrow` 字段，几何方向必须符合 `direction / Lane_Dir` 映射规则。
-22. 所有路径均由参数提供，不写死内网目录。
-23. 所有 T08 成果输出文件名均以 `_toolX` 结尾。
-24. summary 可追溯输入、输出、参数、字段解析、CRS 与计数。
+22. Tool9 输出 `rcsdnode_clean_tool9.gpkg / rcsdroad_clean_tool9.gpkg` 且 GPKG CRS 为 `EPSG:3857`。
+23. Tool9 对普通 node 按道路面覆盖 / 包含判定保留；对 `mainnodeid` 非空且非 `0` 的语义路口组，必须整组所有 node 均满足道路面覆盖 / 包含才保留。
+24. Tool9 仅保留与道路面相交且 `snodeid / enodeid` 均在最终保留 node 集合内的 RCSDRoad。
+25. 所有路径均由参数提供，不写死内网目录。
+26. 所有 T08 成果输出文件名均以 `_toolX` 结尾。
+27. summary 可追溯输入、输出、参数、字段解析、CRS 与计数。

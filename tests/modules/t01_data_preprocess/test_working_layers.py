@@ -34,7 +34,15 @@ def test_initialize_working_layers_creates_runtime_fields(tmp_path: Path) -> Non
         road_path,
         [
             {
-                "properties": {"id": "r1", "snodeid": 1, "enodeid": 2, "direction": 2, "formway": 0},
+                "properties": {
+                    "id": "r1",
+                    "snodeid": 1,
+                    "enodeid": 2,
+                    "direction": 2,
+                    "formway": 0,
+                    "s_grade": "0-2单",
+                    "segment_id": "old_pair",
+                },
                 "geometry": LineString([(0.0, 0.0), (1.0, 0.0)]),
             }
         ],

@@ -177,7 +177,7 @@ def _step5a_base_match(grade_2: Optional[int], kind_2: Optional[int]) -> bool:
 
 
 def _step5b_base_match(grade_2: Optional[int], kind_2: Optional[int]) -> bool:
-    return is_full_through_or_t_kind(kind_2) and grade_2 in {1, 2, 3}
+    return (is_full_through_or_t_kind(kind_2) or kind_2 == 128) and grade_2 in {1, 2, 3}
 
 
 def _build_group_to_road_ids(
@@ -245,7 +245,7 @@ def _is_step5c_current_input_candidate(node: NodeFeatureRecord) -> bool:
     kind_2 = _current_kind_2(node)
     return (
         is_active_closed_con(_current_closed_con(node))
-        and kind_2 in {4, 64, 2048}
+        and kind_2 in {4, 64, 128, 2048}
         and grade_2 in {1, 2, 3}
     )
 

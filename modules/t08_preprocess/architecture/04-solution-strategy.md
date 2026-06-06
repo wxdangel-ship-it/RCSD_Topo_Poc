@@ -69,6 +69,16 @@ Tool8 读取 SW Laneinfo、SW Node 与 SW Road。Laneinfo 可以是非空间 GPK
 3. 基于 SW Road `direction` 与 Laneinfo `Lane_Dir` 定向 Link 几何：`direction in {0,1,2}` 且 `Lane_Dir = 2` 使用原方向，`Lane_Dir = 3` 使用反向；`direction = 3` 时二者相反。
 4. 输出 `sw_arrow_tool8.gpkg / sw_arrow_summary_tool8.json`，不修改输入 Laneinfo、SW Node 或 SW Road。
 
+## Tool9
+
+Tool9 读取 RCSDNode、RCSDRoad 与道路面 GPKG，并统一投影到 `EPSG:3857` 后执行清理。
+
+1. RCSDNode 按 `mainnodeid` 聚合语义路口；`mainnodeid` 为空或 `0` 时按单 node 组处理。
+2. 默认使用 `covers` 判定 node 是否被道路面覆盖，保留道路面边界上的 node；需要严格内部包含时可切换为 `contains`。
+3. 语义路口组只有在组内所有 node 均被道路面覆盖 / 包含时整组保留，否则整组删除。
+4. RCSDRoad 先按几何与道路面相交过滤，再按 `snodeid / enodeid` 是否均属于最终保留 node 集合过滤。
+5. 输出 `rcsdnode_clean_tool9.gpkg / rcsdroad_clean_tool9.gpkg / rcsd_clean_summary_tool9.json`，不修改输入 RCSDNode、RCSDRoad 或道路面。
+
 ## 输出策略
 
 - Tool1 输出同目录追加 `_tool1` 的目标格式文件与 summary。
@@ -79,4 +89,5 @@ Tool8 读取 SW Laneinfo、SW Node 与 SW Road。Laneinfo 可以是非空间 GPK
 - Tool6 输出人工质检 CSV、目视审查 GPKG 与 summary，不输出修复后的 Nodes/Roads。
 - Tool7 输出追加 `_tool7` 的显性 restriction GPKG 与 summary，不输出或改写 Nodes/Roads。
 - Tool8 输出追加 `_tool8` 的 Road 方向级显性 arrow GPKG 与 summary，不输出或改写 Laneinfo/Nodes/Roads。
+- Tool9 输出追加 `_tool9` 的清理后 RCSDNode / RCSDRoad GPKG 与 summary，不输出或改写输入道路面。
 - 所有路径由命令参数提供。

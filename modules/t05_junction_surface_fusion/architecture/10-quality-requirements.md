@@ -72,6 +72,7 @@
 - Cardinality QC 错误必须输出 `relation_cardinality_errors.csv/json`，并给出 `introduced_by_module / source_modules / source_case_ids / scenes / reasons` 归因信息；错误 relation 必须从 `intersection_match_all.geojson` 主表剔除。
 - `level = grade - 1`，缺失、为空或非法时为 `-1`。
 - `is_highway = closed_con - 1`，缺失、为空或非法时为 `-1`。
+- `no_related_rcsd` 场景下，若 SWSD node 原始 `has_evd = yes / is_anchor = yes`，T05 必须只在 copy-on-write `swsdnode_out.gpkg` 中改写为 `yes_nr`，并输出 `swsdnode_yes_nr_audit.csv/json`；不得原地修改输入 nodes。
 - 多个 `base_id` 无法合并时必须 blocking error，不得输出多条 relation，也不得写成普通失败关系。
 - T03 handoff 补齐只能读取 T03 已输出的 relation evidence 与 case 级 `step6_status/step6_audit` 字段，不得反推或新增 T03 业务语义。
 - T03 handoff 补齐必须输出独立 backfilled evidence、audit 与 summary，不覆盖原始 T03 输出。

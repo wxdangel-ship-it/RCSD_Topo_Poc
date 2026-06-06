@@ -3,13 +3,14 @@
 ## 当前风险
 
 - Tool2 Kind enrich 沿用 T00 的空间匹配口径，后续如果业务需要更强匹配规则，必须独立冻结契约。
-- Tool3 当前冻结 Nodes 类型聚合，Tool4 当前冻结路口类型修复，Tool5 当前冻结复杂路口预处理，Tool6 当前冻结 Nodes 类型质检，Tool7 当前冻结交通限制显性化，Tool8 当前冻结 Laneinfo 箭头显性化；其它 Node 预处理字段语义尚未定义，不能提前实现。
+- Tool3 当前冻结 Nodes 类型聚合，Tool4 当前冻结路口类型修复，Tool5 当前冻结复杂路口预处理，Tool6 当前冻结 Nodes 类型质检，Tool7 当前冻结交通限制显性化，Tool8 当前冻结 Laneinfo 箭头显性化，Tool9 当前冻结 RCSD 数据清理；其它 Node 预处理字段语义尚未定义，不能提前实现。
 - Tool5 复杂分歧 / 合流聚合依赖 Road 有向拓扑与候选字段质量，内网运行后需要通过 summary 复核聚合组。
 - Tool4 不自行识别连续分歧合流 T 型候选；该候选由 Tool6 输出，Tool4 只消费人工确认后的 Tool6 结果并执行契约内修复。
 - Tool5 错误 1 对多处理复用 T02 `node_error_2` 生成与修复口径，依赖 `RCSDIntersection` 输入质量；删除 Road 必须通过 summary 复核。
 - Tool6 连续分歧合流与交叉路口质检依赖 Road 方向、几何方向与 `kind` 字段质量；CSV `是否修复` 默认 `1` 只是人工确认标记，不代表 Tool6 已执行修复。
 - Tool7 交通限制显性化依赖 C 表 `inLinkID / outLinkID` 与 SW Road id 的一致性；端点连接只表达显性限制几何，不推断额外交通限制语义。
 - Tool8 Laneinfo 箭头显性化依赖 Laneinfo `LinkID / Seq_Nm / Arrow_Dir / Lane_Dir` 与 SW Road `direction`、Link 几何方向的一致性；输出 arrow 只表达上游 Laneinfo 明示箭头，不推断额外车道通行规则。
+- Tool9 RCSD 数据清理依赖道路面几何完整性与 RCSDRoad `snodeid / enodeid` 拓扑一致性；边界 node 默认按 `covers` 保留，若业务要求严格内部包含需显式切换参数。
 
 ## 缓解方式
 

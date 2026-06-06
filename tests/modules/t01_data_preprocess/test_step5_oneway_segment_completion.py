@@ -426,6 +426,7 @@ def test_oneway_completion_final_fallback_handles_phase_mismatch_and_same_group(
             _node_feature(2, 1.0, 0.0, kind_2=8, grade_2=1, closed_con=1),
             _node_feature(31, 0.0, 1.0, kind_2=4, grade_2=3, closed_con=2, mainnodeid=30),
             _node_feature(32, 1.0, 1.0, kind_2=4, grade_2=3, closed_con=2, mainnodeid=30),
+            _node_feature(33, 2.0, 1.0, kind_2=4, grade_2=3, closed_con=2, mainnodeid=30),
         ],
     )
     write_geojson(
@@ -433,6 +434,7 @@ def test_oneway_completion_final_fallback_handles_phase_mismatch_and_same_group(
         [
             _road_feature("phase_mismatch", 1, 2, [(0.0, 0.0), (1.0, 0.0)], road_kind=1),
             _road_feature("same_group", 31, 32, [(0.0, 1.0), (1.0, 1.0)], road_kind=3),
+            _road_feature("same_group_dual", 32, 33, [(1.0, 1.0), (2.0, 1.0)], direction=1, road_kind=3),
         ],
     )
 
@@ -450,8 +452,11 @@ def test_oneway_completion_final_fallback_handles_phase_mismatch_and_same_group(
     assert road_props["same_group"]["segmentid"] == "30_30"
     assert road_props["same_group"]["sgrade"] == "0-2单"
     assert road_props["same_group"]["segment_build_source"] == "oneway_single_road_fallback"
-    assert artifacts.summary["final_fallback_segment_count"] == 2
-    assert artifacts.summary["final_fallback_road_count"] == 2
+    assert road_props["same_group_dual"]["segmentid"] == "30_30_1"
+    assert road_props["same_group_dual"]["sgrade"] == "0-2双"
+    assert road_props["same_group_dual"]["segment_build_source"] == "oneway_single_road_fallback"
+    assert artifacts.summary["final_fallback_segment_count"] == 3
+    assert artifacts.summary["final_fallback_road_count"] == 3
     assert artifacts.summary["road_kind_1_built_road_count"] == 1
     assert artifacts.summary["unsegmented_road_count"] == 0
 

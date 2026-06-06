@@ -154,10 +154,12 @@ artifacts = run_t05_export_junctionization_bundle(
 - `rcsdroad_split.gpkg`
 - `rcsdnode_generated.gpkg`
 - `rcsdnode_grouped.gpkg`
+- `swsdnode_out.gpkg`
 - `rcsd_junctionization_audit.csv/json`
 - `intersection_match_all_audit.csv/json`
 - `blocking_errors.csv/json`
 - `module_relation_audit_summary.csv/json`
+- `swsdnode_yes_nr_audit.csv/json`
 - `relation_cardinality_errors.csv/json`
 - `summary.json`
 
@@ -178,6 +180,8 @@ Road-only 场景中，若投影点距离 RCSDRoad 起终点小于 `min_endpoint_
 输出阶段会逐文件打印 `writing/done` 进度，并在 `summary.performance.output_timings_sec` 与 `summary.performance.output_sizes_bytes` 中记录每个输出文件的耗时与大小。大体量 `rcsdroad_out.gpkg / rcsdnode_out.gpkg` 使用分批 GPKG 写出，避免逐 feature 写入成为瓶颈。
 
 `module_relation_audit_summary.csv/json` 按 `T07 / T02_INPUT / T03 / T04` 统计输入 evidence 总量与四类结果：前置失败无关联、前置成功且有 RCSD 语义路口、前置成功且有 RCSDRoad、前置成功但无 RCSD 关联。每类记录 relation 成功数、失败数、缺失 relation 数与 blocking error 数，用于验证最终关系生产是否符合预期。
+
+`swsdnode_out.gpkg` 是 final SWSD `nodes.gpkg` 的 copy-on-write 标记输出，不原地修改输入。若某个 SWSD 语义路口在 Phase 2 审计中确认 `no_related_rcsd`，且对应 SWSD node 原始 `has_evd = yes / is_anchor = yes`，T05 将这两个字段改写为 `yes_nr`，表示 not RCSD，用于最终成功率统计时排除纯 SWSD 构面但无 RCSD 关联的数据；标记明细写入 `swsdnode_yes_nr_audit.csv/json`。
 
 T07 历史路口锚定成果与 T03/T04 relation evidence 同构。若 T07/T03/T04 evidence 中某个 target 提供 `status_suggested = 0` 且 `base_id_candidate` 为有效 RCSD 语义路口主 node id 或 group id，Phase 2 优先作为 direct relation 消费，不再用同 row 的 `required_rcsdnode_ids` 重新归组；即使 T07 target 没有 Phase 1 surface，也会进入 `intersection_match_all.geojson`。
 

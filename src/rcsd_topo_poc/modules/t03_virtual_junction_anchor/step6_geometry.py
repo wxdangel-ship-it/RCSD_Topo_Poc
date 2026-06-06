@@ -28,6 +28,8 @@ from rcsd_topo_poc.modules.t03_virtual_junction_anchor.finalization_models impor
 
 TARGET_NODE_BUFFER_M = 5.5
 SUPPORT_ONLY_SEAM_BRIDGE_BUFFER_M = 9.0
+SUPPORT_ONLY_TINY_FRAGMENT_MAX_AREA_M2 = 12.0
+SUPPORT_ONLY_DOMINANT_COMPONENT_MIN_RATIO = 0.95
 REQUIRED_NODE_BUFFER_M = 5.5
 REQUIRED_ROAD_BUFFER_M = 6.0
 SEMANTIC_INTRA_LINE_BUFFER_M = 5.5
@@ -574,22 +576,6 @@ def _contiguous_allowed_prefix(
     return chosen
 
 
-def _retain_components_touching_anchors(
-    geometry: BaseGeometry | None,
-    anchor_geometries: Iterable[BaseGeometry | None],
-) -> BaseGeometry | None:
-    cleaned = _clean_geometry(geometry)
-    if cleaned is None:
-        return None
-    anchors = _union_geometries(anchor_geometries)
-    if anchors is None:
-        return cleaned
-    return _retain_components_touching_keep_geometry(
-        cleaned,
-        _clean_geometry(anchors.buffer(NODE_COVER_TOLERANCE_M)),
-    )
-
-
 def _retain_components_touching_keep_geometry(
     geometry: BaseGeometry | None,
     keep_geometry: BaseGeometry | None,
@@ -607,6 +593,40 @@ def _retain_components_touching_keep_geometry(
     if not kept:
         return None
     return _clean_geometry(unary_union(kept))
+
+
+def _prune_support_only_tiny_fragments(
+    finalization_context: FinalizationContext,
+    geometry: BaseGeometry | None,
+    *,
+    geometry_cache: _Step6GeometryCache | None = None,
+) -> tuple[BaseGeometry | None, bool]:
+    cleaned = _clean_geometry(geometry)
+    if cleaned is None:
+        return None, False
+    case_result = finalization_context.association_case_result
+    if (
+        case_result.template_class != "single_sided_t_mouth"
+        or case_result.reason != "association_support_only"
+    ):
+        return cleaned, False
+    polygons = sorted(_iter_polygons(cleaned), key=lambda item: item.area, reverse=True)
+    if len(polygons) < 3:
+        return cleaned, False
+    total_area = sum(polygon.area for polygon in polygons)
+    if total_area <= 0.0:
+        return cleaned, False
+    dominant = polygons[0]
+    fragment_area = total_area - dominant.area
+    anchor = _target_anchor_geometry(finalization_context, geometry_cache=geometry_cache)
+    if (
+        dominant.area / total_area >= SUPPORT_ONLY_DOMINANT_COMPONENT_MIN_RATIO
+        and fragment_area <= SUPPORT_ONLY_TINY_FRAGMENT_MAX_AREA_M2
+        and anchor is not None
+        and dominant.intersects(anchor.buffer(SUPPORT_ONLY_SEAM_BRIDGE_BUFFER_M))
+    ):
+        return _clean_geometry(dominant), True
+    return cleaned, False
 
 
 def _line_coverage_ratio(line_geometry: BaseGeometry | None, polygon_geometry: BaseGeometry | None) -> float:
@@ -1724,6 +1744,7 @@ def build_step6_result(
             status_started_perf=status_started_perf,
         )
 
+    support_only_tiny_fragment_pruned = False
     final_polygon = raw_polygon
     if foreign_mask_geometry is not None:
         final_polygon = _clean_geometry(final_polygon.difference(foreign_mask_geometry))
@@ -1747,6 +1768,12 @@ def build_step6_result(
         if final_polygon is not None and foreign_mask_geometry is not None:
             final_polygon = _clean_geometry(final_polygon.difference(foreign_mask_geometry))
             final_polygon = _retain_components_touching_keep_geometry(final_polygon, anchor_keep_geometry)
+    if final_polygon is not None:
+        final_polygon, support_only_tiny_fragment_pruned = _prune_support_only_tiny_fragments(
+            finalization_context,
+            final_polygon,
+            geometry_cache=geometry_cache,
+        )
     _accumulate_stage_timer(stage_timers, "step6_finalize_cleanup", perf_counter() - cleanup_started_perf)
 
     validation_started_perf = perf_counter()
@@ -1923,6 +1950,7 @@ def build_step6_result(
             "support_only_seam_bridge_applied": support_only_seam_bridge_geometry is not None,
             "support_only_seam_bridge_buffer_m": SUPPORT_ONLY_SEAM_BRIDGE_BUFFER_M,
             "support_only_seam_bridge_metrics": support_only_seam_bridge_metrics,
+            "support_only_tiny_fragment_pruned": support_only_tiny_fragment_pruned,
             "directional_cut_rule": {
                 "mode": "directional_selected_road_cut",
                 "cut_distance_m": DIRECTIONAL_CUT_DISTANCE_M,

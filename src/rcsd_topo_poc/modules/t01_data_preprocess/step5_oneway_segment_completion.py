@@ -687,7 +687,11 @@ def _single_road_fallback_semantic_endpoints(
     if road.direction in {2, 3}:
         return _directed_oneway_semantic_endpoints(road, physical_to_semantic)
     if road.direction in {0, 1}:
-        return _road_semantic_endpoints(road, physical_to_semantic)
+        snode_group = physical_to_semantic.get(road.snodeid)
+        enode_group = physical_to_semantic.get(road.enodeid)
+        if snode_group is None or enode_group is None:
+            return None
+        return snode_group, enode_group
     return None
 
 

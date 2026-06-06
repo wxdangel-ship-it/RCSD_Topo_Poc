@@ -225,7 +225,10 @@ def _initialize_road_properties(props: dict[str, Any]) -> dict[str, Any]:
         normalized_id_value = _normalize_id_property_value(initialized.get(field_name))
         if normalized_id_value is not None:
             initialized[field_name] = normalized_id_value
-    return canonicalize_road_working_properties(initialized)
+    initialized = canonicalize_road_working_properties(initialized)
+    set_road_sgrade(initialized, None)
+    set_road_segmentid(initialized, None)
+    return initialized
 
 
 def sanitize_public_node_properties(properties: dict[str, Any]) -> dict[str, Any]:

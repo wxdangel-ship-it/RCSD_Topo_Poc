@@ -26,6 +26,10 @@ from rcsd_topo_poc.modules.t08_preprocess.lane_arrow import (
     T08LaneArrowArtifacts,
     run_t08_lane_arrow,
 )
+from rcsd_topo_poc.modules.t08_preprocess.rcsd_cleaning import (
+    T08RcsdCleaningArtifacts,
+    run_t08_rcsd_cleaning,
+)
 from rcsd_topo_poc.modules.t08_preprocess.shp_to_gpkg import (
     ShpToGpkgResult,
     Tool1ConversionResult,
@@ -40,6 +44,7 @@ __all__ = [
     "T08LaneArrowArtifacts",
     "T08NodesTypeAggregationArtifacts",
     "T08NodesTypeQcArtifacts",
+    "T08RcsdCleaningArtifacts",
     "T08RoadPreprocessArtifacts",
     "T08TrafficRestrictionArtifacts",
     "Tool1ConversionResult",
@@ -48,6 +53,7 @@ __all__ = [
     "run_t08_lane_arrow",
     "run_t08_nodes_type_aggregation",
     "run_t08_nodes_type_qc",
+    "run_t08_rcsd_cleaning",
     "run_t08_road_preprocess",
     "run_t08_traffic_restriction",
     "run_t08_tool1_conversions",

@@ -1,8 +1,13 @@
 from __future__ import annotations
 
-from pathlib import Path
 from dataclasses import replace
+from pathlib import Path
+from types import SimpleNamespace
 
+from shapely.geometry import Point, box
+from shapely.ops import unary_union
+
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor import step6_geometry
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.association_loader import (
     load_association_case_specs,
     load_association_context,
@@ -59,6 +64,29 @@ def _road_covered_length(finalization_context: FinalizationContext, step6_result
     if geometry is None:
         return 0.0
     return road.geometry.intersection(geometry).length
+
+
+def test_support_only_tiny_fragment_cleanup_keeps_dominant_target_component() -> None:
+    context = SimpleNamespace(
+        association_case_result=SimpleNamespace(
+            template_class="single_sided_t_mouth",
+            reason="association_support_only",
+        ),
+        association_context=SimpleNamespace(
+            step1_context=SimpleNamespace(
+                target_group=SimpleNamespace(
+                    nodes=(SimpleNamespace(geometry=Point(0.0, 0.0)),),
+                ),
+            ),
+        ),
+    )
+    geometry = unary_union([box(-5.0, -5.0, 5.0, 5.0), box(20.0, 20.0, 21.0, 21.0), box(22.0, 20.0, 22.5, 20.5)])
+
+    pruned, applied = step6_geometry._prune_support_only_tiny_fragments(context, geometry)
+
+    assert applied is True
+    assert step6_geometry._component_count(pruned) == 1
+    assert pruned.area == 100.0
 
 
 def test_finalization_accepts_case_a_when_step6_is_clean(tmp_path: Path) -> None:

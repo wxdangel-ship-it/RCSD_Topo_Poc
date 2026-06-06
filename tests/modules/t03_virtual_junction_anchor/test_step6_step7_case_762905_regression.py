@@ -144,7 +144,7 @@ def test_real_case_762905_single_sided_strong_rcsdnode_is_kept_inside_final_poly
     ) == pytest.approx(1.0)
 
 
-def test_real_case_21497119_single_sided_terminal_rcsdroad_anchors(tmp_path: Path) -> None:
+def test_real_case_21497119_single_sided_degree1_rcsdnode_stays_support_only(tmp_path: Path) -> None:
     case_id = "21497119"
     if not (REAL_T03_ROOT / case_id).is_dir():
         pytest.skip(f"missing decoded T03 case: {REAL_T03_ROOT / case_id}")
@@ -166,13 +166,23 @@ def test_real_case_21497119_single_sided_terminal_rcsdroad_anchors(tmp_path: Pat
     step7_result = build_step7_result(finalization_context, step6_result)
 
     assert association_context.step3_status_doc["step3_state"] == "review"
-    assert association_case_result.association_class == "A"
-    assert association_case_result.extra_status_fields["required_rcsdnode_ids"] == ["5384380731228527"]
-    assert association_case_result.extra_status_fields["required_rcsdroad_ids"] == ["5384380731228263"]
+    assert association_case_result.association_class == "B"
+    assert association_case_result.reason == "association_support_only"
+    assert association_case_result.extra_status_fields["required_rcsdnode_ids"] == []
+    assert association_case_result.extra_status_fields["required_rcsdroad_ids"] == []
+    assert association_case_result.extra_status_fields["support_rcsdroad_ids"] == [
+        "5384380731228186",
+        "5384380731228263",
+    ]
+    assert association_case_result.extra_status_fields["required_rcsdnode_gate_audit"]["5384380731228527"][
+        "gate_decision"
+    ] == "dropped"
     assert association_case_result.extra_status_fields["required_rcsdnode_gate_audit"]["5384380731228527"][
         "gate_reason"
-    ] == "single_sided_required_core_terminal_degree1_anchor_review"
+    ] == "single_sided_required_core_singleton_degree_below_semantic_threshold"
     assert step6_result.geometry_established is True
+    assert step6_result.audit_doc["assembly"]["support_only_tiny_fragment_pruned"] is True
+    assert step6_result.audit_doc["assembly"]["polygon_final_metrics"]["component_count"] == 1
     assert step6_result.extra_status_fields["semantic_intra_rcsdnode_line_count"] == 0
     assert step7_result.step7_state == "accepted"
     assert step7_result.reason == "step7_accepted_with_upstream_step3_visual_risk"

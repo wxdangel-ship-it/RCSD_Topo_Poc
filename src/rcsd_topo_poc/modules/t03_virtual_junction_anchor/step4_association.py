@@ -1025,17 +1025,10 @@ def _apply_required_rcsdnode_template_gate(
             for group_id, group_required_ids in list(required_groups.items()):
                 row = gate_audit[group_id]
                 if not row["compact_multi_node_semantic_group"] and row["effective_degree"] < 3:
-                    if (
-                        row["effective_degree"] == 1
-                        and row["min_distance_to_representative_m"] <= SINGLE_SIDED_REQUIRED_CORE_ANCHOR_DISTANCE_M
-                        and context.step3_status_doc.get("reason") == "single_sided_direction_ambiguous"
-                    ):
-                        row["gate_reason"] = "single_sided_required_core_terminal_degree1_anchor_review"
-                    else:
-                        row["gate_decision"] = "dropped"
-                        row["gate_reason"] = "single_sided_required_core_singleton_degree_below_semantic_threshold"
-                        pre_dropped_required_ids.update(group_required_ids)
-                        continue
+                    row["gate_decision"] = "dropped"
+                    row["gate_reason"] = "single_sided_required_core_singleton_degree_below_semantic_threshold"
+                    pre_dropped_required_ids.update(group_required_ids)
+                    continue
                 if not row["compact_multi_node_semantic_group"]:
                     direction_audit = build_single_sided_direction_gate_audit(
                         context=context,
@@ -1043,10 +1036,7 @@ def _apply_required_rcsdnode_template_gate(
                         candidate_roads=candidate_roads,
                     )
                     row.update(direction_audit)
-                    if (
-                        row.get("gate_reason") != "single_sided_required_core_terminal_degree1_anchor_review"
-                        and not direction_audit["direction_gate_passed"]
-                    ):
+                    if not direction_audit["direction_gate_passed"]:
                         row["gate_decision"] = "dropped"
                         row["gate_reason"] = "single_sided_required_core_direction_signature_mismatch"
                         pre_dropped_required_ids.update(group_required_ids)
@@ -1079,8 +1069,7 @@ def _apply_required_rcsdnode_template_gate(
         if has_required_pair or has_anchor_singleton or has_anchor_compact_group or has_allowed_only_compact_group:
             for row in gate_audit.values():
                 if row.get("gate_decision") != "dropped":
-                    if row.get("gate_reason") != "single_sided_required_core_terminal_degree1_anchor_review":
-                        row["gate_reason"] = "single_sided_required_core_pair_anchor_or_allowed_only_compact_group"
+                    row["gate_reason"] = "single_sided_required_core_pair_anchor_or_allowed_only_compact_group"
             return required_node_ids, gate_audit, _sorted_ids(pre_dropped_required_ids)
         for row in gate_audit.values():
             if row.get("gate_decision") != "dropped":

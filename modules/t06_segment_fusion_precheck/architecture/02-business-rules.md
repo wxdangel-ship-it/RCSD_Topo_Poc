@@ -22,6 +22,8 @@ semantic_node_set = unique(pair_nodes + junc_nodes)
 - relation mapping 使用 `intersection_match_all.geojson` 的 `target_id -> base_id`。
 - 只接受 `status = 0` 且 `base_id > 0`。
 - `pair_nodes` 和非豁免 `junc_nodes` 都必须映射成功。
+- `pair_nodes` 必须表示两个不同 SWSD 语义路口；若两端相同，以 `swsd_pair_nodes_not_distinct` 拒绝。
+- T05 relation 映射后的 RCSD pair 两端归一到同一个 RCSD 语义路口时，以 `rcsd_pair_nodes_not_distinct` 拒绝。
 - `junc_kind2_exempt_nodes` 不参与 Step2 relation 必检集合，也不参与后续 mapped junc 覆盖、内部通过与语义顺序检查。
 - buffer-based RCSDSegment 审查以 SWSD Segment 50m buffer 限定 RCSD 候选；RCSDRoad 使用 `intersects + overlap threshold`，RCSDNode 使用 `covers/within`。
 - buffer candidate graph 按 `rcsdnode_out.id/mainnodeid/subnodeid` 归一到 canonical RCSD semantic node id 后再判定连通。
@@ -35,6 +37,7 @@ semantic_node_set = unique(pair_nodes + junc_nodes)
 - retained RCSD graph 的叶子端点只能是 `pair_nodes` 对应的 RCSD semantic nodes；非 pair 叶子端点必须以 `unexpected_retained_endpoint_nodes` 拒绝。
 - `swsd_directionality=dual` 的 retained RCSD graph 必须 pair 两端双向可达，否则以 `rcsd_not_bidirectional_for_swsd_dual` 拒绝。
 - `swsd_directionality=single` 必须由 SWSDRoad `snodeid / enodeid / direction` 推导 pair source/target，并按该方向构建覆盖全部 required semantic nodes 的 RCSD 有向 corridor，不得把无向 corridor、反向可达或 `pair_nodes / segmentid` 顺序作为兜底；不满足时以 `rcsd_directed_path_missing` 或 `swsd_single_direction_*` 拒绝。
+- retained RCSDSegment 的每条 RCSDRoad 必须满足 `min_buffer_road_overlap_ratio` 覆盖审计；若完整 RCSDRoad 最终 retained 但与 SWSD Segment buffer 的覆盖率不足，必须以 `retained_road_buffer_overlap_insufficient` 拒绝；retained RCSD 与 SWSD 的整体 50m buffer 覆盖不一致比例默认不得超过 `10%`，绝对长度默认不得超过 `20m`，任一超限即拒绝。
 - `kind_2=64` 环岛路口与 `kind_2=128` 复杂路口执行特殊组门控：按 Step2 输入融合单元中 `pair_nodes + junc_nodes` 包含该语义路口识别关联 Segment；若关联 Segment 未全部进入可替换集合，则该特殊组所有原本可替换 Segment 均移出 `replaceable`，并以 `special_junction_group_not_fully_replaceable` 输出拒绝。
 - 特殊组审计必须记录 SWSD 特殊路口映射到 RCSD 后的 `rcsd_junction_id`、RCSD 语义组内 Node，以及端点同归一到该 RCSD 语义组的内部 RCSDRoad，供 Step3 统一替换审计。
 - RCSD 网络通过 runner 参数传入，不硬编码路径。
@@ -54,7 +57,8 @@ semantic_node_set = unique(pair_nodes + junc_nodes)
 8. retained extra mapped semantic node check
 9. retained dual-direction reachability check for `swsd_directionality=dual`
 10. retained leaf endpoint check
-11. retained RCSDRoad output and compatibility replaceable output
+11. retained RCSDRoad buffer overlap ratio check
+12. retained RCSDRoad output and compatibility replaceable output
 
 ## Step3
 

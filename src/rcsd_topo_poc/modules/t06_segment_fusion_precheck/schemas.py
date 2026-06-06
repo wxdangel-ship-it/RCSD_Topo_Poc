@@ -144,6 +144,10 @@ STEP2_REJECTED_FIELDS = [
     "rcsd_candidate_id",
     "reject_stage",
     "reject_reason",
+    "root_cause_category",
+    "full_graph_status",
+    "candidate_graph_status",
+    "directional_status",
     "failed_pair_nodes",
     "failed_junc_nodes",
     "junc_kind2_exempt_nodes",
@@ -181,6 +185,10 @@ STEP2_BUFFER_REJECTED_FIELDS = [
     "swsd_segment_id",
     "reject_stage",
     "reject_reason",
+    "root_cause_category",
+    "full_graph_status",
+    "candidate_graph_status",
+    "directional_status",
     "required_rcsd_nodes",
     "optional_allowed_rcsd_nodes",
     "directed_rcsd_pair_nodes",
@@ -199,6 +207,7 @@ STEP2_BUFFER_REJECTED_FIELDS = [
     "retained_road_count",
     "candidate_node_count",
     "retained_node_count",
+    "notes",
 ]
 
 STEP2_SPECIAL_JUNCTION_GROUP_FIELDS = [

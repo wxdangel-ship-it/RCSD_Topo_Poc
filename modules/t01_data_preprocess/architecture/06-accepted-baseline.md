@@ -265,6 +265,8 @@
 
 ### 10.6 Step4 后立即刷新
 - Step4 结束后立即刷新 `nodes / roads` 当前语义，作为下一阶段输入。
+- Step4 工作图仅保护已有高等级 `sgrade = 0-0双` 的 road；历史低等级 / residual `segmentid` road 可被当前轮重构。
+- Step4 validated 结果优先于历史低等级 / residual `segmentid` 赋值；被当前轮 validated body 命中的 road 必须改写为当前 Step4 Segment，未命中的历史段保持原值。
 - Node 刷新优先级：
   1. 当前轮 validated pair 端点：保持当前值
   2. 所有 road 都在一个 segment 中：`grade_2 = -1, kind_2 = 1`

@@ -22,6 +22,8 @@ class BufferExtractionConfig:
     min_road_overlap_ratio: float = 0.2
     min_road_overlap_length_m: float = 1.0
     advance_right_formway_bit: int = 128
+    max_geometry_buffer_mismatch_ratio: float = 0.1
+    min_geometry_buffer_mismatch_length_m: float = 20.0
 
 
 @dataclass(frozen=True)
@@ -40,6 +42,13 @@ class BufferSegmentResult:
     out_node_ids: list[str]
     unexpected_endpoint_node_ids: list[str]
     unexpected_mapped_semantic_node_ids: list[str]
+    low_buffer_overlap_road_ids: list[str]
+    min_retained_road_buffer_overlap_ratio: float | None
+    geometry_buffer_coverage_issue: str | None
+    rcsd_outside_swsd_buffer_length_m: float
+    rcsd_outside_swsd_buffer_ratio: float
+    swsd_uncovered_by_rcsd_length_m: float
+    swsd_uncovered_by_rcsd_ratio: float
     missing_required_node_ids: list[str]
     selected_component_id: int | None
     candidate_road_count: int
@@ -91,7 +100,11 @@ class BufferSegmentExtractor:
         required_nodes = _canonical_ids([*relation.rcsd_pair_nodes, *relation.rcsd_junc_nodes], self.node_canonicalizer)
         optional_nodes = _canonical_ids(optional_allowed_rcsd_nodes, self.node_canonicalizer)
         relation_base_ids = set(_canonical_ids(list(all_relation_base_ids), self.node_canonicalizer))
-        unexpected_base_ids = set(_canonical_ids(list(unexpected_relation_base_ids or set()), self.node_canonicalizer))
+        unexpected_base_ids = (
+            set(_canonical_ids(list(unexpected_relation_base_ids or set()), self.node_canonicalizer))
+            - set(required_nodes)
+            - set(optional_nodes)
+        )
         if segment_geometry is None or segment_geometry.is_empty:
             return _empty_result("missing_swsd_geometry", required_nodes, optional_nodes)
 
@@ -107,8 +120,10 @@ class BufferSegmentExtractor:
             selected_roads=candidate_roads,
             excluded_roads=excluded_roads,
             required_nodes=required_nodes,
+            pair_nodes=pair_nodes,
             directed_pair_nodes=directed_nodes,
             require_directed_pair=require_directed_pair,
+            require_bidirectional=require_bidirectional,
             node_canonicalizer=self.node_canonicalizer,
             reference_geometry=segment_geometry,
         )
@@ -175,6 +190,25 @@ class BufferSegmentExtractor:
             require_directed_pair=require_directed_pair,
             require_bidirectional=require_bidirectional,
         )
+        low_overlap_road_ids, min_overlap_ratio = _retained_buffer_overlap_issues(
+            corridor_edges,
+            buffer_geometry,
+            cfg.min_road_overlap_ratio,
+        )
+        if ok and low_overlap_road_ids:
+            ok = False
+            reason = "retained_road_buffer_overlap_insufficient"
+        coverage_status = _retained_geometry_buffer_coverage_status(
+            corridor_edges,
+            segment_geometry,
+            buffer_geometry,
+            buffer_distance_m=cfg.buffer_distance_m,
+            max_mismatch_ratio=cfg.max_geometry_buffer_mismatch_ratio,
+            min_mismatch_length_m=cfg.min_geometry_buffer_mismatch_length_m,
+        )
+        if ok and coverage_status.issue is not None:
+            ok = False
+            reason = coverage_status.issue
         return _result(
             ok=ok,
             reason=reason,
@@ -190,6 +224,9 @@ class BufferSegmentExtractor:
             out_nodes=pruned.out_nodes,
             unexpected_endpoint_nodes=unexpected_endpoint_nodes,
             unexpected_mapped_semantic_nodes=unexpected_mapped_semantic_nodes,
+            low_overlap_road_ids=low_overlap_road_ids,
+            min_overlap_ratio=min_overlap_ratio,
+            coverage_status=coverage_status,
             missing_required_nodes=[],
             selected_component_id=selected,
         )
@@ -214,6 +251,15 @@ class _PrunedGraph:
     retained_edges: list[Edge]
     inner_nodes: list[str]
     out_nodes: list[str]
+
+
+@dataclass(frozen=True)
+class _GeometryCoverageStatus:
+    issue: str | None
+    rcsd_outside_length_m: float
+    rcsd_outside_ratio: float
+    swsd_uncovered_length_m: float
+    swsd_uncovered_ratio: float
 
 
 def _select_candidate_roads(
@@ -259,8 +305,10 @@ def _restore_required_corridor_advance_roads(
     selected_roads: list[dict[str, Any]],
     excluded_roads: list[dict[str, Any]],
     required_nodes: list[str],
+    pair_nodes: list[str],
     directed_pair_nodes: list[str],
     require_directed_pair: bool,
+    require_bidirectional: bool,
     node_canonicalizer: NodeCanonicalizer,
     reference_geometry: BaseGeometry | None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -270,8 +318,10 @@ def _restore_required_corridor_advance_roads(
     if _selected_graph_satisfies_required_corridor(
         selected_graph.edges,
         required_nodes,
+        pair_nodes=pair_nodes,
         directed_pair_nodes=directed_pair_nodes,
         require_directed_pair=require_directed_pair,
+        require_bidirectional=require_bidirectional,
         reference_geometry=reference_geometry,
     ):
         return selected_roads, excluded_roads
@@ -302,6 +352,28 @@ def _restore_required_corridor_advance_roads(
             for path in _minimum_terminal_edge_paths(component_edges, required_nodes, reference_geometry=reference_geometry)
             for edge_id in path
         }
+        if require_bidirectional and len(pair_nodes) == 2:
+            source, target = pair_nodes
+            for path in (
+                _shortest_edge_path(
+                    component_edges,
+                    source,
+                    target,
+                    directed=True,
+                    reference_geometry=reference_geometry,
+                    required_nodes=set(required_nodes),
+                ),
+                _shortest_edge_path(
+                    component_edges,
+                    target,
+                    source,
+                    directed=True,
+                    reference_geometry=reference_geometry,
+                    required_nodes=set(required_nodes),
+                ),
+            ):
+                if path is not None:
+                    corridor_edge_ids.update(path)
     excluded_road_ids = {road_id for road_id in (_feature_road_id(feature) for feature in excluded_roads) if road_id is not None}
     restored_road_ids = {
         edge.road_id for edge in component_edges if edge.edge_id in corridor_edge_ids and edge.road_id in excluded_road_ids
@@ -351,13 +423,17 @@ def _selected_graph_satisfies_required_corridor(
     edges: list[Edge],
     required_nodes: list[str],
     *,
+    pair_nodes: list[str],
     directed_pair_nodes: list[str],
     require_directed_pair: bool,
+    require_bidirectional: bool,
     reference_geometry: BaseGeometry | None,
 ) -> bool:
     components = _connected_components(_adjacency_from_edges(edges))
     if _select_component(components, required_nodes) is None:
         return False
+    if require_bidirectional:
+        return _pair_nodes_bidirectionally_reachable(edges, pair_nodes)
     if not require_directed_pair:
         return True
     if len(directed_pair_nodes) != 2:
@@ -854,6 +930,72 @@ def _retained_status(
     return True, "passed", []
 
 
+def _retained_buffer_overlap_issues(
+    edges: list[Edge],
+    buffer_geometry: BaseGeometry,
+    min_overlap_ratio: float,
+) -> tuple[list[str], float | None]:
+    if min_overlap_ratio <= 0:
+        return [], None
+    low_road_ids: list[str] = []
+    seen: set[str] = set()
+    ratios: list[float] = []
+    for edge in edges:
+        geometry = edge.geometry
+        if geometry is None or geometry.is_empty:
+            ratio = 0.0
+        else:
+            length = float(geometry.length)
+            if length <= 0:
+                continue
+            overlap_length = float(geometry.intersection(buffer_geometry).length) if geometry.intersects(buffer_geometry) else 0.0
+            ratio = overlap_length / length
+        ratios.append(ratio)
+        if ratio + 1e-9 >= min_overlap_ratio or edge.road_id in seen:
+            continue
+        seen.add(edge.road_id)
+        low_road_ids.append(edge.road_id)
+    return low_road_ids, min(ratios) if ratios else None
+
+
+def _retained_geometry_buffer_coverage_status(
+    edges: list[Edge],
+    segment_geometry: BaseGeometry,
+    swsd_buffer_geometry: BaseGeometry,
+    *,
+    buffer_distance_m: float,
+    max_mismatch_ratio: float,
+    min_mismatch_length_m: float,
+) -> _GeometryCoverageStatus:
+    retained_geometry = _edge_geometry(edges)
+    retained_length = float(retained_geometry.length) if not retained_geometry.is_empty else 0.0
+    segment_length = float(segment_geometry.length) if not segment_geometry.is_empty else 0.0
+    rcsd_outside_length = (
+        float(retained_geometry.difference(swsd_buffer_geometry).length)
+        if retained_length > 0
+        else 0.0
+    )
+    swsd_uncovered_length = (
+        float(segment_geometry.difference(retained_geometry.buffer(buffer_distance_m)).length)
+        if retained_length > 0 and segment_length > 0
+        else 0.0
+    )
+    rcsd_outside_ratio = rcsd_outside_length / retained_length if retained_length > 0 else 0.0
+    swsd_uncovered_ratio = swsd_uncovered_length / segment_length if segment_length > 0 else 0.0
+    issue = None
+    if rcsd_outside_ratio > max_mismatch_ratio or rcsd_outside_length > min_mismatch_length_m:
+        issue = "retained_geometry_outside_swsd_buffer_scope"
+    elif swsd_uncovered_ratio > max_mismatch_ratio or swsd_uncovered_length > min_mismatch_length_m:
+        issue = "swsd_geometry_not_covered_by_retained_rcsd"
+    return _GeometryCoverageStatus(
+        issue=issue,
+        rcsd_outside_length_m=rcsd_outside_length,
+        rcsd_outside_ratio=rcsd_outside_ratio,
+        swsd_uncovered_length_m=swsd_uncovered_length,
+        swsd_uncovered_ratio=swsd_uncovered_ratio,
+    )
+
+
 def _unexpected_endpoint_nodes(edges: list[Edge], pair_nodes: list[str]) -> list[str]:
     pair_node_set = set(pair_nodes)
     adjacency = _adjacency_from_edges(edges)
@@ -960,6 +1102,9 @@ def _result(
     out_nodes: list[str],
     unexpected_endpoint_nodes: list[str],
     unexpected_mapped_semantic_nodes: list[str],
+    low_overlap_road_ids: list[str] | None = None,
+    min_overlap_ratio: float | None = None,
+    coverage_status: _GeometryCoverageStatus | None = None,
     missing_required_nodes: list[str],
     selected_component_id: int | None,
 ) -> BufferSegmentResult:
@@ -982,6 +1127,13 @@ def _result(
         out_node_ids=out_nodes,
         unexpected_endpoint_node_ids=unexpected_endpoint_nodes or [],
         unexpected_mapped_semantic_node_ids=unexpected_mapped_semantic_nodes or [],
+        low_buffer_overlap_road_ids=low_overlap_road_ids or [],
+        min_retained_road_buffer_overlap_ratio=min_overlap_ratio,
+        geometry_buffer_coverage_issue=coverage_status.issue if coverage_status else None,
+        rcsd_outside_swsd_buffer_length_m=coverage_status.rcsd_outside_length_m if coverage_status else 0.0,
+        rcsd_outside_swsd_buffer_ratio=coverage_status.rcsd_outside_ratio if coverage_status else 0.0,
+        swsd_uncovered_by_rcsd_length_m=coverage_status.swsd_uncovered_length_m if coverage_status else 0.0,
+        swsd_uncovered_by_rcsd_ratio=coverage_status.swsd_uncovered_ratio if coverage_status else 0.0,
         missing_required_node_ids=missing_required_nodes,
         selected_component_id=selected_component_id,
         candidate_road_count=len(candidate_road_ids),
@@ -1008,6 +1160,13 @@ def _empty_result(reason: str, required_nodes: list[str], optional_nodes: list[s
         out_node_ids=[],
         unexpected_endpoint_node_ids=[],
         unexpected_mapped_semantic_node_ids=[],
+        low_buffer_overlap_road_ids=[],
+        min_retained_road_buffer_overlap_ratio=None,
+        geometry_buffer_coverage_issue=None,
+        rcsd_outside_swsd_buffer_length_m=0.0,
+        rcsd_outside_swsd_buffer_ratio=0.0,
+        swsd_uncovered_by_rcsd_length_m=0.0,
+        swsd_uncovered_by_rcsd_ratio=0.0,
         missing_required_node_ids=list(required_nodes),
         selected_component_id=None,
         candidate_road_count=0,

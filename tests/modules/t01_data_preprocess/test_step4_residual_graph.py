@@ -273,6 +273,51 @@ def test_step4_historical_boundary_is_injected_into_seed_and_terminate(tmp_path:
     assert (artifacts.out_root / "S2" / "endpoint_pool_summary.json").is_file()
 
 
+def test_step4_validated_segment_overwrites_existing_lower_grade_assignment(tmp_path: Path) -> None:
+    input_dir = tmp_path / "input_overwrite"
+    input_dir.mkdir()
+    node_path = input_dir / "nodes.geojson"
+    road_path = input_dir / "roads.geojson"
+    out_root = tmp_path / "out_overwrite"
+
+    write_geojson(
+        node_path,
+        [
+            _node_feature(1, 0.0, 0.0, grade_2=1, kind_2=4, closed_con=2),
+            _node_feature(2, 1.0, 0.0, grade_2=0, kind_2=0, closed_con=0),
+            _node_feature(3, 2.0, 0.0, grade_2=1, kind_2=64, closed_con=2),
+            _node_feature(9, 0.0, 1.0, grade_2=0, kind_2=0, closed_con=0),
+            _node_feature(10, 1.0, 1.0, grade_2=0, kind_2=0, closed_con=0),
+        ],
+    )
+    write_geojson(
+        road_path,
+        [
+            _road_feature("r12", 1, 2, 0, [[0.0, 0.0], [1.0, 0.0]], segmentid="old_low", sgrade="0-1单"),
+            _road_feature("r23", 2, 3, 0, [[1.0, 0.0], [2.0, 0.0]]),
+            _road_feature("preserve_old", 9, 10, 0, [[0.0, 1.0], [1.0, 1.0]], segmentid="keep_old", sgrade="0-1单"),
+        ],
+    )
+
+    artifacts = run_step4_residual_graph(
+        road_path=road_path,
+        node_path=node_path,
+        out_root=out_root,
+        run_id="step4_overwrite",
+    )
+
+    roads_doc = _load_geojson(artifacts.refreshed_roads_path)
+    road_props = {str(feature["properties"]["id"]): feature["properties"] for feature in roads_doc["features"]}
+    assert road_props["r12"]["segmentid"] == "1_3"
+    assert road_props["r12"]["sgrade"] == "0-0双"
+    assert road_props["r12"]["segment_build_source"] == "step4_high_grade_terminal_demotion"
+    assert road_props["r23"]["segmentid"] == "1_3"
+    assert road_props["r23"]["sgrade"] == "0-0双"
+    assert road_props["preserve_old"]["segmentid"] == "keep_old"
+    assert road_props["preserve_old"]["sgrade"] == "0-1单"
+    assert artifacts.summary["step4_existing_segment_road_overwrite_count"] == 1
+
+
 def test_step4_historical_boundary_prefers_validated_pairs_over_endpoint_pool(tmp_path: Path) -> None:
     input_dir = tmp_path / "input_validated_priority"
     input_dir.mkdir()

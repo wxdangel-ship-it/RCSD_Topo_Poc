@@ -255,12 +255,13 @@
   - `closed_con in {2,3}`
 - 当前轮合法 terminate 集合与输入集合一致。
 - 并入历史高等级边界端点，来源遵守 §5.3。
-- 工作图剔除已有非空 `segmentid` 的 road。
+- 工作图仅保护已有高等级 `sgrade = 0-0双` 的 road；历史低等级 / residual `segmentid` road 可进入 Step4 重构。
 - 阶段结束后立即刷新 `nodes / roads`。
 - Step4 新构成 road：
   - 默认 `sgrade = 0-1双`
   - 若 validated pair 两端代表语义路口 `grade_2` 均为 `1`，直接写 `sgrade = 0-0双`
   - 上述 `0-0双` road 同时写 `segment_build_source = step4_high_grade_terminal_demotion`，用于 Step6 审计识别其允许穿越中间高等级分歧 / 合流语义节点
+- Step4 validated 结果优先于历史低等级 / residual `segmentid` 赋值；被当前轮 validated body 命中的 road 必须改写为当前 Step4 Segment，未命中的历史段保持原值。
 
 ### 5.9 Step5A / Step5B / Step5C
 - 三个子阶段按顺序执行。

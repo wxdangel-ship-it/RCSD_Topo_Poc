@@ -22,6 +22,7 @@ Step1 / Step2 / Step3 代码均已提供模块内 callable runner；所有阶段
 - 基于 SWSD Segment 50m buffer、RCSDRoad `intersects + 阈值`、RCSDNode `covers/within` 生成 buffer-based RCSDSegment 审查成果，作为 Step2 唯一正式构建策略。
 - 构建 buffer 候选连通图前，使用 `formway` bit7/128 识别提前右转 road；若该 road 两端均与非提前右转候选 road 形成二度链接，或属于 required semantic nodes 之间的必要 corridor，则保留参与 Segment 构建并不计入提前右转排除审计，否则排除。
 - `swsd_directionality=dual` 构建最小 corridor 时，极短 required-to-required connector 不得替代完整方向 road；RCSDRoad `formway & 1024 != 0` 的内部调头 road 若两端均属于 retained corridor node，必须保留在 RCSDSegment 中。
+- retained RCSDSegment 中的每条 RCSDRoad 必须满足 `min_buffer_road_overlap_ratio` 覆盖阈值；若某条完整 RCSDRoad 仅因端点或极小相交进入候选、但最终 retained 几何大部分落在 SWSD Segment buffer 外，必须以 `retained_road_buffer_overlap_insufficient` 拒绝；retained RCSD 与 SWSD 的双向 50m buffer 覆盖不一致比例默认不得超过 `10%`，绝对长度默认不得超过 `20m`，任一超限即拒绝。
 - 不再执行旧 pair-to-pair BFS 路径搜索、主轴 / 粗长度趋势或唯一性筛选；buffer 候选连通分量必须先收缩为覆盖 required semantic nodes 的最小 corridor 子图；`swsd_directionality=single` 时，source/target 必须由 SWSDRoad `snodeid / enodeid / direction` 推导，并据此构建一条覆盖全部 required semantic nodes 的 RCSD 有向 corridor；`swsd_directionality=dual` 时执行 RCSD retained graph 双向可达硬审计。
 - 对 final `nodes.gpkg.kind_2=64` 的环岛路口与 `kind_2=128` 的复杂路口执行特殊组门控：按 `pair_nodes + junc_nodes` 包含该语义路口识别关联 Segment；只有组内全部关联 Segment 均通过可替换判定时，组内 Segment 才允许进入 Step2 replaceable；否则组内所有原本可替换 Segment 均移出 replaceable，并以 `special_junction_group_not_fully_replaceable` 记录拒绝。
 - Step3 消费 Step2 replaceable 成果，删除被替换 SWSDRoad 及其端点 SWSDNode，引入 retained RCSDRoad / RCSDNode；若 Step2 输出 `gate_status=passed` 的特殊路口组审计，则统一引入该组 RCSD 语义路口内部 Node/Road；输出 `source=1` 的 RCSD 数据与 `source=2` 的 SWSD 数据，并按 `pair_nodes + junc_nodes` 聚合重建语义路口 C。
@@ -94,11 +95,13 @@ run_t06_step2_extract_rcsd_segments(
 ### 2.3 关键输入语义
 
 - `pair_nodes + junc_nodes` 按语义路口 ID 判定，不按物理 node 展开作为主判断。
+- T06 替换单元要求 `pair_nodes` 表示两个不同 SWSD 语义路口；若 SWSD pair 两端相同，以 `swsd_pair_nodes_not_distinct` 拒绝。
 - Step1 解析 final `nodes.gpkg` 时，语义节点属性优先使用 `id` 精确匹配记录；只有不存在对应 `id` 记录时，才使用 `mainnodeid` 命中的组内记录作为 fallback。
 - `kind_2 in {1,4096,8192}` 只对 `junc_nodes` 生效：命中 junc node 从 Step1 `has_evd / is_anchor` eligibility 检查集合与 Step2 T05 relation 必检映射集合中移除，但仍保留在 `junc_nodes / semantic_node_set` 输出中；`pair_nodes` 命中这些 `kind_2` 也不豁免。
 - `intersection_match_all.geojson` 中只有 `status = 0` 且 `base_id > 0` 的 relation 可用。
 - `base_id` 必须是 RCSD 语义路口主 node id。
 - Step2 构建 buffer candidate graph 时，必须先按 `rcsdnode_path` 的 `mainnodeid / subnodeid` 做语义节点归一化：`id` 若有有效 `mainnodeid` 则归一到 `mainnodeid`，`subnodeid` 列表中的物理节点也归一到所属 `mainnodeid`；relation required nodes 与 RCSDRoad `snodeid / enodeid` 必须使用同一 canonical key 判定连通。
+- T05 relation 映射后的 RCSD pair 两端归一到同一个 RCSD 语义路口时，不能构成可替换 RCSDSegment，必须以 `rcsd_pair_nodes_not_distinct` 拒绝。
 - 全局 RCSD 语义路口组按有效 `mainnodeid` 聚合，组内所有 node 关联 road 都视为该语义路口的进入 / 退出道路；未映射到当前 Segment 的全局 RCSD 语义路口若进入候选图，必须参与 seed pruning，处于 required corridor 内部时作为 `inner_nodes` 保留审计，旁支节点归入 `out_nodes` 裁剪，不能当普通通过节点。
 - SWSDRoad `direction` 用于 `swsd_directionality=single` 的 source/target 推导：`direction in {0,1,2}` 允许 `snodeid -> enodeid`，`direction in {0,1,3}` 允许 `enodeid -> snodeid`；若 pair 两端正反向都可达或都不可达，Step2 必须拒绝，不能用 `pair_nodes` 顺序或 `segmentid A_B` 顺序兜底。
 - RCSDRoad `direction` 用于 retained graph 有向可达硬审计：`swsd_directionality=dual` 时 pair 两端必须正反向均可达；`swsd_directionality=single` 时必须存在一条按 SWSDRoad 推导方向、覆盖全部 required semantic nodes 的 pair 有向 corridor；component coverage、seed pruning、最小 corridor 子图与 leaf endpoint 仍按 canonical 无向图执行。
@@ -108,6 +111,7 @@ run_t06_step2_extract_rcsd_segments(
 - `formway` 为 bit mask；提前右转必须按 `formway & 128 != 0` 判断，不得写成 `formway == 128`。提前右转 road 在两端均与非提前右转候选 road 存在二度链接关系，或属于 required semantic nodes 之间的必要 corridor 时，保留参与构建。
 - `formway & 1024 != 0` 表示 RCSD 调头口；该字段在 T06 中只用于双向 retained corridor 内部调头 road 保留，前提是该 road 两端均已属于 retained corridor node。
 - Step2 路径权重不得只按 road 几何长度选择 required semantic node 之间的最短直连 edge；当 required-to-required edge 明显短于 SWSD Segment 时，必须加惩罚，避免把路口内短连接误当作完整反向 road。
+- Step2 retained RCSDRoad 覆盖审计复用 `min_buffer_road_overlap_ratio`：候选选择可保留 `intersects + overlap length / endpoint` 的宽松入口，但最终 retained Road 若覆盖率低于该比例，不能进入 replaceable。retained RCSD 与 SWSD 的整体 50m buffer 覆盖审计使用比例 + 绝对长度双阈值，默认 `10% / 20m`，任一阈值超限即拒绝。
 - Step2 特殊组门控只使用已正式定义的 `kind_2=64/128`：`64` 表示环岛路口，`128` 表示复杂路口。关联 Segment 范围为 Step2 输入融合单元中 `pair_nodes + junc_nodes` 包含该语义路口的所有 Segment；切片证据包按切片内可见 Step2 输入执行并通过 `t06_special_junction_group_audit.*` 暴露组完整性。
 - 特殊组门控通过时，`t06_special_junction_group_audit.*` 必须输出该 SWSD 特殊路口映射到 RCSD 后的 `rcsd_junction_id`、RCSD 语义组内 Node，以及端点同归一到该 RCSD 语义组的内部 RCSDRoad，用于 Step3 统一替换审计。
 - Step3 的替换输入必须来自 Step2 replaceable RCSDSegment；Step3 不重新搜索 RCSD Segment，不处理 Step2 rejected Segment。
@@ -523,11 +527,13 @@ Step3 提供独立脚本，消费 Step2 replaceable 成果，不改变 `scripts/
 3. `fail4_fallback` 能进入 Step1 final fusion units，但 Step2 对 relation 必检集合仍必须校验 T05 relation。
 4. `junc_nodes.kind_2 in {1,4096,8192}` 的节点不参与 Step1 `has_evd / is_anchor` 判定，也不进入 Step2 T05 relation 必检映射集合；同值 `pair_nodes` 仍按原规则判定并映射。
 5. Step2 不执行旧 pair-to-pair BFS 路径搜索、主轴 / 粗长度趋势或唯一性筛选；buffer 候选连通分量必须先收缩为覆盖 required semantic nodes 的最小 corridor 子图；`swsd_directionality=single` 时必须由 SWSDRoad `snodeid / enodeid / direction` 推导 pair source/target，并按该方向构建覆盖全部 required semantic nodes 的 RCSD corridor，否则以 `rcsd_directed_path_missing` 或 `swsd_single_direction_*` 拒绝；`swsd_directionality=dual` 时 retained RCSD graph 必须 pair 两端双向可达，否则以 `rcsd_not_bidirectional_for_swsd_dual` 拒绝。
-6. `junc_nodes` 执行 required coverage、内部通过 + 侧向阻断；retained graph 中出现非 pair leaf endpoint 时必须拒绝并输出 `unexpected_endpoint_node_ids`。
-7. retained graph 中不得存在 required / optional allowed 以外且未被判定为 required corridor `inner_nodes` 的额外 T05 mapped semantic nodes；出现时必须拒绝并输出 `unexpected_mapped_semantic_node_ids`。
-8. 所有解析、映射、buffer 构建失败都有明确 reason。
-9. 输入文件不被原地修改。
-10. buffer-based RCSDSegment 审查必须按 `formway` bit7/128 识别提前右转 road；二度链接保留、required corridor 保留和排除结果必须在 summary / 输出中可审计。
-11. `swsd_directionality=dual` 不能因短 required-to-required connector 通过双向审计；retained corridor 内部 `formway & 1024 != 0` 调头 road 必须保留。
-12. Step3 必须只消费 replaceable Segment，删除被替换 SWSDRoad 与其端点 SWSDNode，保留未替换 SWSD 数据并写 `source=2`，引入 retained RCSD 数据与 passed 特殊路口组内部 RCSD 数据并写 `source=1`。
-13. Step3 必须按 C 聚合重建语义路口关系；若原 main node 被删除，必须重新选择 main node，并让 C 内 Node 继承原 main node 的 `kind / grade / kind_2 / grade_2 / closed_con`。
+6. SWSD pair 两端相同或映射后 RCSD pair 坍缩到同一个语义路口时，Step2 必须拒绝并输出 `swsd_pair_nodes_not_distinct` 或 `rcsd_pair_nodes_not_distinct`。
+7. `junc_nodes` 执行 required coverage、内部通过 + 侧向阻断；retained graph 中出现非 pair leaf endpoint 时必须拒绝并输出 `unexpected_endpoint_node_ids`。
+8. retained graph 中不得存在 required / optional allowed 以外且未被判定为 required corridor `inner_nodes` 的额外 T05 mapped semantic nodes；出现时必须拒绝并输出 `unexpected_mapped_semantic_node_ids`。
+9. 所有解析、映射、buffer 构建失败都有明确 reason。
+10. 输入文件不被原地修改。
+11. buffer-based RCSDSegment 审查必须按 `formway` bit7/128 识别提前右转 road；二度链接保留、required corridor 保留和排除结果必须在 summary / 输出中可审计。
+12. `swsd_directionality=dual` 不能因短 required-to-required connector 通过双向审计；retained corridor 内部 `formway & 1024 != 0` 调头 road 必须保留。
+13. Step2 retained RCSDRoad 必须满足 `min_buffer_road_overlap_ratio` 覆盖审计；不满足时以 `retained_road_buffer_overlap_insufficient` 拒绝，并在 `failed_metric_value` 中记录低覆盖 Road ID 与最小覆盖率。
+14. Step3 必须只消费 replaceable Segment，删除被替换 SWSDRoad 与其端点 SWSDNode，保留未替换 SWSD 数据并写 `source=2`，引入 retained RCSD 数据与 passed 特殊路口组内部 RCSD 数据并写 `source=1`。
+15. Step3 必须按 C 聚合重建语义路口关系；若原 main node 被删除，必须重新选择 main node，并让 C 内 Node 继承原 main node 的 `kind / grade / kind_2 / grade_2 / closed_con`。

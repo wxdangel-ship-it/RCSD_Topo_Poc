@@ -354,6 +354,14 @@ def _current_segmentid(road: RoadFeatureRecord) -> Optional[str]:
     return _normalize_id(get_road_segmentid(road.properties))
 
 
+def _current_sgrade(road: RoadFeatureRecord) -> Optional[str]:
+    return get_road_sgrade(road.properties)
+
+
+def _is_step4_protected_existing_segment_road(road: RoadFeatureRecord) -> bool:
+    return _current_segmentid(road) is not None and _current_sgrade(road) == STEP4_HIGH_GRADE_SEGMENT_GRADE
+
+
 def _is_right_turn_only_road(road: RoadFeatureRecord) -> bool:
     formway = _coerce_int(road.properties.get("formway")) or 0
     return bool(formway & (1 << RIGHT_TURN_FORMWAY_BIT))
@@ -522,7 +530,9 @@ def _build_step4_inputs(
     debug: bool,
 ) -> tuple[Path, Path, Path, dict[str, Any], dict[str, tuple[str, ...]]]:
     initial_active_road_ids = {
-        road.road_id for road in roads if _current_segmentid(road) is None and is_allowed_road_kind(road.road_kind)
+        road.road_id
+        for road in roads
+        if not _is_step4_protected_existing_segment_road(road) and is_allowed_road_kind(road.road_kind)
     }
     pseudo_junction_ids = _identify_right_turn_only_side_pseudojunction_ids(
         nodes=nodes,
@@ -588,12 +598,13 @@ def _build_step4_inputs(
         working_node_features.append({"properties": props, "geometry": node.geometry})
 
     removed_existing_segment_road_count = 0
+    reprocessed_existing_segment_road_count = 0
     removed_closed_road_count = 0
     removed_right_turn_only_road_count = 0
     working_road_features: list[dict[str, Any]] = []
     for road in roads:
         current_segmentid = _current_segmentid(road)
-        if current_segmentid:
+        if _is_step4_protected_existing_segment_road(road):
             removed_existing_segment_road_count += 1
             continue
         if not is_allowed_road_kind(road.road_kind):
@@ -602,6 +613,8 @@ def _build_step4_inputs(
         if _is_right_turn_only_road(road):
             removed_right_turn_only_road_count += 1
             continue
+        if current_segmentid:
+            reprocessed_existing_segment_road_count += 1
         working_road_features.append({"properties": dict(road.properties), "geometry": road.geometry})
 
     working_graph_road_count = len(working_road_features)
@@ -684,6 +697,7 @@ def _build_step4_inputs(
             "right_turn_only_side_pseudojunction_count": len(pseudo_junction_ids),
             "endpoint_pool_node_count": len(endpoint_pool_ids),
             "removed_existing_segment_road_count": removed_existing_segment_road_count,
+            "reprocessed_existing_segment_road_count": reprocessed_existing_segment_road_count,
             "removed_closed_road_count": removed_closed_road_count,
             "removed_right_turn_only_road_count": removed_right_turn_only_road_count,
             "working_graph_road_count": working_graph_road_count,
@@ -856,27 +870,29 @@ def _refresh_after_step4(
             else STEP4_NEW_SEGMENT_GRADE
         )
 
+    step4_existing_segment_road_overwrite_count = 0
     road_properties_map: dict[str, dict[str, Any]] = {}
     for road in roads:
         props = canonicalize_road_working_properties(road.properties)
         existing_segmentid = _current_segmentid(road)
         existing_sgrade = get_road_sgrade(props)
         new_segmentid = new_road_to_segmentid.get(road.road_id)
-        if existing_segmentid:
-            set_road_segmentid(props, existing_segmentid)
-            set_road_sgrade(props, existing_sgrade)
-        elif new_segmentid is not None:
-            set_road_segmentid(props, new_segmentid)
+        if new_segmentid is not None:
             pair_id = new_road_to_pair_id.get(road.road_id)
             assigned_sgrade = pair_sgrade_by_pair_id.get(pair_id or "", STEP4_NEW_SEGMENT_GRADE)
+            if existing_segmentid and (existing_segmentid != new_segmentid or existing_sgrade != assigned_sgrade):
+                step4_existing_segment_road_overwrite_count += 1
+            set_road_segmentid(props, new_segmentid)
             set_road_sgrade(props, assigned_sgrade)
             if assigned_sgrade == STEP4_HIGH_GRADE_SEGMENT_GRADE:
                 props["segment_build_source"] = STEP4_HIGH_GRADE_DEMOTION_BUILD_SOURCE
+        elif existing_segmentid:
+            set_road_segmentid(props, existing_segmentid)
+            set_road_sgrade(props, existing_sgrade)
         else:
             set_road_segmentid(props, get_road_segmentid(props))
             set_road_sgrade(props, get_road_sgrade(props))
         road_properties_map[road.road_id] = props
-
     group_to_road_ids: dict[str, set[str]] = {}
     physical_to_semantic = {node_id: group.mainnode_id for group in mainnode_groups.values() for node_id in group.member_node_ids}
     for road in roads:
@@ -1018,6 +1034,7 @@ def _refresh_after_step4(
         "step4_validated_pair_count": step4_segment_summary["validated_pair_count"],
         "step4_rejected_pair_count": step4_segment_summary["rejected_pair_count"],
         "step4_new_segment_road_count": len(new_road_to_segmentid),
+        "step4_existing_segment_road_overwrite_count": step4_existing_segment_road_overwrite_count,
         "resolved_segment_body_overlap_road_count": overlap_resolution_count,
         "node_rule_keep_pair_count": node_rule_keep_pair_count,
         "node_rule_single_segment_count": node_rule_single_segment_count,

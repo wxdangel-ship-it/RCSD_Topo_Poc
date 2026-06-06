@@ -254,6 +254,120 @@ def test_step2_runner_uses_swsd_road_direction_for_single_segments(tmp_path: Pat
     assert set(by_segment["s_reverse"]["rcsd_road_ids"]) == {"reverse_a", "reverse_b"}
 
 
+def test_step2_rejects_swsd_pair_nodes_that_are_not_distinct(tmp_path: Path) -> None:
+    segment = _write(
+        tmp_path / "segment.gpkg",
+        [
+            {
+                "properties": {"id": "s_loop", "sgrade": "主单", "pair_nodes": [1, 1], "junc_nodes": [], "roads": ["sr1"]},
+                "geometry": LineString([(0, 0), (10, 0)]),
+            }
+        ],
+    )
+    fusion_units = _write(
+        tmp_path / "fusion_units.gpkg",
+        [
+            {
+                "properties": {"swsd_segment_id": "s_loop", "sgrade": "主单", "pair_nodes": [1, 1], "junc_nodes": [], "roads": ["sr1"]},
+                "geometry": LineString([(0, 0), (10, 0)]),
+            }
+        ],
+    )
+    nodes = _write(
+        tmp_path / "nodes.gpkg",
+        [{"properties": {"id": 1, "mainnodeid": 0, "has_evd": "yes", "is_anchor": "yes", "kind_2": 4}, "geometry": Point(0, 0)}],
+    )
+    swsd_roads = _write(tmp_path / "swsd_roads.gpkg", [_road("sr1", 1, 1, 0)])
+    relation = _write(
+        tmp_path / "intersection_match_all.geojson",
+        [{"properties": {"target_id": 1, "base_id": 10, "status": 0}, "geometry": Point(0, 0)}],
+    )
+    rcsd_nodes = _write(tmp_path / "rcsdnode_out.gpkg", [{"properties": {"id": 10, "mainnodeid": 0}, "geometry": Point(0, 0)}])
+    rcsd_roads = _write(
+        tmp_path / "rcsdroad_out.gpkg",
+        [{"properties": {"id": "rr_far", "snodeid": 30, "enodeid": 40, "direction": 0}, "geometry": LineString([(1000, 0), (1010, 0)])}],
+    )
+
+    artifacts = run_t06_step2_extract_rcsd_segments(
+        swsd_fusion_units_path=fusion_units,
+        swsd_segment_path=segment,
+        swsd_roads_path=swsd_roads,
+        swsd_nodes_path=nodes,
+        intersection_match_path=relation,
+        rcsdroad_path=rcsd_roads,
+        rcsdnode_path=rcsd_nodes,
+        out_root=tmp_path / "out",
+        run_id="run",
+    )
+
+    payload = json.loads(artifacts.rejected_gpkg_path.with_suffix(".json").read_text(encoding="utf-8"))
+    assert payload["features"][0]["properties"]["reject_reason"] == "swsd_pair_nodes_not_distinct"
+
+
+def test_step2_rejects_rcsd_pair_nodes_that_collapse_to_one_semantic_node(tmp_path: Path) -> None:
+    segment = _write(
+        tmp_path / "segment.gpkg",
+        [
+            {
+                "properties": {"id": "s_collapse", "sgrade": "主双", "pair_nodes": [1, 2], "junc_nodes": [], "roads": ["sr1"]},
+                "geometry": LineString([(0, 0), (100, 0)]),
+            }
+        ],
+    )
+    fusion_units = _write(
+        tmp_path / "fusion_units.gpkg",
+        [
+            {
+                "properties": {"swsd_segment_id": "s_collapse", "sgrade": "主双", "pair_nodes": [1, 2], "junc_nodes": [], "roads": ["sr1"]},
+                "geometry": LineString([(0, 0), (100, 0)]),
+            }
+        ],
+    )
+    nodes = _write(
+        tmp_path / "nodes.gpkg",
+        [
+            {"properties": {"id": 1, "mainnodeid": 0, "has_evd": "yes", "is_anchor": "yes", "kind_2": 4}, "geometry": Point(0, 0)},
+            {"properties": {"id": 2, "mainnodeid": 0, "has_evd": "yes", "is_anchor": "yes", "kind_2": 4}, "geometry": Point(100, 0)},
+        ],
+    )
+    swsd_roads = _write(tmp_path / "swsd_roads.gpkg", [_road("sr1", 1, 2, 0)])
+    relation = _write(
+        tmp_path / "intersection_match_all.geojson",
+        [
+            {"properties": {"target_id": 1, "base_id": 10, "status": 0}, "geometry": Point(0, 0)},
+            {"properties": {"target_id": 2, "base_id": 11, "status": 0}, "geometry": Point(100, 0)},
+        ],
+    )
+    rcsd_nodes = _write(
+        tmp_path / "rcsdnode_out.gpkg",
+        [
+            {"properties": {"id": 10, "mainnodeid": 100}, "geometry": Point(0, 0)},
+            {"properties": {"id": 11, "mainnodeid": 100}, "geometry": Point(100, 0)},
+        ],
+    )
+    rcsd_roads = _write(
+        tmp_path / "rcsdroad_out.gpkg",
+        [{"properties": {"id": "rr1", "snodeid": 10, "enodeid": 11, "direction": 0}, "geometry": LineString([(0, 0), (100, 0)])}],
+    )
+
+    artifacts = run_t06_step2_extract_rcsd_segments(
+        swsd_fusion_units_path=fusion_units,
+        swsd_segment_path=segment,
+        swsd_roads_path=swsd_roads,
+        swsd_nodes_path=nodes,
+        intersection_match_path=relation,
+        rcsdroad_path=rcsd_roads,
+        rcsdnode_path=rcsd_nodes,
+        out_root=tmp_path / "out",
+        run_id="run",
+    )
+
+    payload = json.loads(artifacts.rejected_gpkg_path.with_suffix(".json").read_text(encoding="utf-8"))
+    props = payload["features"][0]["properties"]
+    assert props["reject_reason"] == "rcsd_pair_nodes_not_distinct"
+    assert props["failed_metric_value"]["canonical_rcsd_pair_nodes"] == ["100"]
+
+
 def test_step2_blocks_whole_special_junction_group_when_one_segment_is_not_replaceable(tmp_path: Path) -> None:
     segments = _write(
         tmp_path / "segment.gpkg",
@@ -499,3 +613,76 @@ def test_step2_skips_junc_kind2_exempt_nodes_when_mapping_relations(tmp_path: Pa
     assert candidate_props["swsd_junc_nodes"] == ["3", "5", "4"]
     assert candidate_props["junc_kind2_exempt_nodes"] == ["3", "5"]
     assert candidate_props["rcsd_junc_nodes"] == ["40"]
+
+
+def test_step2_rejected_rows_explain_buffer_missing_bidirectional_corridor(tmp_path: Path) -> None:
+    segment = _write(
+        tmp_path / "segment.gpkg",
+        [
+            {
+                "properties": {"id": "s1", "sgrade": "主双", "pair_nodes": [1, 2], "junc_nodes": [], "roads": ["sr1"]},
+                "geometry": LineString([(0, 0), (100, 0)]),
+            }
+        ],
+    )
+    nodes = _write(
+        tmp_path / "nodes.gpkg",
+        [
+            {"properties": {"id": 1, "mainnodeid": 0, "has_evd": "yes", "is_anchor": "yes", "kind_2": 4}, "geometry": Point(0, 0)},
+            {"properties": {"id": 2, "mainnodeid": 0, "has_evd": "yes", "is_anchor": "yes", "kind_2": 4}, "geometry": Point(100, 0)},
+        ],
+    )
+    swsd_roads = _write(tmp_path / "swsd_roads.gpkg", [_road("sr1", 1, 2, 0)])
+    relation = _write(
+        tmp_path / "intersection_match_all.geojson",
+        [
+            {"properties": {"target_id": 1, "base_id": 10, "status": 0}, "geometry": Point(0, 0)},
+            {"properties": {"target_id": 2, "base_id": 20, "status": 0}, "geometry": Point(100, 0)},
+        ],
+    )
+    rcsd_nodes = _write(
+        tmp_path / "rcsdnode_out.gpkg",
+        [
+            {"properties": {"id": 10, "mainnodeid": 0}, "geometry": Point(0, 0)},
+            {"properties": {"id": 20, "mainnodeid": 0}, "geometry": Point(100, 0)},
+            {"properties": {"id": 30, "mainnodeid": 0}, "geometry": Point(100, 80)},
+            {"properties": {"id": 40, "mainnodeid": 0}, "geometry": Point(0, 80)},
+        ],
+    )
+    rcsd_roads = _write(
+        tmp_path / "rcsdroad_out.gpkg",
+        [
+            {"properties": {"id": "forward", "snodeid": 10, "enodeid": 20, "direction": 2}, "geometry": LineString([(0, 0), (100, 0)])},
+            {"properties": {"id": "reverse_a", "snodeid": 20, "enodeid": 30, "direction": 2}, "geometry": LineString([(100, 0), (100, 80)])},
+            {"properties": {"id": "reverse_b", "snodeid": 30, "enodeid": 40, "direction": 2}, "geometry": LineString([(100, 80), (0, 80)])},
+            {"properties": {"id": "reverse_c", "snodeid": 40, "enodeid": 10, "direction": 2}, "geometry": LineString([(0, 80), (0, 0)])},
+        ],
+    )
+
+    artifacts = run_t06_segment_fusion_precheck(
+        swsd_segment_path=segment,
+        swsd_roads_path=swsd_roads,
+        swsd_nodes_path=nodes,
+        intersection_match_path=relation,
+        rcsdroad_path=rcsd_roads,
+        rcsdnode_path=rcsd_nodes,
+        out_root=tmp_path / "out",
+        run_id="run",
+    )
+
+    summary = json.loads(artifacts.step2.summary_path.read_text(encoding="utf-8"))
+    assert summary["replaceable_count"] == 0
+    assert summary["reject_reason_counts"]["rcsd_not_bidirectional_for_swsd_dual"] == 1
+
+    rejected_payload = json.loads(artifacts.step2.rejected_gpkg_path.with_suffix(".json").read_text(encoding="utf-8"))
+    rejected_props = rejected_payload["features"][0]["properties"]
+    assert rejected_props["root_cause_category"] == "buffer_candidate_missing_bidirectional_corridor"
+    assert rejected_props["full_graph_status"] == "required_nodes_connected"
+    assert rejected_props["candidate_graph_status"] == "required_nodes_connected"
+    assert rejected_props["directional_status"] == "full=bidirectional;candidate=forward_only"
+
+    buffer_rejected = json.loads(
+        (artifacts.step2.summary_path.parent / "t06_rcsd_buffer_segment_rejected.json").read_text(encoding="utf-8")
+    )
+    buffer_props = buffer_rejected["features"][0]["properties"]
+    assert buffer_props["notes"] == "full RCSD graph is bidirectional, but the 50m buffer candidate graph misses at least one direction corridor"

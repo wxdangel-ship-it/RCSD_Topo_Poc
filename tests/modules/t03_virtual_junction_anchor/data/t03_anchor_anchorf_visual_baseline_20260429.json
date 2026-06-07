@@ -1,11 +1,11 @@
 {
-  "baseline_id": "t03_anchor_anchorf_visual_baseline_20260429_v002",
+  "baseline_id": "t03_anchor_anchorf_visual_baseline_20260429_v003",
   "source_run_root": "/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t03_visual_audit/20260429_anchor_anchorf_abc_uturn_fix_v001",
   "scope": "Anchor default formal 58 + Anchor_F 7 after visual audit approval",
   "case_count": 65,
   "step7_state_counts": {
-    "accepted": 60,
-    "rejected": 5
+    "accepted": 62,
+    "rejected": 3
   },
   "association_class_counts": {
     "A": 15,
@@ -33,7 +33,7 @@
     {"dataset": "anchor", "case_id": "707281", "template_class": "center_junction", "step7_state": "accepted", "step7_reason": "step7_accepted_after_support_only_convergence", "step6_state": "established", "association_class": "B", "association_state": "review"},
     {"dataset": "anchor", "case_id": "707324", "template_class": "center_junction", "step7_state": "accepted", "step7_reason": "step7_accepted", "step6_state": "established", "association_class": "C", "association_state": "established"},
     {"dataset": "anchor", "case_id": "707476", "template_class": "center_junction", "step7_state": "accepted", "step7_reason": "step7_accepted_after_support_only_convergence", "step6_state": "established", "association_class": "B", "association_state": "review"},
-    {"dataset": "anchor", "case_id": "707913", "template_class": "single_sided_t_mouth", "step7_state": "rejected", "step7_reason": "step7_rejected_after_step6_failure", "step6_state": "not_established", "association_class": "B", "association_state": "review"},
+    {"dataset": "anchor", "case_id": "707913", "template_class": "single_sided_t_mouth", "step7_state": "accepted", "step7_reason": "step7_accepted_with_visual_risk", "step6_state": "established", "association_class": "B", "association_state": "review"},
     {"dataset": "anchor", "case_id": "709431", "template_class": "single_sided_t_mouth", "step7_state": "accepted", "step7_reason": "step7_accepted_after_support_only_convergence", "step6_state": "established", "association_class": "B", "association_state": "review"},
     {"dataset": "anchor", "case_id": "709632", "template_class": "single_sided_t_mouth", "step7_state": "accepted", "step7_reason": "step7_accepted_after_support_only_convergence", "step6_state": "established", "association_class": "B", "association_state": "review"},
     {"dataset": "anchor", "case_id": "724123", "template_class": "single_sided_t_mouth", "step7_state": "accepted", "step7_reason": "step7_accepted_after_support_only_convergence", "step6_state": "established", "association_class": "B", "association_state": "review"},
@@ -84,6 +84,6 @@
     {"dataset": "anchor_f", "case_id": "21497084", "template_class": "single_sided_t_mouth", "step7_state": "accepted", "step7_reason": "step7_accepted", "step6_state": "established", "association_class": "A", "association_state": "established"},
     {"dataset": "anchor_f", "case_id": "42342021", "template_class": "center_junction", "step7_state": "accepted", "step7_reason": "step7_accepted_after_support_only_convergence", "step6_state": "established", "association_class": "B", "association_state": "review"},
     {"dataset": "anchor_f", "case_id": "56081971", "template_class": "single_sided_t_mouth", "step7_state": "accepted", "step7_reason": "step7_accepted_with_visual_risk", "step6_state": "established", "association_class": "A", "association_state": "established"},
-    {"dataset": "anchor_f", "case_id": "600114422", "template_class": "center_junction", "step7_state": "rejected", "step7_reason": "step7_rejected_after_step6_failure", "step6_state": "not_established", "association_class": "B", "association_state": "review"}
+    {"dataset": "anchor_f", "case_id": "600114422", "template_class": "center_junction", "step7_state": "accepted", "step7_reason": "step7_accepted_with_visual_risk", "step6_state": "established", "association_class": "B", "association_state": "review"}
   ]
 }

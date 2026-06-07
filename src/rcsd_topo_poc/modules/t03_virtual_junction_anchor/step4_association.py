@@ -1823,22 +1823,6 @@ def build_association_case_result(context: AssociationContext) -> AssociationCas
     ]
     if support_road_ids:
         hook_shrunk_road_ids = [road_id for road_id in hook_shrunk_road_ids if road_id in support_road_ids]
-    forced_no_support_only_due_direction_mismatch = (
-        template_result.template_class == "single_sided_t_mouth"
-        and not required_node_ids
-        and any(
-            row.get("gate_reason") == "single_sided_required_core_direction_signature_mismatch"
-            and float(row.get("min_distance_to_representative_m", float("inf")))
-            <= SINGLE_SIDED_REQUIRED_CORE_ANCHOR_DISTANCE_M
-            for row in required_rcsdnode_gate_audit.values()
-        )
-    )
-    if forced_no_support_only_due_direction_mismatch:
-        support_road_ids.clear()
-        support_roads = []
-        support_fragments = []
-        hook_shrunk_road_ids = []
-
     if required_node_ids:
         association_class = "A"
     elif support_road_ids:

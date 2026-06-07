@@ -436,9 +436,16 @@ def _step3_two_node_t_bridge_geometry(
 ) -> BaseGeometry | None:
     association_context = finalization_context.association_context
     association_case_result = finalization_context.association_case_result
+    support_only_center_bridge_candidate = (
+        association_case_result.association_class == "B"
+        and association_case_result.template_class == "center_junction"
+        and association_case_result.reason == "association_support_only"
+        and len(association_case_result.extra_status_fields.get("support_rcsdroad_ids") or []) >= 4
+    )
     if (
         association_case_result.association_class != "A"
         and association_case_result.template_class != "single_sided_t_mouth"
+        and not support_only_center_bridge_candidate
     ):
         return None
     if not bool(association_context.step3_status_doc.get("two_node_t_bridge_applied")):
@@ -454,8 +461,15 @@ def _step3_two_node_t_bridge_geometry(
     start_point = target_nodes[0].geometry
     end_point = target_nodes[1].geometry
     raw_line = LineString([start_point, end_point])
+    support_only_long_center_bridge = (
+        support_only_center_bridge_candidate
+        and raw_line.length > CENTER_TWO_NODE_T_BRIDGE_MAX_LENGTH_M
+    )
+    if support_only_center_bridge_candidate and not support_only_long_center_bridge:
+        return None
     if (
         association_case_result.template_class != "single_sided_t_mouth"
+        and not support_only_long_center_bridge
         and raw_line.length > CENTER_TWO_NODE_T_BRIDGE_MAX_LENGTH_M
     ):
         return None
@@ -2160,10 +2174,20 @@ def build_step6_result(
             association_case_result.reason == "association_support_only"
             and component_count == 2
             and max_component_target_distance_m <= SUPPORT_ONLY_SEAM_BRIDGE_BUFFER_M
-            and aspect_ratio is not None
-            and aspect_ratio >= 2.5
-            and bbox_fill_ratio is not None
-            and bbox_fill_ratio >= 0.4
+            and (
+                (
+                    aspect_ratio is not None
+                    and aspect_ratio >= 2.5
+                    and bbox_fill_ratio is not None
+                    and bbox_fill_ratio >= 0.4
+                )
+                or (
+                    compactness is not None
+                    and compactness >= 0.12
+                    and bbox_fill_ratio is not None
+                    and bbox_fill_ratio >= 0.11
+                )
+            )
             and semantic_junction_cover_ok
             and required_rc_cover_ok
             and within_legal_space_ok
@@ -2184,10 +2208,27 @@ def build_step6_result(
         )
         severe_reason = "step6_single_sided_shape_artifact" if severe_template_misfit else None
     else:
+        component_count = int(shape_metrics["component_count"] or 0)
+        compactness = shape_metrics["compactness"]
+        bbox_fill_ratio = shape_metrics["bbox_fill_ratio"]
+        support_only_two_component_review = (
+            association_case_result.reason == "association_support_only"
+            and component_count == 2
+            and max_component_target_distance_m <= SUPPORT_ONLY_SEAM_BRIDGE_BUFFER_M
+            and compactness is not None
+            and compactness >= 0.14
+            and bbox_fill_ratio is not None
+            and bbox_fill_ratio >= 0.12
+            and semantic_junction_cover_ok
+            and required_rc_cover_ok
+            and within_legal_space_ok
+            and within_direction_boundary_ok
+            and foreign_exclusion_ok
+        )
         severe_template_misfit = (
-            (shape_metrics["compactness"] is not None and shape_metrics["compactness"] < 0.14)
-            or (shape_metrics["bbox_fill_ratio"] is not None and shape_metrics["bbox_fill_ratio"] < 0.12)
-            or shape_metrics["component_count"] > 1
+            (compactness is not None and compactness < 0.14)
+            or (bbox_fill_ratio is not None and bbox_fill_ratio < 0.12)
+            or (component_count > 1 and not support_only_two_component_review)
         )
         severe_reason = "step6_center_shape_artifact" if severe_template_misfit else None
     if severe_template_misfit:

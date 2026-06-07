@@ -237,6 +237,7 @@ RCSD 语义候选与多点语义路口组规则：
 - `RCSDNode` 进入 required/support 语义关联时必须具备 incident `RCSDRoad` 证据；仅靠空间邻近且无 road 拓扑连接的孤立点不得升格为 related。
 - `center_junction` 的 required semantic core 必须由当前代表点附近的 anchor-local 语义组、代表点附近成对语义组，或与当前 SWSD 路口结构一致且偏移受限的紧凑高阶 RCSD 复合语义组证明；远离当前代表点、无结构一致性证据的单个 RCSD 语义组不得单独把 case 升格为 A 类。
 - `single_sided_t_mouth` 的 required semantic core 必须满足至少一种条件：当前代表点附近的 anchor-local 语义组、横向两侧成对语义组、代表点近处的紧凑同 `mainnodeid` 复合语义组，或落在 allowed space 但不落在当前 SWSD surface 的紧凑复合语义组。已落在当前 SWSD surface 内、但既非 anchor-local 也非成对的紧凑复合组，不得仅凭 compact group 身份把 case 升格为 A 类。
+- `single_sided_t_mouth` 中，若候选 `RCSDNode` 因 `single_sided_required_core_direction_signature_mismatch` 被降级，该降级只阻断 A 类 required semantic core；几何趋势与当前 Step3 selected corridor / allowed space 相交的 `RCSDRoad` 仍可按 road-only support 进入 B 类。该规则用于 RCSD 缺少竖向或横向语义 Road、但可用主干 `RCSDRoad` 足以辅助当前 SWSD T 型口门闭合的场景；不得把已降级的 `RCSDNode` 隐式提升为 `required_rcsdnode_ids`。
 - Step4 对 `required_rcsdnode_ids` 的升格 / 降级必须通过 `required_rcsdnode_gate_audit` 与 `required_rcsdnode_gate_dropped_ids` 可审计。
 
 ### 3.5 Step5：foreign / excluded 负向约束
@@ -286,6 +287,7 @@ node 类 `excluded / foreign` 当前保留在审计层，不进入本轮 hard su
 - directional boundary 外的 related RCSDRoad / RCSDNode 不得作为 accepted 的硬失败条件。
 - 对 Step4 已确认的 local required RCSD 语义组，Step6 的 `semantic_junction_cover_ok / required_rc_cover_ok` 还必须覆盖同组 RCSDNode 之间的直线连接区域；成员来源限于 Step4 审计过的 candidate / local required 语义成员，`single-sided overflow node` 与 terminal degree-1 特例的非本地成员不得被隐式提升为 must-cover。
 - `association_class=B` 的 support-only case 允许在目标节点附近增加局部 seam bridge，以修补中心连接缝隙；该 bridge 仍必须受 legal space、directional boundary 与 hard negative mask 共同约束，不能成为跨路口扩张通道。
+- `association_class=B` 的 support-only case 若 final geometry 仅形成两个贴近目标节点的组件，且 semantic must-cover、local required RC must-cover、legal space、directional boundary 与 foreign exclusion 均通过，可作为 V2 风险接受；三组件及以上碎片、低 compactness / bbox fill 的不稳定形态仍按 shape artifact 拒绝。
 - 当前正式契约不冻结 Step6 solver 常量、阈值与具体构面参数。
 
 ### 3.7 Step7：最终验收与发布
@@ -382,6 +384,7 @@ node 类 `excluded / foreign` 当前保留在审计层，不进入本轮 hard su
 - tracing 过程中的 `RCSDRoad` 不要求整体完全落在当前候选空间内；只要最终确认的 `RCSDNode` 落在横方向候选空间内，即可视为当前 tracing 有效。
 - 若 tracing 无法在横方向两侧都确认 terminal `RCSDNode`，则当前 A 类横向口门特化规则不成立，横方向回到 generic directional boundary。
 - 若冻结 Step3 已对当前 case 标记 `two_node_t_bridge_applied = true`，则后续 directional boundary / polygon seed 必须继承该 bridge corridor。
+- 对 `center_junction + association_class=B + association_support_only`，若冻结 Step3 已确认 two-node bridge、bridge 长度超过 center 常规短桥上限，且当前 support-only 证据不少于 4 条 `RCSDRoad`，Step6 必须把该 long bridge 作为 target-node connection must-cover 区域继承。该规则用于 SWSD/RCSD 语义 Road 缺失但虚拟路口面仍需覆盖两个 SWSD 语义节点之间区域的长 T 型口门；短 bridge 仍保持既有 center support-only 口径，避免扩大既有 accepted case 的形态回退风险。
 
 ## 5. 输出契约
 

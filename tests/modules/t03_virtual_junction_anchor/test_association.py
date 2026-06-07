@@ -412,7 +412,7 @@ def test_association_single_sided_degree1_node_stays_support_only(tmp_path: Path
     )
 
 
-def test_association_single_sided_direction_mismatch_fails_without_support_fallback(tmp_path: Path) -> None:
+def test_association_single_sided_direction_mismatch_keeps_road_only_support(tmp_path: Path) -> None:
     case_root = tmp_path / "cases"
     step3_root = tmp_path / "step3"
     case_id = "100016"
@@ -453,10 +453,11 @@ def test_association_single_sided_direction_mismatch_fails_without_support_fallb
 
     result = _run_case(case_root, step3_root, case_id)
 
-    assert result.association_class == "C"
+    assert result.association_class == "B"
+    assert result.reason == "association_support_only"
     assert result.extra_status_fields["required_rcsdnode_ids"] == []
     assert result.extra_status_fields["support_rcsdnode_ids"] == []
-    assert result.extra_status_fields["support_rcsdroad_ids"] == []
+    assert result.extra_status_fields["support_rcsdroad_ids"] == ["rc_h_left"]
     gate_rows = result.audit_doc["step4"]["required_rcsdnode_gate_audit"]
     assert (
         gate_rows["rc_horizontal_only"]["gate_reason"]

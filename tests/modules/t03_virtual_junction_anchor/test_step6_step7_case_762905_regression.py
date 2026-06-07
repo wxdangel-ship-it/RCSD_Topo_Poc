@@ -30,6 +30,7 @@ from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step7_acceptance import (
 
 
 REAL_T03_ROOT = Path("/mnt/e/TestData/POC_Data/T03")
+REAL_T03_ERROR_ROOT = Path("/mnt/e/TestData/POC_Data/T03_Error")
 
 
 def _write_step3_for_case(case_root: Path, step3_root: Path, case_id: str) -> None:
@@ -64,14 +65,14 @@ def _rcsd_line_cover_ratio(case_root: Path, case_id: str, left_node_id: str, rig
     return line.intersection(polygon).length / line.length if polygon is not None and line.length > 0.0 else 0.0
 
 
-def _run_real_case_finalization(case_id: str, tmp_path: Path):
-    if not (REAL_T03_ROOT / case_id).is_dir():
-        pytest.skip(f"missing decoded T03 case: {REAL_T03_ROOT / case_id}")
+def _run_real_case_finalization(case_id: str, tmp_path: Path, case_root: Path = REAL_T03_ROOT):
+    if not (case_root / case_id).is_dir():
+        pytest.skip(f"missing decoded T03 case: {case_root / case_id}")
 
     step3_root = tmp_path / "step3"
-    _write_step3_for_case(REAL_T03_ROOT, step3_root, case_id)
+    _write_step3_for_case(case_root, step3_root, case_id)
     specs, _ = load_association_case_specs(
-        case_root=REAL_T03_ROOT,
+        case_root=case_root,
         case_ids=[case_id],
         exclude_case_ids=[],
     )
@@ -84,6 +85,82 @@ def _run_real_case_finalization(case_id: str, tmp_path: Path):
     step6_result = build_step6_result(finalization_context)
     step7_result = build_step7_result(finalization_context, step6_result)
     return association_context, association_case_result, step6_result, step7_result
+
+
+@pytest.mark.parametrize(
+    ("case_id", "template_class"),
+    [
+        ("520988080", "single_sided_t_mouth"),
+        ("1032579", "center_junction"),
+    ],
+)
+def test_real_error_support_only_near_two_component_geometry_is_accepted(
+    case_id: str,
+    template_class: str,
+    tmp_path: Path,
+) -> None:
+    _association_context, association_case_result, step6_result, step7_result = _run_real_case_finalization(
+        case_id,
+        tmp_path,
+        REAL_T03_ERROR_ROOT,
+    )
+
+    assert association_case_result.template_class == template_class
+    assert association_case_result.association_class == "B"
+    assert association_case_result.reason == "association_support_only"
+    assert step6_result.geometry_established is True
+    assert step6_result.audit_doc["assembly"]["polygon_final_metrics"]["component_count"] == 2
+    assert step6_result.extra_status_fields["max_component_target_distance_m"] <= 9.0
+    assert step6_result.extra_status_fields["foreign_exclusion_ok"] is True
+    assert step7_result.step7_state == "accepted"
+    assert step7_result.visual_review_class == VISUAL_V2
+
+
+@pytest.mark.parametrize("case_id", ["699877", "722518"])
+def test_real_error_single_sided_direction_mismatch_keeps_road_only_support(
+    case_id: str,
+    tmp_path: Path,
+) -> None:
+    _association_context, association_case_result, step6_result, step7_result = _run_real_case_finalization(
+        case_id,
+        tmp_path,
+        REAL_T03_ERROR_ROOT,
+    )
+
+    assert association_case_result.template_class == "single_sided_t_mouth"
+    assert association_case_result.association_class == "B"
+    assert association_case_result.reason == "association_support_only"
+    assert association_case_result.extra_status_fields["required_rcsdnode_ids"] == []
+    assert association_case_result.extra_status_fields["support_rcsdroad_ids"]
+    gate_audit = association_case_result.extra_status_fields["required_rcsdnode_gate_audit"]
+    assert any(
+        row.get("gate_reason") == "single_sided_required_core_direction_signature_mismatch"
+        for row in gate_audit.values()
+    )
+    assert step6_result.geometry_established is True
+    assert step6_result.audit_doc["assembly"]["polygon_final_metrics"]["component_count"] == 1
+    assert step7_result.step7_state == "accepted"
+    assert step7_result.visual_review_class == VISUAL_V1
+
+
+def test_real_error_984901_center_support_only_long_bridge_covers_target_connection(tmp_path: Path) -> None:
+    _association_context, association_case_result, step6_result, step7_result = _run_real_case_finalization(
+        "984901",
+        tmp_path,
+        REAL_T03_ERROR_ROOT,
+    )
+
+    assert association_case_result.template_class == "center_junction"
+    assert association_case_result.association_class == "B"
+    assert association_case_result.reason == "association_support_only"
+    assert len(association_case_result.extra_status_fields["support_rcsdroad_ids"]) >= 4
+    assert step6_result.geometry_established is True
+    assert step6_result.audit_doc["assembly"]["target_node_connection_bridge_applied"] is True
+    assert step6_result.extra_status_fields["target_node_connection_required"] is True
+    assert step6_result.extra_status_fields["target_node_connection_cover_ratio"] == pytest.approx(1.0)
+    assert step6_result.audit_doc["assembly"]["polygon_final_metrics"]["component_count"] == 1
+    assert step7_result.step7_state == "accepted"
+    assert step7_result.visual_review_class == VISUAL_V1
 
 
 def test_real_case_762905_single_sided_strong_rcsdnode_is_kept_inside_final_polygon(tmp_path: Path) -> None:

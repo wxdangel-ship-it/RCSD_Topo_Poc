@@ -160,6 +160,7 @@ def choose_preferred_continuation_edges(
     roads: dict[str, Any],
     physical_to_semantic: dict[str, str],
     angle_tolerance_deg: float = DEFAULT_KIND_CONTINUITY_ANGLE_TOLERANCE_DEG,
+    prefer_exact_kind_token: bool = True,
 ) -> ContinuationDecision:
     if len(outgoing_edges) <= 1:
         return ContinuationDecision(
@@ -184,12 +185,14 @@ def choose_preferred_continuation_edges(
             edge_angles_deg={},
         )
 
-    same_kind_edges = tuple(
-        edge
-        for edge in outgoing_edges
-        if (outgoing_road := roads.get(edge.road_id)) is not None
-        and roads_share_kind_token(incoming_road, outgoing_road)
-    )
+    same_kind_edges: tuple[Any, ...] = ()
+    if prefer_exact_kind_token:
+        same_kind_edges = tuple(
+            edge
+            for edge in outgoing_edges
+            if (outgoing_road := roads.get(edge.road_id)) is not None
+            and roads_share_kind_token(incoming_road, outgoing_road)
+        )
     same_level_edges = same_kind_edges or tuple(
         edge
         for edge in outgoing_edges

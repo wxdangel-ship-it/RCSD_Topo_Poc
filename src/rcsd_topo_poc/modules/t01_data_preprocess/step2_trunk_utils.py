@@ -1248,7 +1248,7 @@ def _dedupe_trunk_candidates(
 def _pair_support_seed_candidates(
     pair: PairRecord,
     *,
-    context: Step1GraphContext,
+    context: Optional[Step1GraphContext] = None,
     roads: dict[str, RoadRecord],
     road_endpoints: dict[str, tuple[str, str]],
     pruned_road_ids: set[str],
@@ -1296,8 +1296,12 @@ def _pair_support_seed_candidates(
     )
     if not is_bidirectional_minimal_loop and not is_semantic_node_group_closure:
         return []
-    if not shared_internal_nodes and not is_semantic_node_group_closure and not is_bidirectional_minimal_loop:
-        return []
+    if not shared_internal_nodes and not is_bidirectional_minimal_loop and len(pair_support_road_ids) > 2:
+        if context is None:
+            return []
+        active_node_ids = set(forward_path.node_ids + reverse_path.node_ids)
+        if len({_semantic_group_node_id(node_id, context) for node_id in active_node_ids}) == len(active_node_ids):
+            return []
 
     left_turn_road_ids = tuple(
         road_id

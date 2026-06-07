@@ -1014,6 +1014,7 @@ def _search_from_seed(
     terminate_eval: dict[str, RuleEvaluation],
     continue_after_terminal_candidate: bool = False,
     complex_junction_equivalent_node_ids: Optional[dict[str, tuple[str, ...]]] = None,
+    prefer_exact_kind_token: bool = True,
 ) -> SearchResult:
     queue: deque[str] = deque([start_node_id])
     visited = {start_node_id}
@@ -1052,6 +1053,7 @@ def _search_from_seed(
                 outgoing_edges=outgoing_edges,
                 roads=roads,
                 physical_to_semantic=physical_to_semantic,
+                prefer_exact_kind_token=prefer_exact_kind_token,
             )
             if decision.pruned_edges:
                 _record_search_event(
@@ -1152,6 +1154,21 @@ def _search_from_seed(
                             "seed_reasons": list(seed_eval[next_node_id].reasons),
                         },
                     )
+                continue
+
+            if through_node and equivalent_terminal_node_id is None:
+                _record_search_event(
+                    event_counts,
+                    event_samples,
+                    sample_counts,
+                    {
+                        "event": "through_continue",
+                        "seed_node_id": start_node_id,
+                        "node_id": next_node_id,
+                        "road_id": edge.road_id,
+                    },
+                )
+                queue.append(next_node_id)
                 continue
 
             if candidate_terminal_node_id is not None and next_node_id != start_node_id:
@@ -1588,6 +1605,64 @@ def run_step1_strategy(
         search_event_sample_counts,
         complex_junction_node_ids=complex_junction_node_ids,
         complex_junction_equivalent_node_ids=complex_junction_equivalent_node_ids,
+    )
+
+    relaxed_search_results: dict[str, SearchResult] = {}
+    relaxed_event_counts: dict[str, int] = {}
+    relaxed_event_samples: list[dict[str, Any]] = []
+    relaxed_event_sample_counts: dict[str, int] = {}
+    for seed_id in search_seed_ids:
+        relaxed_result = _search_from_seed(
+            seed_id,
+            directed=strategy_directed,
+            blocked=strategy_blocked,
+            roads=context.roads,
+            physical_to_semantic=context.physical_to_semantic,
+            through_node_ids=through_node_ids,
+            hard_stop_node_ids=hard_stop_node_ids,
+            seed_eval=seed_eval,
+            terminate_eval=terminate_eval,
+            continue_after_terminal_candidate=strategy.through_rule.continue_after_terminal_candidate,
+            complex_junction_equivalent_node_ids=complex_junction_equivalent_node_ids,
+            prefer_exact_kind_token=False,
+        )
+        relaxed_search_results[seed_id] = relaxed_result
+        for event_name, count in relaxed_result.event_counts.items():
+            relaxed_event_counts[event_name] = relaxed_event_counts.get(event_name, 0) + count
+        for payload in relaxed_result.event_samples:
+            _append_capped_event_sample(relaxed_event_samples, relaxed_event_sample_counts, payload)
+    relaxed_pair_candidates = _build_pair_records(
+        strategy,
+        relaxed_search_results,
+        relaxed_event_counts,
+        relaxed_event_samples,
+        relaxed_event_sample_counts,
+        complex_junction_node_ids=complex_junction_node_ids,
+        complex_junction_equivalent_node_ids=complex_junction_equivalent_node_ids,
+    )
+    pair_candidate_by_id = {pair.pair_id: pair for pair in pair_candidates}
+    for relaxed_pair in relaxed_pair_candidates:
+        if relaxed_pair.pair_id in pair_candidate_by_id or not relaxed_pair.kind_2_128_node_ids:
+            continue
+        pair_candidate_by_id[relaxed_pair.pair_id] = relaxed_pair
+        _record_search_event(
+            search_event_counts,
+            search_event_samples,
+            search_event_sample_counts,
+            {
+                "event": "kind_2_128_relaxed_same_level_pair_added",
+                "strategy_id": strategy.strategy_id,
+                "pair_id": relaxed_pair.pair_id,
+                "a_node_id": relaxed_pair.a_node_id,
+                "b_node_id": relaxed_pair.b_node_id,
+                "kind_2_128_node_ids": list(relaxed_pair.kind_2_128_node_ids),
+                "forward_path_road_ids": list(relaxed_pair.forward_path_road_ids),
+                "reverse_path_road_ids": list(relaxed_pair.reverse_path_road_ids),
+            },
+        )
+    pair_candidates = sorted(
+        pair_candidate_by_id.values(),
+        key=lambda pair: (_sort_key(pair.a_node_id), _sort_key(pair.b_node_id)),
     )
 
     return Step1StrategyExecution(

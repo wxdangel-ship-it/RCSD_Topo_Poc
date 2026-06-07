@@ -59,17 +59,21 @@ def _road_feature(
     *,
     formway: int = 0,
     road_kind: int = 0,
+    kind: Optional[str] = None,
 ) -> dict:
+    properties = {
+        "id": road_id,
+        "snodeid": snodeid,
+        "enodeid": enodeid,
+        "direction": direction,
+        "formway": formway,
+        "road_kind": road_kind,
+    }
+    if kind is not None:
+        properties["kind"] = kind
     return {
         "type": "Feature",
-        "properties": {
-            "id": road_id,
-            "snodeid": snodeid,
-            "enodeid": enodeid,
-            "direction": direction,
-            "formway": formway,
-            "road_kind": road_kind,
-        },
+        "properties": properties,
         "geometry": {"type": "LineString", "coordinates": coords},
     }
 
@@ -1147,3 +1151,50 @@ def test_step1_full_through_filter_accepts_roundabout_kind_64(tmp_path: Path) ->
 
     assert execution.seed_ids == ["1", "2"]
     assert execution.terminate_ids == ["1", "2"]
+
+
+def test_step1_adds_relaxed_same_level_complex_corridor_pair(tmp_path: Path) -> None:
+    road_path = tmp_path / "complex_relaxed_roads.geojson"
+    node_path = tmp_path / "complex_relaxed_nodes.geojson"
+
+    _write_geojson(
+        node_path,
+        features=[
+            _node_feature(1, 0.0, 0.0, kind_2=4, grade_2=1),
+            _node_feature(2, 0.01, 0.0, kind=1, grade=3, kind_2=1, grade_2=3),
+            _node_feature(3, 0.02, 0.0, kind=128, grade=2, kind_2=128, grade_2=2),
+            _node_feature(4, 0.03, 0.0, kind=1, grade=3, kind_2=1, grade_2=3),
+            _node_feature(5, 0.04, 0.0, kind_2=4, grade_2=1),
+            _node_feature(6, 0.03, -0.01, kind=1, grade=3, kind_2=1, grade_2=3),
+            _node_feature(7, 0.01, 0.01, kind=1, grade=3, kind_2=1, grade_2=3),
+            _node_feature(8, 0.01, -0.01, kind=1, grade=3, kind_2=1, grade_2=3),
+            _node_feature(9, -0.01, 0.0, kind=1, grade=3, kind_2=1, grade_2=3),
+            _node_feature(10, 0.05, 0.0, kind=1, grade=3, kind_2=1, grade_2=3),
+        ],
+    )
+    _write_geojson(
+        road_path,
+        features=[
+            _road_feature("r12", 1, 2, 2, [[0.0, 0.0], [0.01, 0.0]], kind="0602"),
+            _road_feature("r27", 2, 7, 2, [[0.01, 0.0], [0.01, 0.01]], kind="0602"),
+            _road_feature("r23", 2, 3, 2, [[0.01, 0.0], [0.02, 0.0]], kind="060a"),
+            _road_feature("r34", 3, 4, 2, [[0.02, 0.0], [0.03, 0.0]], kind="060a"),
+            _road_feature("r45", 4, 5, 2, [[0.03, 0.0], [0.04, 0.0]], kind="060a"),
+            _road_feature("r56", 5, 6, 2, [[0.04, 0.0], [0.03, -0.01]], kind="060a"),
+            _road_feature("r68", 6, 8, 2, [[0.03, -0.01], [0.01, -0.01]], kind="0602"),
+            _road_feature("r81", 8, 1, 2, [[0.01, -0.01], [0.0, 0.0]], kind="0602"),
+            _road_feature("r19", 1, 9, 2, [[0.0, 0.0], [-0.01, 0.0]], kind="0801"),
+            _road_feature("r510", 5, 10, 2, [[0.04, 0.0], [0.05, 0.0]], kind="0801"),
+        ],
+    )
+
+    context = step1_pair_poc.build_step1_graph_context(road_path=road_path, node_path=node_path)
+    strategy = step1_pair_poc._load_strategy("configs/t01_data_preprocess/step1_pair_s2.json")
+    execution = step1_pair_poc.run_step1_strategy(context, strategy)
+    pairs = {pair.pair_id: pair for pair in execution.pair_candidates}
+
+    pair = pairs["S2:1__5"]
+    assert pair.forward_path_road_ids == ("r12", "r23", "r34", "r45")
+    assert pair.reverse_path_road_ids == ("r56", "r68", "r81")
+    assert pair.kind_2_128_node_ids == ("3",)
+    assert execution.search_event_counts["kind_2_128_relaxed_same_level_pair_added"] == 1

@@ -476,3 +476,85 @@ def test_dual_carriageway_gate_uses_semantic_endpoint_internal_width() -> None:
     assert failed == []
     assert support_info["dual_carriageway_separation_gate_limit_m"] == 80.0
     assert support_info["dual_carriageway_base_gate_limit_m"] == 50.0
+
+
+def test_evaluate_trunk_choices_keeps_same_mainnode_physical_port_closure() -> None:
+    pair = _pair(
+        "S2:A__B",
+        a_node_id="A",
+        b_node_id="B",
+        forward_path_node_ids=("A", "B"),
+        forward_path_road_ids=("ab",),
+        reverse_path_node_ids=("B", "C", "A2"),
+        reverse_path_road_ids=("bc", "ca2"),
+    )
+    roads = [
+        _road("ab", "A", "B", direction=2, coords=((0.0, 0.0), (20.0, 0.0))),
+        _road("bc", "B", "C", direction=2, coords=((20.0, 0.0), (10.0, 8.0))),
+        _road("ca2", "C", "A2", direction=2, coords=((10.0, 8.0), (0.0, 2.0))),
+    ]
+    context = _context(
+        roads,
+        semantic_nodes=[
+            step1_pair_poc.SemanticNodeRecord("A", "A", ("A",), 4, 1, 4, 1, 2, Point(0.0, 0.0), {"mainnodeid": "A"}),
+            step1_pair_poc.SemanticNodeRecord("A2", "A2", ("A2",), 8, 2, 0, 0, 2, Point(0.0, 2.0), {"mainnodeid": "A"}),
+            step1_pair_poc.SemanticNodeRecord("B", "B", ("B",), 4, 1, 4, 1, 2, Point(20.0, 0.0), {}),
+            step1_pair_poc.SemanticNodeRecord("C", "C", ("C",), 16, 3, 16, 3, 2, Point(10.0, 8.0), {}),
+        ],
+    )
+    road_endpoints = {road.road_id: (road.snodeid, road.enodeid) for road in roads}
+
+    choices, reject_reason, warnings, _ = step2_segment_poc._evaluate_trunk_choices(
+        pair,
+        context=context,
+        candidate_road_ids={road.road_id for road in roads},
+        pruned_road_ids={road.road_id for road in roads},
+        branch_cut_infos=[],
+        road_endpoints=road_endpoints,
+        through_rule=step1_pair_poc.ThroughRuleSpec(),
+        formway_mode="strict",
+        left_turn_formway_bit=step2_segment_poc.LEFT_TURN_FORMWAY_BIT,
+    )
+
+    assert reject_reason is None
+    assert warnings == ()
+    assert len(choices) == 1
+    assert choices[0].candidate.is_semantic_node_group_closure is True
+
+
+def test_evaluate_trunk_choices_keeps_pair_support_near_dual_gate() -> None:
+    pair = _pair(
+        "S2:A__B",
+        a_node_id="A",
+        b_node_id="B",
+        forward_path_node_ids=("A", "F", "B"),
+        forward_path_road_ids=("af", "fb"),
+        reverse_path_node_ids=("B", "R", "A"),
+        reverse_path_road_ids=("br", "ra"),
+    )
+    roads = [
+        _road("af", "A", "F", direction=2, coords=((0.0, 0.0), (50.0, 0.0))),
+        _road("fb", "F", "B", direction=2, coords=((50.0, 0.0), (100.0, 0.0))),
+        _road("br", "B", "R", direction=2, coords=((100.0, 56.0), (50.0, 56.0))),
+        _road("ra", "R", "A", direction=2, coords=((50.0, 56.0), (0.0, 56.0))),
+    ]
+    context = _context(roads)
+    road_endpoints = {road.road_id: (road.snodeid, road.enodeid) for road in roads}
+
+    choices, reject_reason, warnings, support_info = step2_segment_poc._evaluate_trunk_choices(
+        pair,
+        context=context,
+        candidate_road_ids={road.road_id for road in roads},
+        pruned_road_ids={road.road_id for road in roads},
+        branch_cut_infos=[],
+        road_endpoints=road_endpoints,
+        through_rule=step1_pair_poc.ThroughRuleSpec(),
+        formway_mode="strict",
+        left_turn_formway_bit=step2_segment_poc.LEFT_TURN_FORMWAY_BIT,
+    )
+
+    assert reject_reason is None
+    assert warnings == ()
+    assert len(choices) == 1
+    assert support_info["dual_carriageway_base_gate_limit_m"] == 50.0
+    assert 50.0 < support_info["dual_carriageway_max_separation_m"] < 60.0

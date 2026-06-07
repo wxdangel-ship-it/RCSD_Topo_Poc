@@ -73,3 +73,23 @@ def test_choose_preferred_edges_uses_angle_inside_same_level_candidates() -> Non
     assert [edge.road_id for edge in decision.pruned_edges] == ["turn"]
     assert decision.angle_applied is True
     assert decision.best_angle_deg == 0.0
+
+
+def test_choose_preferred_edges_keeps_exact_kind_before_angle() -> None:
+    roads = {
+        "in": _road("in", "a", "b", "0602", [(0.0, 0.0), (1.0, 0.0)]),
+        "exact": _road("exact", "b", "c", "0602", [(1.0, 0.0), (1.0, 1.0)]),
+        "same_level": _road("same_level", "b", "d", "0601", [(1.0, 0.0), (2.0, 0.0)]),
+    }
+
+    decision = choose_preferred_continuation_edges(
+        current_node_id="b",
+        incoming_from_node_id="a",
+        incoming_road_id="in",
+        outgoing_edges=(_edge("same_level", "b", "d"), _edge("exact", "b", "c")),
+        roads=roads,
+        physical_to_semantic={},
+    )
+
+    assert [edge.road_id for edge in decision.edges] == ["exact"]
+    assert [edge.road_id for edge in decision.pruned_edges] == ["same_level"]

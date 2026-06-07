@@ -26,6 +26,8 @@ def _node_feature(
     *,
     kind: int = 4,
     grade: int = 1,
+    kind_2: Optional[int] = None,
+    grade_2: Optional[int] = None,
     closed_con: int = 2,
     mainnodeid: Optional[int] = None,
 ) -> dict:
@@ -35,6 +37,10 @@ def _node_feature(
         "grade": grade,
         "closed_con": closed_con,
     }
+    if kind_2 is not None:
+        properties["kind_2"] = kind_2
+    if grade_2 is not None:
+        properties["grade_2"] = grade_2
     if mainnodeid is not None:
         properties["mainnodeid"] = mainnodeid
     return {
@@ -180,6 +186,27 @@ def _build_force_terminate_dataset(base_dir: Path) -> tuple[Path, Path]:
     road_features = [
         _road_feature("r12", 1, 2, 0, [[0.0, 0.0], [0.01, 0.0]]),
         _road_feature("r23", 2, 3, 0, [[0.01, 0.0], [0.02, 0.0]]),
+    ]
+
+    _write_geojson(road_path, features=road_features)
+    _write_geojson(node_path, features=node_features)
+    return road_path, node_path
+
+
+def _build_complex_port_reverse_confirm_dataset(base_dir: Path) -> tuple[Path, Path]:
+    road_path = base_dir / "complex_port_roads.geojson"
+    node_path = base_dir / "complex_port_nodes.geojson"
+
+    node_features = [
+        _node_feature(1, 0.0, 0.0, kind=4, grade=1, kind_2=4, grade_2=1),
+        _node_feature(100, 1.0, 0.0, kind=16, grade=2, kind_2=128, grade_2=2, mainnodeid=100),
+        _node_feature(101, 1.0, 0.2, kind=8, grade=2, kind_2=0, grade_2=0, mainnodeid=100),
+        _node_feature(200, 0.5, 0.2, kind=16, grade=3, kind_2=16, grade_2=3),
+    ]
+    road_features = [
+        _road_feature("r100_1", 100, 1, 2, [[1.0, 0.0], [0.0, 0.0]]),
+        _road_feature("r1_200", 1, 200, 2, [[0.0, 0.0], [0.5, 0.2]]),
+        _road_feature("r200_101", 200, 101, 2, [[0.5, 0.2], [1.0, 0.2]]),
     ]
 
     _write_geojson(road_path, features=road_features)
@@ -346,6 +373,50 @@ def test_null_mainnode_singleton_seed_terminate_is_not_swallowed_by_through(tmp_
     assert "S_NULL_SINGLETON:1__2" in pair_table
     assert "S_NULL_SINGLETON:2__3" in pair_table
     assert "S_NULL_SINGLETON:1__3" not in pair_table
+
+
+def test_complex_kind2_128_reverse_confirm_accepts_equivalent_physical_port(tmp_path: Path) -> None:
+    road_path, node_path = _build_complex_port_reverse_confirm_dataset(tmp_path)
+    out_root = tmp_path / "outputs_complex_port"
+    strategy_path = _write_strategy(
+        tmp_path / "step1_complex_port.json",
+        {
+            "strategy_id": "S_COMPLEX_PORT",
+            "description": "Complex junction physical ports may close reverse confirmation within one mainnode.",
+            "seed_rule": {"kind_bits_any": [2, 3, 4], "closed_con_in": [2]},
+            "terminate_rule": {"kind_bits_any": [2, 3, 4], "closed_con_in": [2]},
+            "through_node_rule": {
+                "incident_road_degree_eq": 2,
+                "disallow_seed_terminate_nodes": True,
+            },
+            "explicit_seed_node_ids": [1, 100, 101],
+            "explicit_terminate_node_ids": [1, 100, 101],
+        },
+    )
+
+    rc = main(
+        [
+            "t01-step1-pair-poc",
+            "--road-path",
+            str(road_path),
+            "--node-path",
+            str(node_path),
+            "--strategy-config",
+            str(strategy_path),
+            "--out-root",
+            str(out_root),
+        ]
+    )
+
+    assert rc == 0
+    pair_rows = list(csv.DictReader((out_root / "S_COMPLEX_PORT" / "pair_table.csv").open(encoding="utf-8")))
+    pair = next(row for row in pair_rows if row["pair_id"] == "S_COMPLEX_PORT:1__100")
+    support = json.loads(pair["support_info"])
+    search_audit = _load_json(out_root / "S_COMPLEX_PORT" / "search_audit.json")
+
+    assert support["forward_path_node_ids"] == ["1", "200", "101"]
+    assert support["forward_path_road_ids"] == ["r1_200", "r200_101"]
+    assert search_audit["search_event_counts"]["reverse_confirm_equivalent_complex_port"] == 1
 
 
 def test_hard_stop_boundary_can_still_act_as_seed_and_terminal(tmp_path: Path) -> None:

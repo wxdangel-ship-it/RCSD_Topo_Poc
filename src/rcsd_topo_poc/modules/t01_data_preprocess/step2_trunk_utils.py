@@ -24,6 +24,12 @@ from rcsd_topo_poc.modules.t01_data_preprocess.step1_pair_poc import (
     _bit_enabled,
     _sort_key,
 )
+from rcsd_topo_poc.modules.t01_data_preprocess.step2_dual_separation_gate import (
+    _dual_separation_gate_limit_m,
+    _dual_separation_support_info,
+    _semantic_group_node_id,
+    _split_pair_support_near_gate_candidates,
+)
 from rcsd_topo_poc.modules.t01_data_preprocess.working_layers import (
     MAX_DUAL_CARRIAGEWAY_SEPARATION_M,
     MAX_SIDE_ACCESS_DISTANCE_M,
@@ -616,16 +622,6 @@ def _collect_road_ids_on_any_simple_path(
     road_endpoints: dict[str, tuple[str, str]],
     allowed_road_ids: set[str],
 ) -> set[str]:
-    """Return roads that lie on at least one simple undirected path between terminals.
-
-    The previous implementation enumerated many simple paths directly, which can
-    explode on dense segment-body candidates. Here we instead decompose the
-    undirected graph into vertex-biconnected edge components and keep only the
-    components that sit on the block-cut-tree path between the two terminals.
-    This preserves the "road belongs to some simple a-b path" semantics while
-    avoiding exponential path enumeration.
-    """
-
     if start_node_id == end_node_id or not allowed_road_ids:
         return set()
 
@@ -880,6 +876,7 @@ def _is_semantic_node_group_loop_candidate(
     *,
     forward_path: DirectedPath,
     reverse_path: DirectedPath,
+    context: Optional[Step1GraphContext] = None,
 ) -> bool:
     if not forward_path.road_ids or not reverse_path.road_ids:
         return False
@@ -896,6 +893,9 @@ def _is_semantic_node_group_loop_candidate(
     weak_adjacency: dict[str, set[str]] = defaultdict(set)
     active_nodes: set[str] = set()
     for _, from_node_id, to_node_id in forward_edges + reverse_edges:
+        if context is not None:
+            from_node_id = _semantic_group_node_id(from_node_id, context)
+            to_node_id = _semantic_group_node_id(to_node_id, context)
         active_nodes.add(from_node_id)
         active_nodes.add(to_node_id)
         outdegree[from_node_id] += 1
@@ -1248,6 +1248,7 @@ def _dedupe_trunk_candidates(
 def _pair_support_seed_candidates(
     pair: PairRecord,
     *,
+    context: Step1GraphContext,
     roads: dict[str, RoadRecord],
     road_endpoints: dict[str, tuple[str, str]],
     pruned_road_ids: set[str],
@@ -1265,8 +1266,7 @@ def _pair_support_seed_candidates(
         return []
     if len(pair.reverse_path_node_ids) != len(pair.reverse_path_road_ids) + 1:
         return []
-    if not (set(pair.forward_path_node_ids[1:-1]) & set(pair.reverse_path_node_ids[1:-1])):
-        return []
+    shared_internal_nodes = set(pair.forward_path_node_ids[1:-1]) & set(pair.reverse_path_node_ids[1:-1])
 
     def _build_seed_path(node_ids: tuple[str, ...], road_ids: tuple[str, ...]) -> Optional[DirectedPath]:
         total_length = 0.0
@@ -1292,8 +1292,11 @@ def _pair_support_seed_candidates(
     is_semantic_node_group_closure = _is_semantic_node_group_loop_candidate(
         forward_path=forward_path,
         reverse_path=reverse_path,
+        context=context,
     )
     if not is_bidirectional_minimal_loop and not is_semantic_node_group_closure:
+        return []
+    if not shared_internal_nodes and not is_semantic_node_group_closure and not is_bidirectional_minimal_loop:
         return []
 
     left_turn_road_ids = tuple(
@@ -1434,44 +1437,6 @@ def _best_dual_separation_failure(candidates: list[TrunkCandidate]) -> Optional[
     if not candidates:
         return None
     return min(candidates, key=lambda item: (item.max_dual_carriageway_separation_m, item.total_length))
-
-
-def _semantic_node_internal_width_m(node_id: str, context: Step1GraphContext) -> float:
-    semantic_node = context.semantic_nodes.get(node_id)
-    if semantic_node is None or len(semantic_node.member_node_ids) < 2:
-        return 0.0
-    geometries = [
-        context.physical_nodes[member_node_id].geometry
-        for member_node_id in semantic_node.member_node_ids
-        if member_node_id in context.physical_nodes
-    ]
-    max_distance_m = 0.0
-    for index, left_geometry in enumerate(geometries):
-        for right_geometry in geometries[index + 1 :]:
-            max_distance_m = max(max_distance_m, float(left_geometry.distance(right_geometry)))
-    return max_distance_m
-
-
-def _dual_separation_gate_limit_m(pair: PairRecord, context: Step1GraphContext) -> float:
-    return max(
-        MAX_DUAL_CARRIAGEWAY_SEPARATION_M,
-        _semantic_node_internal_width_m(pair.a_node_id, context),
-        _semantic_node_internal_width_m(pair.b_node_id, context),
-    )
-
-
-def _dual_separation_support_info(
-    candidate: Optional[TrunkCandidate],
-    *,
-    gate_limit_m: float = MAX_DUAL_CARRIAGEWAY_SEPARATION_M,
-) -> dict[str, Any]:
-    return {
-        "dual_carriageway_separation_gate_limit_m": gate_limit_m,
-        "dual_carriageway_base_gate_limit_m": MAX_DUAL_CARRIAGEWAY_SEPARATION_M,
-        "dual_carriageway_max_separation_m": (
-            candidate.max_dual_carriageway_separation_m if candidate is not None else None
-        ),
-    }
 
 
 def _tjunction_node_kind(node: SemanticNodeRecord) -> int:
@@ -2157,6 +2122,7 @@ def _evaluate_trunk_choices(
     base_candidates = _dedupe_trunk_candidates(
         _pair_support_seed_candidates(
             pair,
+            context=context,
             roads=context.roads,
             road_endpoints=road_endpoints,
             pruned_road_ids=pruned_road_ids,
@@ -2206,6 +2172,17 @@ def _evaluate_trunk_choices(
             left_turn_formway_bit=left_turn_formway_bit,
             allow_bidirectional_overlap=True,
         )
+        strict_candidates = _dedupe_trunk_candidates(
+            _pair_support_seed_candidates(
+                pair,
+                context=context,
+                roads=context.roads,
+                road_endpoints=road_endpoints,
+                pruned_road_ids=pruned_road_ids,
+                left_turn_formway_bit=left_turn_formway_bit,
+            )
+            + strict_candidates
+        )
         strict_passed_candidates, strict_failed_candidates = _split_dual_separation_candidates(
             strict_candidates,
             gate_limit_m=dual_gate_limit_m,
@@ -2214,6 +2191,14 @@ def _evaluate_trunk_choices(
             base_candidates,
             gate_limit_m=dual_gate_limit_m,
         )
+        strict_near_gate_candidates, strict_failed_candidates = _split_pair_support_near_gate_candidates(
+            pair, strict_failed_candidates, gate_limit_m=dual_gate_limit_m
+        )
+        base_near_gate_candidates, base_failed_candidates = _split_pair_support_near_gate_candidates(
+            pair, base_failed_candidates, gate_limit_m=dual_gate_limit_m
+        )
+        strict_passed_candidates += strict_near_gate_candidates
+        base_passed_candidates += base_near_gate_candidates
         strict_passed_candidates = _prefer_same_endpoint_direct_bidirectional_candidates(
             pair,
             candidates=strict_passed_candidates,
@@ -2319,6 +2304,10 @@ def _evaluate_trunk_choices(
         base_candidates,
         gate_limit_m=dual_gate_limit_m,
     )
+    base_near_gate_candidates, base_failed_candidates = _split_pair_support_near_gate_candidates(
+        pair, base_failed_candidates, gate_limit_m=dual_gate_limit_m
+    )
+    base_passed_candidates += base_near_gate_candidates
     base_passed_candidates = _prefer_same_endpoint_direct_bidirectional_candidates(
         pair,
         candidates=base_passed_candidates,

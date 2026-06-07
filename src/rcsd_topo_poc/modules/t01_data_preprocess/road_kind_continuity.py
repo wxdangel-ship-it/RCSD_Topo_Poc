@@ -80,6 +80,13 @@ def roads_share_kind_level(incoming_road: Any, outgoing_road: Any) -> bool:
     return bool(incoming_levels & set(road_kind_levels(outgoing_road)))
 
 
+def roads_share_kind_token(incoming_road: Any, outgoing_road: Any) -> bool:
+    incoming_tokens = set(road_kind_tokens(incoming_road))
+    if not incoming_tokens:
+        return False
+    return bool(incoming_tokens & set(road_kind_tokens(outgoing_road)))
+
+
 def _geometry_coords(geometry: Any) -> tuple[tuple[float, float], ...]:
     if geometry is None or getattr(geometry, "is_empty", False):
         return ()
@@ -177,7 +184,13 @@ def choose_preferred_continuation_edges(
             edge_angles_deg={},
         )
 
-    same_level_edges = tuple(
+    same_kind_edges = tuple(
+        edge
+        for edge in outgoing_edges
+        if (outgoing_road := roads.get(edge.road_id)) is not None
+        and roads_share_kind_token(incoming_road, outgoing_road)
+    )
+    same_level_edges = same_kind_edges or tuple(
         edge
         for edge in outgoing_edges
         if (outgoing_road := roads.get(edge.road_id)) is not None

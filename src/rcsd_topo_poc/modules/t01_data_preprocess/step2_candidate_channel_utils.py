@@ -136,14 +136,6 @@ def _expand_segment_body_allowed_road_ids(
     boundary_node_ids: set[str],
     road_endpoints: dict[str, tuple[str, str]],
 ) -> set[str]:
-    """Recover local bridge roads between branch-backtrack-pruned fragments.
-
-    Trunk search intentionally keeps a narrow candidate channel, and prune may
-    cut side-corridor attachments as backtracking leaves. For segment_body
-    recovery we only stitch short local bridge components between those pruned
-    branch anchors, while avoiding an unrestricted walk over the whole graph.
-    """
-
     allowed_road_ids = set(pruned_road_ids)
     backtrack_infos = [
         info
@@ -228,6 +220,10 @@ def _prune_candidate_channel(
     hard_stop_node_ids: set[str],
 ) -> tuple[set[str], list[dict[str, Any]], bool]:
     protected = {pair.a_node_id, pair.b_node_id}
+    for path_node_ids in (pair.forward_path_node_ids, pair.reverse_path_node_ids):
+        if path_node_ids:
+            protected.update((path_node_ids[0], path_node_ids[-1]))
+    protected_road_ids = set(pair.forward_path_road_ids) | set(pair.reverse_path_road_ids)
     remaining_road_ids = set(candidate_road_ids)
     incident = _build_incident_map(remaining_road_ids, road_endpoints)
     queue: deque[str] = deque(
@@ -245,6 +241,8 @@ def _prune_candidate_channel(
             continue
 
         road_id = next(road_id for road_id in incident.get(node_id, set()) if road_id in remaining_road_ids)
+        if road_id in protected_road_ids:
+            continue
         other_node_id = _other_endpoint(road_id, node_id, road_endpoints)
         current_connects_protected = _path_exists_undirected(
             pair.a_node_id,

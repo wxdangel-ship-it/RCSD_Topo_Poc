@@ -42,3 +42,36 @@ def test_prune_candidate_channel_keeps_unique_bridge_between_pair_endpoints() ->
             "to_node_id": "2",
         }
     ]
+
+
+def test_prune_candidate_channel_keeps_physical_port_path_endpoint() -> None:
+    pair = PairRecord(
+        pair_id="S:763073__25167042",
+        a_node_id="763073",
+        b_node_id="25167042",
+        strategy_id="S",
+        reverse_confirmed=True,
+        forward_path_node_ids=("763073", "25167042"),
+        forward_path_road_ids=("f",),
+        reverse_path_node_ids=("25167042", "25167060", "763076"),
+        reverse_path_road_ids=("r1", "r2"),
+        through_node_ids=(),
+    )
+    road_endpoints = {
+        "f": ("763073", "25167042"),
+        "r1": ("25167042", "25167060"),
+        "r2": ("25167060", "763076"),
+        "leaf": ("25167060", "x"),
+    }
+
+    remaining_road_ids, branch_cut_infos, disconnected_after_prune = _prune_candidate_channel(
+        pair,
+        candidate_road_ids=set(road_endpoints),
+        road_endpoints=road_endpoints,
+        terminate_ids=set(),
+        hard_stop_node_ids=set(),
+    )
+
+    assert remaining_road_ids == {"f", "r1", "r2"}
+    assert disconnected_after_prune is False
+    assert [info["road_id"] for info in branch_cut_infos] == ["leaf"]

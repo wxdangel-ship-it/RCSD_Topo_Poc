@@ -862,6 +862,25 @@ def _build_candidate_from_parents(
     )
 
 
+def _build_candidate_to_terminal(
+    *,
+    start_node_id: str,
+    reached_node_id: str,
+    terminal_node_id: str,
+    parent_node_ids: dict[str, Optional[str]],
+    parent_road_ids: dict[str, str],
+    through_node_ids: set[str],
+) -> SearchCandidate:
+    candidate = _build_candidate_from_parents(
+        start_node_id=start_node_id,
+        terminal_node_id=reached_node_id,
+        parent_node_ids=parent_node_ids,
+        parent_road_ids=parent_road_ids,
+        through_node_ids=through_node_ids,
+    )
+    return _canonicalize_candidate_terminal(candidate, terminal_node_id)
+
+
 def _matches_through_rule(
     *,
     road_degree: int,
@@ -905,6 +924,29 @@ def _complex_junction_semantic_node_ids(
     }
 
 
+def _complex_junction_equivalent_node_ids(
+    semantic_nodes: dict[str, SemanticNodeRecord],
+    *,
+    physical_nodes: dict[str, NodeRecord],
+) -> dict[str, tuple[str, ...]]:
+    complex_node_ids = _complex_junction_semantic_node_ids(semantic_nodes, physical_nodes=physical_nodes)
+    grouped: dict[str, set[str]] = defaultdict(set)
+    for node_id in complex_node_ids:
+        node = semantic_nodes[node_id]
+        source_mainnodeid = _normalize_mainnodeid(node.raw_properties.get("mainnodeid"))
+        group_id = source_mainnodeid or node_id
+        grouped[group_id].add(node_id)
+
+    equivalent: dict[str, tuple[str, ...]] = {}
+    for member_ids in grouped.values():
+        if len(member_ids) < 2:
+            continue
+        ordered = tuple(sorted(member_ids, key=_sort_key))
+        for node_id in ordered:
+            equivalent[node_id] = ordered
+    return equivalent
+
+
 def _road_matches_any_formway_bit(road: RoadRecord, bits: tuple[int, ...]) -> bool:
     if not bits or road.formway is None:
         return False
@@ -943,6 +985,22 @@ def _build_incident_road_degree(
     return dict(incident_road_degree)
 
 
+def _equivalent_complex_terminal_node_id(
+    node_id: str,
+    *,
+    start_node_id: str,
+    seed_eval: dict[str, RuleEvaluation],
+    terminate_eval: dict[str, RuleEvaluation],
+    complex_junction_equivalent_node_ids: dict[str, tuple[str, ...]],
+) -> Optional[str]:
+    for equivalent_node_id in complex_junction_equivalent_node_ids.get(node_id, ()):
+        if equivalent_node_id in {node_id, start_node_id}:
+            continue
+        if seed_eval[equivalent_node_id].matched and terminate_eval[equivalent_node_id].matched:
+            return equivalent_node_id
+    return None
+
+
 def _search_from_seed(
     start_node_id: str,
     *,
@@ -955,6 +1013,7 @@ def _search_from_seed(
     seed_eval: dict[str, RuleEvaluation],
     terminate_eval: dict[str, RuleEvaluation],
     continue_after_terminal_candidate: bool = False,
+    complex_junction_equivalent_node_ids: Optional[dict[str, tuple[str, ...]]] = None,
 ) -> SearchResult:
     queue: deque[str] = deque([start_node_id])
     visited = {start_node_id}
@@ -1022,6 +1081,16 @@ def _search_from_seed(
             parent_road_ids[next_node_id] = edge.road_id
             terminate_ok = terminate_eval[next_node_id].matched
             seed_ok = seed_eval[next_node_id].matched
+            candidate_terminal_node_id = next_node_id if terminate_ok and seed_ok else None
+            equivalent_terminal_node_id = _equivalent_complex_terminal_node_id(
+                next_node_id,
+                start_node_id=start_node_id,
+                seed_eval=seed_eval,
+                terminate_eval=terminate_eval,
+                complex_junction_equivalent_node_ids=complex_junction_equivalent_node_ids or {},
+            )
+            if candidate_terminal_node_id is None and equivalent_terminal_node_id is not None:
+                candidate_terminal_node_id = equivalent_terminal_node_id
             through_node = next_node_id != start_node_id and next_node_id in through_node_ids
             hard_stop_node = next_node_id != start_node_id and next_node_id in hard_stop_node_ids
 
@@ -1037,39 +1106,89 @@ def _search_from_seed(
                         "road_id": edge.road_id,
                     },
                 )
-                if terminate_ok:
-                    if seed_ok and next_node_id != start_node_id:
-                        candidates[next_node_id] = _build_candidate_from_parents(
-                            start_node_id=start_node_id,
-                            terminal_node_id=next_node_id,
-                            parent_node_ids=parent_node_ids,
-                            parent_road_ids=parent_road_ids,
-                            through_node_ids=through_node_ids,
-                        )
+                if candidate_terminal_node_id is not None and next_node_id != start_node_id:
+                    candidates[candidate_terminal_node_id] = _build_candidate_to_terminal(
+                        start_node_id=start_node_id,
+                        reached_node_id=next_node_id,
+                        terminal_node_id=candidate_terminal_node_id,
+                        parent_node_ids=parent_node_ids,
+                        parent_road_ids=parent_road_ids,
+                        through_node_ids=through_node_ids,
+                    )
+                    _record_search_event(
+                        event_counts,
+                        event_samples,
+                        sample_counts,
+                        {
+                            "event": "hard_stop_terminal_candidate",
+                            "seed_node_id": start_node_id,
+                            "node_id": candidate_terminal_node_id,
+                            "road_id": edge.road_id,
+                        },
+                    )
+                    if equivalent_terminal_node_id is not None:
                         _record_search_event(
                             event_counts,
                             event_samples,
                             sample_counts,
                             {
-                                "event": "hard_stop_terminal_candidate",
+                                "event": "equivalent_complex_terminal_candidate",
                                 "seed_node_id": start_node_id,
-                                "node_id": next_node_id,
+                                "node_id": equivalent_terminal_node_id,
+                                "reached_node_id": next_node_id,
                                 "road_id": edge.road_id,
                             },
                         )
-                    else:
-                        _record_search_event(
-                            event_counts,
-                            event_samples,
-                            sample_counts,
-                            {
-                                "event": "hard_stop_terminal_not_seed",
-                                "seed_node_id": start_node_id,
-                                "node_id": next_node_id,
-                                "terminate_reasons": list(terminate_eval[next_node_id].reasons),
-                                "seed_reasons": list(seed_eval[next_node_id].reasons),
-                            },
+                elif terminate_ok:
+                    _record_search_event(
+                        event_counts,
+                        event_samples,
+                        sample_counts,
+                        {
+                            "event": "hard_stop_terminal_not_seed",
+                            "seed_node_id": start_node_id,
+                            "node_id": next_node_id,
+                            "terminate_reasons": list(terminate_eval[next_node_id].reasons),
+                            "seed_reasons": list(seed_eval[next_node_id].reasons),
+                        },
+                    )
+                continue
+
+            if candidate_terminal_node_id is not None and next_node_id != start_node_id:
+                candidates[candidate_terminal_node_id] = _build_candidate_to_terminal(
+                    start_node_id=start_node_id,
+                    reached_node_id=next_node_id,
+                    terminal_node_id=candidate_terminal_node_id,
+                    parent_node_ids=parent_node_ids,
+                    parent_road_ids=parent_road_ids,
+                    through_node_ids=through_node_ids,
                 )
+                if continue_after_terminal_candidate:
+                    _record_search_event(
+                        event_counts,
+                        event_samples,
+                        sample_counts,
+                        {
+                            "event": "terminal_candidate_continued",
+                            "seed_node_id": start_node_id,
+                            "node_id": candidate_terminal_node_id,
+                            "road_id": edge.road_id,
+                        },
+                    )
+                    queue.append(next_node_id)
+                if equivalent_terminal_node_id is not None:
+                    _record_search_event(
+                        event_counts,
+                        event_samples,
+                        sample_counts,
+                        {
+                            "event": "equivalent_complex_terminal_candidate",
+                            "seed_node_id": start_node_id,
+                            "node_id": equivalent_terminal_node_id,
+                            "reached_node_id": next_node_id,
+                            "road_id": edge.road_id,
+                        },
+                    )
                 continue
 
             if through_node:
@@ -1088,40 +1207,18 @@ def _search_from_seed(
                 continue
 
             if terminate_ok:
-                if seed_ok and next_node_id != start_node_id:
-                    candidates[next_node_id] = _build_candidate_from_parents(
-                        start_node_id=start_node_id,
-                        terminal_node_id=next_node_id,
-                        parent_node_ids=parent_node_ids,
-                        parent_road_ids=parent_road_ids,
-                        through_node_ids=through_node_ids,
-                    )
-                    if continue_after_terminal_candidate:
-                        _record_search_event(
-                            event_counts,
-                            event_samples,
-                            sample_counts,
-                            {
-                                "event": "terminal_candidate_continued",
-                                "seed_node_id": start_node_id,
-                                "node_id": next_node_id,
-                                "road_id": edge.road_id,
-                            },
-                        )
-                        queue.append(next_node_id)
-                else:
-                    _record_search_event(
-                        event_counts,
-                        event_samples,
-                        sample_counts,
-                        {
-                            "event": "terminal_not_seed",
-                            "seed_node_id": start_node_id,
-                            "node_id": next_node_id,
-                            "terminate_reasons": list(terminate_eval[next_node_id].reasons),
-                            "seed_reasons": list(seed_eval[next_node_id].reasons),
-                        },
-                    )
+                _record_search_event(
+                    event_counts,
+                    event_samples,
+                    sample_counts,
+                    {
+                        "event": "terminal_not_seed",
+                        "seed_node_id": start_node_id,
+                        "node_id": next_node_id,
+                        "terminate_reasons": list(terminate_eval[next_node_id].reasons),
+                        "seed_reasons": list(seed_eval[next_node_id].reasons),
+                    },
+                )
                 continue
 
             queue.append(next_node_id)
@@ -1147,6 +1244,38 @@ def _pair_id(strategy_id: str, a_node_id: str, b_node_id: str) -> str:
     return f"{strategy_id}:{ordered[0]}__{ordered[1]}"
 
 
+def _canonicalize_candidate_terminal(candidate: SearchCandidate, terminal_node_id: str) -> SearchCandidate:
+    if candidate.terminal_node_id == terminal_node_id:
+        return candidate
+    return SearchCandidate(
+        terminal_node_id=terminal_node_id,
+        path_node_ids=tuple(candidate.path_node_ids),
+        path_road_ids=tuple(candidate.path_road_ids),
+        through_node_ids=tuple(candidate.through_node_ids),
+    )
+
+
+def _find_reverse_candidate(
+    reverse_result: Optional[SearchResult],
+    *,
+    start_node_id: str,
+    complex_junction_equivalent_node_ids: dict[str, tuple[str, ...]],
+) -> tuple[Optional[SearchCandidate], Optional[str]]:
+    if reverse_result is None:
+        return None, None
+    reverse_candidate = reverse_result.candidates.get(start_node_id)
+    if reverse_candidate is not None:
+        return reverse_candidate, start_node_id
+
+    for equivalent_node_id in complex_junction_equivalent_node_ids.get(start_node_id, ()):
+        if equivalent_node_id == start_node_id:
+            continue
+        equivalent_candidate = reverse_result.candidates.get(equivalent_node_id)
+        if equivalent_candidate is not None:
+            return _canonicalize_candidate_terminal(equivalent_candidate, start_node_id), equivalent_node_id
+    return None, None
+
+
 def _build_pair_records(
     strategy: StrategySpec,
     search_results: dict[str, SearchResult],
@@ -1155,13 +1284,31 @@ def _build_pair_records(
     sample_counts: dict[str, int],
     *,
     complex_junction_node_ids: set[str],
+    complex_junction_equivalent_node_ids: dict[str, tuple[str, ...]],
 ) -> list[PairRecord]:
     pairs: dict[str, PairRecord] = {}
     force_terminate_node_ids = set(strategy.force_terminate_node_ids)
     for start_node_id, search_result in search_results.items():
         for terminal_node_id, candidate in search_result.candidates.items():
             reverse_result = search_results.get(terminal_node_id)
-            reverse_candidate = None if reverse_result is None else reverse_result.candidates.get(start_node_id)
+            reverse_candidate, reverse_confirm_node_id = _find_reverse_candidate(
+                reverse_result,
+                start_node_id=start_node_id,
+                complex_junction_equivalent_node_ids=complex_junction_equivalent_node_ids,
+            )
+            if reverse_candidate is not None and reverse_confirm_node_id != start_node_id:
+                _record_search_event(
+                    event_counts,
+                    event_samples,
+                    sample_counts,
+                    {
+                        "event": "reverse_confirm_equivalent_complex_port",
+                        "strategy_id": strategy.strategy_id,
+                        "a_node_id": start_node_id,
+                        "b_node_id": terminal_node_id,
+                        "reverse_confirm_node_id": reverse_confirm_node_id,
+                    },
+                )
             used_mirrored_reverse_confirm_fallback = False
             if reverse_candidate is None:
                 if (
@@ -1394,6 +1541,14 @@ def run_step1_strategy(
         through_node_ids -= protected_singleton_ids
     hard_stop_node_ids = set(strategy.hard_stop_node_ids)
     through_node_ids -= hard_stop_node_ids
+    complex_junction_node_ids = _complex_junction_semantic_node_ids(
+        context.semantic_nodes,
+        physical_nodes=context.physical_nodes,
+    )
+    complex_junction_equivalent_node_ids = _complex_junction_equivalent_node_ids(
+        context.semantic_nodes,
+        physical_nodes=context.physical_nodes,
+    )
     if strategy.through_rule.allow_seed_search_when_through:
         search_seed_ids = list(seed_ids)
     else:
@@ -1417,6 +1572,7 @@ def run_step1_strategy(
             seed_eval=seed_eval,
             terminate_eval=terminate_eval,
             continue_after_terminal_candidate=strategy.through_rule.continue_after_terminal_candidate,
+            complex_junction_equivalent_node_ids=complex_junction_equivalent_node_ids,
         )
         search_results[seed_id] = search_result
         for event_name, count in search_result.event_counts.items():
@@ -1430,10 +1586,8 @@ def run_step1_strategy(
         search_event_counts,
         search_event_samples,
         search_event_sample_counts,
-        complex_junction_node_ids=_complex_junction_semantic_node_ids(
-            context.semantic_nodes,
-            physical_nodes=context.physical_nodes,
-        ),
+        complex_junction_node_ids=complex_junction_node_ids,
+        complex_junction_equivalent_node_ids=complex_junction_equivalent_node_ids,
     )
 
     return Step1StrategyExecution(

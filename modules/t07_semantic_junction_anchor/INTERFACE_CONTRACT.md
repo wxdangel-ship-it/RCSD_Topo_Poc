@@ -4,7 +4,7 @@
 
 本文件是 `t07_semantic_junction_anchor` 的稳定接口契约。T07 当前覆盖语义路口级 Step1 / Step2，并提供独立 Step3 relation 补锚：
 
-- Step1：基于 `nodes` 与 `DriveZone` 判定代表 node 的 `has_evd`；处理范围内语义路口必须组内所有 node 均命中 `DriveZone` 才写 `yes`。
+- Step1：基于 `nodes`、`DriveZone` 与 `RCSDIntersection` 判定代表 node 的 `has_evd`；处理范围内语义路口必须组内所有 node 均命中 `DriveZone ∪ RCSDIntersection` 才写 `yes`。
 - Step2：基于 `nodes` 与 `RCSDIntersection` 判定代表 node 的 `is_anchor / anchor_reason`。
 - Step3：基于 Step2 后 `nodes`、T05 `intersection_match_all.geojson` 与输入 `RCSDNode`，对候选 SWSD 语义路口补写 `is_anchor = yes`。
 - Step2 / Step3 同步维护 T07 版 handoff 成果 `t07_rcsdintersection_anchor_surface.gpkg` 与 `t07_swsd_rcsd_relation_evidence.csv/json`；Step3 surface 产物直接复制 Step2 结果。
@@ -21,9 +21,9 @@
 - 仅对代表 node `kind_2 in {4, 8, 16, 64, 128, 2048}` 的语义路口处理 `has_evd`。
 - 仅对代表 node `has_evd = yes` 的语义路口处理 `is_anchor / anchor_reason`。
 - 只对代表 node 写 `has_evd / is_anchor / anchor_reason`。
-- 保留 T02 Step2 的空间命中与 `fail1 / fail2` 冲突语义；`kind_2 = 64 / 128 / 2048` 采用 T07 专属 Step2 分流规则。
+- 保留 T02 Step2 的空间命中与 `fail1 / fail2` 冲突语义；`kind_2 = 64 / 128` 采用 T07 专属 Step2 分流规则，`kind_2 = 2048` 不在 T07 建立 SWSD-RCSD 关系。
 - Step2 输出 `t07_rcsdintersection_anchor_surface.gpkg` 与 `t07_swsd_rcsd_relation_evidence.csv/json`，对应 T02 `t02_rcsdintersection_anchor_surface.gpkg` 与 `t02_swsd_rcsd_relation_evidence.csv/json` 的语义路口级 handoff 口径。
-- Step3 处理代表 node `kind_2 in {4, 8, 16, 2048}` 的 SWSD 语义路口；先基于 Step2 surface 1V1 结果建立 SWSD-RCSD 语义路口关系，再对 `has_evd = yes / is_anchor = no` 的候选使用 T05 `intersection_match_all.geojson` 补充关系。
+- Step3 处理代表 node `kind_2 in {4, 8, 16}` 的 SWSD 语义路口；先基于 Step2 surface 1V1 结果建立 SWSD-RCSD 语义路口关系，再对 `has_evd = yes / is_anchor = no` 的候选使用 T05 `intersection_match_all.geojson` 补充关系。
 - Step3 只接受 T05 `intersection_match_all.geojson` 中 `status = 0` 且 `base_id != 0` 的成功 relation，并要求 `base_id` 在输入 `RCSDNode.id/mainnodeid` 中存在且未被 Step2 surface 1V1 阶段占用。
 - Step3 输出 `t07_rcsdintersection_anchor_surface.gpkg`，内容赋值 Step2 surface 结果；输出合并 Step2 evidence 与 Step3 成功补锚 relation 的 `t07_swsd_rcsd_relation_evidence.csv/json`，并在顶层记录 `anchor_counts.step2_anchor_count / step3_anchor_count / total_anchor_count`。
 
@@ -46,6 +46,7 @@
 
 - `nodes_path`：SWSD `nodes.gpkg`。
 - `drivezone_path`：`DriveZone.gpkg`。
+- `intersection_path`：`RCSDIntersection.gpkg`；组合 runner 与内网脚本必须传入，Step1 standalone callable 为兼容历史调用可省略。
 - `out_root`：输出根目录。
 
 `nodes` 依赖字段：
@@ -56,6 +57,10 @@
 - geometry
 
 `DriveZone` 依赖：
+
+- 面状 geometry。
+
+`RCSDIntersection` 依赖：
 
 - 面状 geometry。
 
@@ -119,6 +124,7 @@
 - 缺失必需字段、缺失 CRS、无法投影或 geometry 不可用时，必须显式失败并留审计，不得转换成业务 `no`。
 - `kind_2` 是当前唯一正式类型字段；不读取 `Kind_2`。
 - `mainnodeid` 按 T02 口径组装：非空值成组，空值按 `id` singleton fallback。若后续需要把 `0` 视为空值，必须另行确认并同步契约。
+- T07 对外 handoff 主键字段必须输出 canonical ID：字符串化整数浮点如 `"622700016.0"` 必须归一为 `"622700016"`；非整数小数与非数字业务字符串不得静默误转。
 - Step3 输出 `intersection_match_t07.geojson` 采用 T05 relation 输出 CRS `CRS84`；节点处理仍统一到 `EPSG:3857`。
 
 ## 3. Business Rules
@@ -139,8 +145,8 @@
   - `anchor_reason = NULL`
   - 不进入 Step2
 - 代表 node `kind_2 in {4, 8, 16, 64, 128, 2048}` 时：
-  - 组内所有 node 均落入或接触 `DriveZone`，代表 node `has_evd = yes`
-  - 任一组内 node 未命中 `DriveZone`，代表 node `has_evd = no`
+  - 组内所有 node 均落入或接触 `DriveZone ∪ RCSDIntersection`，代表 node `has_evd = yes`
+  - 任一组内 node 未命中 `DriveZone ∪ RCSDIntersection`，代表 node `has_evd = no`
 - 边界接触视为命中。
 
 ### 3.3 Step2 `is_anchor / anchor_reason`
@@ -163,14 +169,11 @@
   - `is_anchor = no`
   - `anchor_reason = NULL`
   - 不纳入 `fail1` 规则；若命中的同一个 `RCSDIntersection` 还对应其它 SWSD 语义路口，仍被 `fail2` 覆盖
-- `kind_2 = 2048` 且组内所有 node 均命中同一个且唯一的 `RCSDIntersection`：
-  - `is_anchor = yes`
-  - `anchor_reason = t`
-  - 不纳入 `fail1` 规则；若该 `RCSDIntersection` 还对应其它 SWSD 语义路口，仍被 `fail2` 覆盖
-- `kind_2 = 2048` 不满足上述条件时：
+- `kind_2 = 2048`：
   - `is_anchor = no`
   - `anchor_reason = NULL`
-  - 不纳入 `fail1` 规则；若命中的同一个 `RCSDIntersection` 还对应其它 SWSD 语义路口，仍被 `fail2` 覆盖
+  - T07 不建立 SWSD-RCSD 成功关系，不输出成功 surface / relation
+  - 不纳入 `fail1 / fail2` 规则；后续由 T03 虚拟锚定
 - 对未命中上述豁免规则的多节点组，若同一组 node 命中两个及以上不同 `RCSDIntersection`：
   - `is_anchor = fail1`
   - `anchor_reason = NULL`
@@ -178,7 +181,7 @@
 - 若一个 `RCSDIntersection` 面对应多个参与 Step2 的语义路口：
   - 先忽略代表 node `kind_2 = 1` 的组
   - 过滤后剩余组数大于 `1` 时，相关代表 node `is_anchor = fail2`
-  - `fail2` 覆盖范围包括代表 node `kind_2 in {4, 8, 16, 64, 128, 2048}` 的语义路口
+  - `fail2` 覆盖范围包括代表 node `kind_2 in {4, 8, 16, 64, 128}` 的语义路口
   - 输出 `node_error_2`
 - 优先级：
   - `fail2 > fail1`
@@ -188,7 +191,7 @@
 
 - Step3 必须独立运行，不与 Step1 / Step2 合并。
 - Step3 处理范围：
-  - 代表 node `kind_2 in {4, 8, 16, 2048}`
+  - 代表 node `kind_2 in {4, 8, 16}`
 - Step3 先处理 Step2 surface 1V1：
   - 读取 Step2 `t07_rcsdintersection_anchor_surface.gpkg`
   - 同一 SWSD 语义路口必须只对应一个 `RCSDIntersection` surface
@@ -197,7 +200,7 @@
   - 若有多个 RCSD 语义路口，则不建立成功关系，输出 `RCSDNode_error.gpkg`
   - 若没有 RCSD 语义路口，则只写 audit / summary，不输出 `RCSDNode_error.gpkg`
 - Step3 再处理 T05 relation 补充候选，候选 SWSD 语义路口必须同时满足：
-  - 代表 node `kind_2 in {4, 8, 16, 2048}`
+  - 代表 node `kind_2 in {4, 8, 16}`
   - 代表 node `has_evd = yes`
   - 代表 node `is_anchor = no`
 - 对候选 SWSD 语义路口，在 `intersection_match_all.geojson` 中按 `target_id = SWSD 语义路口 id` 查找 relation。
@@ -393,9 +396,9 @@ scripts/t07_run_step3_intersection_match_innernet.sh
 4. 非处理范围 `kind_2` 的 `has_evd / is_anchor / anchor_reason` 均为 `NULL`。
 5. 从属 node 不写业务状态。
 6. `kind_2 = 64 / 128` 在 Step2 基础判定写 `no / NULL`，但一面多 SWSD 语义路口时必须被 `fail2` 覆盖。
-7. `kind_2 = 2048` 只有全组 node 均命中同一个且唯一的 `RCSDIntersection` 时基础判定写 `yes / t`，否则写 `no / NULL`；一面多 SWSD 语义路口时必须被 `fail2` 覆盖。
+7. `kind_2 = 2048` 在 T07 中统一写 `no / NULL`，不得建立 SWSD-RCSD 成功关系，也不得参与或接收 `fail2`；T 型路口后续由 T03 虚拟锚定。
 8. `fail2` 优先于 `fail1`。
-9. Step3 处理范围为 `kind_2 in {4, 8, 16, 2048}`，先处理 Step2 surface 1V1，再处理 `has_evd = yes` 且 `is_anchor = no` 的 T05 relation 补充候选。
+9. Step3 处理范围为 `kind_2 in {4, 8, 16}`，先处理 Step2 surface 1V1，再处理 `has_evd = yes`、`is_anchor = no` 的 T05 relation 补充候选。
 10. Step2 必须输出 `t07_rcsdintersection_anchor_surface.gpkg` 与 `t07_swsd_rcsd_relation_evidence.csv/json`。
 11. Step3 仅在 Step2 surface 1V1 推导成功，或 T05 relation 成功且 RCSD `base_id` 存在并未被前段占用时，写 `is_anchor = yes` 并输出 `intersection_match_t07.geojson`。
 12. Step3 必须输出复制 Step2 结果的 `t07_rcsdintersection_anchor_surface.gpkg`，以及合并 Step2 与 Step3 成功补锚成果的 `t07_swsd_rcsd_relation_evidence.csv/json`。

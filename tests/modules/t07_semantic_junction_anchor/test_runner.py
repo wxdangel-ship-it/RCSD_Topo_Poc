@@ -15,6 +15,7 @@ from rcsd_topo_poc.modules.t07_semantic_junction_anchor import (
     run_t07_step1_has_evd,
     run_t07_step2_anchor_recognition,
 )
+from rcsd_topo_poc.modules.t07_semantic_junction_anchor.runner import _normalize_id
 
 
 def _feature(properties: dict[str, Any], geometry: Any) -> dict[str, Any]:
@@ -50,17 +51,32 @@ def _read_gpkg_properties_by_id(path: Path) -> dict[str, dict[str, Any]]:
         }
 
 
+@pytest.mark.parametrize(
+    ("raw_value", "expected"),
+    [
+        ("622700016.0", "622700016"),
+        ("622700016", "622700016"),
+        ("6.22700016E+8", "622700016"),
+        ("622700016.5", "622700016.5"),
+        ("SWSD-622700016.0", "SWSD-622700016.0"),
+    ],
+)
+def test_normalize_id_canonicalizes_integer_numeric_strings(raw_value: Any, expected: str) -> None:
+    assert _normalize_id(raw_value) == expected
+
+
 def test_step1_uses_representative_kind2_and_writes_only_representative(tmp_path: Path) -> None:
     nodes_path = tmp_path / "nodes.geojson"
     drivezone_path = tmp_path / "drivezone.geojson"
+    intersections_path = tmp_path / "intersections.geojson"
     _write_geojson(
         nodes_path,
         [
             _feature({"id": 1, "mainnodeid": 1, "kind_2": 4}, Point(0, 0)),
             _feature({"id": 101, "mainnodeid": 1, "kind_2": 0}, Point(1, 0)),
-            _feature({"id": 2, "mainnodeid": 2, "kind_2": 8}, Point(0, 0)),
-            _feature({"id": 201, "mainnodeid": 2, "kind_2": 0}, Point(100, 0)),
-            _feature({"id": 3, "mainnodeid": 3, "kind_2": 16}, Point(100, 0)),
+            _feature({"id": 2, "mainnodeid": 2, "kind_2": 8}, Point(100, 0)),
+            _feature({"id": 201, "mainnodeid": 2, "kind_2": 0}, Point(101, 0)),
+            _feature({"id": 3, "mainnodeid": 3, "kind_2": 16}, Point(200, 0)),
             _feature({"id": 4, "mainnodeid": 4, "kind_2": 1}, Point(0, 0)),
         ],
     )
@@ -68,10 +84,15 @@ def test_step1_uses_representative_kind2_and_writes_only_representative(tmp_path
         drivezone_path,
         [_feature({"id": "dz"}, Polygon([(-10, -10), (10, -10), (10, 10), (-10, 10), (-10, -10)]))],
     )
+    _write_geojson(
+        intersections_path,
+        [_feature({"id": "intersection"}, Polygon([(90, -10), (110, -10), (110, 10), (90, 10), (90, -10)]))],
+    )
 
     artifacts = run_t07_step1_has_evd(
         nodes_path=nodes_path,
         drivezone_path=drivezone_path,
+        intersection_path=intersections_path,
         out_root=tmp_path / "out",
         run_id="case",
     )
@@ -79,7 +100,7 @@ def test_step1_uses_representative_kind2_and_writes_only_representative(tmp_path
     props = _read_gpkg_properties_by_id(artifacts.nodes_path)
     assert props["1"]["has_evd"] == "yes"
     assert props["101"]["has_evd"] is None
-    assert props["2"]["has_evd"] == "no"
+    assert props["2"]["has_evd"] == "yes"
     assert props["201"]["has_evd"] is None
     assert props["3"]["has_evd"] == "no"
     assert props["4"]["has_evd"] is None
@@ -87,9 +108,10 @@ def test_step1_uses_representative_kind2_and_writes_only_representative(tmp_path
     summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
     assert summary["processed_kind2_count"] == 3
     assert summary["skipped_kind2_count"] == 1
-    assert summary["has_evd_yes_count"] == 1
-    assert summary["has_evd_no_count"] == 2
+    assert summary["has_evd_yes_count"] == 2
+    assert summary["has_evd_no_count"] == 1
     assert summary["has_evd_null_count"] == 1
+    assert summary["input_paths"]["intersection"] == str(intersections_path)
     assert "stage_timings" in summary["performance"]
     assert "write_nodes_seconds" in summary["performance"]["stage_timings"]
 
@@ -146,8 +168,8 @@ def test_step2_outputs_anchor_states_reasons_and_conflicts(tmp_path: Path) -> No
     assert props["2"]["is_anchor"] == "no"
     assert props["3"]["is_anchor"] == "no"
     assert props["3"]["anchor_reason"] is None
-    assert props["4"]["is_anchor"] == "yes"
-    assert props["4"]["anchor_reason"] == "t"
+    assert props["4"]["is_anchor"] == "no"
+    assert props["4"]["anchor_reason"] is None
     assert props["5"]["is_anchor"] == "fail1"
     assert props["6"]["is_anchor"] == "fail2"
     assert props["7"]["is_anchor"] == "fail2"
@@ -158,13 +180,14 @@ def test_step2_outputs_anchor_states_reasons_and_conflicts(tmp_path: Path) -> No
     assert props["10"]["anchor_reason"] is None
 
     summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
-    assert summary["anchor_yes_count"] == 2
-    assert summary["anchor_no_count"] == 3
+    assert summary["anchor_yes_count"] == 1
+    assert summary["anchor_no_count"] == 4
     assert summary["anchor_fail1_count"] == 1
     assert summary["anchor_fail2_count"] == 3
     assert summary["anchor_null_count"] == 1
+    assert summary["t_reason_count"] == 0
     assert summary["relation_evidence_row_count"] == 10
-    assert summary["surface_candidate_count"] == 2
+    assert summary["surface_candidate_count"] == 1
     assert artifacts.relation_evidence_csv_path is not None
     assert artifacts.relation_evidence_csv_path.is_file()
     assert artifacts.relation_evidence_json_path is not None
@@ -178,6 +201,8 @@ def test_step2_outputs_anchor_states_reasons_and_conflicts(tmp_path: Path) -> No
     assert relation_rows["1"]["status_suggested"] == 0
     assert relation_rows["1"]["base_id_candidate"] == "a"
     assert relation_rows["2"]["relation_state"] == "no_existing_rcsdintersection"
+    assert relation_rows["4"]["relation_state"] == "t_junction_deferred_to_t03"
+    assert relation_rows["4"]["status_suggested"] == 1
     assert relation_rows["5"]["relation_state"] == "multiple_intersections_for_group"
     assert relation_rows["6"]["relation_state"] == "intersection_shared_by_multiple_groups"
     assert relation_rows["8"]["relation_state"] == "not_evaluated_no_evidence"
@@ -185,7 +210,7 @@ def test_step2_outputs_anchor_states_reasons_and_conflicts(tmp_path: Path) -> No
     assert artifacts.anchor_surface_path is not None
     with fiona.open(str(artifacts.anchor_surface_path)) as src:
         surface_rows = [dict(feature["properties"]) for feature in src]
-    assert {str(row["target_id"]) for row in surface_rows} == {"1", "4"}
+    assert {str(row["target_id"]) for row in surface_rows} == {"1"}
     assert {row["source_module"] for row in surface_rows} == {"T07_STEP2"}
     assert "stage_timings" in summary["performance"]
     assert "build_intersection_index_seconds" in summary["performance"]["stage_timings"]
@@ -195,7 +220,48 @@ def test_step2_outputs_anchor_states_reasons_and_conflicts(tmp_path: Path) -> No
     assert all(row["junction_id"] != "10" for row in error2["rows"])
 
 
-def test_step2_shared_intersection_fail2_applies_to_all_handled_kind2(tmp_path: Path) -> None:
+def test_step2_canonicalizes_string_float_semantic_ids_in_handoff_outputs(tmp_path: Path) -> None:
+    nodes_path = tmp_path / "nodes.geojson"
+    intersections_path = tmp_path / "intersections.geojson"
+    _write_geojson(
+        nodes_path,
+        [
+            _feature(
+                {"id": "622700016.0", "mainnodeid": "622700016.0", "kind_2": 4, "has_evd": "yes"},
+                Point(0, 0),
+            )
+        ],
+    )
+    _write_geojson(
+        intersections_path,
+        [_feature({"id": "surface-a"}, Polygon([(-5, -5), (5, -5), (5, 5), (-5, 5), (-5, -5)]))],
+    )
+
+    artifacts = run_t07_step2_anchor_recognition(
+        nodes_path=nodes_path,
+        intersection_path=intersections_path,
+        out_root=tmp_path / "out",
+        run_id="case",
+    )
+
+    assert artifacts.relation_evidence_json_path is not None
+    relation_payload = json.loads(artifacts.relation_evidence_json_path.read_text(encoding="utf-8"))
+    assert relation_payload["rows"][0]["target_id"] == "622700016"
+    assert relation_payload["rows"][0]["representative_node_id"] == "622700016"
+    with artifacts.relation_evidence_csv_path.open("r", encoding="utf-8", newline="") as handle:
+        csv_rows = list(csv.DictReader(handle))
+    assert csv_rows[0]["target_id"] == "622700016"
+    assert csv_rows[0]["representative_node_id"] == "622700016"
+
+    assert artifacts.anchor_surface_path is not None
+    with fiona.open(str(artifacts.anchor_surface_path)) as src:
+        surface_rows = [dict(feature["properties"]) for feature in src]
+    assert surface_rows[0]["target_id"] == "622700016"
+    assert surface_rows[0]["mainnodeid"] == "622700016"
+    assert surface_rows[0]["representative_node_id"] == "622700016"
+
+
+def test_step2_shared_intersection_fail2_excludes_t_junction_kind2(tmp_path: Path) -> None:
     nodes_path = tmp_path / "nodes.geojson"
     intersections_path = tmp_path / "intersections.geojson"
     _write_geojson(
@@ -223,19 +289,21 @@ def test_step2_shared_intersection_fail2_applies_to_all_handled_kind2(tmp_path: 
     )
 
     props = _read_gpkg_properties_by_id(artifacts.nodes_path)
-    for junction_id in ["1", "2", "3", "4", "5", "6"]:
+    for junction_id in ["1", "2", "3", "4", "5"]:
         assert props[junction_id]["is_anchor"] == "fail2"
         assert props[junction_id]["anchor_reason"] is None
+    assert props["6"]["is_anchor"] == "no"
+    assert props["6"]["anchor_reason"] is None
 
     summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
     assert summary["anchor_yes_count"] == 0
-    assert summary["anchor_no_count"] == 0
+    assert summary["anchor_no_count"] == 1
     assert summary["anchor_fail1_count"] == 0
-    assert summary["anchor_fail2_count"] == 6
+    assert summary["anchor_fail2_count"] == 5
     assert summary["anchor_null_count"] == 0
 
     error2 = json.loads((artifacts.stage_root / "node_error_2_audit.json").read_text(encoding="utf-8"))
-    assert {row["junction_id"] for row in error2["rows"]} == {"1", "2", "3", "4", "5", "6"}
+    assert {row["junction_id"] for row in error2["rows"]} == {"1", "2", "3", "4", "5"}
 
 
 def test_combined_runner_has_no_segment_dependency_or_outputs(tmp_path: Path) -> None:

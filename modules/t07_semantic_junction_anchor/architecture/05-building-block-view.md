@@ -24,7 +24,7 @@ strict input read -> semantic junction assembly -> representative node selection
 ### Step1
 
 - 判断代表 node `kind_2` 是否属于 `{4, 8, 16, 64, 128, 2048}`。
-- 只对处理范围内语义路口执行全组 node `DriveZone` 命中判定；所有 node 均命中才写 `yes`。
+- 只对处理范围内语义路口执行全组 node `DriveZone ∪ RCSDIntersection` 命中判定；所有 node 均命中该合并 evidence 面才写 `yes`。
 - 写代表 node `has_evd`。
 
 ### Step2
@@ -37,7 +37,7 @@ strict input read -> semantic junction assembly -> representative node selection
 
 ### Step3
 
-- 处理 `kind_2 in {4, 8, 16, 2048}` 的代表 node。
+- 处理 `kind_2 in {4, 8, 16}` 的代表 node。
 - 先读取 Step2 surface，用 `RCSDIntersection` 面查询输入 `RCSDNode` 语义路口，形成 Step2 surface 1V1 关系或 `RCSDNode_error.gpkg`。
 - 再读取 T05 relation 主表中 `target_id / base_id / status`，对 `has_evd = yes / is_anchor = no` 的候选补充关系。
 - 校验成功 relation 的 RCSD `base_id` 是否存在于输入 `RCSDNode.id/mainnodeid` 且未被 Step2 surface 1V1 阶段占用。

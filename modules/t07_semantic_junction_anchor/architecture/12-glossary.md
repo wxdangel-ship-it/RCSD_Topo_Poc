@@ -5,7 +5,7 @@
 - `kind_2`：T07 当前唯一正式类型判断字段。
 - `has_evd`：语义路口是否有道路面资料，值域为 `yes / no / NULL`。
 - `is_anchor`：语义路口是否锚定到 `RCSDIntersection`，值域为 `yes / no / fail1 / fail2 / NULL`。
-- `anchor_reason`：特殊锚定原因，当前值域为 `t / NULL`；`kind_2 = 64 / 128` 暂不在 T07 Step2 内产生专项原因。
+- `anchor_reason`：特殊锚定原因，当前 T07 不再为 T 型路口产生 `t`，输出保持 `NULL`。
 - `fail1`：同一语义路口组命中多个 `RCSDIntersection` 的冲突。
 - `fail2`：同一个 `RCSDIntersection` 对应多个语义路口的冲突，优先级高于 `fail1`。
 - `intersection_match_all.geojson`：T05 Phase2 输出的 SWSD-RCSD 语义路口 relation 主表，字段为 `target_id / base_id / status / level / is_highway`。

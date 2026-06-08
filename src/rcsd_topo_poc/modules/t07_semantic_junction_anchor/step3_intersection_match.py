@@ -40,7 +40,8 @@ from .runner import (
 )
 
 
-STEP3_KIND2 = {"4", "8", "16", "2048"}
+STEP3_SURFACE_KIND2 = {"4", "8", "16"}
+STEP3_BACKFILL_KIND2 = {"4", "8", "16"}
 
 
 @dataclass(frozen=True)
@@ -485,6 +486,15 @@ def _read_relation_records(
     ]
 
 
+def _relation_output_properties(record: RelationRecord) -> dict[str, Any]:
+    properties = dict(record.properties)
+    if record.target_id is not None:
+        properties["target_id"] = record.target_id
+    if record.base_id is not None:
+        properties["base_id"] = record.base_id
+    return properties
+
+
 def _write_relation_output(path: Path, records: list[RelationRecord]) -> None:
     if all(record.geometry_mode == "raw_crs84" for record in records):
         write_json(
@@ -496,7 +506,7 @@ def _write_relation_output(path: Path, records: list[RelationRecord]) -> None:
                 "features": [
                     {
                         "type": "Feature",
-                        "properties": dict(record.properties),
+                        "properties": _relation_output_properties(record),
                         "geometry": record.geometry,
                     }
                     for record in records
@@ -517,7 +527,7 @@ def _write_relation_output(path: Path, records: list[RelationRecord]) -> None:
         features.append(
             {
                 "type": "Feature",
-                "properties": dict(record.properties),
+                "properties": _relation_output_properties(record),
                 "geometry": geometry,
             }
         )
@@ -725,7 +735,36 @@ def _load_step2_relation_evidence_rows(path: Path) -> list[dict[str, Any]]:
     rows = payload.get("rows")
     if not isinstance(rows, list):
         return []
-    return [dict(row) for row in rows if isinstance(row, dict)]
+    return [_canonicalize_relation_evidence_row(dict(row)) for row in rows if isinstance(row, dict)]
+
+
+def _canonicalize_pipe_id_value(value: Any) -> Any:
+    if value is None:
+        return value
+    text = str(value).strip()
+    if not text:
+        return value
+    if "|" in text:
+        parts = []
+        for part in text.split("|"):
+            normalized = _normalize_id(part)
+            parts.append(normalized if normalized is not None else part.strip())
+        return "|".join(parts)
+    normalized = _normalize_id(value)
+    if normalized is not None and normalized != text:
+        return normalized
+    return value
+
+
+def _canonicalize_relation_evidence_row(row: dict[str, Any]) -> dict[str, Any]:
+    for field_name in ("target_id", "representative_node_id"):
+        if field_name not in row:
+            continue
+        normalized = _normalize_id(row.get(field_name))
+        row[field_name] = normalized or ""
+    if "base_id_candidate" in row:
+        row["base_id_candidate"] = _canonicalize_pipe_id_value(row.get("base_id_candidate"))
+    return row
 
 
 def _step2_one_to_one_surface_base_ids(rows: list[dict[str, Any]]) -> set[str]:
@@ -841,6 +880,11 @@ def _write_step3_anchor_surface(
         if output_path.exists():
             output_path.unlink()
         shutil.copy2(step2_surface_path, output_path)
+        _canonicalize_gpkg_id_fields(
+            output_path,
+            layer_name=None,
+            field_names=("target_id", "mainnodeid", "representative_node_id"),
+        )
         return "copy_step2_surface"
     from rcsd_topo_poc.modules.t08_preprocess.vector_io import write_gpkg
 
@@ -852,6 +896,53 @@ def _write_step3_anchor_surface(
         geometry_type="Polygon",
     )
     return "empty_surface_no_step2_source"
+
+
+def _canonicalize_gpkg_id_fields(
+    path: Path,
+    *,
+    layer_name: str | None,
+    field_names: tuple[str, ...],
+) -> None:
+    resolved_layer = _resolve_gpkg_layer(path, layer_name)
+    with sqlite3.connect(str(path)) as conn:
+        columns = [str(row[1]) for row in conn.execute(f"PRAGMA table_info({_quote_identifier(resolved_layer)})")]
+        resolved_fields = [
+            field
+            for field_name in field_names
+            if (field := _field_name_case_insensitive(columns, field_name)) is not None
+        ]
+        if not resolved_fields:
+            return
+        select_sql = (
+            "SELECT rowid, "
+            + ", ".join(_quote_identifier(field) for field in resolved_fields)
+            + " FROM "
+            + _quote_identifier(resolved_layer)
+        )
+        update_sql = (
+            "UPDATE "
+            + _quote_identifier(resolved_layer)
+            + " SET "
+            + ", ".join(f"{_quote_identifier(field)} = ?" for field in resolved_fields)
+            + " WHERE rowid = ?"
+        )
+        updates: list[tuple[Any, ...]] = []
+        for row in conn.execute(select_sql):
+            rowid = row[0]
+            values = list(row[1:])
+            next_values = []
+            changed = False
+            for value in values:
+                normalized = _normalize_id(value)
+                next_value = normalized if normalized is not None else value
+                next_values.append(next_value)
+                if normalized is not None and normalized != str(value).strip():
+                    changed = True
+            if changed:
+                updates.append((*next_values, rowid))
+        if updates:
+            conn.executemany(update_sql, updates)
 
 
 def run_t07_step3_intersection_match(
@@ -946,7 +1037,7 @@ def run_t07_step3_intersection_match(
     for surface_feature in step2_surface_features:
         surface_props = dict(surface_feature.properties)
         target_id = _surface_target_id(surface_props)
-        if target_id is None or _surface_kind2(surface_props) not in STEP3_KIND2:
+        if target_id is None or _surface_kind2(surface_props) not in STEP3_SURFACE_KIND2:
             continue
         surface_features_by_target[target_id].append(surface_feature)
 
@@ -1094,19 +1185,19 @@ def run_t07_step3_intersection_match(
         kind_2 = _normalize_id(representative_props.get("kind_2"))
         has_evd = _normalize_id(representative_props.get("has_evd"))
         is_anchor = _normalize_id(representative_props.get("is_anchor"))
-        if kind_2 not in STEP3_KIND2:
+        if kind_2 not in STEP3_SURFACE_KIND2:
             counts["skipped_kind2_count"] += 1
             continue
         counts["step3_scope_kind2_count"] += 1
 
-        if has_evd != "yes" or is_anchor != "no":
+        if kind_2 not in STEP3_BACKFILL_KIND2 or has_evd != "yes" or is_anchor != "no":
             counts["not_candidate_count"] += 1
             audit_rows.append(
                 _audit_row(
                     scope="semantic_junction",
                     status="skipped",
                     reason="not_step3_candidate",
-                    detail="Step3 only processes has_evd=yes and is_anchor=no representatives.",
+                    detail="Step3 T05 relation backfill only processes has_evd=yes and is_anchor=no representatives in kind_2 {4,8,16}.",
                     junction_id=junction_id,
                     node_id=group.representative.node_id,
                     kind_2=kind_2,

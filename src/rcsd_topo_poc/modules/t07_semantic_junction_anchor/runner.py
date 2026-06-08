@@ -5,6 +5,7 @@ import json
 import sqlite3
 import time
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
@@ -162,6 +163,15 @@ def _normalize_id(value: Any) -> str | None:
     text = str(value).strip()
     if not text or text.lower() in {"null", "none", "nan"}:
         return None
+    if "." in text or "e" in text.lower():
+        try:
+            decimal_value = Decimal(text)
+        except InvalidOperation:
+            return text
+        if decimal_value.is_finite():
+            integral_value = decimal_value.to_integral_value()
+            if decimal_value == integral_value:
+                return format(integral_value, "f")
     return text
 
 
@@ -720,11 +730,13 @@ def _write_relation_evidence_json(
         target_id = _normalize_id(representative_props.get("mainnodeid")) or representative_node_id or junction_id
         representative_has_evd = _normalize_id(representative_props.get("has_evd"))
         final_state = _normalize_id(representative_props.get("is_anchor"))
-        relation_state = _stage2_relation_state(
-            participates=bool(result.get("participates")),
-            final_state=final_state,
-            representative_has_evd=representative_has_evd,
-            representative_missing=representative_missing,
+        relation_state = _normalize_id(result.get("relation_state")) or (
+            _stage2_relation_state(
+                participates=bool(result.get("participates")),
+                final_state=final_state,
+                representative_has_evd=representative_has_evd,
+                representative_missing=representative_missing,
+            )
         )
         if final_state == "fail2":
             matched_intersection_ids = sorted(fail2_by_junction.get(junction_id, set()))
@@ -870,12 +882,15 @@ def run_t07_step1_has_evd(
     *,
     nodes_path: str | Path,
     drivezone_path: str | Path,
+    intersection_path: str | Path | None = None,
     out_root: str | Path,
     run_id: str | None = None,
     nodes_layer: str | None = None,
     drivezone_layer: str | None = None,
+    intersection_layer: str | None = None,
     nodes_crs: str | None = None,
     drivezone_crs: str | None = None,
+    intersection_crs: str | None = None,
 ) -> T07StageArtifacts:
     started_at = time.perf_counter()
     stage_timings: dict[str, float] = {}
@@ -896,13 +911,31 @@ def run_t07_step1_has_evd(
         crs_override=drivezone_crs,
         allow_null_geometry=False,
     )
+    intersection_layer_data = (
+        _read_vector_layer(
+            intersection_path,
+            layer_name=intersection_layer,
+            crs_override=intersection_crs,
+            allow_null_geometry=False,
+        )
+        if intersection_path is not None
+        else None
+    )
     stage_timings["read_inputs_seconds"] = _elapsed_since(stage_started)
 
     stage_started = time.perf_counter()
     drivezone_geoms = [feature.geometry for feature in drivezone_layer_data.features if feature.geometry is not None and not feature.geometry.is_empty]
     if not drivezone_geoms:
         raise T07RunError("missing_required_field", "DriveZone layer has no non-empty geometry.")
-    prepared_drivezone = prep(drivezone_geoms[0] if len(drivezone_geoms) == 1 else unary_union(drivezone_geoms))
+    intersection_geoms = (
+        [feature.geometry for feature in intersection_layer_data.features if feature.geometry is not None and not feature.geometry.is_empty]
+        if intersection_layer_data is not None
+        else []
+    )
+    if intersection_layer_data is not None and not intersection_geoms:
+        raise T07RunError("missing_required_field", "RCSDIntersection layer has no non-empty geometry.")
+    evidence_geoms = drivezone_geoms + intersection_geoms
+    prepared_evidence_surface = prep(evidence_geoms[0] if len(evidence_geoms) == 1 else unary_union(evidence_geoms))
 
     by_mainnodeid, singleton_by_id = _build_node_index(nodes_layer_data.features, audit_rows)
     junction_ids = _candidate_junction_ids(by_mainnodeid, singleton_by_id)
@@ -955,7 +988,7 @@ def run_t07_step1_has_evd(
             continue
 
         counts["processed_kind2_count"] += 1
-        has_evd = "yes" if all(prepared_drivezone.intersects(record.geometry) for record in group.group_nodes) else "no"
+        has_evd = "yes" if all(prepared_evidence_surface.intersects(record.geometry) for record in group.group_nodes) else "no"
         representative_props["has_evd"] = has_evd
         if has_evd == "yes":
             counts["has_evd_yes_count"] += 1
@@ -972,10 +1005,13 @@ def run_t07_step1_has_evd(
     stage_started = time.perf_counter()
     _write_nodes(nodes_output_path, nodes_layer_data.features)
     stage_timings["write_nodes_seconds"] = _elapsed_since(stage_started)
+    input_paths = {"nodes": str(nodes_path), "drivezone": str(drivezone_path)}
+    if intersection_path is not None:
+        input_paths["intersection"] = str(intersection_path)
     summary = {
         "run_id": resolved_run_id,
         **counts,
-        "input_paths": {"nodes": str(nodes_path), "drivezone": str(drivezone_path)},
+        "input_paths": input_paths,
         "output_paths": {"nodes": str(nodes_output_path)},
         "target_crs": TARGET_CRS.to_string(),
         "audit_count": len(audit_rows),
@@ -1026,18 +1062,6 @@ def _read_intersections(layer: LoadedLayer) -> list[IntersectionRecord]:
     if not records:
         raise T07RunError("missing_required_field", "RCSDIntersection layer has no non-empty geometry.")
     return records
-
-
-def _same_single_intersection_for_all(node_hits: list[tuple[str, ...]]) -> str | None:
-    if not node_hits:
-        return None
-    first_hits = node_hits[0]
-    if len(first_hits) != 1:
-        return None
-    target = first_hits[0]
-    if all(hits == (target,) for hits in node_hits):
-        return target
-    return None
 
 
 def _write_error_outputs(
@@ -1151,15 +1175,37 @@ def run_t07_step2_anchor_recognition(
             group_results[junction_id] = {"participates": False, "group": group, "intersection_ids": []}
             continue
 
+        if kind_2 == "2048":
+            representative_props["is_anchor"] = "no"
+            representative_props["anchor_reason"] = None
+            counts["anchor_no_count"] += 1
+            group_results[junction_id] = {
+                "participates": False,
+                "fail2_eligible": False,
+                "group": group,
+                "kind_2": kind_2,
+                "intersection_ids": [],
+                "relation_state": "t_junction_deferred_to_t03",
+            }
+            audit_rows.append(
+                _audit_row(
+                    scope="semantic_junction",
+                    status="skipped",
+                    reason="t_junction_deferred_to_t03",
+                    detail="T07 does not build SWSD-RCSD relation for kind_2=2048; T03 handles T-junction virtual anchoring.",
+                    junction_id=junction_id,
+                    node_id=group.representative.node_id,
+                )
+            )
+            continue
+
         hit_intersection_ids: set[str] = set()
-        group_node_hits: list[tuple[str, ...]] = []
         for record in group.group_nodes:
             cached = node_hit_cache.get(record.output_index)
             if cached is None:
                 indexes = intersection_tree.query(record.geometry, predicate="intersects")
                 cached = tuple(sorted({intersections[int(index)].intersection_id for index in indexes}))
                 node_hit_cache[record.output_index] = cached
-            group_node_hits.append(cached)
             for intersection_id in cached:
                 hit_intersection_ids.add(intersection_id)
 
@@ -1181,26 +1227,6 @@ def run_t07_step2_anchor_recognition(
             continue
 
         counts["stage2_candidate_count"] += 1
-        if kind_2 == "2048":
-            shared_intersection_id = _same_single_intersection_for_all(group_node_hits)
-            if shared_intersection_id is None:
-                representative_props["is_anchor"] = "no"
-                representative_props["anchor_reason"] = None
-                counts["anchor_no_count"] += 1
-            else:
-                representative_props["is_anchor"] = "yes"
-                representative_props["anchor_reason"] = "t"
-                counts["anchor_yes_count"] += 1
-                counts["t_reason_count"] += 1
-            group_results[junction_id] = {
-                "participates": False,
-                "fail2_eligible": True,
-                "group": group,
-                "kind_2": kind_2,
-                "intersection_ids": [shared_intersection_id] if shared_intersection_id is not None else sorted_hits,
-            }
-            continue
-
         provisional_reason = None
 
         if not sorted_hits:
@@ -1454,12 +1480,15 @@ def run_t07_semantic_junction_anchor(
     step1 = run_t07_step1_has_evd(
         nodes_path=nodes_path,
         drivezone_path=drivezone_path,
+        intersection_path=intersection_path,
         out_root=out_root,
         run_id=resolved_run_id,
         nodes_layer=nodes_layer,
         drivezone_layer=drivezone_layer,
+        intersection_layer=intersection_layer,
         nodes_crs=nodes_crs,
         drivezone_crs=drivezone_crs,
+        intersection_crs=intersection_crs,
     )
     step2 = run_t07_step2_anchor_recognition(
         nodes_path=step1.nodes_path,

@@ -5,7 +5,7 @@
 - T07 从 T02 Step1 / Step2 继承业务语义，但不能继承 T02 的 Segment 候选域；实现时若复用 T02 代码过多，容易重新引入 Segment 依赖。
 - `mainnodeid = 0` 在不同模块存在不同解释边界；T07 当前按 T02 口径只声明空值 singleton，如需把 `0` 视为空值必须另行确认。
 - `kind_2 = 64 / 128` 当前在 Step2 中写 `no / NULL` 并交由后续专项规则处理；若专项规则落地，必须另行同步契约。
-- `kind_2 = 2048` 当前在 Step2 中只支持“全组 node 命中同一个且唯一 `RCSDIntersection`”的 `yes / t` 规则；其它情形统一 `no / NULL`。
+- `kind_2 = 2048` 当前在 T07 中统一 `no / NULL`，不建立 SWSD-RCSD 关系；T 型路口虚拟锚定由 T03 负责，如 T03 口径变化必须同步 T07 handoff 边界。
 - Step3 依赖 T05 `intersection_match_all.geojson` 的 `target_id / base_id / status` 规格；若 T05 relation 字段或 CRS 规格变化，必须同步 T07 契约与测试。
 - Step3 只校验 RCSD `base_id` 在输入 `RCSDNode.id/mainnodeid` 中存在，不反推 RCSD 语义路口字段含义。
 - Step3 合并 `t07_swsd_rcsd_relation_evidence.csv/json` 时默认从 Step2 `nodes.gpkg` 同目录读取 Step2 evidence；若用户传入非 Step2 目录的 nodes，需要确认合并基准是否存在。

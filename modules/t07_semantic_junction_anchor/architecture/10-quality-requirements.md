@@ -14,8 +14,9 @@
 
 - `representative_node_missing`、字段缺失、CRS 缺失、geometry 缺失必须可追溯。
 - `fail1 / fail2` 必须输出涉及语义路口与 `RCSDIntersection` 的审计信息。
-- `kind_2 = 64 / 128 / 2048` 的 Step2 专属基础分流必须可从 summary / audit / 输出字段解释；一面多 SWSD 语义路口场景必须进入 `fail2` 并可追溯。
+- `kind_2 = 64 / 128 / 2048` 的 Step2 专属基础分流必须可从 summary / audit / 输出字段解释；一面多 SWSD 语义路口场景必须进入 `fail2` 并可追溯，且 `kind_2 = 2048` 不参与或接收 T07 `fail2`。
 - Step2 `t07_rcsdintersection_anchor_surface.gpkg` 与 `t07_swsd_rcsd_relation_evidence.csv/json` 必须可追溯到 Step2 代表 node 判定与命中的 `RCSDIntersection`。
+- Step2 / Step3 对外 handoff 主键字段必须使用 canonical ID，不允许把 SWSD 语义路口 ID 输出为字符串化整数浮点。
 - Step3 的 Step2 surface 0 个 / 多个 RCSD 语义路口、relation 缺失、relation 失败、重复 `target_id`、RCSD `base_id` 不存在、`base_id` 已被前段占用必须可从 audit / summary 解释。
 - Step3 `t07_rcsdintersection_anchor_surface.gpkg` 必须复制 Step2 surface 结果；Step3 `t07_swsd_rcsd_relation_evidence.csv/json` 必须合并 Step2 evidence 与 `intersection_match_t07.geojson` 成功补锚成果，同一 `target_id` 以 Step3 成功补锚行覆盖，并显式记录 Step2 / Step3 锚定数量。
 - Step3 必须输出 `RCSDNode_error.gpkg` 记录 Step2 surface 面内多个 RCSD 语义路口错误；最终候选成功 relation 的 1:N、N:1 与重复 success target 必须输出 `relation_cardinality_errors.csv/json`，并在 summary 中提供分类计数。SWSD 1:N 必须取消关系并回写 `is_anchor = no`。

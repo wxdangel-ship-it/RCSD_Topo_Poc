@@ -16,7 +16,7 @@ Examples:
 Environment overrides:
   PY             Python interpreter. Defaults to <repo>/.venv/bin/python.
   NODES_LAYER    Optional GeoPackage layer for existing T04 nodes.gpkg.
-  RCSDNODE_LAYER Optional GeoPackage layer for RCSDNode from preflight.json.
+  RCSDNODE_LAYER Optional GeoPackage layer for RCSDNode from preflight.json or case-package dirs.
 EOF
 }
 
@@ -99,6 +99,96 @@ def _add_case(
     }
 
 
+def _read_case_package_rcsdnodes(case_root: Path, selected_cases: list[dict]) -> list:
+    features = []
+    for case_doc in selected_cases:
+        case_id = str(case_doc.get("case_id") or "").strip()
+        if not case_id:
+            continue
+        rcsdnode_path = case_root / case_id / "rcsdnode.gpkg"
+        if not rcsdnode_path.exists():
+            continue
+        features.extend(
+            read_vector_layer(
+                rcsdnode_path,
+                layer_name=os.environ.get("RCSDNODE_LAYER") or None,
+            ).features
+        )
+    return features
+
+
+def _int_or_zero(value) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _postprocess_audit_patch(
+    *,
+    document: dict,
+    batch_summary: dict,
+    nodes_outputs: dict,
+    fallback: dict,
+) -> dict:
+    batch_yes = _int_or_zero(batch_summary.get("step7_accepted_count"))
+    batch_selected = _int_or_zero(batch_summary.get("selected_case_count"))
+    if batch_selected <= 0:
+        batch_selected = batch_yes + _int_or_zero(batch_summary.get("step7_rejected_count"))
+        batch_selected += len(batch_summary.get("failed_case_ids") or [])
+        batch_selected += len(batch_summary.get("runtime_failed_case_ids") or [])
+    batch_fail4 = max(batch_selected - batch_yes, 0)
+    post_fail4 = _int_or_zero(nodes_outputs.get("nodes_updated_to_fail4_count"))
+    post_fallback = _int_or_zero(nodes_outputs.get("nodes_updated_to_fail4_fallback_count"))
+    post_no = _int_or_zero(nodes_outputs.get("nodes_updated_to_no_count"))
+    post_total = _int_or_zero(nodes_outputs.get("nodes_total_update_count"))
+    final_total = batch_yes + post_fail4 + post_fallback + post_no
+    postprocess_passed = bool(nodes_outputs.get("nodes_consistency_passed"))
+    final_passed = postprocess_passed and (batch_selected <= 0 or final_total == batch_selected)
+
+    patched = dict(document)
+    patched.update(
+        {
+            "nodes_gpkg": nodes_outputs.get("nodes_path"),
+            "nodes_anchor_update_audit_csv": nodes_outputs.get("nodes_anchor_update_audit_csv_path"),
+            "nodes_anchor_update_audit_json": nodes_outputs.get("nodes_anchor_update_audit_json_path"),
+            "nodes_total_update_count": final_total,
+            "nodes_updated_to_yes_count": batch_yes,
+            "nodes_updated_to_fail4_count": post_fail4,
+            "nodes_updated_to_fail4_fallback_count": post_fallback,
+            "nodes_updated_to_no_count": post_no,
+            "nodes_consistency_passed": final_passed,
+            "relation_fallback": fallback,
+            "relation_fallback_success_count": fallback.get("fallback_success_count"),
+            "relation_fallback_failed_count": fallback.get("fallback_failed_count"),
+            "relation_fallback_audit_csv": str(run_root / "t04_relation_fallback_audit.csv"),
+            "relation_fallback_summary_json": str(run_root / "t04_relation_fallback_summary.json"),
+            "batch_nodes_total_update_count": batch_selected,
+            "batch_nodes_updated_to_yes_count": batch_yes,
+            "batch_nodes_updated_to_fail4_count": batch_fail4,
+            "batch_nodes_updated_to_fail4_fallback_count": 0,
+            "batch_nodes_updated_to_no_count": 0,
+            "postprocess_nodes_path": nodes_outputs.get("nodes_path"),
+            "postprocess_nodes_anchor_update_audit_csv": nodes_outputs.get("nodes_anchor_update_audit_csv_path"),
+            "postprocess_nodes_anchor_update_audit_json": nodes_outputs.get("nodes_anchor_update_audit_json_path"),
+            "postprocess_nodes_total_update_count": post_total,
+            "postprocess_nodes_updated_to_fail4_count": post_fail4,
+            "postprocess_nodes_updated_to_fail4_fallback_count": post_fallback,
+            "postprocess_nodes_updated_to_no_count": post_no,
+            "postprocess_nodes_consistency_passed": postprocess_passed,
+            "final_nodes_updated_to_yes_count": batch_yes,
+            "final_nodes_updated_to_fail4_count": post_fail4,
+            "final_nodes_updated_to_fail4_fallback_count": post_fallback,
+            "final_nodes_updated_to_no_count": post_no,
+            "final_nodes_total_update_count": final_total,
+            "final_nodes_consistency_passed": final_passed,
+        }
+    )
+    if "passed" in patched:
+        patched["passed"] = bool(patched.get("passed")) and final_passed
+    return patched
+
+
 run_root = Path(os.environ["RUN_ROOT"])
 preflight_path = run_root / "preflight.json"
 summary_path = run_root / "summary.json"
@@ -119,8 +209,12 @@ summary = _load_json(summary_path)
 
 input_paths = preflight.get("input_paths") or {}
 rcsdnode_path = Path(input_paths.get("rcsdnode_path") or "")
-if not rcsdnode_path.exists():
-    raise SystemExit(f"RCSDNode path not found from preflight.json: {rcsdnode_path}")
+case_package_root = Path(preflight.get("case_root") or "")
+if not rcsdnode_path.is_file() and not case_package_root.is_dir():
+    raise SystemExit(
+        "RCSDNode source not found: preflight.input_paths.rcsdnode_path is missing "
+        f"and case_root is not a directory: {case_package_root}"
+    )
 
 nodes_source_path = run_root / "_fallback_existing_nodes_source.gpkg"
 shutil.copy2(nodes_path, nodes_source_path)
@@ -158,6 +252,22 @@ for case_id in summary.get("runtime_failed_case_ids") or []:
         state="runtime_failed",
     )
 
+failed_case_reason_by_id = {
+    str(item.get("case_id")): str(item.get("message") or item.get("exception_type") or "runtime_failed")
+    for item in summary.get("failed_cases") or []
+    if str(item.get("case_id") or "").strip()
+}
+for case_id in summary.get("failed_case_ids") or []:
+    if str(case_id) in selected_by_case:
+        continue
+    _add_case(
+        selected_by_case=selected_by_case,
+        failure_status_by_case=failure_status_by_case,
+        case_id=case_id,
+        reason=failed_case_reason_by_id.get(str(case_id), "runtime_failed"),
+        state="runtime_failed",
+    )
+
 for case_id in summary.get("missing_status_case_ids") or []:
     _add_case(
         selected_by_case=selected_by_case,
@@ -185,10 +295,15 @@ source_nodes = read_vector_layer(
     nodes_source_path,
     layer_name=os.environ.get("NODES_LAYER") or None,
 ).features
-rcsdnodes = read_vector_layer(
-    rcsdnode_path,
-    layer_name=os.environ.get("RCSDNODE_LAYER") or None,
-).features
+if rcsdnode_path.is_file():
+    rcsdnodes = read_vector_layer(
+        rcsdnode_path,
+        layer_name=os.environ.get("RCSDNODE_LAYER") or None,
+    ).features
+else:
+    rcsdnodes = _read_case_package_rcsdnodes(case_package_root, selected_cases)
+    if not rcsdnodes:
+        raise SystemExit(f"No RCSDNode features found under case-package root: {case_package_root}")
 
 fallback = enrich_t04_relation_evidence_with_fallback(
     run_root=run_root,
@@ -199,7 +314,7 @@ fallback = enrich_t04_relation_evidence_with_fallback(
     input_dataset_id=str(preflight.get("input_dataset_id") or ""),
 )
 
-write_t04_nodes_outputs(
+nodes_outputs = write_t04_nodes_outputs(
     run_root=run_root,
     source_node_features=source_nodes,
     selected_cases=selected_cases,
@@ -211,6 +326,31 @@ write_t04_nodes_outputs(
     fallback_reason_by_case=fallback.get("fallback_reason_by_case") or {},
     fallback_base_id_by_case=fallback.get("fallback_base_id_by_case") or {},
 )
+
+consistency_report_path = run_root / "step7_consistency_report.json"
+if consistency_report_path.exists():
+    consistency_report = _load_json(consistency_report_path)
+    consistency_report = _postprocess_audit_patch(
+        document=consistency_report,
+        batch_summary=summary,
+        nodes_outputs=nodes_outputs,
+        fallback=fallback,
+    )
+    with consistency_report_path.open("w", encoding="utf-8") as handle:
+        json.dump(consistency_report, handle, ensure_ascii=False, indent=2)
+        handle.write("\n")
+
+if summary_path.exists():
+    refreshed_summary = _load_json(summary_path)
+    refreshed_summary = _postprocess_audit_patch(
+        document=refreshed_summary,
+        batch_summary=summary,
+        nodes_outputs=nodes_outputs,
+        fallback=fallback,
+    )
+    with summary_path.open("w", encoding="utf-8") as handle:
+        json.dump(refreshed_summary, handle, ensure_ascii=False, indent=2)
+        handle.write("\n")
 
 print("[T04-FALLBACK] fallback_success_count=", fallback.get("fallback_success_count"))
 print("[T04-FALLBACK] evidence_csv=", run_root / "t04_swsd_rcsd_relation_evidence.csv")

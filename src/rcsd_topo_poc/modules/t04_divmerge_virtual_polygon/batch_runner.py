@@ -131,6 +131,27 @@ def _failure_doc(*, case_id: str, exc: BaseException) -> dict[str, Any]:
     }
 
 
+def _write_batch_failures_doc(
+    *,
+    run_root: Path,
+    git_sha: Any,
+    input_dataset_id: Any,
+    failed_case_ids: list[str],
+    failure_records: list[dict[str, Any]],
+) -> None:
+    write_json(
+        run_root / "batch_failures.json",
+        {
+            "produced_at": _now_text(),
+            "git_sha": git_sha,
+            "input_dataset_id": input_dataset_id,
+            "failed_case_count": len(failure_records),
+            "failed_case_ids": failed_case_ids,
+            "failures": failure_records,
+        },
+    )
+
+
 def run_t04_step14_batch(
     *,
     case_root: str | Path = DEFAULT_CASE_ROOT,
@@ -212,16 +233,12 @@ def run_t04_step14_batch(
             )
             failure_records.append(doc)
 
-    write_json(
-        run_root / "batch_failures.json",
-        {
-            "produced_at": _now_text(),
-            "git_sha": preflight.get("git_sha"),
-            "input_dataset_id": preflight.get("input_dataset_id"),
-            "failed_case_count": len(failure_records),
-            "failed_case_ids": failed_case_ids,
-            "failures": failure_records,
-        },
+    _write_batch_failures_doc(
+        run_root=run_root,
+        git_sha=preflight.get("git_sha"),
+        input_dataset_id=preflight.get("input_dataset_id"),
+        failed_case_ids=failed_case_ids,
+        failure_records=failure_records,
     )
 
     finalized_case_results, resolution_doc = resolve_step4_final_conflicts(case_results)
@@ -235,9 +252,39 @@ def run_t04_step14_batch(
     review_rows = []
     step7_artifacts = []
     for case_result in finalized_case_results:
-        case_review_rows, step7_artifact = write_case_outputs(run_root=run_root, case_result=case_result)
+        try:
+            case_review_rows, step7_artifact = write_case_outputs(run_root=run_root, case_result=case_result)
+        except Exception as exc:
+            case_id = case_result.case_spec.case_id
+            failures_dir.mkdir(parents=True, exist_ok=True)
+            failure_path = failures_dir / f"{case_id}.failure.json"
+            doc = _failure_doc(case_id=case_id, exc=exc)
+            write_json(failure_path, doc)
+            if case_id not in failed_case_ids:
+                failed_case_ids.append(case_id)
+            failed_cases.append(
+                {
+                    "case_id": case_id,
+                    "exception_type": doc["exception_type"],
+                    "message": doc["message"],
+                    "failure_doc_path": str(failure_path),
+                }
+            )
+            failure_records.append(doc)
+            for record in case_elapsed_records:
+                if record.get("case_id") == case_id:
+                    record["status"] = "runtime_failed"
+                    break
+            continue
         review_rows.extend(case_review_rows)
         step7_artifacts.append(step7_artifact)
+    _write_batch_failures_doc(
+        run_root=run_root,
+        git_sha=preflight.get("git_sha"),
+        input_dataset_id=preflight.get("input_dataset_id"),
+        failed_case_ids=failed_case_ids,
+        failure_records=failure_records,
+    )
 
     materialized_rows = materialize_review_gallery(run_root, review_rows)
     write_review_index(run_root, materialized_rows)

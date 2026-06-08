@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Iterable
 
+from .phase2_ids import normalize_target_id
 from .phase2_models import (
     SCENE_DIRECT,
     SCENE_FAILURE,
@@ -39,10 +40,10 @@ def build_evidence_rows(
         (SOURCE_T04, t04_rows),
     ):
         for row in rows:
-            target_id = _text(row.get("target_id"))
+            target_id = normalize_target_id(row.get("target_id"))
             if not target_id:
                 continue
-            case_id = _text(row.get("case_id") or row.get("representative_node_id"))
+            case_id = normalize_target_id(row.get("case_id") or row.get("representative_node_id"))
             records.append(Phase2Evidence(source_module=source_module, row=dict(row), target_id=target_id, case_id=case_id))
     return sorted(records, key=lambda item: (item.target_id, SOURCE_PRIORITY.get(item.source_module, 99), item.case_id or ""))
 

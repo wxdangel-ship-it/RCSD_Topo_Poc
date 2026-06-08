@@ -64,6 +64,7 @@
 - T03 road-only 与 T04 fallback road-only 才能进入 RCSDRoad split。
 - T07 历史路口锚定 relation evidence 只作为已有 RCSD 语义路口 direct relation，不触发 RCSDRoad split 或 RCSDNode insert。
 - T07 历史锚定 relation-only target 没有 Phase 1 surface 时，仍必须进入 `intersection_match_all.geojson`。
+- Phase 2 入口必须统一 canonicalize SWSD 语义路口主键，覆盖 evidence `target_id`、surface `mainnodeid`、nodes `id/mainnodeid`、known target 索引和最终 relation/audit 输出；整数 ID 的字符串 / 浮点字符串表达差异必须归一，例如 `622700016.0` 输出为 `622700016`。
 - `kind_2 = 64` 环岛场景必须验证所有 SWSD 子 node 均被路口面覆盖，RCSD 候选语义路口全组 node 均被环岛面覆盖，并且候选语义路口之间通过 `RCSDRoad.roadtype = 8` 连通。
 - `kind_2 = 64` 环岛场景只能归组已有 RCSDNode，不得 split RCSDRoad 或新增 RCSDNode。
 - Road-only 投影点靠近 RCSDRoad 端点时必须复用已有端点 RCSDNode 或审计失败，不得生成极短 road 段。
@@ -73,6 +74,7 @@
 - `level = grade - 1`，缺失、为空或非法时为 `-1`。
 - `is_highway = closed_con - 1`，缺失、为空或非法时为 `-1`。
 - `no_related_rcsd` 场景下，若 SWSD node 原始 `has_evd = yes / is_anchor = yes`，T05 必须只在 copy-on-write `swsdnode_out.gpkg` 中改写为 `yes_nr`，并输出 `swsdnode_yes_nr_audit.csv/json`；不得原地修改输入 nodes。
+- `summary.json` 必须记录 `swsdnode_no_rcsd_target_count / swsdnode_no_rcsd_node_match_count / swsdnode_yes_nr_candidate_count / swsdnode_no_rcsd_unmatched_target_count`，用于定位 `swsdnode_yes_nr_count = 0` 的原因。
 - 多个 `base_id` 无法合并时必须 blocking error，不得输出多条 relation，也不得写成普通失败关系。
 - T03 handoff 补齐只能读取 T03 已输出的 relation evidence 与 case 级 `step6_status/step6_audit` 字段，不得反推或新增 T03 业务语义。
 - T03 handoff 补齐必须输出独立 backfilled evidence、audit 与 summary，不覆盖原始 T03 输出。

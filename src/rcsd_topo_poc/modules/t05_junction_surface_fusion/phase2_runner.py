@@ -11,6 +11,7 @@ from shapely.geometry import Point
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import unary_union
 
+from .phase2_ids import normalize_target_id
 from .phase2_io import prepare_run_root, produced_at_utc, read_table, read_vector_3857
 from .phase2_models import (
     SCENE_DIRECT,
@@ -552,13 +553,13 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
     ) = filter_cardinality_error_relations(relation_cardinality_input_features, relation_cardinality_errors)
     if relation_cardinality_removed_target_ids:
         kept_target_ids = {
-            _text((feature.get("properties") or {}).get("target_id"))
+            normalize_target_id((feature.get("properties") or {}).get("target_id"))
             for feature in filtered_relation_cardinality_features
         }
         relation_features = [
             feature
             for feature in relation_features
-            if _text((feature.get("properties") or {}).get("target_id")) in kept_target_ids
+            if normalize_target_id((feature.get("properties") or {}).get("target_id")) in kept_target_ids
         ]
     module_relation_audit_rows = _module_relation_audit_summary(
         evidence_rows=evidence_rows,
@@ -572,7 +573,7 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
         relation_features=relation_features,
         blocking_errors=blocking_errors,
     )
-    swsdnode_out_features, swsdnode_yes_nr_audit_rows = _swsdnode_yes_nr_outputs(
+    swsdnode_out_features, swsdnode_yes_nr_audit_rows, swsdnode_yes_nr_stats = _swsdnode_yes_nr_outputs(
         swsd_nodes=swsd_nodes,
         audit_rows=audit_rows,
     )
@@ -606,6 +607,7 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
         grouped_node_features=grouped_node_features,
         swsdnode_out_features=swsdnode_out_features,
         swsdnode_yes_nr_audit_rows=swsdnode_yes_nr_audit_rows,
+        swsdnode_yes_nr_stats=swsdnode_yes_nr_stats,
         audit_rows=audit_rows,
         blocking_errors=blocking_errors,
         module_relation_audit_rows=module_relation_audit_rows,
@@ -665,13 +667,13 @@ def _target_contexts(
     nodes_by_target: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for node in swsd_nodes:
         props = node.get("properties") or {}
-        target_id = _text(_field_value(props, "mainnodeid") or _field_value(props, "id"))
+        target_id = normalize_target_id(_field_value(props, "mainnodeid") or _field_value(props, "id"))
         if target_id:
             nodes_by_target[target_id].append(node)
     contexts: list[SwsdTargetContext] = []
     for surface in surfaces:
         props = surface.get("properties") or {}
-        target_id = _text(_field_value(props, "mainnodeid"))
+        target_id = normalize_target_id(_field_value(props, "mainnodeid"))
         if not target_id:
             continue
         nodes = nodes_by_target.get(target_id, [])
@@ -819,7 +821,7 @@ def _target_case_ids(rows: list[dict[str, Any]]) -> set[str]:
     result: set[str] = set()
     for row in rows:
         for value in (row.get("case_id"), row.get("target_id")):
-            text = _text(value)
+            text = normalize_target_id(value)
             if text:
                 result.add(text)
     return result
@@ -868,7 +870,7 @@ def _t04_step4_evidence_supplement(path: Path, *, crs_override: str | None) -> d
         geometry = feature.geometry
         if isinstance(geometry, Point) and not geometry.is_empty:
             points.append(geometry)
-            case_id = _text(props.get("case_id")) or case_id
+            case_id = normalize_target_id(props.get("case_id")) or case_id
     supplement: dict[str, Any] = {
         "case_id": case_id,
         "fact_reference_point_count": len(points),
@@ -885,7 +887,7 @@ def _merge_t04_supplements(rows: list[dict[str, Any]], supplements: dict[str, di
     merged_rows: list[dict[str, Any]] = []
     for row in rows:
         merged = dict(row)
-        for key in (_text(row.get("target_id")), _text(row.get("case_id"))):
+        for key in (normalize_target_id(row.get("target_id")), normalize_target_id(row.get("case_id"))):
             supplement = supplements.get(key)
             if not supplement:
                 continue
@@ -1070,14 +1072,14 @@ def _module_relation_audit_summary(
     target_input_counts: Counter[str] = Counter()
     counters: dict[tuple[str, str], Counter[str]] = defaultdict(Counter)
     relation_status_by_target = {
-        _text((feature.get("properties") or {}).get("target_id")): int((feature.get("properties") or {}).get("status"))
+        normalize_target_id((feature.get("properties") or {}).get("target_id")): int((feature.get("properties") or {}).get("status"))
         for feature in relation_features
-        if _text((feature.get("properties") or {}).get("target_id"))
+        if normalize_target_id((feature.get("properties") or {}).get("target_id"))
     }
     blocking_targets = {
-        _text(row.get("target_id"))
+        normalize_target_id(row.get("target_id"))
         for row in blocking_errors
-        if _text(row.get("target_id"))
+        if normalize_target_id(row.get("target_id"))
     }
 
     for evidence in evidence_rows:
@@ -1136,9 +1138,9 @@ def _swsdnode_yes_nr_outputs(
     *,
     swsd_nodes: list[dict[str, Any]],
     audit_rows: list[dict[str, Any]],
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
     no_rcsd_targets = {
-        _text(row.get("target_id"))
+        _target_key(row.get("target_id"))
         for row in audit_rows
         if _text(row.get("target_id"))
         and _text(row.get("scene")) == SCENE_NO_RCSD
@@ -1147,16 +1149,30 @@ def _swsdnode_yes_nr_outputs(
     }
     output_features: list[dict[str, Any]] = []
     audit: list[dict[str, Any]] = []
+    matched_target_keys: set[str] = set()
+    no_rcsd_node_match_count = 0
+    yes_nr_candidate_count = 0
     for node in swsd_nodes:
         feature = _copy_feature(node)
         props = feature.setdefault("properties", {})
         target_id = _swsd_node_target_id(props)
+        target_key = _target_key(target_id)
         has_evd_key = _property_key(props, "has_evd")
         is_anchor_key = _property_key(props, "is_anchor")
         has_evd_before = props.get(has_evd_key) if has_evd_key else None
         is_anchor_before = props.get(is_anchor_key) if is_anchor_key else None
+        if target_key in no_rcsd_targets:
+            matched_target_keys.add(target_key)
+            no_rcsd_node_match_count += 1
+            if (
+                has_evd_key
+                and is_anchor_key
+                and _text(has_evd_before).lower() == "yes"
+                and _text(is_anchor_before).lower() == "yes"
+            ):
+                yes_nr_candidate_count += 1
         if (
-            target_id in no_rcsd_targets
+            target_key in no_rcsd_targets
             and has_evd_key
             and is_anchor_key
             and _text(has_evd_before).lower() == "yes"
@@ -1176,11 +1192,21 @@ def _swsdnode_yes_nr_outputs(
                 }
             )
         output_features.append(feature)
-    return output_features, audit
+    stats = {
+        "swsdnode_no_rcsd_target_count": len(no_rcsd_targets),
+        "swsdnode_no_rcsd_node_match_count": no_rcsd_node_match_count,
+        "swsdnode_yes_nr_candidate_count": yes_nr_candidate_count,
+        "swsdnode_no_rcsd_unmatched_target_count": len(no_rcsd_targets - matched_target_keys),
+    }
+    return output_features, audit, stats
 
 
 def _swsd_node_target_id(props: dict[str, Any]) -> str:
-    return _text(_field_value(props, "mainnodeid") or _field_value(props, "id"))
+    return normalize_target_id(_field_value(props, "mainnodeid") or _field_value(props, "id"))
+
+
+def _target_key(value: Any) -> str:
+    return normalize_target_id(value)
 
 
 def _property_key(props: dict[str, Any], field_name: str) -> str | None:
@@ -1203,7 +1229,7 @@ def _module_audit_scenario(decision: Any) -> str:
 
 def _add_supplement(supplements: dict[str, dict[str, Any]], properties: dict[str, Any]) -> None:
     props = dict(properties or {})
-    for key in (_text(props.get("target_id") or props.get("mainnodeid")), _text(props.get("case_id"))):
+    for key in (normalize_target_id(props.get("target_id") or props.get("mainnodeid")), normalize_target_id(props.get("case_id"))):
         if key:
             supplements.setdefault(key, {}).update({field: value for field, value in props.items() if value not in (None, "")})
 
@@ -1313,14 +1339,14 @@ def _enforce_unique_relation_targets(
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     target_counts: dict[str, int] = defaultdict(int)
     for feature in relation_features:
-        target_counts[_text((feature.get("properties") or {}).get("target_id"))] += 1
+        target_counts[normalize_target_id((feature.get("properties") or {}).get("target_id"))] += 1
     duplicates = {target_id for target_id, count in target_counts.items() if target_id and count > 1}
     if not duplicates:
         return relation_features, [], []
     filtered = [
         feature
         for feature in relation_features
-        if _text((feature.get("properties") or {}).get("target_id")) not in duplicates
+        if normalize_target_id((feature.get("properties") or {}).get("target_id")) not in duplicates
     ]
     blocking_rows: list[dict[str, Any]] = []
     audit_rows: list[dict[str, Any]] = []
@@ -1414,8 +1440,9 @@ def _semantic_point(nodes: list[dict[str, Any]], surface_geometry: BaseGeometry 
 
 
 def _representative_node(nodes: list[dict[str, Any]], target_id: str) -> dict[str, Any] | None:
+    target_key = normalize_target_id(target_id)
     for node in nodes:
-        if _text(_field_value(node.get("properties") or {}, "id")) == target_id:
+        if normalize_target_id(_field_value(node.get("properties") or {}, "id")) == target_key:
             return node
     return nodes[0] if nodes else None
 

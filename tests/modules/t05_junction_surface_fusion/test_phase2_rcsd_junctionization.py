@@ -169,14 +169,14 @@ def test_t07_historical_anchor_relation_without_surface_outputs_success(tmp_path
         surface_features=[_surface("999", x=50)],
         swsd_nodes=[
             _node(999, 50, 0, mainnodeid="999"),
-            _node(900, 0, 0, mainnodeid="900", grade=2, closed_con=2),
+            _node(900, 0, 0, mainnodeid="900.0", grade=2, closed_con=2),
         ],
         rcsd_roads=[_road(1, (-10, 0), (10, 0))],
         rcsd_nodes=[_node(1, -10, 0), _node(2, 10, 0), _node(55, 5, 0)],
         t07_rows=[
             {
-                "target_id": "900",
-                "case_id": "900",
+                "target_id": "900.0",
+                "case_id": "900.0",
                 "junction_type": "center_junction",
                 "relation_source": "T07",
                 "relation_target_type": "RCSDNode",
@@ -190,8 +190,10 @@ def test_t07_historical_anchor_relation_without_surface_outputs_success(tmp_path
     )
 
     relations = {feature["properties"]["target_id"]: feature for feature in _relation_features(artifacts.relation_geojson_path)}
+    assert "900.0" not in relations
     assert relations["900"]["properties"] == {"target_id": "900", "base_id": 55, "status": 0, "level": 1, "is_highway": 1}
     audit_rows = list(csv.DictReader(artifacts.rcsd_junctionization_audit_csv_path.open("r", encoding="utf-8")))
+    assert "900.0" not in {row["target_id"] for row in audit_rows}
     assert {row["target_id"]: row for row in audit_rows}["900"]["source_module"] == "T07"
     assert _summary(artifacts)["performance"]["data_volume"]["t07_evidence_row_count"] == 1
 
@@ -264,13 +266,13 @@ def test_upstream_base_id_candidate_takes_precedence_over_required_node_grouping
 def test_no_related_rcsd_outputs_failure_with_base_id_zero(tmp_path: Path) -> None:
     artifacts = _run_phase2(
         tmp_path,
-        surface_features=[_surface("200")],
+        surface_features=[_surface("200.0")],
         swsd_nodes=[_node(200, 0, 0, mainnodeid="200", has_evd="yes", is_anchor="yes")],
         rcsd_roads=[_road(1, (-10, 0), (10, 0))],
         rcsd_nodes=[_node(1, -10, 0), _node(2, 10, 0)],
         t03_rows=[
             {
-                "target_id": "200",
+                "target_id": "200.0",
                 "case_id": "200",
                 "association_class": "C",
                 "step7_state": "accepted",
@@ -282,8 +284,11 @@ def test_no_related_rcsd_outputs_failure_with_base_id_zero(tmp_path: Path) -> No
     )
 
     relation = _relation_features(artifacts.relation_geojson_path)[0]
+    assert relation["properties"]["target_id"] == "200"
     assert relation["properties"]["status"] == 1
     assert relation["properties"]["base_id"] == 0
+    junction_audit_rows = list(csv.DictReader(artifacts.rcsd_junctionization_audit_csv_path.open("r", encoding="utf-8")))
+    assert junction_audit_rows[0]["target_id"] == "200"
     coords = relation["geometry"]["coordinates"]
     assert coords[0] == coords[1]
     swsdnode_props = _layer_props(artifacts.swsdnode_out_path)[0]
@@ -301,7 +306,12 @@ def test_no_related_rcsd_outputs_failure_with_base_id_zero(tmp_path: Path) -> No
             "reason": "no_related_rcsd",
         }
     ]
-    assert _summary(artifacts)["swsdnode_yes_nr_count"] == 1
+    summary = _summary(artifacts)
+    assert summary["swsdnode_yes_nr_count"] == 1
+    assert summary["swsdnode_no_rcsd_target_count"] == 1
+    assert summary["swsdnode_no_rcsd_node_match_count"] == 1
+    assert summary["swsdnode_yes_nr_candidate_count"] == 1
+    assert summary["swsdnode_no_rcsd_unmatched_target_count"] == 0
 
 
 def test_t04_fail4_fallback_relation_without_surface_outputs_success(tmp_path: Path) -> None:

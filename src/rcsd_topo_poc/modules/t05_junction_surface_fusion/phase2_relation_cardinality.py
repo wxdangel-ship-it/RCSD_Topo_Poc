@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 from typing import Any
 
+from .phase2_ids import normalize_target_id
 from .phase2_models import STATUS_SUCCESS
 
 
@@ -91,8 +92,8 @@ def relation_cardinality_summary(error_rows: list[dict[str, str]]) -> dict[str, 
 def relation_cardinality_error_target_ids(error_rows: list[dict[str, str]]) -> set[str]:
     target_ids: set[str] = set()
     for row in error_rows:
-        target_ids.update(_parts(row.get("related_target_ids")))
-        target_ids.update(_parts(row.get("target_id")))
+        target_ids.update(_normalized_parts(row.get("related_target_ids")))
+        target_ids.update(_normalized_parts(row.get("target_id")))
     return target_ids
 
 
@@ -106,7 +107,7 @@ def filter_cardinality_error_relations(
     filtered = [
         feature
         for feature in relation_features
-        if _text((feature.get("properties") or {}).get("target_id")) not in target_ids
+        if normalize_target_id((feature.get("properties") or {}).get("target_id")) not in target_ids
     ]
     return filtered, target_ids, len(relation_features) - len(filtered)
 
@@ -117,7 +118,7 @@ def _success_relation_rows(relation_features: list[dict[str, Any]]) -> list[dict
         props = feature.get("properties") or {}
         if _int_text(props.get("status")) != str(STATUS_SUCCESS):
             continue
-        target_id = _text(props.get("target_id"))
+        target_id = normalize_target_id(props.get("target_id"))
         base_id = _text(props.get("base_id"))
         if not target_id or base_id in {"", "0", "-1"}:
             continue
@@ -128,7 +129,7 @@ def _success_relation_rows(relation_features: list[dict[str, Any]]) -> list[dict
 def _audit_by_target(audit_rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
     result: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in audit_rows:
-        target_id = _text(row.get("target_id"))
+        target_id = normalize_target_id(row.get("target_id"))
         if target_id:
             result[target_id].append(row)
     return result
@@ -176,6 +177,10 @@ def _error_row(
 
 def _parts(value: Any) -> set[str]:
     return {part for part in str(value or "").replace(",", "|").split("|") if part}
+
+
+def _normalized_parts(value: Any) -> set[str]:
+    return {normalized for item in _parts(value) if (normalized := normalize_target_id(item))}
 
 
 def _int_text(value: Any) -> str:

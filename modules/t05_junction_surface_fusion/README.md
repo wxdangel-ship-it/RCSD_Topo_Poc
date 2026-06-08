@@ -181,7 +181,9 @@ Road-only 场景中，若投影点距离 RCSDRoad 起终点小于 `min_endpoint_
 
 `module_relation_audit_summary.csv/json` 按 `T07 / T02_INPUT / T03 / T04` 统计输入 evidence 总量与四类结果：前置失败无关联、前置成功且有 RCSD 语义路口、前置成功且有 RCSDRoad、前置成功但无 RCSD 关联。每类记录 relation 成功数、失败数、缺失 relation 数与 blocking error 数，用于验证最终关系生产是否符合预期。
 
-`swsdnode_out.gpkg` 是 final SWSD `nodes.gpkg` 的 copy-on-write 标记输出，不原地修改输入。若某个 SWSD 语义路口在 Phase 2 审计中确认 `no_related_rcsd`，且对应 SWSD node 原始 `has_evd = yes / is_anchor = yes`，T05 将这两个字段改写为 `yes_nr`，表示 not RCSD，用于最终成功率统计时排除纯 SWSD 构面但无 RCSD 关联的数据；标记明细写入 `swsdnode_yes_nr_audit.csv/json`。
+Phase 2 在入口统一归一 SWSD 语义路口主键：evidence `target_id`、surface `mainnodeid`、nodes `id/mainnodeid` 中 `622700016` 与 `622700016.0` 这类整数 ID 表达差异视为同一 target。最终 `intersection_match_all.geojson`、junctionization audit、relation audit 与 blocking/cardinality 输出均写 canonical `target_id`。
+
+`swsdnode_out.gpkg` 是 final SWSD `nodes.gpkg` 的 copy-on-write 标记输出，不原地修改输入。若某个 SWSD 语义路口在 Phase 2 审计中确认 `no_related_rcsd`，且对应 SWSD node 原始 `has_evd = yes / is_anchor = yes`，T05 将这两个字段改写为 `yes_nr`，表示 not RCSD，用于最终成功率统计时排除纯 SWSD 构面但无 RCSD 关联的数据；标记明细写入 `swsdnode_yes_nr_audit.csv/json`。summary 同步记录 `swsdnode_no_rcsd_target_count / swsdnode_no_rcsd_node_match_count / swsdnode_yes_nr_candidate_count / swsdnode_no_rcsd_unmatched_target_count`，用于判断 `yes_nr=0` 是无候选、节点未匹配，还是候选不满足 `has_evd/is_anchor` 门槛。
 
 T07 历史路口锚定成果与 T03/T04 relation evidence 同构。若 T07/T03/T04 evidence 中某个 target 提供 `status_suggested = 0` 且 `base_id_candidate` 为有效 RCSD 语义路口主 node id 或 group id，Phase 2 优先作为 direct relation 消费，不再用同 row 的 `required_rcsdnode_ids` 重新归组；即使 T07 target 没有 Phase 1 surface，也会进入 `intersection_match_all.geojson`。
 

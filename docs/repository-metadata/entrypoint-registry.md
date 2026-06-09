@@ -71,8 +71,8 @@
 | `t04_probe_706243_706247_innernet.py` | `scripts/t04_probe_706243_706247_innernet.py` | repo 级 | T04 内网专项诊断脚本；只读分析或重跑 `706243 / 706247`，输出 Step3/4/5/6/7、RCSD audit、候选与 GPKG 几何摘要，用于定位内网 full-input 与最新基线差异 | `active` | 是 |
 | `.venv/bin/python -m rcsd_topo_poc` | `src/rcsd_topo_poc/__main__.py` | repo 级 | Python 包入口 | `active` | 否 |
 | `doctor` | `src/rcsd_topo_poc/cli.py` | repo 级 | 检查 repo / docs / repo `.venv` / 锁文件 / 运行与开发依赖是否齐备 | `active` | 否 |
-| `qc-template` | `src/rcsd_topo_poc/cli.py` | repo 级 | 打印 `TEXT_QC_BUNDLE v1` 模板 | `active` | 否 |
-| `qc-demo` | `src/rcsd_topo_poc/cli.py` | repo 级 | 打印可粘贴、截断版 `TEXT_QC_BUNDLE` 示例 | `active` | 否 |
+| `qc-template` | `src/rcsd_topo_poc/cli.py` | repo 级 | 打印历史 `TEXT_QC_BUNDLE v1` 兼容模板；当前正式协作以文件证据包和 summary/audit/review 为准 | `active` | 否 |
+| `qc-demo` | `src/rcsd_topo_poc/cli.py` | repo 级 | 打印历史 `TEXT_QC_BUNDLE` 兼容示例；当前正式协作以文件证据包和 summary/audit/review 为准 | `active` | 否 |
 | `lint-text` | `src/rcsd_topo_poc/cli.py` | repo 级 | 校验文本可粘贴性，包括体积、行数与长行约束 | `active` | 否 |
 | `t01-step1-pair-poc` | `src/rcsd_topo_poc/cli.py` | repo 级 | T01 Step1 pair candidate 诊断入口 | `active` | 否 |
 | `t01-step2-segment-poc` | `src/rcsd_topo_poc/cli.py` | repo 级 | T01 Step2 validated/trunk/segment_body 诊断入口 | `active` | 否 |

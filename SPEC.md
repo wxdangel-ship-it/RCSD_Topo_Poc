@@ -5,7 +5,7 @@
 - 版本：v0.2
 - 状态：Draft
 - 当前阶段：工程治理与正式业务模块并行维护
-- 交付形态：外网 GitHub 仓库 + 内网执行 + 文本粘贴回传
+- 交付形态：外网 GitHub 仓库 + 内网执行 + 文件证据包 / 摘要反哺
 
 ---
 
@@ -49,7 +49,7 @@ T08 -> T01 -> T07 -> T03 -> T04 -> T05 -> T06 -> T09
 
 - 仓库级治理规则、阅读链路、文档结构和 source-of-truth 分层。
 - RCSD 场景拓扑业务模块的项目级生命周期登记。
-- `TEXT_QC_BUNDLE` 文本回传协议及基础粘贴性守卫。
+- 文件证据包、summary / audit / review 和必要文本提炼的内外网协作口径。
 - `modules/_template/` 新模块启动模板。
 - 已登记模块的项目级角色、上下游关系和治理缺口。
 - 与参考仓库 `Highway_Topo_Poc` 兼容的初始数据组织约定。
@@ -86,9 +86,11 @@ T08 -> T01 -> T07 -> T03 -> T04 -> T05 -> T06 -> T09
 
 | 文档 | 职责 |
 |---|---|
+| `README.md` | 仓库级基础文档索引，便于从根目录快速进入当前文档链路。 |
+| `AGENTS.md` | Agent 会话级硬规则、停机条件和执行边界。 |
 | `SPEC.md` | 项目目标、当前事实、跨模块业务原则和治理不变量。 |
 | `docs/PROJECT_BRIEF.md` | 面向业务读者的项目摘要、当前范围、非目标和近期治理缺口。 |
-| `docs/architecture/*` | 项目级架构目标、边界、约束、策略、质量、风险和术语。 |
+| `docs/architecture/*` | 项目级架构目标、全局业务概念、字段语义、跨模块方案、证据审计、质量要求和风险。 |
 | `docs/doc-governance/README.md` | 主阅读链路与文档职责边界。 |
 | `docs/doc-governance/module-lifecycle.md` | 模块生命周期状态事实。 |
 | `docs/doc-governance/current-module-inventory.md` | 模块业务目标、上下游关系与治理缺口。 |
@@ -99,6 +101,7 @@ T08 -> T01 -> T07 -> T03 -> T04 -> T05 -> T06 -> T09
 
 - 项目级 source-of-truth：`SPEC.md`、`docs/PROJECT_BRIEF.md`、`docs/architecture/*`、`docs/doc-governance/module-lifecycle.md`。
 - 模块级 source-of-truth：`modules/<module>/architecture/*` 与 `modules/<module>/INTERFACE_CONTRACT.md`。
+- `README.md` 只承载仓库级基础索引，不承担项目事实或模块契约。
 - `AGENTS.md` 只承载仓库级 durable guidance，不承担项目事实摘要。
 - `specs/*` 是 SpecKit 变更工件，不替代当前项目级或模块级源事实。
 - `outputs/`、`outputs/_work/`、`.claude/worktrees/`、`.venv/`、临时审计工件不属于主阅读路径。
@@ -120,6 +123,7 @@ T08 -> T01 -> T07 -> T03 -> T04 -> T05 -> T06 -> T09
 - 未在项目或模块源事实中正式启用的字段，不得进入强规则。
 - 字段正式启用时，必须同步写入对应项目级约束或模块契约，并说明可用语义、适用范围和未确认边界。
 - 模块输出、入口、审计和测试状态必须与 `docs/repository-metadata/entrypoint-registry.md`、模块契约和测试面保持一致。
+- 旧 `TEXT_QC_BUNDLE v1` 仅作为历史兼容工具保留；当前正式协作以文件证据包、summary、audit、review 和必要文本提炼为准。
 
 ## 8. 当前治理缺口
 

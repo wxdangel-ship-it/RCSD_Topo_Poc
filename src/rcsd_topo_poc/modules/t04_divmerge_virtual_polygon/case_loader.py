@@ -35,6 +35,14 @@ def _stable_case_sort_key(value: str) -> tuple[int, int | str]:
     return sort_patch_key(value)
 
 
+def _is_case_dir_candidate(path: Path) -> bool:
+    if not path.is_dir():
+        return False
+    if path.name in {"out", "renders"}:
+        return False
+    return not path.name.startswith((".", "_"))
+
+
 def _read_json(path: Path) -> dict[str, Any]:
     return dict(json.loads(path.read_text(encoding="utf-8")))
 
@@ -76,7 +84,7 @@ def load_case_specs(
     raw_case_dirs = [
         path
         for path in resolved_case_root.iterdir()
-        if path.is_dir() and path.name not in {"out", "renders"}
+        if _is_case_dir_candidate(path)
     ]
     sorted_case_dirs = sorted(raw_case_dirs, key=lambda path: _stable_case_sort_key(path.name))
 

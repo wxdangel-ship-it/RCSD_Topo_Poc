@@ -2,34 +2,30 @@
 
 ## 当前上下文
 
-当前仓库已经从“纯骨架初始化”进入“治理底座 + 已登记模块并行维护”阶段。它与参考仓库 `Highway_Topo_Poc` 的关系是：
+当前仓库处于成熟治理阶段。它复用参考仓库 `Highway_Topo_Poc` 的仓库骨架、治理规则、文档契约体系和协作方式，但不复用高速场景业务实现。
 
-- 复用仓库级骨架、治理规则、文档契约体系、协作方式
-- 不复用任何高速场景业务实现
+## 系统边界
 
-## 当前范围
+| 边界 | 范围 |
+|---|---|
+| 项目级治理 | 仓库规则、项目事实、文档结构、生命周期、盘点和治理缺口。 |
+| 模块级治理 | 模块 architecture、接口契约、操作者入口、模块内实现和测试。 |
+| 仓库元数据 | 目录结构、入口登记、文件体量、路径约定和结构债。 |
+| 变更工件 | `specs/*` 中的 SpecKit 任务书、计划和任务拆解。 |
+| 运行工件 | `outputs/*` 和临时审计材料，只用于追溯，不作为源事实。 |
 
-- 仓库级目录与文档骨架
-- 项目级治理入口
-- 仓库结构元数据
-- 共享文本回传协议
-- 模块启动模板
-- 基础测试与 smoke
-- `t00_utility_toolbox` 工具集合模块治理
-- `t01_data_preprocess` 项目级登记与文档契约
-- `t02_junction_anchor` 项目级登记与仓库级入口索引
-- `t03_virtual_junction_anchor` 项目级登记、Step1~Step7 正式业务主链与 internal full-input 交付面
-- `t04_divmerge_virtual_polygon` 项目级登记、Step1~Step7 正式文档面与 internal full-input 交付面
-- `t05_junction_surface_fusion` 项目级登记、Phase 1 路口面融合发布、Phase 2 SWSD-RCSD relation 生产与 copy-on-write RCSD 网络输出
-- `t06_segment_fusion_precheck` 项目级登记、Step1 SWSD 可融合 Segment 识别与 Step2 RCSD Segment candidate 抽取 / buffer-based RCSDSegment 审查输出 / 趋势硬筛
-- `t07_semantic_junction_anchor` 项目级登记、T02 Step1 / Step2 语义路口级 `has_evd / is_anchor / anchor_reason` 重构、模块内 callable runner 与内网脚本交付面
-- `t08_preprocess` 项目级登记、Tool1 基础矢量格式转换、Tool2 Road GPKG 预处理、Tool3 Nodes 类型聚合、Tool4 路口类型修复、Tool5 复杂路口预处理、Tool6 Nodes 类型质检、Tool7 交通限制显性化、Tool8 Laneinfo 箭头显性化与 Tool9 RCSD 数据清理入口、契约与测试
-- `p01_arm_build` 项目级登记、P01-A1 Arm 构建、P01-A2 Arm 配准与 P01-Final F-RCSD RoadNextRoad 规则级还原文档契约、模块内 callable runner 与 review / final audit 交付面
+## 当前范围内
+
+- 维护 RCSD 主业务链 `T08 -> T01 -> T07 -> T03 -> T04 -> T05 -> T06 -> T09` 的项目级事实。
+- 维护 T00 / T01 / T02 / T03 / T04 / T05 / T06 / T07 / T08 / T09 / P01 的生命周期和业务关系。
+- 维护 `TEXT_QC_BUNDLE` 文本回传协议、粘贴性守卫和基础测试。
+- 维护 `modules/_template/` 新模块启动模板。
+- 维护与参考仓库兼容的初始 patch 数据组织约定。
 
 ## 当前范围外
 
-- 未登记模块的无边界扩展
-- 脱离模块契约的算法扩写
-- 历史数据迁移
-- 内网真实数据接入
-- 专项回归、专项审计和专项工具链
+- 未登记模块的无边界扩展。
+- 脱离模块契约的算法扩写。
+- 模块内部字段规则、参数、执行步骤和验收细节的项目级重复展开。
+- 历史数据迁移、内网真实数据接入、专项回归和专项审计工具链。
+- 无任务书的新入口、新模块契约或长期脚本。

@@ -1151,7 +1151,7 @@ def _swsdnode_yes_nr_outputs(
         and _text(row.get("reason")) == "no_related_rcsd"
     }
     pre_success_no_rcsd_targets = {_target_key(target_id) for target_id in pre_success_no_rcsd_target_ids if _target_key(target_id)}
-    no_rcsd_targets = audit_no_rcsd_targets & pre_success_no_rcsd_targets
+    no_rcsd_targets = audit_no_rcsd_targets
     output_features: list[dict[str, Any]] = []
     audit: list[dict[str, Any]] = []
     matched_target_keys: set[str] = set()
@@ -1200,6 +1200,7 @@ def _swsdnode_yes_nr_outputs(
     stats = {
         "swsdnode_audit_no_rcsd_target_count": len(audit_no_rcsd_targets),
         "swsdnode_pre_success_no_rcsd_target_count": len(pre_success_no_rcsd_targets),
+        "swsdnode_pre_success_no_rcsd_audit_overlap_count": len(audit_no_rcsd_targets & pre_success_no_rcsd_targets),
         "swsdnode_no_rcsd_target_count": len(no_rcsd_targets),
         "swsdnode_no_rcsd_node_match_count": no_rcsd_node_match_count,
         "swsdnode_yes_nr_candidate_count": yes_nr_candidate_count,

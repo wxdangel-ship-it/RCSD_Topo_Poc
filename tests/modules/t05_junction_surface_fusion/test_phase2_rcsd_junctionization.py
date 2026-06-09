@@ -318,7 +318,7 @@ def test_t03_no_related_without_accepted_surface_does_not_mark_yes_nr(tmp_path: 
     artifacts = _run_phase2(
         tmp_path,
         surface_features=[_surface("201")],
-        swsd_nodes=[_node(201, 0, 0, mainnodeid="201", has_evd="yes", is_anchor="yes")],
+        swsd_nodes=[_node(201, 0, 0, mainnodeid="201", has_evd="yes", is_anchor="no")],
         rcsd_roads=[_road(1, (-10, 0), (10, 0))],
         rcsd_nodes=[_node(1, -10, 0), _node(2, 10, 0)],
         t03_rows=[
@@ -336,7 +336,7 @@ def test_t03_no_related_without_accepted_surface_does_not_mark_yes_nr(tmp_path: 
     assert _relation_features(artifacts.relation_geojson_path)[0]["properties"]["status"] == 1
     swsdnode_props = _layer_props(artifacts.swsdnode_out_path)[0]
     assert swsdnode_props["has_evd"] == "yes"
-    assert swsdnode_props["is_anchor"] == "yes"
+    assert swsdnode_props["is_anchor"] == "no"
     summary = _summary(artifacts)
     assert summary["swsdnode_audit_no_rcsd_target_count"] == 1
     assert summary["swsdnode_pre_success_no_rcsd_target_count"] == 0

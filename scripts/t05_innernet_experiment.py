@@ -207,11 +207,11 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--t03-backfill-mode",
         choices=("auto", "always", "never"),
-        default="auto",
+        default="never",
         help=(
             "Controls T03 relation evidence compatibility backfill. "
             "auto runs only when old T03 evidence lacks Phase 2 handoff fields; "
-            "always forces backfill; never consumes T03 evidence as-is."
+            "always forces backfill; never consumes T03 evidence as-is. Defaults to never because current T03 outputs complete evidence."
         ),
     )
     return parser.parse_args()

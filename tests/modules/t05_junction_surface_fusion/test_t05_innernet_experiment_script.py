@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -116,3 +117,12 @@ def test_t07_evidence_auto_discovery_accepts_json(tmp_path: Path) -> None:
     resolved = module._resolve_t07_file(None, t07_dir, module.T07_RELATION_EVIDENCE_FILENAMES)
 
     assert resolved == evidence_path
+
+
+def test_t03_backfill_mode_defaults_to_never(monkeypatch) -> None:
+    module = _load_script_module()
+    monkeypatch.setattr(sys, "argv", ["t05_innernet_experiment.py"])
+
+    args = module._parse_args()
+
+    assert args.t03_backfill_mode == "never"

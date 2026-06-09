@@ -11,18 +11,17 @@
 
 | 层级 | 文档 | 业务范畴 | 不承担 | 当前状态 |
 |---|---|---|---|---|
+| 仓库索引 | `README.md` | 仓库级基础文档索引，便于从根目录快速进入当前文档链路 | 项目事实全文、模块契约、Agent 硬规则 | active index |
 | 仓库规则 | `AGENTS.md` | 会话级硬约束、停机规则、范围边界 | 项目事实摘要、模块业务说明 | active durable guidance |
 | 项目规格 | `SPEC.md` | 项目目标、当前事实、主业务链、跨模块原则、治理不变量 | 模块内部步骤、字段规则、运行教程 | source of truth |
 | 业务摘要 | `docs/PROJECT_BRIEF.md` | 面向业务读者的项目现状、范围、非目标和近期缺口 | 完整架构说明、模块契约 | source of truth |
 | 架构视图 | `docs/architecture/01-introduction-and-goals.md` | 项目目标与架构目标 | 模块生命周期清单 | source of truth |
-| 架构视图 | `docs/architecture/02-constraints.md` | 跨项目约束、字段启用原则、运行与协作约束 | 模块局部实现策略 | source of truth |
-| 架构视图 | `docs/architecture/03-context-and-scope.md` | 系统上下文、范围内外边界 | 模块级输入输出细节 | source of truth |
-| 架构视图 | `docs/architecture/04-solution-strategy.md` | 分层策略、数据兼容策略、治理策略 | 具体模块执行步骤 | source of truth |
-| 架构视图 | `docs/architecture/08-crosscutting-concepts.md` | source-of-truth、文本回传、文档/实现分层、入口治理等横切概念 | 模块业务清单 | source of truth |
-| 架构视图 | `docs/architecture/10-quality-requirements.md` | 项目级质量要求 | 单模块验收标准 | source of truth |
-| 架构视图 | `docs/architecture/11-risks-and-technical-debt.md` | 项目级风险与技术债 | 运行日志 | source of truth |
-| 架构视图 | `docs/architecture/12-glossary.md` | 项目级术语 | 字段级完整码表 | source of truth |
-| 治理入口 | `docs/doc-governance/README.md` | 阅读顺序、项目文档结构、非主入口说明 | 项目事实全文、模块过程说明 | active durable guidance |
+| 架构视图 | `docs/architecture/02-data-and-domain-model.md` | SWSD / RCSD / F-RCSD 全局业务概念、数据对象、字段语义和术语 | 模块局部字段规则、完整码表 | source of truth |
+| 架构视图 | `docs/architecture/03-solution-strategy.md` | T08 -> T09 跨模块主方案、T00/T02/P01 边界 | 具体模块执行步骤 | source of truth |
+| 架构视图 | `docs/architecture/04-evidence-and-audit.md` | 文件证据包、summary/audit/review、内外网信息反哺与历史文本协议口径 | 模块输出文件完整契约 | source of truth |
+| 架构视图 | `docs/architecture/05-quality-requirements.md` | CRS、拓扑、几何语义、审计、性能、字段契约等项目级质量要求 | 单模块验收标准 | source of truth |
+| 架构视图 | `docs/architecture/06-risks-and-technical-debt.md` | 项目级架构风险与技术债 | 运行日志、临时审计结论 | source of truth |
+| 治理入口 | `docs/doc-governance/README.md` | 阅读顺序、治理链路、非主入口说明 | 项目事实全文、模块过程说明、完整职责表 | active durable guidance |
 | 生命周期 | `docs/doc-governance/module-lifecycle.md` | 模块生命周期状态事实 | 模块业务解释、实现过程 | source of truth |
 | 模块盘点 | `docs/doc-governance/current-module-inventory.md` | 模块业务目标、上下游关系、治理缺口 | 模块契约正文 | inventory |
 | 文档盘点 | `docs/doc-governance/current-doc-inventory.md` | 文档结构、文档业务范畴、治理状态 | 模块实现细节 | inventory |
@@ -46,7 +45,7 @@
 |---|---|
 | `docs/doc-governance/history/` | 历史治理过程材料 |
 | `docs/doc-governance/audits/` | 历史审计材料 |
-| `docs/archive/nonstandard/` | 项目级非标准历史说明 |
+| `docs/archive/` | 已退出主阅读路径的项目级历史参考 |
 | `specs/*` | SpecKit 变更工件，不替代源事实 |
 | `outputs/*` | 运行与审计工件，不替代源事实 |
 

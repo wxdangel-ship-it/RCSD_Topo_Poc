@@ -1,33 +1,30 @@
 # 01 引言与目标
 
-## 状态
+## 文档定位
 
-- 当前状态：项目级架构摘要
-- 来源依据：`SPEC.md`、`docs/PROJECT_BRIEF.md`
-
-## 系统目标
-
-`RCSD_Topo_Poc` 建立并维护一套适用于 RCSD 场景拓扑能力的工程底座，使正式业务模块、POC 成果模块和后续新模块具备统一的文档契约、实现边界、测试审计和协作入口。
-
-## 业务目标
-
-- 支撑 SWSD / RCSD 预处理、Segment 构建、路口锚定、关系融合、Segment 替换与通行规则还原的主业务链。
-- 保持当前模块生命周期、上下游关系和治理缺口清晰可查。
-- 允许 POC 成果模块验证异构路口通行能力，但不混淆正式业务契约。
-- 支持外网治理、内网执行和文本粘贴回传的协作模式。
+本文档说明项目级架构目标与边界。模块生命周期、模块业务说明和文档结构盘点分别由 `docs/doc-governance/module-lifecycle.md`、`docs/doc-governance/current-module-inventory.md`、`docs/doc-governance/current-doc-inventory.md` 承载。
 
 ## 架构目标
 
-- 项目级事实、模块级事实、仓库元数据、变更工件分层清晰。
-- 模块文档与实现代码分离，便于模块独立治理。
-- 新模块可从 `modules/_template/` 启动，不重复建设文档骨架。
-- GIS / 拓扑 / 空间数据处理具备可解释、可审计、可验证的质量边界。
+- 支撑 `T08 -> T01 -> T07 -> T03 -> T04 -> T05 -> T06 -> T09` 主业务链的持续治理。
+- 沉淀 SWSD、RCSD、F-RCSD、语义路口、Segment、字段语义等跨模块共用信息。
+- 保持项目级架构、文档治理、仓库元数据、模块契约职责分离。
+- 保证 GIS / 拓扑 / 空间数据处理结果可解释、可审计、可复现、可验证。
 
-## 当前项目口径
+## 非目标
 
-- 正式业务模块：T01、T03、T04、T05、T06、T07、T08、T09。
-- POC / 成果模块：P01。
-- Retired 模块：T02。
-- Support Retained 模块：T00。
-- 模板目录：`modules/_template/`。
-- 用户历史 `P10` 口径统一改称为 `P01` / `p01_arm_build`。
+- 不在 architecture 中重复模块内部 Step、参数、阈值、入口和验收细节。
+- 不承载目录白名单、入口登记、文件体量等仓库技术元数据。
+- 不维护阅读顺序、文档职责完整表或模块生命周期事实。
+- 不替代 `modules/<module>/architecture/*` 与 `modules/<module>/INTERFACE_CONTRACT.md`。
+
+## 结构
+
+| 文档 | 职责 |
+|---|---|
+| `01-introduction-and-goals.md` | 架构目标、非目标和职责边界 |
+| `02-data-and-domain-model.md` | 全局业务概念、数据对象、字段语义和术语 |
+| `03-solution-strategy.md` | 跨模块主方案与 POC 边界 |
+| `04-evidence-and-audit.md` | 文件证据包、summary/audit/review 与内外网信息反哺 |
+| `05-quality-requirements.md` | CRS、拓扑、几何、审计、性能和契约质量要求 |
+| `06-risks-and-technical-debt.md` | 项目级架构风险和技术债 |

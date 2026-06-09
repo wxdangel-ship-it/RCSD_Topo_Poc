@@ -9,7 +9,7 @@
 ### repo root
 
 - 放仓库级 durable guidance、项目级 source-of-truth 与仓库级构建 / 运行元文件
-- 当前受治理的根文件包括：`AGENTS.md`、`SPEC.md`、`Makefile`、`pyproject.toml`、`uv.lock`、`.gitignore`、`.gitattributes`
+- 当前受治理的根文件包括：`README.md`、`AGENTS.md`、`SPEC.md`、`Makefile`、`pyproject.toml`、`uv.lock`、`.gitignore`、`.gitattributes`
 - 根目录不承载临时审计产物、运行输出或模块级事实
 
 ### `.agents/skills/`
@@ -83,6 +83,7 @@
 允许：
 
 - `AGENTS.md`
+- `README.md`
 - `SPEC.md`
 - `Makefile`
 - `pyproject.toml`
@@ -108,11 +109,9 @@
 允许：
 
 - `PROJECT_BRIEF.md`
-- `ARTIFACT_PROTOCOL.md`
 - `architecture/`
 - `doc-governance/`
 - `repository-metadata/`
-- `metadata-cleanup/`
 - `archive/`
 
 ### `docs/doc-governance/`
@@ -170,14 +169,14 @@
 ## 4. 归档规则
 
 - 项目级历史治理过程：`docs/doc-governance/history/`
-- 项目级非标准说明：`docs/archive/nonstandard/`
+- 项目级历史参考：`docs/archive/`
 - 历史变更工件：`specs/archive/`
 - 模块级历史资料：`modules/<module>/history/`
 
 ## 5. 本目录的按需阅读顺序
 
 本目录不是仓库 day-0 主入口。
-按 `AGENTS.md`，应先进入 `docs/doc-governance/README.md`；只有在需要确认仓库结构、入口边界与体量约束时，再按下列顺序阅读：
+人类查看仓库时可先读 repo root `README.md`；Agent 执行任务时仍以 `AGENTS.md` 为硬规则入口，并按其要求进入 `docs/doc-governance/README.md`。只有在需要确认仓库结构、入口边界与体量约束时，再按下列顺序阅读：
 
 1. `README.md`
 2. `repository-structure-metadata.md`

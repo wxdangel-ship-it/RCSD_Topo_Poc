@@ -1148,7 +1148,7 @@ def _swsdnode_yes_nr_outputs(
         if _text(row.get("target_id"))
         and _text(row.get("scene")) == SCENE_NO_RCSD
         and _int_text(row.get("status")) == str(STATUS_FAILURE)
-        and _text(row.get("reason")) == "no_related_rcsd"
+        and _int_text(row.get("base_id")) == "0"
     }
     pre_success_no_rcsd_targets = {_target_key(target_id) for target_id in pre_success_no_rcsd_target_ids if _target_key(target_id)}
     no_rcsd_targets = audit_no_rcsd_targets

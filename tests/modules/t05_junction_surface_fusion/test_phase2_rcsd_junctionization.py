@@ -343,6 +343,38 @@ def test_t03_no_related_without_accepted_surface_does_not_mark_yes_nr(tmp_path: 
     assert summary["swsdnode_yes_nr_count"] == 0
 
 
+def test_no_related_scene_marks_yes_nr_even_when_reason_is_no_existing_rcsdintersection(tmp_path: Path) -> None:
+    artifacts = _run_phase2(
+        tmp_path,
+        surface_features=[_surface("203")],
+        swsd_nodes=[_node(203, 0, 0, mainnodeid="203", has_evd="yes", is_anchor="yes")],
+        rcsd_roads=[_road(1, (-10, 0), (10, 0))],
+        rcsd_nodes=[_node(1, -10, 0), _node(2, 10, 0)],
+        t07_rows=[
+            {
+                "target_id": "203",
+                "case_id": "203",
+                "relation_state": "no_existing_rcsdintersection",
+                "status_suggested": 1,
+                "base_id_candidate": -1,
+            }
+        ],
+    )
+
+    relation = _relation_features(artifacts.relation_geojson_path)[0]
+    assert relation["properties"]["status"] == 1
+    assert relation["properties"]["base_id"] == 0
+    junction_audit_rows = list(csv.DictReader(artifacts.rcsd_junctionization_audit_csv_path.open("r", encoding="utf-8")))
+    assert junction_audit_rows[0]["scene"] == "no_related_rcsd"
+    assert junction_audit_rows[0]["reason"] == "no_existing_rcsdintersection"
+    swsdnode_props = _layer_props(artifacts.swsdnode_out_path)[0]
+    assert swsdnode_props["has_evd"] == "yes_nr"
+    assert swsdnode_props["is_anchor"] == "yes_nr"
+    summary = _summary(artifacts)
+    assert summary["swsdnode_audit_no_rcsd_target_count"] == 1
+    assert summary["swsdnode_yes_nr_count"] == 1
+
+
 def test_t04_accepted_no_related_without_rcsd_candidate_marks_yes_nr(tmp_path: Path) -> None:
     artifacts = _run_phase2(
         tmp_path,

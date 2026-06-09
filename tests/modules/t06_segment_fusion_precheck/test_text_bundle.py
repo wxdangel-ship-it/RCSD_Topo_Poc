@@ -258,7 +258,7 @@ def test_t06_input_text_bundle_slices_by_center_and_keeps_segment_dependencies(t
         [
             {"properties": {"id": 101, "mainnodeid": 0}, "geometry": Point(0, 0)},
             {"properties": {"id": 102, "mainnodeid": 0}, "geometry": Point(10, 0)},
-            {"properties": {"id": 103, "mainnodeid": 0}, "geometry": Point(5, 1)},
+            {"properties": {"id": 203, "mainnodeid": 0, "subnodeid": "103"}, "geometry": Point(500, 500)},
             {"properties": {"id": 104, "mainnodeid": 0}, "geometry": Point(60, 0)},
             {"properties": {"id": 110, "mainnodeid": 0}, "geometry": Point(1000, 0)},
         ],
@@ -313,7 +313,7 @@ def test_t06_input_text_bundle_slices_by_center_and_keeps_segment_dependencies(t
 
     assert [item["properties"]["id"] for item in segment_doc["features"]] == ["s-near"]
     assert {item["properties"]["target_id"] for item in relation_doc["features"]} == {1, 2, 3}
-    assert {item["properties"]["id"] for item in rcsdnode_doc["features"]} == {101, 102, 103, 104}
+    assert {item["properties"]["id"] for item in rcsdnode_doc["features"]} == {101, 102, 203, 104}
     assert summary["selected_swsd_segment_count"] == 1
     assert summary["crs_normalized_to"] == "EPSG:3857"
     assert summary["size_m"] == 100.0

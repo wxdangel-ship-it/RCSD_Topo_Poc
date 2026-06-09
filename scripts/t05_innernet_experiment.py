@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import sys
 from pathlib import Path
@@ -64,12 +65,11 @@ def main() -> int:
     t04_audit = _resolve_optional_file(args.t04_audit, t04_dir, ("divmerge_virtual_anchor_surface_audit.gpkg",))
     t04_case_root = Path(args.t04_case_root) if args.t04_case_root else _default_case_root(t04_dir)
 
-    print("[T05 innernet] backfill T03 evidence", flush=True)
-    t03_backfill = backfill_t03_relation_evidence(
-        t03_run_root=t03_dir,
-        relation_evidence_path=t03_evidence,
-        out_root=out_root / "t03_backfill",
-        accepted_only=args.t03_accepted_only,
+    t03_phase2_evidence, t03_backfill = _resolve_t03_phase2_evidence(
+        args=args,
+        t03_dir=t03_dir,
+        t03_evidence=t03_evidence,
+        out_root=out_root,
     )
 
     print("[T05 innernet] run Phase 1", flush=True)
@@ -90,7 +90,7 @@ def main() -> int:
         rcsdroad_path=args.rcsdroad,
         rcsdnode_path=args.rcsdnode,
         t02_relation_evidence_path=t02_evidence,
-        t03_relation_evidence_path=t03_backfill.evidence_csv_path,
+        t03_relation_evidence_path=t03_phase2_evidence,
         t04_relation_evidence_path=t04_evidence,
         t07_relation_evidence_path=t07_evidence,
         t04_surface_path=t04_surface,
@@ -120,6 +120,9 @@ def main() -> int:
                     "t05_phase1_existing_intersection_input": str(t02_input),
                     "t02_evidence": str(t02_evidence) if t02_evidence else None,
                     "t07_evidence": str(t07_evidence) if t07_evidence else None,
+                    "t03_evidence": str(t03_phase2_evidence),
+                    "t03_backfill_mode": args.t03_backfill_mode,
+                    "t03_backfill_summary": str(t03_backfill.summary_path) if t03_backfill else None,
                 },
                 "phase1": {
                     "run_root": str(phase1.run_root),
@@ -201,6 +204,16 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--readonly-workers", type=int, default=4)
     parser.add_argument("--progress-interval", type=int, default=1000)
     parser.add_argument("--t03-accepted-only", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        "--t03-backfill-mode",
+        choices=("auto", "always", "never"),
+        default="auto",
+        help=(
+            "Controls T03 relation evidence compatibility backfill. "
+            "auto runs only when old T03 evidence lacks Phase 2 handoff fields; "
+            "always forces backfill; never consumes T03 evidence as-is."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -257,6 +270,98 @@ def _resolve_phase1_input(*, args: argparse.Namespace, t02_dir: Path, t07_dir: P
     if t07_dir is not None:
         return _resolve_file(None, t07_dir, T07_ANCHOR_SURFACE_FILENAME)
     return _resolve_file(args.t02_input, t02_dir, T02_ANCHOR_SURFACE_FILENAME)
+
+
+def _resolve_t03_phase2_evidence(
+    *,
+    args: argparse.Namespace,
+    t03_dir: Path,
+    t03_evidence: Path,
+    out_root: Path,
+):
+    mode = args.t03_backfill_mode
+    should_backfill = mode == "always" or (mode == "auto" and _t03_backfill_needed(t03_evidence))
+    if mode == "never" or not should_backfill:
+        print(f"[T05 innernet] use T03 evidence as-is mode={mode}", flush=True)
+        return t03_evidence, None
+    print(f"[T05 innernet] backfill T03 evidence mode={mode}", flush=True)
+    backfilled = backfill_t03_relation_evidence(
+        t03_run_root=t03_dir,
+        relation_evidence_path=t03_evidence,
+        out_root=out_root / "t03_backfill",
+        accepted_only=args.t03_accepted_only,
+    )
+    return backfilled.evidence_csv_path, backfilled
+
+
+def _t03_backfill_needed(path: Path) -> bool:
+    rows = _read_table_rows(path)
+    for row in rows:
+        if not _t03_accepted_surface(row):
+            continue
+        relation_state = _text(row.get("relation_state"))
+        if relation_state == "success_required_rcsd_junction" and not _has_any_value(
+            row,
+            ("base_id_candidate", "required_rcsdnode_ids", "required_rcsd_node_ids"),
+        ):
+            return True
+        if relation_state == "rcsd_present_not_junction" and not _has_any_value(
+            row,
+            ("support_rcsdroad_ids", "selected_rcsdroad_ids", "required_rcsdroad_ids"),
+        ):
+            return True
+        if relation_state in {"", "ambiguous_review", "step7_accepted"} and not _has_any_value(
+            row,
+            (
+                "base_id_candidate",
+                "required_rcsdnode_ids",
+                "required_rcsd_node_ids",
+                "support_rcsdroad_ids",
+                "selected_rcsdroad_ids",
+                "required_rcsdroad_ids",
+            ),
+        ):
+            return True
+    return False
+
+
+def _read_table_rows(path: Path) -> list[dict]:
+    if path.suffix.lower() == ".json":
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(payload, dict) and isinstance(payload.get("rows"), list):
+            return [dict(row) for row in payload["rows"] if isinstance(row, dict)]
+        if isinstance(payload, list):
+            return [dict(row) for row in payload if isinstance(row, dict)]
+        return []
+    with path.open("r", encoding="utf-8-sig", newline="") as fp:
+        return [dict(row) for row in csv.DictReader(fp)]
+
+
+def _t03_accepted_surface(row: dict) -> bool:
+    return _text(row.get("step7_state")) == "accepted" or _truthy(row.get("surface_candidate_present"))
+
+
+def _has_any_value(row: dict, fields: tuple[str, ...]) -> bool:
+    return any(_split_values(row.get(field)) for field in fields)
+
+
+def _split_values(value) -> list[str]:
+    if value in (None, "", -1, "-1", 0, "0"):
+        return []
+    if isinstance(value, (list, tuple, set)):
+        return [str(item).strip() for item in value if str(item or "").strip() and str(item).strip() not in {"-1", "0"}]
+    text = str(value).strip()
+    if not text:
+        return []
+    return [part.strip() for part in text.replace(",", "|").split("|") if part.strip() and part.strip() not in {"-1", "0"}]
+
+
+def _truthy(value) -> bool:
+    return _text(value).lower() in {"1", "true", "yes", "y", "accepted"}
+
+
+def _text(value) -> str:
+    return "" if value is None else str(value).strip()
 
 
 def _resolve_optional_file(explicit_path: str | None, root: Path, filenames: tuple[str, ...]) -> Path | None:

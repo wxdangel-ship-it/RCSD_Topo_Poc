@@ -314,6 +314,65 @@ def test_no_related_rcsd_outputs_failure_with_base_id_zero(tmp_path: Path) -> No
     assert summary["swsdnode_no_rcsd_unmatched_target_count"] == 0
 
 
+def test_t03_no_related_without_accepted_surface_does_not_mark_yes_nr(tmp_path: Path) -> None:
+    artifacts = _run_phase2(
+        tmp_path,
+        surface_features=[_surface("201")],
+        swsd_nodes=[_node(201, 0, 0, mainnodeid="201", has_evd="yes", is_anchor="yes")],
+        rcsd_roads=[_road(1, (-10, 0), (10, 0))],
+        rcsd_nodes=[_node(1, -10, 0), _node(2, 10, 0)],
+        t03_rows=[
+            {
+                "target_id": "201",
+                "case_id": "201",
+                "step7_state": "rejected",
+                "relation_state": "no_related_rcsd",
+                "status_suggested": 1,
+                "base_id_candidate": -1,
+            }
+        ],
+    )
+
+    assert _relation_features(artifacts.relation_geojson_path)[0]["properties"]["status"] == 1
+    swsdnode_props = _layer_props(artifacts.swsdnode_out_path)[0]
+    assert swsdnode_props["has_evd"] == "yes"
+    assert swsdnode_props["is_anchor"] == "yes"
+    summary = _summary(artifacts)
+    assert summary["swsdnode_audit_no_rcsd_target_count"] == 1
+    assert summary["swsdnode_pre_success_no_rcsd_target_count"] == 0
+    assert summary["swsdnode_yes_nr_count"] == 0
+
+
+def test_t04_accepted_no_related_without_rcsd_candidate_marks_yes_nr(tmp_path: Path) -> None:
+    artifacts = _run_phase2(
+        tmp_path,
+        surface_features=[{**_surface("202"), "properties": {**_surface("202")["properties"], "surface_sources": "T04"}}],
+        swsd_nodes=[_node(202, 0, 0, mainnodeid="202", has_evd="yes", is_anchor="yes")],
+        rcsd_roads=[_road(1, (-10, 0), (10, 0))],
+        rcsd_nodes=[_node(1, -10, 0), _node(2, 10, 0)],
+        t04_rows=[
+            {
+                "target_id": "202",
+                "case_id": "202",
+                "final_state": "accepted",
+                "relation_state": "no_related_rcsd",
+                "status_suggested": 1,
+                "base_id_candidate": -1,
+            }
+        ],
+    )
+
+    relation = _relation_features(artifacts.relation_geojson_path)[0]
+    assert relation["properties"]["status"] == 1
+    assert relation["properties"]["base_id"] == 0
+    swsdnode_props = _layer_props(artifacts.swsdnode_out_path)[0]
+    assert swsdnode_props["has_evd"] == "yes_nr"
+    assert swsdnode_props["is_anchor"] == "yes_nr"
+    summary = _summary(artifacts)
+    assert summary["swsdnode_pre_success_no_rcsd_target_count"] == 1
+    assert summary["swsdnode_yes_nr_count"] == 1
+
+
 def test_t04_fail4_fallback_relation_without_surface_outputs_success(tmp_path: Path) -> None:
     artifacts = _run_phase2(
         tmp_path,
@@ -628,7 +687,7 @@ def test_t04_surface_scenario_fallback_splits_even_when_evidence_state_is_no_rel
     artifacts = _run_phase2(
         tmp_path,
         surface_features=[{**_surface("550"), "properties": {**_surface("550")["properties"], "junction_type": "diverge", "kind_2": 16}}],
-        swsd_nodes=[_node(550, 0, 10, mainnodeid="550")],
+        swsd_nodes=[_node(550, 0, 10, mainnodeid="550", has_evd="yes", is_anchor="yes")],
         rcsd_roads=[_road(1, (0, 0), (100, 0))],
         rcsd_nodes=[_node(1, 0, 0), _node(2, 100, 0)],
         t04_rows=[
@@ -655,6 +714,10 @@ def test_t04_surface_scenario_fallback_splits_even_when_evidence_state_is_no_rel
     relation = _relation_features(artifacts.relation_geojson_path)[0]
     assert relation["properties"]["status"] == 0
     assert relation["properties"]["base_id"] == 3
+    swsdnode_props = _layer_props(artifacts.swsdnode_out_path)[0]
+    assert swsdnode_props["has_evd"] == "yes"
+    assert swsdnode_props["is_anchor"] == "yes"
+    assert _summary(artifacts)["swsdnode_yes_nr_count"] == 0
 
 
 def test_kind_64_roundabout_groups_connected_rcsd_semantic_junctions(tmp_path: Path) -> None:

@@ -573,9 +573,11 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
         relation_features=relation_features,
         blocking_errors=blocking_errors,
     )
+    pre_success_no_rcsd_target_ids = _pre_success_no_rcsd_target_ids(evidence_rows)
     swsdnode_out_features, swsdnode_yes_nr_audit_rows, swsdnode_yes_nr_stats = _swsdnode_yes_nr_outputs(
         swsd_nodes=swsd_nodes,
         audit_rows=audit_rows,
+        pre_success_no_rcsd_target_ids=pre_success_no_rcsd_target_ids,
     )
 
     write_started = perf_counter()
@@ -1138,8 +1140,9 @@ def _swsdnode_yes_nr_outputs(
     *,
     swsd_nodes: list[dict[str, Any]],
     audit_rows: list[dict[str, Any]],
+    pre_success_no_rcsd_target_ids: set[str],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
-    no_rcsd_targets = {
+    audit_no_rcsd_targets = {
         _target_key(row.get("target_id"))
         for row in audit_rows
         if _text(row.get("target_id"))
@@ -1147,6 +1150,8 @@ def _swsdnode_yes_nr_outputs(
         and _int_text(row.get("status")) == str(STATUS_FAILURE)
         and _text(row.get("reason")) == "no_related_rcsd"
     }
+    pre_success_no_rcsd_targets = {_target_key(target_id) for target_id in pre_success_no_rcsd_target_ids if _target_key(target_id)}
+    no_rcsd_targets = audit_no_rcsd_targets & pre_success_no_rcsd_targets
     output_features: list[dict[str, Any]] = []
     audit: list[dict[str, Any]] = []
     matched_target_keys: set[str] = set()
@@ -1193,12 +1198,63 @@ def _swsdnode_yes_nr_outputs(
             )
         output_features.append(feature)
     stats = {
+        "swsdnode_audit_no_rcsd_target_count": len(audit_no_rcsd_targets),
+        "swsdnode_pre_success_no_rcsd_target_count": len(pre_success_no_rcsd_targets),
         "swsdnode_no_rcsd_target_count": len(no_rcsd_targets),
         "swsdnode_no_rcsd_node_match_count": no_rcsd_node_match_count,
         "swsdnode_yes_nr_candidate_count": yes_nr_candidate_count,
         "swsdnode_no_rcsd_unmatched_target_count": len(no_rcsd_targets - matched_target_keys),
     }
     return output_features, audit, stats
+
+
+def _pre_success_no_rcsd_target_ids(evidence_rows: list[Any]) -> set[str]:
+    targets: set[str] = set()
+    for evidence in evidence_rows:
+        source = getattr(evidence, "source_module", "")
+        if source not in {SOURCE_T03, SOURCE_T04}:
+            continue
+        row = getattr(evidence, "row", {}) or {}
+        if _text(row.get("relation_state")) != "no_related_rcsd":
+            continue
+        if _has_rcsd_candidate(row):
+            continue
+        if source == SOURCE_T03 and _t03_pre_success_no_rcsd(row):
+            targets.add(getattr(evidence, "target_id", ""))
+        if source == SOURCE_T04 and _t04_pre_success_no_rcsd(row):
+            targets.add(getattr(evidence, "target_id", ""))
+    return {_target_key(target_id) for target_id in targets if _target_key(target_id)}
+
+
+def _t03_pre_success_no_rcsd(row: dict[str, Any]) -> bool:
+    return _text(row.get("step7_state")) == "accepted" or _truthy(row.get("surface_candidate_present"))
+
+
+def _t04_pre_success_no_rcsd(row: dict[str, Any]) -> bool:
+    return _text(row.get("final_state")) == "accepted" or _truthy(row.get("surface_candidate_present"))
+
+
+def _has_rcsd_candidate(row: dict[str, Any]) -> bool:
+    fields = (
+        "base_id_candidate",
+        "required_rcsdnode_ids",
+        "required_rcsd_node_ids",
+        "selected_rcsdnode_ids",
+        "support_rcsdnode_ids",
+        "fallback_rcsdroad_ids",
+        "support_rcsdroad_ids",
+        "selected_rcsdroad_ids",
+        "required_rcsdroad_ids",
+    )
+    return any(_meaningful_candidate_values(row.get(field)) for field in fields)
+
+
+def _meaningful_candidate_values(value: Any) -> list[str]:
+    return [item for item in (_text(part) for part in _list_values(value)) if item not in {"", "-1", "0"}]
+
+
+def _truthy(value: Any) -> bool:
+    return _text(value).lower() in {"1", "true", "yes", "y", "accepted"}
 
 
 def _swsd_node_target_id(props: dict[str, Any]) -> str:

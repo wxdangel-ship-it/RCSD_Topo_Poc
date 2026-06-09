@@ -54,6 +54,42 @@ def test_legacy_t02_evidence_can_be_explicitly_included_in_t07_mode(tmp_path: Pa
     assert resolved == evidence_path
 
 
+def test_t03_backfill_auto_skips_current_complete_evidence(tmp_path: Path) -> None:
+    module = _load_script_module()
+    evidence_path = tmp_path / "t03_swsd_rcsd_relation_evidence.csv"
+    evidence_path.write_text(
+        "target_id,case_id,step7_state,relation_state,status_suggested,support_rcsdroad_ids\n"
+        "100,100,accepted,rcsd_present_not_junction,1,1|2\n",
+        encoding="utf-8",
+    )
+
+    assert module._t03_backfill_needed(evidence_path) is False
+
+
+def test_t03_backfill_auto_detects_legacy_incomplete_evidence(tmp_path: Path) -> None:
+    module = _load_script_module()
+    evidence_path = tmp_path / "t03_swsd_rcsd_relation_evidence.csv"
+    evidence_path.write_text(
+        "target_id,case_id,step7_state,relation_state,status_suggested,support_rcsdroad_ids\n"
+        "100,100,accepted,rcsd_present_not_junction,1,\n",
+        encoding="utf-8",
+    )
+
+    assert module._t03_backfill_needed(evidence_path) is True
+
+
+def test_t03_backfill_auto_ignores_rejected_incomplete_evidence(tmp_path: Path) -> None:
+    module = _load_script_module()
+    evidence_path = tmp_path / "t03_swsd_rcsd_relation_evidence.csv"
+    evidence_path.write_text(
+        "target_id,case_id,step7_state,relation_state,status_suggested,support_rcsdroad_ids\n"
+        "100,100,rejected,rcsd_present_not_junction,1,\n",
+        encoding="utf-8",
+    )
+
+    assert module._t03_backfill_needed(evidence_path) is False
+
+
 def test_explicit_t02_evidence_is_honored_in_t07_mode(tmp_path: Path) -> None:
     module = _load_script_module()
     t02_dir = tmp_path / "t02"

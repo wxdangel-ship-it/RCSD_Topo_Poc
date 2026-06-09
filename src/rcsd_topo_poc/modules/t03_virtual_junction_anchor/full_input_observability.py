@@ -307,6 +307,11 @@ def write_internal_manifest(
         "drivezone_path": str(input_paths["drivezone_path"]),
         "rcsdroad_path": str(input_paths["rcsdroad_path"]),
         "rcsdnode_path": str(input_paths["rcsdnode_path"]),
+        "intersection_match_all_path": (
+            str(input_paths["intersection_match_all_path"])
+            if input_paths.get("intersection_match_all_path") is not None
+            else None
+        ),
         "intersection_match_t07_path": (
             str(input_paths["intersection_match_t07_path"])
             if input_paths.get("intersection_match_t07_path") is not None

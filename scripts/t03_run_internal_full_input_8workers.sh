@@ -10,6 +10,7 @@ ROADS_PATH="${ROADS_PATH:-/mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/r
 DRIVEZONE_PATH="${DRIVEZONE_PATH:-/mnt/d/TestData/POC_Data/patch_all/DriveZone.gpkg}"
 RCSDROAD_PATH="${RCSDROAD_PATH:-/mnt/d/TestData/POC_Data/RC4/RCSDRoad.gpkg}"
 RCSDNODE_PATH="${RCSDNODE_PATH:-/mnt/d/TestData/POC_Data/RC4/RCSDNode.gpkg}"
+INTERSECTION_MATCH_ALL_PATH="${INTERSECTION_MATCH_ALL_PATH:-}"
 INTERSECTION_MATCH_T07_PATH="${INTERSECTION_MATCH_T07_PATH:-}"
 
 OUT_ROOT="${OUT_ROOT:-$REPO_DIR/outputs/_work/t03_internal_full_input}"
@@ -88,6 +89,20 @@ if [[ -n "$INTERSECTION_MATCH_T07_PATH" && ! -f "$INTERSECTION_MATCH_T07_PATH" ]
   echo "[BLOCK] INTERSECTION_MATCH_T07_PATH does not exist: $INTERSECTION_MATCH_T07_PATH" >&2
   exit 2
 fi
+if [[ -n "$INTERSECTION_MATCH_ALL_PATH" && ! -f "$INTERSECTION_MATCH_ALL_PATH" ]]; then
+  echo "[BLOCK] INTERSECTION_MATCH_ALL_PATH does not exist: $INTERSECTION_MATCH_ALL_PATH" >&2
+  exit 2
+fi
+if [[ -n "$INTERSECTION_MATCH_ALL_PATH" && -n "$INTERSECTION_MATCH_T07_PATH" ]]; then
+  all_resolved="$(readlink -f "$INTERSECTION_MATCH_ALL_PATH")"
+  t07_resolved="$(readlink -f "$INTERSECTION_MATCH_T07_PATH")"
+  if [[ "$all_resolved" != "$t07_resolved" ]]; then
+    echo "[BLOCK] Provide only one optional relation validation input: INTERSECTION_MATCH_ALL_PATH or INTERSECTION_MATCH_T07_PATH." >&2
+    echo "[BLOCK] INTERSECTION_MATCH_ALL_PATH=$INTERSECTION_MATCH_ALL_PATH" >&2
+    echo "[BLOCK] INTERSECTION_MATCH_T07_PATH=$INTERSECTION_MATCH_T07_PATH" >&2
+    exit 2
+  fi
+fi
 
 if [[ "$DEBUG_FLAG" != "--debug" && "$DEBUG_FLAG" != "--no-debug" ]]; then
   echo "[BLOCK] DEBUG_FLAG must be --debug or --no-debug: $DEBUG_FLAG" >&2
@@ -142,6 +157,7 @@ echo "[RUN] ROADS_PATH=$ROADS_PATH"
 echo "[RUN] DRIVEZONE_PATH=$DRIVEZONE_PATH"
 echo "[RUN] RCSDROAD_PATH=$RCSDROAD_PATH"
 echo "[RUN] RCSDNODE_PATH=$RCSDNODE_PATH"
+echo "[RUN] INTERSECTION_MATCH_ALL_PATH=${INTERSECTION_MATCH_ALL_PATH:-<not provided>}"
 echo "[RUN] INTERSECTION_MATCH_T07_PATH=${INTERSECTION_MATCH_T07_PATH:-<not provided>}"
 echo "[RUN] OUT_ROOT=$OUT_ROOT"
 echo "[RUN] RUN_ID=$RUN_ID"
@@ -163,7 +179,8 @@ if [[ "$PERF_AUDIT" == "1" ]]; then
 fi
 echo "[RUN] Eligible cases are auto-discovered from nodes where has_evd=yes, is_anchor=no, kind_2 in {4, 2048}; T03 default full-batch excluded cases remain excluded."
 
-export NODES_PATH ROADS_PATH DRIVEZONE_PATH RCSDROAD_PATH RCSDNODE_PATH INTERSECTION_MATCH_T07_PATH
+export NODES_PATH ROADS_PATH DRIVEZONE_PATH RCSDROAD_PATH RCSDNODE_PATH
+export INTERSECTION_MATCH_ALL_PATH INTERSECTION_MATCH_T07_PATH
 export OUT_ROOT RUN_ID WORKERS MAX_CASES BUFFER_M PATCH_SIZE_M RESOLUTION_M
 export DEBUG_FLAG VISUAL_CHECK_DIR REVIEW_MODE RESUME RETRY_FAILED
 export PERF_AUDIT PERF_AUDIT_INTERVAL_SEC PERF_AUDIT_MAX_SAMPLES PERF_AUDIT_MAX_BYTES
@@ -252,6 +269,7 @@ try:
         rcsdnode_path=os.environ["RCSDNODE_PATH"],
         out_root=os.environ["OUT_ROOT"],
         run_id=os.environ["RUN_ID"],
+        intersection_match_all_path=os.environ.get("INTERSECTION_MATCH_ALL_PATH") or None,
         intersection_match_t07_path=os.environ.get("INTERSECTION_MATCH_T07_PATH") or None,
         workers=int(os.environ["WORKERS"]),
         max_cases=_optional_int(os.environ.get("MAX_CASES", "")),

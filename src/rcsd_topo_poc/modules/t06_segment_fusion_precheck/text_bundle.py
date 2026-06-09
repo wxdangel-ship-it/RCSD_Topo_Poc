@@ -379,6 +379,10 @@ def _node_identity_ids(properties: dict[str, Any]) -> list[str]:
     return unique_preserve_order(ids)
 
 
+def _node_has_identity_in(properties: dict[str, Any], required_ids: set[str]) -> bool:
+    return any(node_id in required_ids for node_id in _node_identity_ids(properties))
+
+
 def _feature_id_set(features: Sequence[dict[str, Any]]) -> set[str]:
     return {
         feature_id
@@ -1067,8 +1071,7 @@ def _select_t06_input_slice(
     selected_swsd_nodes = [
         feature
         for feature in swsd_nodes
-        if _feature_id(feature.get("properties") or {}) in required_node_id_set
-        or _main_or_id(feature.get("properties") or {}) in required_node_id_set
+        if _node_has_identity_in(feature.get("properties") or {}, required_node_id_set)
         or _intersects_window(feature, window)
     ]
 
@@ -1093,8 +1096,7 @@ def _select_t06_input_slice(
     selected_rcsd_nodes = [
         feature
         for feature in rcsd_nodes
-        if _feature_id(feature.get("properties") or {}) in mapped_rcsd_node_id_set
-        or _main_or_id(feature.get("properties") or {}) in mapped_rcsd_node_id_set
+        if _node_has_identity_in(feature.get("properties") or {}, mapped_rcsd_node_id_set)
         or _intersects_window(feature, window)
     ]
     selected_rcsd_node_ids = {
@@ -1120,8 +1122,7 @@ def _select_t06_input_slice(
     selected_rcsd_nodes = [
         feature
         for feature in rcsd_nodes
-        if _feature_id(feature.get("properties") or {}) in selected_rcsd_node_dependency_id_set
-        or _main_or_id(feature.get("properties") or {}) in selected_rcsd_node_dependency_id_set
+        if _node_has_identity_in(feature.get("properties") or {}, selected_rcsd_node_dependency_id_set)
         or _intersects_window(feature, window)
     ]
     dependency_audit = _dependency_audit(

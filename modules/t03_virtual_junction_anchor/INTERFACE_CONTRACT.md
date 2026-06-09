@@ -600,7 +600,7 @@ internal full-input review PNG 输出按运行模式区分：
 `intersection_match_t03.geojson`：
 
 - 属于 T03 batch / full-input 的最终语义路口 relation 成果，不替代 `Step1~Step7` 主链。
-- 输入来源为 T03 构建路口面过程中已确认的成功 relation，并可通过 `intersection_match_t07.geojson` 进行跨模块校验。
+- 输入来源为 T03 构建路口面过程中已确认的成功 relation，并可通过可选 `intersection_match_all.geojson` 进行跨模块校验。
 - 输出 CRS 采用 relation GeoJSON 口径 `CRS84`。
 - 仅发布通过 1:1 校验的 SWSD-RCSD 语义路口关系：`target_id` 为 SWSD 语义路口 id，`base_id` 为 RCSD 语义路口 id，`status = 0` 表示成功 relation。
 - 构建时必须校验：
@@ -608,7 +608,8 @@ internal full-input review PNG 输出按运行模式区分：
   - 同一个 RCSD 语义路口不得对应多个 SWSD 语义路口。
 - 校验结果写入 `intersection_match_t03_cardinality_errors.csv/json` 与 `intersection_match_t03_summary.json`。
 - 若发现同一个 SWSD 语义路口对应多个 RCSD 语义路口，则该 SWSD 的 T03 final relation 不进入 `intersection_match_t03.geojson`，并在 `nodes.gpkg` 中将代表 node 的 `is_anchor` 回退为 `no`；该回退必须进入 `nodes_anchor_update_audit.csv/json`。
-- `intersection_match_t03.geojson` 的 T07 校验输入可由 internal full-input callable 参数 `intersection_match_t07_path` 或主脚本环境变量 `INTERSECTION_MATCH_T07_PATH` 提供；未提供时仅发布 T03 自身 relation 并在 summary 中标记 `t07_validation_enabled = false`。
+- `intersection_match_t03.geojson` 的外部 relation 校验输入可由 internal full-input callable 参数 `intersection_match_all_path` 或主脚本环境变量 `INTERSECTION_MATCH_ALL_PATH` 提供；该输入为可选，不提供时仅发布 T03 自身 relation 并在 summary 中标记 `external_validation_enabled = false`。
+- `intersection_match_t07_path / INTERSECTION_MATCH_T07_PATH` 仅作为历史兼容别名保留；不得与不同文件的 `intersection_match_all_path / INTERSECTION_MATCH_ALL_PATH` 同时提供。
 
 ## 6. internal 观测与恢复
 
@@ -665,7 +666,8 @@ watch 默认 formal-first 口径：
 - 主 watch：`scripts/t03_watch_internal_full_input.sh`
 - 内网包装：`scripts/t03_run_internal_full_input_innernet.sh`
 - 内网平铺目视包装：`scripts/t03_run_internal_full_input_innernet_flat_review.sh`
-- 主脚本可选读取 `INTERSECTION_MATCH_T07_PATH`，用于校验并生成 `intersection_match_t03.geojson`
+- 主脚本可选读取 `INTERSECTION_MATCH_ALL_PATH`，用于校验并生成 `intersection_match_t03.geojson`；缺省时仍输出 T03 自身完整 relation 成果
+- 主脚本兼容读取旧 `INTERSECTION_MATCH_T07_PATH`；不得与不同文件的 `INTERSECTION_MATCH_ALL_PATH` 同时提供
 - 历史 finalization wrapper 已退役；当前不再登记兼容 wrapper。
 
 当前不新增 repo 官方 Step7 / finalization CLI。

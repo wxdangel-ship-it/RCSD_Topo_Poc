@@ -73,11 +73,11 @@
 - Cardinality QC 错误必须输出 `relation_cardinality_errors.csv/json`，并给出 `introduced_by_module / source_modules / source_case_ids / scenes / reasons` 归因信息；错误 relation 必须从 `intersection_match_all.geojson` 主表剔除。
 - `level = grade - 1`，缺失、为空或非法时为 `-1`。
 - `is_highway = closed_con - 1`，缺失、为空或非法时为 `-1`。
-- `no_related_rcsd` 场景下，若 SWSD node 原始 `has_evd = yes / is_anchor = yes`，T05 必须只在 copy-on-write `swsdnode_out.gpkg` 中改写为 `yes_nr`，并输出 `swsdnode_yes_nr_audit.csv/json`；不得原地修改输入 nodes。
-- `summary.json` 必须记录 `swsdnode_no_rcsd_target_count / swsdnode_no_rcsd_node_match_count / swsdnode_yes_nr_candidate_count / swsdnode_no_rcsd_unmatched_target_count`，用于定位 `swsdnode_yes_nr_count = 0` 的原因。
+- `yes_nr` 只适用于 T03/T04 evidence 明确“前置构面成功 / 锚定成功，但 `relation_state = no_related_rcsd` 且没有可用 RCSDNode 或 RCSDRoad 候选”，并且 Phase 2 审计也确认 `no_related_rcsd` 的 target；若 SWSD node 原始 `has_evd = yes / is_anchor = yes`，T05 必须只在 copy-on-write `swsdnode_out.gpkg` 中改写为 `yes_nr`，并输出 `swsdnode_yes_nr_audit.csv/json`；不得原地修改输入 nodes。
+- `summary.json` 必须记录 Phase2 审计 no-RCSD target 数、T03/T04 前置成功 no-RCSD target 数、最终 yes_nr 候选交集数、节点匹配数、候选数与未匹配数，用于定位 `swsdnode_yes_nr_count = 0` 的原因。
 - 多个 `base_id` 无法合并时必须 blocking error，不得输出多条 relation，也不得写成普通失败关系。
 - T03 handoff 补齐只能读取 T03 已输出的 relation evidence 与 case 级 `step6_status/step6_audit` 字段，不得反推或新增 T03 业务语义。
-- T03 handoff 补齐必须输出独立 backfilled evidence、audit 与 summary，不覆盖原始 T03 输出。
+- T03 handoff 补齐是旧 T03 产物兼容能力；当前 T03 evidence 字段完整时，内网实验脚本默认直接消费原始 T03 evidence。补齐必须输出独立 backfilled evidence、audit 与 summary，不覆盖原始 T03 输出。
 
 ## Phase 2 GIS / 拓扑检查项
 

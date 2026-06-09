@@ -160,6 +160,7 @@ def run_t03_internal_full_input(
     rcsdnode_path: str | Path,
     out_root: str | Path,
     run_id: str,
+    intersection_match_all_path: str | Path | None = None,
     intersection_match_t07_path: str | Path | None = None,
     workers: int = 1,
     max_cases: int | None = None,
@@ -185,11 +186,26 @@ def run_t03_internal_full_input(
     resolved_drivezone_path = normalize_runtime_path(drivezone_path)
     resolved_rcsdroad_path = normalize_runtime_path(rcsdroad_path)
     resolved_rcsdnode_path = normalize_runtime_path(rcsdnode_path)
+    resolved_intersection_match_all_path = (
+        normalize_runtime_path(intersection_match_all_path)
+        if intersection_match_all_path is not None
+        else None
+    )
     resolved_intersection_match_t07_path = (
         normalize_runtime_path(intersection_match_t07_path)
         if intersection_match_t07_path is not None
         else None
     )
+    if (
+        resolved_intersection_match_all_path is not None
+        and resolved_intersection_match_t07_path is not None
+        and resolved_intersection_match_all_path.expanduser().resolve(strict=False)
+        != resolved_intersection_match_t07_path.expanduser().resolve(strict=False)
+    ):
+        raise ValueError(
+            "Provide only one optional relation validation input: "
+            "intersection_match_all_path or intersection_match_t07_path."
+        )
     resolved_out_root = normalize_runtime_path(out_root)
     resolved_visual_check_dir = (
         normalize_runtime_path(visual_check_dir)
@@ -250,6 +266,8 @@ def run_t03_internal_full_input(
         "rcsdroad_path": resolved_rcsdroad_path,
         "rcsdnode_path": resolved_rcsdnode_path,
     }
+    if resolved_intersection_match_all_path is not None:
+        input_paths["intersection_match_all_path"] = resolved_intersection_match_all_path
     if resolved_intersection_match_t07_path is not None:
         input_paths["intersection_match_t07_path"] = resolved_intersection_match_t07_path
     run_started_at = _now_text()
@@ -1167,6 +1185,7 @@ def run_t03_internal_full_input(
             streamed_results=closeout_case_results,
             failed_case_ids=failed_case_ids,
             input_nodes_path=input_paths["nodes_path"],
+            intersection_match_all_path=resolved_intersection_match_all_path,
             intersection_match_t07_path=resolved_intersection_match_t07_path,
         )
         _record_stage_timer("nodes_update", perf_counter() - nodes_update_started_perf)

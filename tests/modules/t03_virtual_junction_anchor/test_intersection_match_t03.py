@@ -130,3 +130,66 @@ def test_intersection_match_t03_validates_t07_and_rolls_back_one_to_many(tmp_pat
     assert updated_node_map["100004"] == "yes"
     assert audit["updated_to_no_count"] == 1
     assert audit["rows"][-1]["reason"] == "intersection_match_t03_one_target_to_many_base"
+
+
+def test_intersection_match_t03_accepts_optional_intersection_match_all(tmp_path: Path) -> None:
+    run_root = tmp_path / "run"
+    run_root.mkdir()
+    (run_root / "summary.json").write_text(json.dumps({"total_case_count": 2}), encoding="utf-8")
+    nodes_path = tmp_path / "nodes.gpkg"
+    write_vector(
+        nodes_path,
+        [
+            {"properties": {"id": "100001", "mainnodeid": "100001", "has_evd": "yes", "is_anchor": "no", "kind_2": 4}, "geometry": Point(0, 0)},
+            {"properties": {"id": "100002", "mainnodeid": "100002", "has_evd": "yes", "is_anchor": "no", "kind_2": 4}, "geometry": Point(10, 0)},
+        ],
+        crs_text="EPSG:3857",
+    )
+    _write_case_status(run_root, "100001", "rc_a", 1.0)
+    _write_case_status(run_root, "100002", "rc_b", 11.0)
+    intersection_match_all_path = tmp_path / "intersection_match_all.geojson"
+    intersection_match_all_path.write_text(
+        json.dumps(
+            {
+                "type": "FeatureCollection",
+                "crs": {"type": "name", "properties": {"name": "CRS84"}},
+                "features": [
+                    _feature(
+                        {"target_id": "100001", "base_id": "rc_x", "status": 0, "source_module": "T05"},
+                        LineString([(0, 0), (1, 1)]),
+                    )
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    outputs = write_updated_nodes_outputs(
+        run_root=run_root,
+        shared_nodes=load_shared_nodes(nodes_path=nodes_path),
+        selected_case_ids=["100001", "100002"],
+        streamed_results={
+            "100001": _accepted_result("100001"),
+            "100002": _accepted_result("100002"),
+        },
+        failed_case_ids=[],
+        input_nodes_path=nodes_path,
+        intersection_match_all_path=intersection_match_all_path,
+    )
+
+    match_payload = json.loads(outputs["intersection_match_t03_path"].read_text(encoding="utf-8"))
+    published_targets = {feature["properties"]["target_id"] for feature in match_payload["features"]}
+    summary = json.loads(outputs["intersection_match_t03_summary_path"].read_text(encoding="utf-8"))
+    updated_nodes = read_vector_layer(outputs["nodes_path"]).features
+    updated_node_map = {str(feature.properties["id"]): feature.properties.get("is_anchor") for feature in updated_nodes}
+
+    assert published_targets == {"100002"}
+    assert summary["relation_validation_source"] == "intersection_match_all"
+    assert summary["external_validation_enabled"] is True
+    assert summary["t07_validation_enabled"] is False
+    assert summary["external_validation_relation_count"] == 1
+    assert summary["one_target_to_many_base_count"] == 1
+    assert summary["rollback_target_ids"] == ["100001"]
+    assert updated_node_map["100001"] == "no"
+    assert updated_node_map["100002"] == "yes"

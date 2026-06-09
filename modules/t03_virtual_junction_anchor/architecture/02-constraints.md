@@ -33,6 +33,6 @@
   - `intersection_match_t03.geojson`
 - `nodes.gpkg` 的 `is_anchor=fail3` 只属于 T03 downstream output 语义，不回写输入原始 nodes，也不修改上游输入字段契约
 - `t03_swsd_rcsd_relation_evidence.csv/json` 是 T05 handoff 输入，不是最终 `intersection_match_all.geojson`；成功建议状态只允许来自 formal `step7_state=accepted` 且具备 required RCSD semantic junction 证据的 case，support-only / road-only 证据不得写成成功匹配
-- `intersection_match_t03.geojson` 是 T03 最终 relation 成果；构建时可消费 T07 `intersection_match_t07.geojson` 做 1:1 校验，若同一个 SWSD 语义路口对应多个 RCSD 语义路口，则取消该 relation 并将代表 node 回退为 `is_anchor=no`
+- `intersection_match_t03.geojson` 是 T03 最终 relation 成果；构建时可消费可选 `intersection_match_all.geojson` 做 1:1 校验，若同一个 SWSD 语义路口对应多个 RCSD 语义路口，则取消该 relation 并将代表 node 回退为 `is_anchor=no`；缺省时仍输出 T03 自身 relation 成果，旧 `intersection_match_t07.geojson` 输入仅作为兼容别名保留
 - 不新增 T03 repo 官方 finalization CLI
 - 不提交 `outputs/_work`、批量 PNG、线程同步文件到 Git

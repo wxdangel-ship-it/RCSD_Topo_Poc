@@ -87,7 +87,7 @@ Phase 2 使用“读取 Phase 1 surface -> 消费 relation evidence -> 场景分
 
 Phase 2 不重新融合路口面，不修改 Phase 1 `junction_anchor_surface.gpkg`，不修改 T07/T03/T04 主链，也不原地修改输入 RCSD 文件。
 
-若 T03 批次级 `t03_swsd_rcsd_relation_evidence.*` 缺少 T05 场景分流所需的 `required_rcsdnode_ids / support_rcsdroad_ids`，先执行 T05 handoff 补齐工具，从 T03 当前已输出的 `cases/<case_id>/step6_status.json` 或 `step6_audit.json.inputs` 读取正式字段，写出独立的 `t03_swsd_rcsd_relation_evidence_backfilled.*`。Phase 2 再消费补齐后的 evidence。
+当前 T03 批次级 `t03_swsd_rcsd_relation_evidence.*` 字段完整时，Phase 2 直接消费原始 T03 evidence。若遇到旧 T03 run 缺少 T05 场景分流所需的 `required_rcsdnode_ids / support_rcsdroad_ids`，可执行 T05 handoff 补齐工具，从 T03 已输出的 `cases/<case_id>/step6_status.json` 或 `step6_audit.json.inputs` 读取正式字段，写出独立的 `t03_swsd_rcsd_relation_evidence_backfilled.*`。Phase 2 再消费补齐后的 evidence。
 
 ## 8. Phase 2 场景策略
 
@@ -104,7 +104,7 @@ Phase 2 不重新融合路口面，不修改 Phase 1 `junction_anchor_surface.gp
 - T04 fallback 若 relation evidence 缺少场景字段，可从 accepted layer、summary、audit 或 case-level audit 补读；补读失败不得 silent fallback。
 - SWSD 环岛 `kind_2 = 64`：所有 SWSD 子 node 必须被 Phase 1 路口面覆盖；覆盖面与 `RCSDRoad.roadtype = 8` 的 road `10m` buffer 合并后形成环岛候选面；候选 RCSD 语义路口必须全组 node 都在该面内，且候选语义路口之间通过 `roadtype = 8` 的 RCSDRoad 连通，才进入 RCSDNode grouping。
 - Phase 2 入口对 SWSD 语义路口主键统一做整数 canonical normalization，覆盖 evidence `target_id`、surface `mainnodeid`、nodes `id/mainnodeid`、known target 索引和最终 relation/audit 输出；`622700016` 与 `622700016.0` 在 T05 内部视为同一 target，并统一输出 `622700016`。
-- `no_related_rcsd` 且 SWSD node 原始 `has_evd = yes / is_anchor = yes`：在 copy-on-write `swsdnode_out.gpkg` 中将两个字段改为 `yes_nr`，表示该成功构面没有 RCSD 关联，供最终成功率统计排除；summary 同步输出 `swsdnode_no_rcsd_target_count / swsdnode_no_rcsd_node_match_count / swsdnode_yes_nr_candidate_count / swsdnode_no_rcsd_unmatched_target_count`，用于判断 `yes_nr=0` 是没有候选、节点未匹配，还是候选不满足 `has_evd/is_anchor` 门槛。
+- T03/T04 evidence 明确“前置构面成功 / 锚定成功，但 `relation_state = no_related_rcsd` 且没有可用 RCSDNode 或 RCSDRoad 候选”，并且 Phase 2 审计也确认 `no_related_rcsd` 时，若 SWSD node 原始 `has_evd = yes / is_anchor = yes`，在 copy-on-write `swsdnode_out.gpkg` 中将两个字段改为 `yes_nr`，表示该成功构面没有 RCSD 关联，供最终成功率统计排除；T04 fallback road-only 只要存在 road 候选并进入 split，不得标记 `yes_nr`。summary 同步输出前置候选、Phase2 审计候选、交集候选、节点匹配与未匹配统计，用于判断 `yes_nr=0` 的原因。
 
 ## 9. Phase 2 拓扑策略
 

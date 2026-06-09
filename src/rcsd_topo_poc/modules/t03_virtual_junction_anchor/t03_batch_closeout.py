@@ -328,11 +328,17 @@ def _t03_relation_records_from_evidence_rows(rows: list[dict[str, Any]]) -> list
     return records
 
 
-def _read_intersection_match_t07_records(path: Path | None) -> list[dict[str, Any]]:
+def _read_external_intersection_match_records(
+    path: Path | None,
+    *,
+    default_source_module: str,
+    default_relation_state: str,
+    default_reason: str,
+) -> list[dict[str, Any]]:
     if path is None:
         return []
     if not path.is_file():
-        raise FileNotFoundError(f"intersection_match_t07.geojson does not exist: {path}")
+        raise FileNotFoundError(f"intersection match validation GeoJSON does not exist: {path}")
     payload = json.loads(path.read_text(encoding="utf-8"))
     features = payload.get("features") if isinstance(payload, dict) else None
     if not isinstance(features, list):
@@ -346,15 +352,16 @@ def _read_intersection_match_t07_records(path: Path | None) -> list[dict[str, An
         base_id = normalize_id(props.get("base_id"))
         if target_id is None or base_id is None or not _is_success_status(props.get("status")) or _is_zero_id(base_id):
             continue
+        source_module = str(props.get("source_module") or default_source_module)
         records.append(
             {
                 "feature_index": index,
                 "target_id": target_id,
                 "base_id": base_id,
-                "source_module": "T07",
+                "source_module": source_module,
                 "source_case_id": str(props.get("source_case_id") or props.get("case_id") or ""),
-                "relation_state": str(props.get("relation_state") or "intersection_match_t07_matched"),
-                "reason": str(props.get("reason") or "intersection_match_t07_matched"),
+                "relation_state": str(props.get("relation_state") or default_relation_state),
+                "reason": str(props.get("reason") or default_reason),
                 "representative_node_id": str(props.get("representative_node_id") or target_id),
                 "step7_state": "",
                 "properties": props,
@@ -362,6 +369,19 @@ def _read_intersection_match_t07_records(path: Path | None) -> list[dict[str, An
             }
         )
     return records
+
+
+def _read_intersection_match_t07_records(path: Path | None) -> list[dict[str, Any]]:
+    return _read_external_intersection_match_records(
+        path,
+        default_source_module="T07",
+        default_relation_state="intersection_match_t07_matched",
+        default_reason="intersection_match_t07_matched",
+    )
+
+
+def _same_optional_path(left: Path, right: Path) -> bool:
+    return left.expanduser().resolve(strict=False) == right.expanduser().resolve(strict=False)
 
 
 def _relation_error_row(
@@ -480,12 +500,35 @@ def write_intersection_match_t03(
     *,
     run_root: Path,
     relation_evidence_json_path: Path,
+    intersection_match_all_path: Path | str | None = None,
     intersection_match_t07_path: Path | str | None = None,
 ) -> dict[str, Any]:
+    all_path = Path(intersection_match_all_path) if intersection_match_all_path is not None else None
     t07_path = Path(intersection_match_t07_path) if intersection_match_t07_path is not None else None
+    if all_path is not None and t07_path is not None and not _same_optional_path(all_path, t07_path):
+        raise ValueError(
+            "Provide only one optional relation validation input: "
+            "intersection_match_all_path or intersection_match_t07_path."
+        )
+    validation_path = all_path if all_path is not None else t07_path
+    validation_source = (
+        "intersection_match_all"
+        if all_path is not None
+        else "intersection_match_t07"
+        if t07_path is not None
+        else ""
+    )
     t03_records = _t03_relation_records_from_evidence_rows(_read_relation_evidence_rows(relation_evidence_json_path))
-    t07_records = _read_intersection_match_t07_records(t07_path)
-    error_rows = _build_intersection_match_cardinality_errors(t03_records + t07_records)
+    if validation_source == "intersection_match_all":
+        external_records = _read_external_intersection_match_records(
+            validation_path,
+            default_source_module="INTERSECTION_MATCH_ALL",
+            default_relation_state="intersection_match_all_matched",
+            default_reason="intersection_match_all_matched",
+        )
+    else:
+        external_records = _read_intersection_match_t07_records(validation_path)
+    error_rows = _build_intersection_match_cardinality_errors(t03_records + external_records)
     error_counts = _relation_error_counts(error_rows)
     suppressed_target_ids = _error_target_ids(error_rows)
     rollback_target_ids = _one_to_many_target_ids(error_rows)
@@ -530,11 +573,18 @@ def write_intersection_match_t03(
     )
     summary = {
         "intersection_match_t03_path": str(match_path),
+        "intersection_match_all_path": str(all_path) if all_path is not None else "",
         "intersection_match_t07_path": str(t07_path) if t07_path is not None else "",
-        "t07_validation_enabled": t07_path is not None,
+        "relation_validation_path": str(validation_path) if validation_path is not None else "",
+        "relation_validation_source": validation_source,
+        "external_validation_enabled": validation_path is not None,
+        "t07_validation_enabled": validation_source == "intersection_match_t07",
         "target_crs": "CRS84",
         "t03_candidate_relation_count": len(t03_records),
-        "t07_validation_relation_count": len(t07_records),
+        "external_validation_relation_count": len(external_records),
+        "t07_validation_relation_count": (
+            len(external_records) if validation_source == "intersection_match_t07" else 0
+        ),
         "published_relation_count": len(output_records),
         "suppressed_target_ids": sorted(suppressed_target_ids, key=_sort_relation_id),
         "rollback_target_ids": sorted({str(row["target_id"]) for row in deduped_rollback_rows}, key=_sort_relation_id),
@@ -1122,6 +1172,7 @@ def write_updated_nodes_outputs(
     streamed_results: dict[str, T03StreamedCaseResult],
     failed_case_ids: list[str],
     input_nodes_path: Path | str | None = None,
+    intersection_match_all_path: Path | str | None = None,
     intersection_match_t07_path: Path | str | None = None,
 ) -> dict[str, Any]:
     updates_by_node_id: dict[str, str] = {}
@@ -1198,6 +1249,7 @@ def write_updated_nodes_outputs(
     intersection_match_outputs = write_intersection_match_t03(
         run_root=run_root,
         relation_evidence_json_path=relation_outputs["relation_evidence_json_path"],
+        intersection_match_all_path=intersection_match_all_path,
         intersection_match_t07_path=intersection_match_t07_path,
     )
     rollback_update_result = _apply_intersection_match_t03_node_rollbacks(

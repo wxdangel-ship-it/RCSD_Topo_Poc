@@ -389,4 +389,16 @@ def _build_multi_event_case_package(case_dir: Path) -> None:
     )
 
 
+def test_case_loader_ignores_work_dirs_with_hidden_prefix(tmp_path: Path) -> None:
+    _build_synthetic_case_package(tmp_path / "1001")
+    (tmp_path / "_codex_work").mkdir()
+    (tmp_path / ".scratch").mkdir()
+
+    specs, preflight = load_case_specs(case_root=tmp_path)
+
+    assert [spec.case_id for spec in specs] == ["1001"]
+    assert preflight["raw_case_count"] == 1
+    assert preflight["selected_case_count"] == 1
+
+
 __all__ = [name for name in globals() if not name.startswith("__")]

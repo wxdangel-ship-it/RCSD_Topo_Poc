@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import io
 import json
 import tempfile
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
 from rcsd_topo_poc.modules.t02_junction_anchor.text_bundle import (
+    TEXT_BUNDLE_MODE_MULTI,
     TEXT_BUNDLE_VERSION,
     TextBundleError,
     _build_bundle_text,
@@ -199,6 +202,15 @@ def _payload_from_text_bundle_file(bundle_txt: Path) -> tuple[bytes, dict[str, A
     return full_payload, split_report
 
 
+def _payload_bundle_mode(payload_bytes: bytes) -> str:
+    with zipfile.ZipFile(io.BytesIO(payload_bytes), "r") as zf:
+        try:
+            manifest = json.loads(zf.read("manifest.json").decode("utf-8"))
+        except KeyError as exc:
+            raise TextBundleError("bundle_missing_files", "Bundle is missing manifest.json.") from exc
+    return str(manifest.get("bundle_mode") or "")
+
+
 def _write_size_report(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
@@ -368,9 +380,9 @@ def run_t03_decode_text_bundle(
     bundle_path = Path(bundle_txt)
     if not bundle_path.is_file():
         raise TextBundleError("bundle_not_found", f"Bundle text file does not exist: {bundle_path}")
-    if resolved_module == "t04" and out_dir is None:
-        out_dir = bundle_path.with_suffix("")
     payload_bytes, split_report = _payload_from_text_bundle_file(bundle_path)
+    if resolved_module == "t04" and out_dir is None and _payload_bundle_mode(payload_bytes) == TEXT_BUNDLE_MODE_MULTI:
+        out_dir = bundle_path.parent
     if split_report is None:
         artifacts = run_t02_decode_text_bundle(bundle_txt=bundle_path, out_dir=out_dir)
     else:

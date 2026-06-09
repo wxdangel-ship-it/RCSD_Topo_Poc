@@ -2,43 +2,32 @@
 
 ## 状态
 
-- 当前状态：项目级架构摘要说明
-- 来源依据：
-  - `SPEC.md`
-  - `docs/PROJECT_BRIEF.md`
-- 审核重点：
-  - 确认当前阶段是否只落骨架与治理基线
-  - 确认未误引入 Highway 业务正文
+- 当前状态：项目级架构摘要
+- 来源依据：`SPEC.md`、`docs/PROJECT_BRIEF.md`
 
 ## 系统目标
 
-`RCSD_Topo_Poc` 当前目标是建立并维护一套适用于 RCSD 场景拓扑类能力的工程底座，使已登记模块和后续模块启动、治理、实现、审计都有统一起点。
+`RCSD_Topo_Poc` 建立并维护一套适用于 RCSD 场景拓扑能力的工程底座，使正式业务模块、POC 成果模块和后续新模块具备统一的文档契约、实现边界、测试审计和协作入口。
 
 ## 业务目标
 
-当前业务目标不是冻结 RCSD 模块列表，而是先保证：
+- 支撑 SWSD / RCSD 预处理、Segment 构建、路口锚定、关系融合、Segment 替换与通行规则还原的主业务链。
+- 保持当前模块生命周期、上下游关系和治理缺口清晰可查。
+- 允许 POC 成果模块验证异构路口通行能力，但不混淆正式业务契约。
+- 支持外网治理、内网执行和文本粘贴回传的协作模式。
 
-- 可初始化
-- 可治理
-- 可扩展
-- 可审计
-- 可在双环境约束下传递结构化文本诊断信息
+## 架构目标
 
-## 文档目标
+- 项目级事实、模块级事实、仓库元数据、变更工件分层清晰。
+- 模块文档与实现代码分离，便于模块独立治理。
+- 新模块可从 `modules/_template/` 启动，不重复建设文档骨架。
+- GIS / 拓扑 / 空间数据处理具备可解释、可审计、可验证的质量边界。
 
-当前文档治理目标是：
+## 当前项目口径
 
-- 明确项目级与模块级 source-of-truth 分层
-- 把 `AGENTS.md` 约束在 durable guidance
-- 把标准 Skill 统一收口到 repo root `.agents/skills/`
-- 为未来任何 RCSD 模块提供统一启动模板
-
-## 范围说明
-
-当前项目级正式口径为：
-
-- 当前已登记正式业务模块：`t01_data_preprocess`、`t02_junction_anchor`、`t03_virtual_junction_anchor`、`t04_divmerge_virtual_polygon`、`t05_junction_surface_fusion`、`t06_segment_fusion_precheck`、`t07_semantic_junction_anchor`、`t08_preprocess`
-- 当前已登记 P01 成果模块：`p01_arm_build`
-- 当前已纳入治理的工具集合模块：`t00_utility_toolbox`
-- `modules/_template/` 是模板目录，不属于业务模块
-- 当前共享代码除文本回传协议与基础 CLI 外，也承接已登记模块的实现入口
+- 正式业务模块：T01、T03、T04、T05、T06、T07、T08、T09。
+- POC / 成果模块：P01。
+- Retired 模块：T02。
+- Support Retained 模块：T00。
+- 模板目录：`modules/_template/`。
+- 用户历史 `P10` 口径统一改称为 `P01` / `p01_arm_build`。

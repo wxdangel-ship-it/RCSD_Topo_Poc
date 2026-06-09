@@ -368,6 +368,8 @@ def run_t03_decode_text_bundle(
     bundle_path = Path(bundle_txt)
     if not bundle_path.is_file():
         raise TextBundleError("bundle_not_found", f"Bundle text file does not exist: {bundle_path}")
+    if resolved_module == "t04" and out_dir is None:
+        out_dir = bundle_path.with_suffix("")
     payload_bytes, split_report = _payload_from_text_bundle_file(bundle_path)
     if split_report is None:
         artifacts = run_t02_decode_text_bundle(bundle_txt=bundle_path, out_dir=out_dir)

@@ -151,3 +151,31 @@ def test_t04_text_bundle_alias_uses_same_common_payload(tmp_path: Path) -> None:
     assert decoded.module_name == "t04"
     assert decoded.case_dirs == (decoded.out_dir,)
     assert (decoded.out_dir / "divstripzone.gpkg").is_file()
+
+
+def test_t04_multi_case_decode_defaults_to_bundle_stem_dir(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    inputs = _write_bundle_inputs(tmp_path)
+    out_txt = tmp_path / "t04_multi_bundle.txt"
+    cwd = tmp_path / "cwd"
+    cwd.mkdir()
+
+    artifacts = run_t04_export_text_bundle(
+        **inputs,
+        mainnodeid=["100", "200"],
+        out_txt=out_txt,
+        max_text_size_bytes=256_000,
+    )
+
+    monkeypatch.chdir(cwd)
+    decoded = run_t04_decode_text_bundle(bundle_txt=out_txt)
+
+    assert artifacts.success
+    assert decoded.module_name == "t04"
+    assert decoded.out_dir == out_txt.with_suffix("")
+    assert {path.name for path in decoded.case_dirs} == {"100", "200"}
+    assert (decoded.out_dir / "100" / "manifest.json").is_file()
+    assert not (cwd / "100").exists()
+    assert not (cwd / "t04_multi_bundle.bundle_manifest.json").exists()

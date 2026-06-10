@@ -19,5 +19,7 @@
 - Case 范围声明使用 SWSD 语义路口 ID 与半径。
 - CaseID 正式含义是 SWSD semantic junction id；坐标只作为由 CaseID 派生的范围中心信息。
 - `suggest` 只做候选生成，不判定问题真实性；没有 selector evidence 时只能输出 inventory-only 清单。
-- v1 Case package manifest 声明 CRS 为 `EPSG:3857`。
-- v1 不执行空间切片，不得把 manifest-only package 表述为空间裁剪成果。
+- v1 Case package 空间切片 CRS 为 `EPSG:3857`。
+- `include_files=true` 的正式默认物化模式为 `spatial_slice`，不得复制全量外部输入冒充 Case 范围证据。
+- `manifest_only` 不得表述为空间裁剪成果。
+- `copy_full` 仅作兼容诊断模式，不作为正式内网 Case 包默认模式。

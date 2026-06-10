@@ -11,14 +11,15 @@ T10 v1 先解决跨模块契约问题：
 
 ## 2. Case 包策略
 
-Case 包 v1 是 manifest-first：
+Case 包 v1 是 spatial-slice-first：
 
 - 用 SWSD 语义路口 ID 和半径表达范围。
-- 列出外部输入全集。
-- 可选择复制外部输入文件。
+- 列出外部输入 slot。
+- `include_files=true` 时默认生成局部 GPKG 空间切片。
+- `manifest_only` 只声明范围与输入，不物化矢量。
 - 明确排除中间产物。
 
-后续版本再实现真实空间切片、依赖补齐与可复跑数据子集。
+后续版本再实现道路 / 节点依赖补齐与可复跑数据子集。
 
 多 Case 包保持同一根目录，并按 `cases/<case_id>/` 存放每个 Case 的 manifest、summary 与外部输入。文本 bundle 只负责传输，自动分片和解包不改变 Case 结构。
 

@@ -27,6 +27,7 @@ Common env:
   SW_ARROW_TOOL8             Default: auto-detect t08/T08 sw_arrow_tool8.gpkg
   RADIUS_M                   Default: 250
   INCLUDE_FILES              Default: 1
+  MATERIALIZATION_MODE       Default: spatial_slice when INCLUDE_FILES=1; values: spatial_slice, manifest_only, copy_full
   OUT_ROOT                   Default: outputs/_work/t10_case_evidence
   BUNDLE_ROOT                Default: outputs/_work/t10_case_evidence_bundles
   PACKAGE_ID                 Optional fixed package id
@@ -117,6 +118,7 @@ SW_ARROW_TOOL8="$(resolve_input_path SW_ARROW_TOOL8 "$FIRST_LAYER_ROOT/t08/sw_ar
 
 RADIUS_M="${RADIUS_M:-250}"
 INCLUDE_FILES="${INCLUDE_FILES:-1}"
+MATERIALIZATION_MODE="${MATERIALIZATION_MODE:-}"
 OUT_ROOT="${OUT_ROOT:-$REPO_DIR/outputs/_work/t10_case_evidence}"
 BUNDLE_ROOT="${BUNDLE_ROOT:-$REPO_DIR/outputs/_work/t10_case_evidence_bundles}"
 PACKAGE_ID="${PACKAGE_ID:-}"
@@ -156,13 +158,14 @@ echo "[RUN] PYTHON_BIN=$PYTHON_BIN"
 echo "[RUN] CASE_IDS=${case_ids[*]}"
 echo "[RUN] RADIUS_M=$RADIUS_M"
 echo "[RUN] INCLUDE_FILES=$INCLUDE_FILES"
+echo "[RUN] MATERIALIZATION_MODE=${MATERIALIZATION_MODE:-<auto>}"
 echo "[RUN] OUT_ROOT=$OUT_ROOT"
 echo "[RUN] BUNDLE_ROOT=$BUNDLE_ROOT"
 echo "[RUN] MAX_TEXT_SIZE_BYTES=$MAX_TEXT_SIZE_BYTES"
 
 export PREPARED_SWSD_NODES PREPARED_SWSD_ROADS DRIVEZONE DIVSTRIPZONE RCSD_INTERSECTION
 export RCSDROAD RCSDNODE SW_RESTRICTION_TOOL7 SW_ARROW_TOOL8
-export OUT_ROOT BUNDLE_ROOT RADIUS_M INCLUDE_FILES PACKAGE_ID MAX_TEXT_SIZE_BYTES
+export OUT_ROOT BUNDLE_ROOT RADIUS_M INCLUDE_FILES MATERIALIZATION_MODE PACKAGE_ID MAX_TEXT_SIZE_BYTES
 export DECODE_AFTER_EXPORT DECODE_ROOT
 
 PYTHONPATH="$REPO_DIR/src${PYTHONPATH:+:$PYTHONPATH}" "$PYTHON_BIN" - "${case_ids[@]}" <<'PY'
@@ -207,6 +210,7 @@ package = build_multi_case_evidence_package(
     radius_m=float(os.environ["RADIUS_M"]),
     package_id=os.environ.get("PACKAGE_ID") or None,
     include_files=truthy(os.environ["INCLUDE_FILES"]),
+    materialization_mode=os.environ.get("MATERIALIZATION_MODE") or None,
 )
 
 bundle_txt = Path(os.environ["BUNDLE_ROOT"]) / f"{package.package_dir.name}.txt"

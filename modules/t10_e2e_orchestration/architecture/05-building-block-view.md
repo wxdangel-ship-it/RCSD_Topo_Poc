@@ -28,9 +28,17 @@
 - `build_case_evidence_package`
 - `build_multi_case_evidence_package`
 
-当前生成 Case package manifest 与 summary，可选复制外部输入文件，不执行空间裁剪。
+当前生成 Case package manifest 与 summary，`include_files=true` 时默认调用空间切片能力物化局部外部输入。
 
-## 4. case_suggest
+## 4. spatial_slice
+
+`spatial_slice.py` 提供：
+
+- `build_case_spatial_input_slices`
+
+当前按 SWSD semantic junction id 定位 member nodes，使用 `radius_m` 在 `EPSG:3857` 下生成窗口，并把外部输入 slot 写成局部 GPKG。
+
+## 5. case_suggest
 
 `case_suggest.py` 提供：
 
@@ -39,7 +47,7 @@
 
 当前从 SWSD nodes 建立语义路口 inventory，并把 selector evidence 映射到候选 Case。
 
-## 5. text_bundle
+## 6. text_bundle
 
 `text_bundle.py` 提供：
 

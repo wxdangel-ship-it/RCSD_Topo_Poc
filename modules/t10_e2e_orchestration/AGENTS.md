@@ -22,4 +22,6 @@
 
 - Case 范围由 SWSD 语义路口 ID 与半径表达。
 - v1 Case 包只纳入外部输入，不纳入 T01-T09 模块间中间产物。
-- v1 不执行空间切片，不得把 manifest-only package 表述为已完成空间裁剪。
+- `spatial_slice` 是当前正式文件物化模式，必须按 Case 范围输出局部外部输入切片。
+- `manifest_only` 不得表述为已完成空间裁剪。
+- `copy_full` 仅作兼容诊断模式，不作为正式内网 Case 包默认模式。

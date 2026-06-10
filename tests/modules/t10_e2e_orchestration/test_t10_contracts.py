@@ -3,6 +3,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from shapely.geometry import LineString, Point
+
+from rcsd_topo_poc.modules.t08_preprocess.vector_io import read_vector, write_gpkg
 from rcsd_topo_poc.modules.t10_e2e_orchestration import (
     T10_V1_CHAIN,
     build_case_evidence_package,
@@ -27,6 +30,37 @@ def _complete_manifest(tmp_path: Path) -> dict:
         requirement.slot: _write_file(tmp_path / "external" / f"{requirement.slot}.gpkg")
         for requirement in EXTERNAL_INPUT_REQUIREMENTS
     }
+    handoffs = {
+        requirement.slot: _write_file(tmp_path / "handoffs" / f"{requirement.slot}.json")
+        for requirement in HANDOFF_REQUIREMENTS
+    }
+    return {"external_inputs": external_inputs, "handoffs": handoffs}
+
+
+def _complete_vector_manifest(tmp_path: Path) -> dict:
+    external_inputs = {}
+    for requirement in EXTERNAL_INPUT_REQUIREMENTS:
+        slot = requirement.slot
+        path = tmp_path / "external_vector" / f"{slot}.gpkg"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if slot == "prepared_swsd_nodes":
+            features = [
+                {"properties": {"id": "1001", "mainnodeid": "9001"}, "geometry": Point(0.0, 0.0)},
+                {"properties": {"id": "1002", "mainnodeid": "9001"}, "geometry": Point(10.0, 0.0)},
+                {"properties": {"id": "2001", "mainnodeid": "2001"}, "geometry": Point(5000.0, 0.0)},
+            ]
+        elif slot == "prepared_swsd_roads":
+            features = [
+                {"properties": {"id": "r_near"}, "geometry": LineString([(-200.0, 0.0), (200.0, 0.0)])},
+                {"properties": {"id": "r_far"}, "geometry": LineString([(4900.0, 0.0), (5100.0, 0.0)])},
+            ]
+        else:
+            features = [
+                {"properties": {"id": f"{slot}_near"}, "geometry": Point(5.0, 0.0)},
+                {"properties": {"id": f"{slot}_far"}, "geometry": Point(5000.0, 0.0)},
+            ]
+        write_gpkg(path, features, crs_text="EPSG:3857", layer_name=slot)
+        external_inputs[slot] = str(path)
     handoffs = {
         requirement.slot: _write_file(tmp_path / "handoffs" / f"{requirement.slot}.json")
         for requirement in HANDOFF_REQUIREMENTS
@@ -102,6 +136,7 @@ def test_case_evidence_package_uses_external_inputs_and_excludes_intermediate_ha
         radius_m=250.0,
         package_id="case_622700016",
         include_files=True,
+        materialization_mode="copy_full",
     )
 
     package_manifest = json.loads(artifacts.manifest_json.read_text(encoding="utf-8"))
@@ -160,6 +195,7 @@ def test_multi_case_package_splits_and_decodes_by_case_id_directory(tmp_path: Pa
         radius_m=300.0,
         package_id="bundle_001",
         include_files=True,
+        materialization_mode="copy_full",
     )
 
     assert (artifacts.package_dir / "cases" / "9001" / "t10_case_evidence_manifest.json").is_file()
@@ -180,3 +216,46 @@ def test_multi_case_package_splits_and_decodes_by_case_id_directory(tmp_path: Pa
     assert decoded_manifest["case_count"] == 2
     assert (decoded.out_dir / "cases" / "9001" / "t10_case_evidence_manifest.json").is_file()
     assert (decoded.out_dir / "cases" / "2001" / "t10_case_evidence_summary.json").is_file()
+
+
+def test_multi_case_package_materializes_spatial_slices_by_case_id(tmp_path: Path) -> None:
+    manifest = _complete_vector_manifest(tmp_path)
+    artifacts = build_multi_case_evidence_package(
+        manifest=manifest,
+        out_root=tmp_path / "packages",
+        semantic_junction_ids=["9001", "2001"],
+        radius_m=100.0,
+        package_id="spatial_bundle_001",
+        include_files=True,
+    )
+
+    case_9001_manifest_path = artifacts.package_dir / "cases" / "9001" / "t10_case_evidence_manifest.json"
+    case_9001_manifest = json.loads(case_9001_manifest_path.read_text(encoding="utf-8"))
+    case_9001_summary = json.loads(
+        (artifacts.package_dir / "cases" / "9001" / "t10_case_evidence_summary.json").read_text(encoding="utf-8")
+    )
+    assert case_9001_manifest["materialization_mode"] == "spatial_slice"
+    assert case_9001_manifest["scope"]["selection_status"] == "spatial_slice_completed"
+    assert case_9001_manifest["scope"]["center"] == {"x": 5.0, "y": 0.0}
+    assert case_9001_summary["materialized_file_count"] == len(EXTERNAL_INPUT_REQUIREMENTS)
+
+    slot_entries = {entry["slot"]: entry for entry in case_9001_manifest["included_external_inputs"]}
+    nodes_slice = artifacts.package_dir / "cases" / "9001" / slot_entries["prepared_swsd_nodes"]["package_path"]
+    roads_slice = artifacts.package_dir / "cases" / "9001" / slot_entries["prepared_swsd_roads"]["package_path"]
+    assert nodes_slice.name == "prepared_swsd_nodes_slice.gpkg"
+    assert roads_slice.name == "prepared_swsd_roads_slice.gpkg"
+    assert slot_entries["prepared_swsd_nodes"]["source_sha256"] == ""
+    assert slot_entries["prepared_swsd_nodes"]["slice_sha256"]
+
+    node_result = read_vector(nodes_slice, target_epsg=3857)
+    road_result = read_vector(roads_slice, target_epsg=3857)
+    assert len(node_result.features) == 2
+    assert len(road_result.features) == 1
+    minx, _miny, maxx, _maxy = road_result.features[0].geometry.bounds
+    assert minx >= -95.0
+    assert maxx <= 105.0
+
+    case_2001_manifest = json.loads(
+        (artifacts.package_dir / "cases" / "2001" / "t10_case_evidence_manifest.json").read_text(encoding="utf-8")
+    )
+    assert case_2001_manifest["scope"]["center"] == {"x": 5000.0, "y": 0.0}

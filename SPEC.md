@@ -19,7 +19,7 @@
 
 ### 2.1 模块生命周期
 
-- Active 正式业务模块：`t01_data_preprocess`、`t03_virtual_junction_anchor`、`t04_divmerge_virtual_polygon`、`t05_junction_surface_fusion`、`t06_segment_fusion_precheck`、`t07_semantic_junction_anchor`、`t08_preprocess`、`t09_swsd_field_rule_restoration`
+- Active 正式业务模块：`t01_data_preprocess`、`t03_virtual_junction_anchor`、`t04_divmerge_virtual_polygon`、`t05_junction_surface_fusion`、`t06_segment_fusion_precheck`、`t07_semantic_junction_anchor`、`t08_preprocess`、`t09_swsd_field_rule_restoration`、`t10_e2e_orchestration`
 - Active POC / 成果模块：`p01_arm_build`
 - Retired 模块：`t02_junction_anchor`
 - Support Retained 模块：`t00_utility_toolbox`
@@ -34,6 +34,8 @@ T08 -> T01 -> T07 -> T03 -> T04 -> T05 -> T06 -> T09
 ```
 
 其中 T08 / T01 / T07 可按输入准备情况并行推进；T05 汇总 T07 / T03 / T04 的锚定关系和构面成果后供 T06 消费；T06 输出 F-RCSD 承载关系后供 T09 还原通行规则。P01 是异构路口通行能力 POC / 成果模块，不替代 T09 正式契约。
+
+T10 是端到端编排与 Case 证据组织模块，不替代上述项目级主业务链。T10 v1 局部编排范围为 `T01 -> T07 -> T03 -> T04 -> T05 -> T06 -> T09`；T08 作为独立前置预处理、质检与修复模块，不由 T10 v1 调用。
 
 ### 2.3 当前命名口径
 
@@ -76,6 +78,7 @@ T08 -> T01 -> T07 -> T03 -> T04 -> T05 -> T06 -> T09
 | T07 | 迁移 T02 1:1 锚定能力，并基于 T05 relation 做无路口面特征补锚。 |
 | T08 | SWSD / RCSD 预处理与质检修复模块，为 T01 / T03 / T04 / T05 / T06 / T09 提供规范输入。 |
 | T09 | 基于 SWSD Laneinfo / restriction 与 T06 F-RCSD 承载关系还原路口级通行规则。 |
+| T10 | 端到端业务流程编排与 Case 级证据组织模块；v1 编排 T01 / T07 / T03 / T04 / T05 / T06 / T09，T08 独立运行。 |
 | P01 | 异构路口通行能力 POC / 成果模块，不作为 T09 正式替代契约。 |
 
 更细的模块业务说明以 `docs/doc-governance/current-module-inventory.md` 为准。
@@ -128,5 +131,6 @@ T08 -> T01 -> T07 -> T03 -> T04 -> T05 -> T06 -> T09
 ## 8. 当前治理缺口
 
 - T09 已补登为正式模块，但模块文档面缺失，需要补齐 `modules/t09_swsd_field_rule_restoration/INTERFACE_CONTRACT.md`、`README.md`、`AGENTS.md` 与 architecture 文档。
+- T10 已启动为端到端编排模块；当前 v1 只建立 contract validation 与 Case manifest，真实模块执行编排和空间切片仍是后续缺口。
 - T02 已 Retired，但仓库级入口登记仍需在后续入口治理中同步 retired / historical 口径。
 - 项目级文档必须持续避免重复模块实现细节；模块细节应回到模块级 source-of-truth。

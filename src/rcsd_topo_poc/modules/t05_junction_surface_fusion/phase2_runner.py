@@ -573,12 +573,6 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
         relation_features=relation_features,
         blocking_errors=blocking_errors,
     )
-    pre_success_no_rcsd_target_ids = _pre_success_no_rcsd_target_ids(evidence_rows)
-    swsdnode_out_features, swsdnode_yes_nr_audit_rows, swsdnode_yes_nr_stats = _swsdnode_yes_nr_outputs(
-        swsd_nodes=swsd_nodes,
-        audit_rows=audit_rows,
-        pre_success_no_rcsd_target_ids=pre_success_no_rcsd_target_ids,
-    )
 
     write_started = perf_counter()
     log("writing outputs")
@@ -607,9 +601,6 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
         split_road_features=list(split_road_features_by_id.values()),
         generated_node_features=generated_node_features,
         grouped_node_features=grouped_node_features,
-        swsdnode_out_features=swsdnode_out_features,
-        swsdnode_yes_nr_audit_rows=swsdnode_yes_nr_audit_rows,
-        swsdnode_yes_nr_stats=swsdnode_yes_nr_stats,
         audit_rows=audit_rows,
         blocking_errors=blocking_errors,
         module_relation_audit_rows=module_relation_audit_rows,
@@ -648,9 +639,6 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
         blocking_errors_json_path=outputs["blocking_errors_json_path"],
         module_relation_audit_csv_path=outputs["module_relation_audit_csv_path"],
         module_relation_audit_json_path=outputs["module_relation_audit_json_path"],
-        swsdnode_out_path=outputs["swsdnode_out_path"],
-        swsdnode_yes_nr_audit_csv_path=outputs["swsdnode_yes_nr_audit_csv_path"],
-        swsdnode_yes_nr_audit_json_path=outputs["swsdnode_yes_nr_audit_json_path"],
         relation_cardinality_errors_csv_path=outputs["relation_cardinality_errors_csv_path"],
         relation_cardinality_errors_json_path=outputs["relation_cardinality_errors_json_path"],
         summary_path=outputs["summary_path"],
@@ -1136,142 +1124,8 @@ def _module_relation_audit_summary(
     return rows
 
 
-def _swsdnode_yes_nr_outputs(
-    *,
-    swsd_nodes: list[dict[str, Any]],
-    audit_rows: list[dict[str, Any]],
-    pre_success_no_rcsd_target_ids: set[str],
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
-    audit_no_rcsd_targets = {
-        _target_key(row.get("target_id"))
-        for row in audit_rows
-        if _text(row.get("target_id"))
-        and _text(row.get("scene")) == SCENE_NO_RCSD
-        and _int_text(row.get("status")) == str(STATUS_FAILURE)
-        and _int_text(row.get("base_id")) == "0"
-    }
-    pre_success_no_rcsd_targets = {_target_key(target_id) for target_id in pre_success_no_rcsd_target_ids if _target_key(target_id)}
-    no_rcsd_targets = audit_no_rcsd_targets
-    output_features: list[dict[str, Any]] = []
-    audit: list[dict[str, Any]] = []
-    matched_target_keys: set[str] = set()
-    no_rcsd_node_match_count = 0
-    yes_nr_candidate_count = 0
-    for node in swsd_nodes:
-        feature = _copy_feature(node)
-        props = feature.setdefault("properties", {})
-        target_id = _swsd_node_target_id(props)
-        target_key = _target_key(target_id)
-        has_evd_key = _property_key(props, "has_evd")
-        is_anchor_key = _property_key(props, "is_anchor")
-        has_evd_before = props.get(has_evd_key) if has_evd_key else None
-        is_anchor_before = props.get(is_anchor_key) if is_anchor_key else None
-        if target_key in no_rcsd_targets:
-            matched_target_keys.add(target_key)
-            no_rcsd_node_match_count += 1
-            if (
-                has_evd_key
-                and is_anchor_key
-                and _text(has_evd_before).lower() == "yes"
-                and _text(is_anchor_before).lower() == "yes"
-            ):
-                yes_nr_candidate_count += 1
-        if (
-            target_key in no_rcsd_targets
-            and has_evd_key
-            and is_anchor_key
-            and _text(has_evd_before).lower() == "yes"
-            and _text(is_anchor_before).lower() == "yes"
-        ):
-            props[has_evd_key] = "yes_nr"
-            props[is_anchor_key] = "yes_nr"
-            audit.append(
-                {
-                    "target_id": target_id,
-                    "node_id": _text(_field_value(props, "id")),
-                    "has_evd_before": has_evd_before,
-                    "is_anchor_before": is_anchor_before,
-                    "has_evd_after": "yes_nr",
-                    "is_anchor_after": "yes_nr",
-                    "reason": "no_related_rcsd",
-                }
-            )
-        output_features.append(feature)
-    stats = {
-        "swsdnode_audit_no_rcsd_target_count": len(audit_no_rcsd_targets),
-        "swsdnode_pre_success_no_rcsd_target_count": len(pre_success_no_rcsd_targets),
-        "swsdnode_pre_success_no_rcsd_audit_overlap_count": len(audit_no_rcsd_targets & pre_success_no_rcsd_targets),
-        "swsdnode_no_rcsd_target_count": len(no_rcsd_targets),
-        "swsdnode_no_rcsd_node_match_count": no_rcsd_node_match_count,
-        "swsdnode_yes_nr_candidate_count": yes_nr_candidate_count,
-        "swsdnode_no_rcsd_unmatched_target_count": len(no_rcsd_targets - matched_target_keys),
-    }
-    return output_features, audit, stats
-
-
-def _pre_success_no_rcsd_target_ids(evidence_rows: list[Any]) -> set[str]:
-    targets: set[str] = set()
-    for evidence in evidence_rows:
-        source = getattr(evidence, "source_module", "")
-        if source not in {SOURCE_T03, SOURCE_T04}:
-            continue
-        row = getattr(evidence, "row", {}) or {}
-        if _text(row.get("relation_state")) != "no_related_rcsd":
-            continue
-        if _has_rcsd_candidate(row):
-            continue
-        if source == SOURCE_T03 and _t03_pre_success_no_rcsd(row):
-            targets.add(getattr(evidence, "target_id", ""))
-        if source == SOURCE_T04 and _t04_pre_success_no_rcsd(row):
-            targets.add(getattr(evidence, "target_id", ""))
-    return {_target_key(target_id) for target_id in targets if _target_key(target_id)}
-
-
-def _t03_pre_success_no_rcsd(row: dict[str, Any]) -> bool:
-    return _text(row.get("step7_state")) == "accepted" or _truthy(row.get("surface_candidate_present"))
-
-
-def _t04_pre_success_no_rcsd(row: dict[str, Any]) -> bool:
-    return _text(row.get("final_state")) == "accepted" or _truthy(row.get("surface_candidate_present"))
-
-
-def _has_rcsd_candidate(row: dict[str, Any]) -> bool:
-    fields = (
-        "base_id_candidate",
-        "required_rcsdnode_ids",
-        "required_rcsd_node_ids",
-        "selected_rcsdnode_ids",
-        "support_rcsdnode_ids",
-        "fallback_rcsdroad_ids",
-        "support_rcsdroad_ids",
-        "selected_rcsdroad_ids",
-        "required_rcsdroad_ids",
-    )
-    return any(_meaningful_candidate_values(row.get(field)) for field in fields)
-
-
-def _meaningful_candidate_values(value: Any) -> list[str]:
-    return [item for item in (_text(part) for part in _list_values(value)) if item not in {"", "-1", "0"}]
-
-
-def _truthy(value: Any) -> bool:
-    return _text(value).lower() in {"1", "true", "yes", "y", "accepted"}
-
-
-def _swsd_node_target_id(props: dict[str, Any]) -> str:
-    return normalize_target_id(_field_value(props, "mainnodeid") or _field_value(props, "id"))
-
-
 def _target_key(value: Any) -> str:
     return normalize_target_id(value)
-
-
-def _property_key(props: dict[str, Any], field_name: str) -> str | None:
-    expected = field_name.lower()
-    for key in props:
-        if str(key).lower() == expected:
-            return key
-    return None
 
 
 def _module_audit_scenario(decision: Any) -> str:

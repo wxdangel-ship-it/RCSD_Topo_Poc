@@ -228,15 +228,14 @@ Phase 2 输出：
 - `intersection_match_all.geojson`，CRS 为 CRS84 / WGS84 lon-lat，字段固定为 `target_id / base_id / status / level / is_highway`。
 - `rcsdroad_out.gpkg`、`rcsdnode_out.gpkg`。
 - `rcsdroad_split.gpkg`、`rcsdnode_generated.gpkg`、`rcsdnode_grouped.gpkg`。
-- `swsdnode_out.gpkg`：final SWSD `nodes.gpkg` 的 copy-on-write 标记输出。
-- `rcsd_junctionization_audit.csv/json`、`intersection_match_all_audit.csv/json`、`blocking_errors.csv/json`、`relation_cardinality_errors.csv/json`、`swsdnode_yes_nr_audit.csv/json`、`summary.json`。
+- `rcsd_junctionization_audit.csv/json`、`intersection_match_all_audit.csv/json`、`blocking_errors.csv/json`、`relation_cardinality_errors.csv/json`、`summary.json`。
 - `module_relation_audit_summary.csv/json`：按 T07/T02/T03/T04 输入与场景统计最终关系生产效果。
 
 Phase 2 失败统一 `status = 1`、`base_id = 0`。成功关系的 `base_id` 必须是 RCSD 语义路口主 node id，不得写普通 RCSDRoad id。T03-A 多 RCSDNode 与 T04 complex 多 RCSDNode 先归组再建关系；T03 road-only 与 T04 fallback road-only 才进入 RCSDRoad split。被 split 的原始 RCSDRoad 不进入 active `rcsdroad_out.gpkg`。
 
 Phase 2 在入口统一对 SWSD 语义路口主键做 canonical normalization：evidence `target_id`、surface `mainnodeid`、nodes `id/mainnodeid` 中的整数 ID 字符串 / 浮点字符串表达差异必须归一，例如 `622700016` 与 `622700016.0` 视为同一 target。`intersection_match_all.geojson`、junctionization audit、relation audit 与 blocking/cardinality 输出中的 `target_id` 必须使用 canonical 值。
 
-若某个 SWSD 语义路口在 Phase 2 审计中确认 `no_related_rcsd`，且对应 SWSD node 原始 `has_evd = yes / is_anchor = yes`，说明前置模块已正确锚定该 SWSD 路口但不存在可关联 RCSD 语义路口或 RCSDRoad，`swsdnode_out.gpkg` 中这两个字段必须改写为 `yes_nr`，表示 not RCSD；输入 `nodes.gpkg` 不得原地修改，标记明细写入 `swsdnode_yes_nr_audit.csv/json`。summary 必须输出 yes_nr 候选、匹配与未匹配统计，便于审计 `yes_nr=0` 的原因。T03/T04 evidence 中的“前置成功但无 RCSD”只作为诊断统计，不再作为 `yes_nr` 的硬门槛。T04 fallback road-only 即使 evidence 中出现 `no_related_rcsd`，只要存在 `fallback_rcsdroad_ids / selected_rcsdroad_ids` 并进入 road split，就不得标记 `yes_nr`。
+Phase 2 不改写 final SWSD `nodes.gpkg`，也不再输出 SWSD node copy-on-write 标记层。若某个 SWSD 语义路口在 Phase 2 审计中确认 `no_related_rcsd`，仅通过 relation failure、junctionization audit 与 module relation audit 表达，不额外改写 `has_evd / is_anchor`。
 
 Road-only 投影点落在 RCSDRoad 起终点 `min_endpoint_gap_m` 范围内时，不打断 road，不新增 RCSDNode；Phase 2 复用最近端点的 `snodeid / enodeid` 对应 RCSDNode 作为语义路口候选。若命中多个端点 RCSDNode，则按主 RCSDNode 选择规则归组后输出唯一 relation；若端点 RCSDNode 缺失，则保持失败并写 audit。
 

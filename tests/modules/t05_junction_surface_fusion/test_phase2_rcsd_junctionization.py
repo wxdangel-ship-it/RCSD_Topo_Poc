@@ -291,30 +291,12 @@ def test_no_related_rcsd_outputs_failure_with_base_id_zero(tmp_path: Path) -> No
     assert junction_audit_rows[0]["target_id"] == "200"
     coords = relation["geometry"]["coordinates"]
     assert coords[0] == coords[1]
-    swsdnode_props = _layer_props(artifacts.swsdnode_out_path)[0]
-    assert swsdnode_props["has_evd"] == "yes_nr"
-    assert swsdnode_props["is_anchor"] == "yes_nr"
-    audit_rows = json.loads(artifacts.swsdnode_yes_nr_audit_json_path.read_text(encoding="utf-8"))["rows"]
-    assert audit_rows == [
-        {
-            "target_id": "200",
-            "node_id": "200",
-            "has_evd_before": "yes",
-            "is_anchor_before": "yes",
-            "has_evd_after": "yes_nr",
-            "is_anchor_after": "yes_nr",
-            "reason": "no_related_rcsd",
-        }
-    ]
     summary = _summary(artifacts)
-    assert summary["swsdnode_yes_nr_count"] == 1
-    assert summary["swsdnode_no_rcsd_target_count"] == 1
-    assert summary["swsdnode_no_rcsd_node_match_count"] == 1
-    assert summary["swsdnode_yes_nr_candidate_count"] == 1
-    assert summary["swsdnode_no_rcsd_unmatched_target_count"] == 0
+    assert "swsdnode_out_count" not in summary
+    assert "swsdnode_out" not in summary["output_paths"]
 
 
-def test_t03_no_related_without_accepted_surface_does_not_mark_yes_nr(tmp_path: Path) -> None:
+def test_t03_no_related_without_accepted_surface_outputs_failure_only(tmp_path: Path) -> None:
     artifacts = _run_phase2(
         tmp_path,
         surface_features=[_surface("201")],
@@ -334,16 +316,11 @@ def test_t03_no_related_without_accepted_surface_does_not_mark_yes_nr(tmp_path: 
     )
 
     assert _relation_features(artifacts.relation_geojson_path)[0]["properties"]["status"] == 1
-    swsdnode_props = _layer_props(artifacts.swsdnode_out_path)[0]
-    assert swsdnode_props["has_evd"] == "yes"
-    assert swsdnode_props["is_anchor"] == "no"
     summary = _summary(artifacts)
-    assert summary["swsdnode_audit_no_rcsd_target_count"] == 1
-    assert summary["swsdnode_pre_success_no_rcsd_target_count"] == 0
-    assert summary["swsdnode_yes_nr_count"] == 0
+    assert "swsdnode_out_count" not in summary
 
 
-def test_no_related_scene_marks_yes_nr_even_when_reason_is_no_existing_rcsdintersection(tmp_path: Path) -> None:
+def test_no_related_scene_keeps_failure_even_when_reason_is_no_existing_rcsdintersection(tmp_path: Path) -> None:
     artifacts = _run_phase2(
         tmp_path,
         surface_features=[_surface("203")],
@@ -367,15 +344,11 @@ def test_no_related_scene_marks_yes_nr_even_when_reason_is_no_existing_rcsdinter
     junction_audit_rows = list(csv.DictReader(artifacts.rcsd_junctionization_audit_csv_path.open("r", encoding="utf-8")))
     assert junction_audit_rows[0]["scene"] == "no_related_rcsd"
     assert junction_audit_rows[0]["reason"] == "no_existing_rcsdintersection"
-    swsdnode_props = _layer_props(artifacts.swsdnode_out_path)[0]
-    assert swsdnode_props["has_evd"] == "yes_nr"
-    assert swsdnode_props["is_anchor"] == "yes_nr"
     summary = _summary(artifacts)
-    assert summary["swsdnode_audit_no_rcsd_target_count"] == 1
-    assert summary["swsdnode_yes_nr_count"] == 1
+    assert "swsdnode_out_count" not in summary
 
 
-def test_t04_accepted_no_related_without_rcsd_candidate_marks_yes_nr(tmp_path: Path) -> None:
+def test_t04_accepted_no_related_without_rcsd_candidate_outputs_failure_only(tmp_path: Path) -> None:
     artifacts = _run_phase2(
         tmp_path,
         surface_features=[{**_surface("202"), "properties": {**_surface("202")["properties"], "surface_sources": "T04"}}],
@@ -397,12 +370,8 @@ def test_t04_accepted_no_related_without_rcsd_candidate_marks_yes_nr(tmp_path: P
     relation = _relation_features(artifacts.relation_geojson_path)[0]
     assert relation["properties"]["status"] == 1
     assert relation["properties"]["base_id"] == 0
-    swsdnode_props = _layer_props(artifacts.swsdnode_out_path)[0]
-    assert swsdnode_props["has_evd"] == "yes_nr"
-    assert swsdnode_props["is_anchor"] == "yes_nr"
     summary = _summary(artifacts)
-    assert summary["swsdnode_pre_success_no_rcsd_target_count"] == 1
-    assert summary["swsdnode_yes_nr_count"] == 1
+    assert "swsdnode_out_count" not in summary
 
 
 def test_t04_fail4_fallback_relation_without_surface_outputs_success(tmp_path: Path) -> None:
@@ -746,10 +715,7 @@ def test_t04_surface_scenario_fallback_splits_even_when_evidence_state_is_no_rel
     relation = _relation_features(artifacts.relation_geojson_path)[0]
     assert relation["properties"]["status"] == 0
     assert relation["properties"]["base_id"] == 3
-    swsdnode_props = _layer_props(artifacts.swsdnode_out_path)[0]
-    assert swsdnode_props["has_evd"] == "yes"
-    assert swsdnode_props["is_anchor"] == "yes"
-    assert _summary(artifacts)["swsdnode_yes_nr_count"] == 0
+    assert "swsdnode_out_count" not in _summary(artifacts)
 
 
 def test_kind_64_roundabout_groups_connected_rcsd_semantic_junctions(tmp_path: Path) -> None:

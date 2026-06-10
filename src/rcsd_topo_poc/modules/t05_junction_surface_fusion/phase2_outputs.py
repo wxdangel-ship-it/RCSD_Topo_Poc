@@ -13,7 +13,6 @@ from .phase2_models import (
     RELATION_FIELDS,
     STATUS_FAILURE,
     STATUS_SUCCESS,
-    SWSDNODE_YES_NR_AUDIT_FIELDS,
 )
 from .phase2_relation import relation_properties
 from .phase2_relation_cardinality import (
@@ -30,7 +29,6 @@ RCSDNODE_OUT_FILENAME = "rcsdnode_out.gpkg"
 RCSDROAD_SPLIT_FILENAME = "rcsdroad_split.gpkg"
 RCSDNODE_GENERATED_FILENAME = "rcsdnode_generated.gpkg"
 RCSDNODE_GROUPED_FILENAME = "rcsdnode_grouped.gpkg"
-SWSDNODE_OUT_FILENAME = "swsdnode_out.gpkg"
 JUNCTIONIZATION_AUDIT_CSV = "rcsd_junctionization_audit.csv"
 JUNCTIONIZATION_AUDIT_JSON = "rcsd_junctionization_audit.json"
 RELATION_AUDIT_CSV = "intersection_match_all_audit.csv"
@@ -39,8 +37,6 @@ BLOCKING_ERRORS_CSV = "blocking_errors.csv"
 BLOCKING_ERRORS_JSON = "blocking_errors.json"
 MODULE_RELATION_AUDIT_CSV = "module_relation_audit_summary.csv"
 MODULE_RELATION_AUDIT_JSON = "module_relation_audit_summary.json"
-SWSDNODE_YES_NR_AUDIT_CSV = "swsdnode_yes_nr_audit.csv"
-SWSDNODE_YES_NR_AUDIT_JSON = "swsdnode_yes_nr_audit.json"
 RELATION_CARDINALITY_ERRORS_CSV = "relation_cardinality_errors.csv"
 RELATION_CARDINALITY_ERRORS_JSON = "relation_cardinality_errors.json"
 SUMMARY_FILENAME = "summary.json"
@@ -58,9 +54,6 @@ def write_phase2_outputs(
     split_road_features: list[dict[str, Any]],
     generated_node_features: list[dict[str, Any]],
     grouped_node_features: list[dict[str, Any]],
-    swsdnode_out_features: list[dict[str, Any]],
-    swsdnode_yes_nr_audit_rows: list[dict[str, Any]],
-    swsdnode_yes_nr_stats: dict[str, Any] | None = None,
     audit_rows: list[dict[str, Any]],
     blocking_errors: list[dict[str, Any]],
     module_relation_audit_rows: list[dict[str, Any]],
@@ -77,7 +70,6 @@ def write_phase2_outputs(
     rcsdroad_split_path = run_root / RCSDROAD_SPLIT_FILENAME
     rcsdnode_generated_path = run_root / RCSDNODE_GENERATED_FILENAME
     rcsdnode_grouped_path = run_root / RCSDNODE_GROUPED_FILENAME
-    swsdnode_out_path = run_root / SWSDNODE_OUT_FILENAME
     junction_audit_csv_path = run_root / JUNCTIONIZATION_AUDIT_CSV
     junction_audit_json_path = run_root / JUNCTIONIZATION_AUDIT_JSON
     relation_audit_csv_path = run_root / RELATION_AUDIT_CSV
@@ -86,8 +78,6 @@ def write_phase2_outputs(
     blocking_errors_json_path = run_root / BLOCKING_ERRORS_JSON
     module_relation_audit_csv_path = run_root / MODULE_RELATION_AUDIT_CSV
     module_relation_audit_json_path = run_root / MODULE_RELATION_AUDIT_JSON
-    swsdnode_yes_nr_audit_csv_path = run_root / SWSDNODE_YES_NR_AUDIT_CSV
-    swsdnode_yes_nr_audit_json_path = run_root / SWSDNODE_YES_NR_AUDIT_JSON
     relation_cardinality_errors_csv_path = run_root / RELATION_CARDINALITY_ERRORS_CSV
     relation_cardinality_errors_json_path = run_root / RELATION_CARDINALITY_ERRORS_JSON
     summary_path = run_root / SUMMARY_FILENAME
@@ -174,15 +164,6 @@ def write_phase2_outputs(
         output_sizes_bytes=output_sizes_bytes,
     )
     _write_with_timing(
-        "swsdnode_out",
-        swsdnode_out_path,
-        len(swsdnode_out_features),
-        lambda: write_gpkg(swsdnode_out_path, swsdnode_out_features, geometry_type="Point"),
-        progress_logger=progress_logger,
-        output_timings_sec=output_timings_sec,
-        output_sizes_bytes=output_sizes_bytes,
-    )
-    _write_with_timing(
         "rcsd_junctionization_audit_csv",
         junction_audit_csv_path,
         len(audit_rows),
@@ -258,27 +239,6 @@ def write_phase2_outputs(
         output_sizes_bytes=output_sizes_bytes,
     )
     _write_with_timing(
-        "swsdnode_yes_nr_audit_csv",
-        swsdnode_yes_nr_audit_csv_path,
-        len(swsdnode_yes_nr_audit_rows),
-        lambda: write_csv(swsdnode_yes_nr_audit_csv_path, swsdnode_yes_nr_audit_rows, SWSDNODE_YES_NR_AUDIT_FIELDS),
-        progress_logger=progress_logger,
-        output_timings_sec=output_timings_sec,
-        output_sizes_bytes=output_sizes_bytes,
-    )
-    _write_with_timing(
-        "swsdnode_yes_nr_audit_json",
-        swsdnode_yes_nr_audit_json_path,
-        len(swsdnode_yes_nr_audit_rows),
-        lambda: write_json(
-            swsdnode_yes_nr_audit_json_path,
-            {"row_count": len(swsdnode_yes_nr_audit_rows), "rows": swsdnode_yes_nr_audit_rows},
-        ),
-        progress_logger=progress_logger,
-        output_timings_sec=output_timings_sec,
-        output_sizes_bytes=output_sizes_bytes,
-    )
-    _write_with_timing(
         "relation_cardinality_errors_csv",
         relation_cardinality_errors_csv_path,
         len(relation_cardinality_errors),
@@ -316,9 +276,6 @@ def write_phase2_outputs(
         split_road_features=split_road_features,
         generated_node_features=generated_node_features,
         grouped_node_features=grouped_node_features,
-        swsdnode_out_features=swsdnode_out_features,
-        swsdnode_yes_nr_audit_rows=swsdnode_yes_nr_audit_rows,
-        swsdnode_yes_nr_stats=swsdnode_yes_nr_stats or {},
         audit_rows=audit_rows,
         blocking_errors=blocking_errors,
         module_relation_audit_rows=module_relation_audit_rows,
@@ -334,7 +291,6 @@ def write_phase2_outputs(
             "rcsdroad_split": str(rcsdroad_split_path),
             "rcsdnode_generated": str(rcsdnode_generated_path),
             "rcsdnode_grouped": str(rcsdnode_grouped_path),
-            "swsdnode_out": str(swsdnode_out_path),
             "rcsd_junctionization_audit_csv": str(junction_audit_csv_path),
             "rcsd_junctionization_audit_json": str(junction_audit_json_path),
             "intersection_match_all_audit_csv": str(relation_audit_csv_path),
@@ -343,8 +299,6 @@ def write_phase2_outputs(
             "blocking_errors_json": str(blocking_errors_json_path),
             "module_relation_audit_summary_csv": str(module_relation_audit_csv_path),
             "module_relation_audit_summary_json": str(module_relation_audit_json_path),
-            "swsdnode_yes_nr_audit_csv": str(swsdnode_yes_nr_audit_csv_path),
-            "swsdnode_yes_nr_audit_json": str(swsdnode_yes_nr_audit_json_path),
             "relation_cardinality_errors_csv": str(relation_cardinality_errors_csv_path),
             "relation_cardinality_errors_json": str(relation_cardinality_errors_json_path),
             "summary": str(summary_path),
@@ -358,7 +312,6 @@ def write_phase2_outputs(
         "rcsdroad_split_path": rcsdroad_split_path,
         "rcsdnode_generated_path": rcsdnode_generated_path,
         "rcsdnode_grouped_path": rcsdnode_grouped_path,
-        "swsdnode_out_path": swsdnode_out_path,
         "junction_audit_csv_path": junction_audit_csv_path,
         "junction_audit_json_path": junction_audit_json_path,
         "relation_audit_csv_path": relation_audit_csv_path,
@@ -367,8 +320,6 @@ def write_phase2_outputs(
         "blocking_errors_json_path": blocking_errors_json_path,
         "module_relation_audit_csv_path": module_relation_audit_csv_path,
         "module_relation_audit_json_path": module_relation_audit_json_path,
-        "swsdnode_yes_nr_audit_csv_path": swsdnode_yes_nr_audit_csv_path,
-        "swsdnode_yes_nr_audit_json_path": swsdnode_yes_nr_audit_json_path,
         "relation_cardinality_errors_csv_path": relation_cardinality_errors_csv_path,
         "relation_cardinality_errors_json_path": relation_cardinality_errors_json_path,
         "summary_path": summary_path,
@@ -410,9 +361,6 @@ def _summary(
     split_road_features: list[dict[str, Any]],
     generated_node_features: list[dict[str, Any]],
     grouped_node_features: list[dict[str, Any]],
-    swsdnode_out_features: list[dict[str, Any]],
-    swsdnode_yes_nr_audit_rows: list[dict[str, Any]],
-    swsdnode_yes_nr_stats: dict[str, Any],
     audit_rows: list[dict[str, Any]],
     blocking_errors: list[dict[str, Any]],
     module_relation_audit_rows: list[dict[str, Any]],
@@ -450,9 +398,6 @@ def _summary(
         "rcsdroad_split_count": len(split_road_features),
         "rcsdnode_generated_count": len(generated_node_features),
         "rcsdnode_grouped_count": len(grouped_node_features),
-        "swsdnode_out_count": len(swsdnode_out_features),
-        "swsdnode_yes_nr_count": len(swsdnode_yes_nr_audit_rows),
-        **swsdnode_yes_nr_stats,
         "audit_row_count": len(audit_rows),
         "blocking_error_count": len(blocking_errors),
         **cardinality_summary,

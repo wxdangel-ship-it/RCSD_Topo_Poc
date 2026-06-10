@@ -104,7 +104,7 @@ Phase 2 不重新融合路口面，不修改 Phase 1 `junction_anchor_surface.gp
 - T04 fallback 若 relation evidence 缺少场景字段，可从 accepted layer、summary、audit 或 case-level audit 补读；补读失败不得 silent fallback。
 - SWSD 环岛 `kind_2 = 64`：所有 SWSD 子 node 必须被 Phase 1 路口面覆盖；覆盖面与 `RCSDRoad.roadtype = 8` 的 road `10m` buffer 合并后形成环岛候选面；候选 RCSD 语义路口必须全组 node 都在该面内，且候选语义路口之间通过 `roadtype = 8` 的 RCSDRoad 连通，才进入 RCSDNode grouping。
 - Phase 2 入口对 SWSD 语义路口主键统一做整数 canonical normalization，覆盖 evidence `target_id`、surface `mainnodeid`、nodes `id/mainnodeid`、known target 索引和最终 relation/audit 输出；`622700016` 与 `622700016.0` 在 T05 内部视为同一 target，并统一输出 `622700016`。
-- Phase 2 审计确认 `no_related_rcsd` 时，若 SWSD node 原始 `has_evd = yes / is_anchor = yes`，在 copy-on-write `swsdnode_out.gpkg` 中将两个字段改为 `yes_nr`，表示前置已锚定但无 RCSD 关联，供最终成功率统计排除；T03/T04 evidence 的“前置成功但无 RCSD”仅作为诊断统计，不作为硬门槛。T04 fallback road-only 只要存在 road 候选并进入 split，不得标记 `yes_nr`。summary 同步输出前置诊断候选、Phase2 审计候选、节点匹配与未匹配统计，用于判断 `yes_nr=0` 的原因。
+- Phase 2 不改写 final SWSD nodes，也不输出 SWSD node copy-on-write 标记层；`no_related_rcsd` 仅通过失败 relation、junctionization audit 与 module relation audit 表达。
 
 ## 9. Phase 2 拓扑策略
 

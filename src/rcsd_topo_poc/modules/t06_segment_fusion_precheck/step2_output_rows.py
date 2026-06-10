@@ -1,0 +1,126 @@
+from __future__ import annotations
+
+from typing import Any
+
+from .buffer_segment_extraction import BufferSegmentResult
+from .schemas import feature
+
+
+def buffer_segment_row(segment_id: str, result: BufferSegmentResult) -> dict[str, Any]:
+    return {
+        "swsd_segment_id": segment_id,
+        "buffer_candidate_id": f"{segment_id}_buffer_segment",
+        "buffer_status": "passed",
+        "buffer_reason": result.reason,
+        "required_rcsd_nodes": result.required_rcsd_nodes,
+        "optional_allowed_rcsd_nodes": result.optional_allowed_rcsd_nodes,
+        "directed_rcsd_pair_nodes": result.directed_rcsd_pair_nodes,
+        "retained_rcsd_road_ids": result.retained_road_ids,
+        "candidate_rcsd_road_ids": result.candidate_road_ids,
+        "candidate_rcsd_node_ids": result.candidate_node_ids,
+        "excluded_advance_right_turn_road_ids": result.excluded_advance_right_turn_road_ids,
+        "retained_node_ids": result.retained_node_ids,
+        "inner_node_ids": result.inner_node_ids,
+        "out_node_ids": result.out_node_ids,
+        "unexpected_endpoint_node_ids": result.unexpected_endpoint_node_ids,
+        "unexpected_mapped_semantic_node_ids": result.unexpected_mapped_semantic_node_ids,
+        "selected_component_id": result.selected_component_id,
+        "candidate_road_count": result.candidate_road_count,
+        "retained_road_count": result.retained_road_count,
+        "candidate_node_count": result.candidate_node_count,
+        "retained_node_count": result.retained_node_count,
+    }
+
+
+def buffer_candidate_row(
+    *,
+    segment_id: str,
+    props: dict[str, Any],
+    directionality: str,
+    directed_swsd_pair_nodes: list[str],
+    relation: Any,
+    junc_nodes: list[str],
+    junc_kind2_exempt_nodes: list[str],
+    junc_audit: dict[str, Any],
+    result: BufferSegmentResult,
+) -> dict[str, Any]:
+    return {
+        "swsd_segment_id": segment_id,
+        "rcsd_candidate_id": f"{segment_id}_buffer_segment",
+        "candidate_strategy": "buffer_segment_extraction",
+        "candidate_status": "passed",
+        "candidate_reason": result.reason,
+        "swsd_sgrade": props.get("sgrade"),
+        "swsd_directionality": directionality,
+        "swsd_pair_nodes": props.get("pair_nodes"),
+        "directed_swsd_pair_nodes": directed_swsd_pair_nodes,
+        "original_rcsd_pair_nodes": relation.rcsd_pair_nodes,
+        "rcsd_pair_nodes": relation.rcsd_pair_nodes,
+        "directed_rcsd_pair_nodes": result.directed_rcsd_pair_nodes,
+        "swsd_junc_nodes": junc_nodes,
+        "junc_kind2_exempt_nodes": junc_kind2_exempt_nodes,
+        "rcsd_junc_nodes": relation.rcsd_junc_nodes,
+        "optional_junc_nodes": junc_audit.get("optional_junc_nodes", []),
+        "optional_junc_rcsd_nodes": junc_audit.get("optional_junc_rcsd_nodes", []),
+        "dropped_junc_nodes": junc_audit.get("dropped_junc_nodes", []),
+        "dropped_junc_relation_nodes": junc_audit.get("dropped_junc_relation_nodes", []),
+        "lost_attach_road_ids": junc_audit.get("lost_attach_road_ids", []),
+        "isolated_attach_loss_count": junc_audit.get("isolated_attach_loss_count", 0),
+        "junc_attach_loss_reason": junc_audit.get("junc_attach_loss_reason", ""),
+        "required_rcsd_nodes": result.required_rcsd_nodes,
+        "optional_allowed_rcsd_nodes": result.optional_allowed_rcsd_nodes,
+        "candidate_rcsd_road_ids": result.candidate_road_ids,
+        "candidate_rcsd_node_ids": result.candidate_node_ids,
+        "retained_rcsd_road_ids": result.retained_road_ids,
+        "retained_node_ids": result.retained_node_ids,
+        "inner_node_ids": result.inner_node_ids,
+        "out_node_ids": result.out_node_ids,
+        "unexpected_endpoint_node_ids": result.unexpected_endpoint_node_ids,
+        "unexpected_mapped_semantic_node_ids": result.unexpected_mapped_semantic_node_ids,
+        "excluded_advance_right_turn_road_ids": result.excluded_advance_right_turn_road_ids,
+        "selected_component_id": result.selected_component_id,
+        "candidate_road_count": result.candidate_road_count,
+        "retained_road_count": result.retained_road_count,
+        "candidate_node_count": result.candidate_node_count,
+        "retained_node_count": result.retained_node_count,
+    }
+
+
+def buffer_replaceable_row(candidate_feature: dict[str, Any]) -> dict[str, Any]:
+    props = dict(candidate_feature["properties"])
+    return feature(
+        {
+            "swsd_segment_id": props.get("swsd_segment_id"),
+            "rcsd_candidate_id": props.get("rcsd_candidate_id"),
+            "replacement_ready": True,
+            "replacement_strategy": props.get("candidate_strategy"),
+            "swsd_sgrade": props.get("swsd_sgrade"),
+            "swsd_directionality": props.get("swsd_directionality"),
+            "swsd_pair_nodes": props.get("swsd_pair_nodes"),
+            "directed_swsd_pair_nodes": props.get("directed_swsd_pair_nodes"),
+            "original_rcsd_pair_nodes": props.get("original_rcsd_pair_nodes"),
+            "rcsd_pair_nodes": props.get("rcsd_pair_nodes"),
+            "directed_rcsd_pair_nodes": props.get("directed_rcsd_pair_nodes"),
+            "swsd_junc_nodes": props.get("swsd_junc_nodes"),
+            "junc_kind2_exempt_nodes": props.get("junc_kind2_exempt_nodes"),
+            "rcsd_junc_nodes": props.get("rcsd_junc_nodes"),
+            "optional_junc_nodes": props.get("optional_junc_nodes"),
+            "optional_junc_rcsd_nodes": props.get("optional_junc_rcsd_nodes"),
+            "dropped_junc_nodes": props.get("dropped_junc_nodes"),
+            "dropped_junc_relation_nodes": props.get("dropped_junc_relation_nodes"),
+            "lost_attach_road_ids": props.get("lost_attach_road_ids"),
+            "isolated_attach_loss_count": props.get("isolated_attach_loss_count"),
+            "junc_attach_loss_reason": props.get("junc_attach_loss_reason"),
+            "rcsd_road_ids": props.get("retained_rcsd_road_ids"),
+            "required_rcsd_nodes": props.get("required_rcsd_nodes"),
+            "optional_allowed_rcsd_nodes": props.get("optional_allowed_rcsd_nodes"),
+            "retained_node_ids": props.get("retained_node_ids"),
+            "inner_node_ids": props.get("inner_node_ids"),
+            "out_node_ids": props.get("out_node_ids"),
+            "unexpected_endpoint_node_ids": props.get("unexpected_endpoint_node_ids"),
+            "unexpected_mapped_semantic_node_ids": props.get("unexpected_mapped_semantic_node_ids"),
+            "excluded_advance_right_turn_road_ids": props.get("excluded_advance_right_turn_road_ids"),
+            "hard_filter_passed": True,
+        },
+        candidate_feature.get("geometry"),
+    )

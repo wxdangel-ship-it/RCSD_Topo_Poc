@@ -97,8 +97,8 @@ class BufferSegmentExtractor:
         cfg = config or BufferExtractionConfig()
         pair_nodes = _canonical_ids(relation.rcsd_pair_nodes, self.node_canonicalizer)
         directed_nodes = _effective_directed_pair_nodes(pair_nodes, _canonical_ids(directed_pair_nodes or [], self.node_canonicalizer))
-        required_nodes = _canonical_ids([*relation.rcsd_pair_nodes, *relation.rcsd_junc_nodes], self.node_canonicalizer)
-        optional_nodes = _canonical_ids(optional_allowed_rcsd_nodes, self.node_canonicalizer)
+        required_nodes = pair_nodes
+        optional_nodes = _canonical_ids([*relation.rcsd_junc_nodes, *optional_allowed_rcsd_nodes], self.node_canonicalizer)
         relation_base_ids = set(_canonical_ids(list(all_relation_base_ids), self.node_canonicalizer))
         unexpected_base_ids = (
             set(_canonical_ids(list(unexpected_relation_base_ids or set()), self.node_canonicalizer))
@@ -536,7 +536,7 @@ def _prune_component_seed_based(
     reference_geometry: BaseGeometry | None,
 ) -> _PrunedGraph:
     adjacency = _adjacency_from_edges(edges)
-    allowed_nodes = (required_nodes | optional_nodes) & component_nodes
+    allowed_nodes = required_nodes & component_nodes
     extra_semantic_nodes = (semantic_nodes & component_nodes) - allowed_nodes
     corridor_edge_ids = {
         edge_id

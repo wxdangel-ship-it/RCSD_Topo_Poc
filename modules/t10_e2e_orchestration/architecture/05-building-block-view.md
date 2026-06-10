@@ -19,7 +19,16 @@
 - `validate_t10_manifest`
 - `write_t10_planning_outputs`
 
-当前只做 contract validation，不执行 T01-T09 runner。
+`orchestrator.py` 本身只做 contract validation，不执行 T01-T09 runner；真实 Case 执行由 `case_runner.py` 承担。
+
+## 2.1 case_runner
+
+`case_runner.py` 提供：
+
+- `run_t10_e2e_cases_from_package`
+- `build_t10_t06_funnel_summary`
+
+当前从 T10 Case package 执行 Case 级 replay，按阶段调用现有模块脚本或 T09 callable，并输出 root/case/stage 三层 manifest 与 T06 数据漏斗。
 
 ## 3. evidence_package
 
@@ -36,7 +45,7 @@
 
 - `build_case_spatial_input_slices`
 
-当前按 SWSD semantic junction id 定位 member nodes，使用 `radius_m` 在 `EPSG:3857` 下生成窗口，并把外部输入 slot 写成局部 GPKG。
+当前按 SWSD semantic junction id 定位 member nodes，使用 `radius_m` 在 `EPSG:3857` 下生成窗口，并把外部输入 slot 写成局部 GPKG。对 SWSD / RCSD 道路类输入，切片必须补齐被选中道路的端点节点，并保留道路完整几何以维持 replay 拓扑语义。
 
 ## 5. case_suggest
 

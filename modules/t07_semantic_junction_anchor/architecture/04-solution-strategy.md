@@ -1,5 +1,7 @@
 # 04 Solution Strategy
 
+本文件是 T07 的详细版需求 / 落地策略说明。凝练版业务需求见 `../SPEC.md`，稳定输入输出、业务规则和入口契约见 `../INTERFACE_CONTRACT.md`。
+
 ## 主策略
 
 1. Step1 / Step2 读取 `nodes / DriveZone / RCSDIntersection`，严格校验字段、CRS 与 geometry。

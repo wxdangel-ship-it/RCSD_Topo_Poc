@@ -4,10 +4,11 @@
 
 ## 开工前先读
 
-1. `README.md`：先理解凝练版业务需求、输入输出和对错边界。
-2. `architecture/04-solution-strategy.md`：再理解 Step1/2/3 详细业务落地策略。
-3. `INTERFACE_CONTRACT.md`：最后确认稳定输入、输出、callable、参数和验收口径。
-4. 涉及上游数据时，回看 T01、T06、T08 的模块契约。
+1. `README.md`：先确认模块阅读入口、当前状态和文档职责。
+2. `SPEC.md`：理解凝练版业务需求、输入输出和对错边界。
+3. `architecture/04-solution-strategy.md`：理解 Step1/2/3 详细业务落地策略。
+4. `INTERFACE_CONTRACT.md`：确认稳定输入、输出、callable、参数和验收口径。
+5. 涉及上游数据时，回看 T01、T06、T08 的模块契约。
 
 ## 模块边界
 
@@ -25,7 +26,7 @@
 
 ## 修改规则
 
-- 修改 T09 文档时必须保持 `README.md`、`INTERFACE_CONTRACT.md`、`architecture/04-solution-strategy.md` 对齐。
+- 修改 T09 文档时必须保持 `README.md`、`SPEC.md`、`INTERFACE_CONTRACT.md`、`architecture/04-solution-strategy.md` 对齐。
 - 修改 T09 实现前必须检查目标 `.py` 文件字节数，遵守 repo root `AGENTS.md` 的 100KB 硬阈值。
 - 若需要改变上游 T06 relation、T08 Tool7 / Tool8 输出语义或 T01 Segment 语义，必须停止并回报。
 

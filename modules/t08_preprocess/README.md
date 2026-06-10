@@ -1,125 +1,41 @@
 # T08 预处理
 
-`t08_preprocess` 是项目正式预处理模块。当前提供九个工具：
+本文件是 T08 的模块阅读入口和文档索引。凝练版业务需求见 `SPEC.md`，详细业务落地见 `architecture/04-solution-strategy.md`，稳定接口见 `INTERFACE_CONTRACT.md`。
 
-- Tool1：基础矢量格式转换，支持 SHP / GeoJSON 转 GPKG 与 GPKG 转 GeoJSON。
-- Tool2：Road 数据预处理，补充 `patch_id` 与原始 `kind`，并输出 `17` 主辅路出入口删除事件 Road。
-- Tool3：Nodes 类型聚合，补充 `kind_2 / grade_2` 并聚合环岛 mainnode。
-- Tool4：路口类型修复，基于 Nodes `kind_2` 与可选 Tool6 质检成果输出完整 Nodes、可选 Roads 与 audit Nodes，不改写输入。
-- Tool5：复杂路口预处理，构建复杂分歧 / 合流路口，并可基于 `RCSDIntersection` 识别和处理错误 1 对多路口，输出 audit Nodes。
-- Tool6：Nodes 类型质检，输出人工质检 CSV 与 `node_error_tool6.gpkg`，不改写输入 Nodes/Roads。
-- Tool7：交通限制显性化，读取 SW C 表与 SW Node/Road，将 `CondType=1` 且 in/out link 均存在的交通限制输出为显性 LineString。
-- Tool8：Laneinfo 箭头显性化，读取 SW Laneinfo 与 SW Node/Road，将同一 `LinkID + Lane_Dir` 的 `Arrow_Dir` 聚合为 Road 方向级 `arrow` LineString。
-- Tool9：RCSD 数据清理，基于道路面过滤 RCSDNode 语义组与 RCSDRoad 起终点拓扑，输出清理后的 Node/Road。
+## 1. 当前状态
+
+- 生命周期：Active。
+- 当前主职责：提供 SWSD / RCSD 正式预处理、质检、修复和显性化工具。
+- 上游：原始 SWSD / RCSD / patch / restriction / Laneinfo 数据。
+- 下游：T01、T03、T04、T05、T06、T09。
+
+## 2. 文档职责
+
+| 文档 | 承载内容 |
+|---|---|
+| `SPEC.md` | 凝练版模块业务需求。 |
+| `architecture/04-solution-strategy.md` | Tool1-Tool9 详细需求 / 落地策略。 |
+| `INTERFACE_CONTRACT.md` | Tool1-Tool9 输入输出、入口、参数和验收契约。 |
+| `architecture/05-building-block-view.md` | 实现构件职责映射。 |
+| `architecture/10-quality-requirements.md` | 质量、审计、GIS / 拓扑和性能要求。 |
+| `architecture/11-risks-and-technical-debt.md` | 当前风险与技术债。 |
+| `architecture/12-glossary.md` | 模块术语。 |
+
+## 3. 当前入口位置
+
+T08 通过已登记 `scripts/t08_tool*.py` 执行 Tool1-Tool9。每个工具的参数、输入输出和约束以 `INTERFACE_CONTRACT.md` 为准。
+
+## 4. 阅读顺序
+
+1. `SPEC.md`
+2. `architecture/04-solution-strategy.md`
+3. `INTERFACE_CONTRACT.md`
+4. `architecture/05-building-block-view.md`
+5. `architecture/10-quality-requirements.md`
+6. `architecture/11-risks-and-technical-debt.md`
+7. `architecture/12-glossary.md`
+8. `AGENTS.md`
+
+## 5. 命名提示
 
 T08 成果输出文件名统一在扩展名前以 `_toolX` 结尾，`X` 为工具编号。
-
-## 运行入口
-
-```bash
-.venv/bin/python scripts/t08_tool1_vector_convert.py --help
-.venv/bin/python scripts/t08_tool2_road_preprocess.py --help
-.venv/bin/python scripts/t08_tool3_nodes_type_aggregation.py --help
-.venv/bin/python scripts/t08_tool4_junction_type_repair.py --help
-.venv/bin/python scripts/t08_tool5_complex_junction_preprocess.py --help
-.venv/bin/python scripts/t08_tool6_nodes_type_qc.py --help
-.venv/bin/python scripts/t08_tool7_traffic_restriction.py --help
-.venv/bin/python scripts/t08_tool8_lane_arrow.py --help
-.venv/bin/python scripts/t08_tool9_rcsd_cleaning.py --help
-```
-
-## 内网示例
-
-```bash
-.venv/bin/python scripts/t08_tool1_vector_convert.py \
-  --input-shp /mnt/d/TestData/POC_Data/input/A200_road.shp \
-  --input-shp /mnt/d/TestData/POC_Data/input/A200_node.shp \
-  --input-geojson /mnt/d/TestData/POC_Data/input/A200_area.geojson \
-  --input-gpkg /mnt/d/TestData/POC_Data/input/A200_node.gpkg
-```
-
-```bash
-.venv/bin/python scripts/t08_tool2_road_preprocess.py \
-  --road-gpkg /mnt/d/TestData/POC_Data/t08_preprocess/gpkg/A200_road.gpkg \
-  --patch-road-gpkg /mnt/d/TestData/POC_Data/input/rc_patch_road.gpkg \
-  --raw-kind-road-gpkg /mnt/d/TestData/POC_Data/input/raw_road_kind.gpkg \
-  --road-patch-output /mnt/d/TestData/POC_Data/t08_preprocess/road/t08_road_patch_tool2.gpkg \
-  --road-patch-unmatched-output /mnt/d/TestData/POC_Data/t08_preprocess/road/t08_road_patch_unmatched_tool2.gpkg \
-  --road-patch-kind-output /mnt/d/TestData/POC_Data/t08_preprocess/road/t08_road_patch_kind_tool2.gpkg \
-  --event-road-0a-output /mnt/d/TestData/POC_Data/t08_preprocess/road/event_road_0a_tool2.gpkg \
-  --progress-interval 10000
-```
-
-```bash
-.venv/bin/python scripts/t08_tool3_nodes_type_aggregation.py \
-  --nodes-gpkg /mnt/d/TestData/POC_Data/t08_preprocess/gpkg/A200_node.gpkg \
-  --roads-gpkg /mnt/d/TestData/POC_Data/t08_preprocess/gpkg/A200_road.gpkg \
-  --nodes-output /mnt/d/TestData/POC_Data/t08_preprocess/nodes/t08_nodes_type_aggregation_tool3.gpkg \
-  --progress-interval 10000
-```
-
-```bash
-.venv/bin/python scripts/t08_tool4_junction_type_repair.py \
-  --nodes-gpkg /mnt/d/TestData/POC_Data/t08_preprocess/nodes/t08_nodes_type_aggregation_tool3.gpkg \
-  --roads-gpkg /mnt/d/TestData/POC_Data/t08_preprocess/gpkg/A200_road.gpkg \
-  --tool6-node-error-csv /mnt/d/TestData/POC_Data/t08_preprocess/nodes/node_error_tool6.csv \
-  --nodes-output /mnt/d/TestData/POC_Data/t08_preprocess/nodes/t08_junction_type_repair_nodes_tool4.gpkg \
-  --roads-output /mnt/d/TestData/POC_Data/t08_preprocess/nodes/t08_junction_type_repair_roads_tool4.gpkg \
-  --audit-nodes-output /mnt/d/TestData/POC_Data/t08_preprocess/nodes/t08_junction_type_repair_audit_nodes_tool4.gpkg \
-  --progress-interval 10000
-```
-
-```bash
-.venv/bin/python scripts/t08_tool5_complex_junction_preprocess.py \
-  --nodes-gpkg /mnt/d/TestData/POC_Data/t08_preprocess/nodes/t08_junction_type_repair_nodes_tool4.gpkg \
-  --roads-gpkg /mnt/d/TestData/POC_Data/t08_preprocess/gpkg/A200_road.gpkg \
-  --intersection-gpkg /mnt/d/TestData/POC_Data/t08_preprocess/nodes/RCSDIntersection.gpkg \
-  --nodes-output /mnt/d/TestData/POC_Data/t08_preprocess/nodes/t08_complex_junction_nodes_tool5.gpkg \
-  --roads-output /mnt/d/TestData/POC_Data/t08_preprocess/nodes/t08_complex_junction_roads_tool5.gpkg \
-  --audit-nodes-output /mnt/d/TestData/POC_Data/t08_preprocess/nodes/t08_complex_junction_audit_nodes_tool5.gpkg \
-  --progress-interval 10000
-```
-
-```bash
-.venv/bin/python scripts/t08_tool6_nodes_type_qc.py \
-  --nodes-gpkg /mnt/d/TestData/POC_Data/t08_preprocess/nodes/t08_complex_junction_nodes_tool5.gpkg \
-  --roads-gpkg /mnt/d/TestData/POC_Data/t08_preprocess/nodes/t08_complex_junction_roads_tool5.gpkg \
-  --csv-output /mnt/d/TestData/POC_Data/t08_preprocess/nodes/node_error_tool6.csv \
-  --error-nodes-output /mnt/d/TestData/POC_Data/t08_preprocess/nodes/node_error_tool6.gpkg \
-  --progress-interval 10000
-```
-
-```bash
-.venv/bin/python scripts/t08_tool7_traffic_restriction.py \
-  --condition-gpkg /mnt/d/TestData/POC_Data/first_layer_road_net_v0/SW/MIF/Cguangdong1.gpkg \
-  --swnode-gpkg /mnt/d/TestData/POC_Data/first_layer_road_net_v0/SW/A200-2025M12-node.gpkg \
-  --swroad-gpkg /mnt/d/TestData/POC_Data/first_layer_road_net_v0/SW/A200-2025M12-road.gpkg \
-  --restriction-output /mnt/d/TestData/POC_Data/first_layer_road_net_v0/SW/sw_restriction_tool7.gpkg \
-  --progress-interval 10000
-```
-
-```bash
-.venv/bin/python scripts/t08_tool8_lane_arrow.py \
-  --lane-gpkg /mnt/d/TestData/POC_Data/first_layer_road_net_v0/SW/MIF/Laneguangdong1.gpkg \
-  --swnode-gpkg /mnt/d/TestData/POC_Data/first_layer_road_net_v0/SW/A200-2025M12-node.gpkg \
-  --swroad-gpkg /mnt/d/TestData/POC_Data/first_layer_road_net_v0/SW/A200-2025M12-road.gpkg \
-  --arrow-output /mnt/d/TestData/POC_Data/first_layer_road_net_v0/SW/sw_arrow_tool8.gpkg \
-  --progress-interval 10000
-```
-
-```bash
-.venv/bin/python scripts/t08_tool9_rcsd_cleaning.py \
-  --rcsdnode-gpkg /mnt/d/TestData/POC_Data/input/RCSDNode.gpkg \
-  --rcsdroad-gpkg /mnt/d/TestData/POC_Data/input/RCSDRoad.gpkg \
-  --road-surface-gpkg /mnt/d/TestData/POC_Data/input/road_surface.gpkg \
-  --nodes-output /mnt/d/TestData/POC_Data/t08_preprocess/rcsd/rcsdnode_clean_tool9.gpkg \
-  --roads-output /mnt/d/TestData/POC_Data/t08_preprocess/rcsd/rcsdroad_clean_tool9.gpkg \
-  --summary-output /mnt/d/TestData/POC_Data/t08_preprocess/rcsd/rcsd_clean_summary_tool9.json \
-  --progress-interval 10000
-```
-
-## 文档
-
-- 稳定契约：[INTERFACE_CONTRACT.md](INTERFACE_CONTRACT.md)
-- 架构说明：[architecture/](architecture/)
-- 变更任务书：[../../specs/t08-preprocess/](../../specs/t08-preprocess/)

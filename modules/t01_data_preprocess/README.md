@@ -1,122 +1,48 @@
 # T01 数据预处理模块
 
-> 本文件是 `T01` 的操作者入口与运行说明。长期源事实以 `architecture/06-accepted-baseline.md` 与 `INTERFACE_CONTRACT.md` 为准；如本文件与长期源事实冲突，以后者为准。
+本文件是 T01 的模块阅读入口和文档索引。凝练版业务需求见 `SPEC.md`，详细业务落地见 `architecture/04-solution-strategy.md`，稳定接口见 `INTERFACE_CONTRACT.md`。
 
-## 模块定位
+## 1. 当前状态
 
-- `T01` 以双向 Segment 构建为主流程。
-- 当前已登记 `Step5` 后基于 refreshed 结果的单向补段 continuation 与 `Step6` 聚合路径。
-- 本文件只提供操作者入口、运行方式与文档索引。
+- 生命周期：Active。
+- 当前主职责：构建 SWSD 双向与单向 Segment。
+- 上游：T08 预处理后的 SWSD `nodes / roads`。
+- 下游：T06 Segment 替换、T09 通行规则恢复。
 
-## 运行前确认
+## 2. 文档职责
 
-- repo root 标准环境先执行：
-  - `make env-sync`
-  - `make doctor`
-- 官方输入文件名：`nodes.gpkg`、`roads.gpkg`
-- 官方业务入口以 repo-level CLI 子命令为准
-- 详细输入约束、阶段语义、freeze compare 边界请分别查看：
-  - `INTERFACE_CONTRACT.md`
-  - `architecture/06-accepted-baseline.md`
+| 文档 | 承载内容 |
+|---|---|
+| `SPEC.md` | 凝练版模块业务需求：目标、范围、上下游、输入输出、关键步骤和对错边界。 |
+| `architecture/04-solution-strategy.md` | 详细版需求 / 落地策略：Step1-Step6 与单向补段如何落地。 |
+| `INTERFACE_CONTRACT.md` | 稳定输入、输出、入口、参数类别、freeze compare 与验收口径。 |
+| `architecture/06-accepted-baseline.md` | 当前 accepted baseline 业务口径。 |
+| `architecture/05-building-block-view.md` | 实现构件职责映射。 |
+| `architecture/10-quality-requirements.md` | 质量、审计、GIS / 拓扑和性能要求。 |
+| `architecture/11-risks-and-technical-debt.md` | 当前风险与技术债。 |
 
-## 官方入口
+## 3. 当前入口位置
 
-### official end-to-end
+T01 官方入口采用 repo-level CLI 子命令，具体命令、参数和辅助脚本边界以 `INTERFACE_CONTRACT.md` 为准。
 
-```bash
-.venv/bin/python -m rcsd_topo_poc t01-run-skill-v1 \
-  --road-path <roads.gpkg> \
-  --node-path <nodes.gpkg> \
-  --out-root <out_root>
-```
+常用入口类别：
 
-### oneway continuation
+- official end-to-end：`t01-run-skill-v1`
+- oneway continuation：`t01-continue-oneway-segment`
+- freeze compare：`t01-compare-freeze`
+- 分步 / 调试入口：见 `INTERFACE_CONTRACT.md`
 
-```bash
-.venv/bin/python -m rcsd_topo_poc t01-continue-oneway-segment \
-  --continue-from-dir <previous_skill_out_root_or_step5_dir> \
-  --out-root <out_root>
-```
+## 4. 阅读顺序
 
-### 分步 / 调试入口
+1. `SPEC.md`
+2. `architecture/04-solution-strategy.md`
+3. `INTERFACE_CONTRACT.md`
+4. `architecture/06-accepted-baseline.md`
+5. `architecture/05-building-block-view.md`
+6. `architecture/10-quality-requirements.md`
+7. `architecture/11-risks-and-technical-debt.md`
+8. `AGENTS.md`
 
-- `.venv/bin/python -m rcsd_topo_poc t01-step1-pair-poc`
-- `.venv/bin/python -m rcsd_topo_poc t01-step2-segment-poc`
-- `.venv/bin/python -m rcsd_topo_poc t01-s2-refresh-node-road`
-- `.venv/bin/python -m rcsd_topo_poc t01-step4-residual-graph`
-- `.venv/bin/python -m rcsd_topo_poc t01-step5-staged-residual-graph`
-- `.venv/bin/python -m rcsd_topo_poc t01-step6-segment-aggregation-poc`
-- `.venv/bin/python -m rcsd_topo_poc t01-compare-freeze`
+## 5. 入口治理提示
 
-说明：
-
-- `T01` 官方入口采用 repo-level CLI 子命令，不新增模块级私有 `.venv/bin/python -m rcsd_topo_poc.modules.*` 入口。
-- 若后续有新的官方入口，必须先满足 repo root `AGENTS.md` 的入口治理规则，并同步仓库入口注册表。
-
-## 辅助脚本（非官方模块契约）
-
-- `scripts/t01_run_full_data_skill_v1.sh`
-- `scripts/t01_run_full_data.sh`
-- `scripts/t01_pull_from_internal_github.sh`
-- `scripts/t01_pull_main_from_internal_github.sh`
-
-说明：
-
-- 这些脚本用于环境交付或批量执行辅助，不替代 repo-level CLI 子命令。
-- 若脚本与模块契约冲突，以 `INTERFACE_CONTRACT.md`、`architecture/06-accepted-baseline.md` 与 `src/rcsd_topo_poc/cli.py` 为准。
-
-## 正式输出
-
-- `nodes.gpkg`
-- `roads.gpkg`
-- `segment.gpkg`
-- `inner_nodes.gpkg`
-- `segment_error.gpkg`
-- `segment_error_s_grade_conflict.gpkg`
-- `segment_error_grade_kind_conflict.gpkg`
-- `validated_pairs_skill_v1.csv`
-- `segment_body_membership_skill_v1.csv`
-- `trunk_membership_skill_v1.csv`
-- `skill_v1_manifest.json`
-- `skill_v1_summary.json`
-- `oneway_segment_roads.gpkg`
-- `oneway_segment_build_table.csv`
-- `oneway_segment_summary.json`
-- `unsegmented_roads.gpkg`
-- `unsegmented_roads.csv`
-- `unsegmented_roads_summary.json`
-- `t01_skill_v1_evidence_bundle.txt`
-- `t01_skill_v1_evidence_bundle_size_report.json`
-
-## 文本证据包 helper（非官方 CLI）
-
-文本证据包 helper 用于内外网结果回传与轻量审计取证，不登记为正式 CLI。默认 compact 包只包含 Skill v1 freeze compare 轻量包、关键 summary / CSV / hash 与可用审计 JSON；不默认带入大体量 GPKG。需要完整向量时显式加 `--include-vectors`，需要各阶段 segment body 证据时显式加 `--include-stage-segment-roads`。
-
-打包：
-
-```bash
-.venv/bin/python -c "import sys; from rcsd_topo_poc.modules.t01_data_preprocess.text_bundle import run_t01_export_text_bundle_from_args as run; raise SystemExit(run(sys.argv[1:]))" --bundle-root <T01_OUT_ROOT> --out-txt <T01_OUT_ROOT>/t01_skill_v1_evidence_bundle.txt
-```
-
-解包：
-
-```bash
-.venv/bin/python -c "import sys; from rcsd_topo_poc.modules.t01_data_preprocess.text_bundle import run_t01_decode_text_bundle_from_args as run; raise SystemExit(run(sys.argv[1:]))" --bundle-txt <T01_OUT_ROOT>/t01_skill_v1_evidence_bundle.txt --out-dir <DECODED_DIR>
-```
-
-## 文档索引
-
-- 架构总览：`/mnt/e/Work/RCSD_Topo_Poc/modules/t01_data_preprocess/architecture/overview.md`
-- accepted baseline：`/mnt/e/Work/RCSD_Topo_Poc/modules/t01_data_preprocess/architecture/06-accepted-baseline.md`
-- 契约：`/mnt/e/Work/RCSD_Topo_Poc/modules/t01_data_preprocess/INTERFACE_CONTRACT.md`
-- 模块级规则：`/mnt/e/Work/RCSD_Topo_Poc/modules/t01_data_preprocess/AGENTS.md`
-- spec-kit 计划：`/mnt/e/Work/RCSD_Topo_Poc/specs/t01-data-preprocess/plan.md`
-- spec-kit 任务：`/mnt/e/Work/RCSD_Topo_Poc/specs/t01-data-preprocess/tasks.md`
-
-## 临时样例基线
-
-- `XXXS*` 的临时最终 Segment 基线仅用于迭代过程中的非回退检查。
-- 不覆盖 accepted baseline。
-- 记录位置：
-  - `modules/t01_data_preprocess/baselines/t01_skill_temp_segment_review_suite/TEMP_SEGMENT_BASELINE_MANIFEST.json`
-  - `modules/t01_data_preprocess/baselines/t01_skill_temp_segment_review_suite/TEMP_SEGMENT_REVIEW.md`
+新增或改变 T01 官方入口前，必须先按 repo root `AGENTS.md` 的入口治理规则获得授权，并同步仓库入口登记。

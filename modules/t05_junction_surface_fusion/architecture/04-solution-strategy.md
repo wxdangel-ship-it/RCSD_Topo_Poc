@@ -1,5 +1,7 @@
 # 04 Solution Strategy
 
+本文件是 T05 的详细版需求 / 落地策略说明。凝练版业务需求见 `../SPEC.md`，稳定输入输出、业务规则和入口契约见 `../INTERFACE_CONTRACT.md`。
+
 ## 1. Phase 1 总体策略
 
 T05 Phase 1 使用“标准化 -> 分组 -> 融合 -> 发布”的轻量链路：

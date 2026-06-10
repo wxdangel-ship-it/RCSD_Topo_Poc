@@ -1,6 +1,11 @@
 from __future__ import annotations
 
 from .case_suggest import T10CaseSuggestionArtifacts, suggest_t10_cases, write_t10_case_suggestions
+from .case_runner import (
+    T10E2ECaseRunArtifacts,
+    build_t10_t06_funnel_summary,
+    run_t10_e2e_cases_from_package,
+)
 from .contracts import T10_MODULE_ID, T10_T08_POLICY, T10_V1_CHAIN, T10_VERSION
 from .evidence_package import (
     T10CaseEvidencePackageArtifacts,
@@ -22,6 +27,7 @@ from .text_bundle import (
 
 __all__ = [
     "T10CaseEvidencePackageArtifacts",
+    "T10E2ECaseRunArtifacts",
     "T10CaseSuggestionArtifacts",
     "T10SpatialSliceResult",
     "T10MultiCaseEvidencePackageArtifacts",
@@ -38,9 +44,11 @@ __all__ = [
     "build_case_evidence_package",
     "build_case_spatial_input_slices",
     "build_multi_case_evidence_package",
+    "build_t10_t06_funnel_summary",
     "build_workflow_plan",
     "decode_t10_case_evidence_text_bundle",
     "export_t10_case_evidence_text_bundle",
+    "run_t10_e2e_cases_from_package",
     "suggest_t10_cases",
     "validate_t10_manifest",
     "write_t10_case_suggestions",

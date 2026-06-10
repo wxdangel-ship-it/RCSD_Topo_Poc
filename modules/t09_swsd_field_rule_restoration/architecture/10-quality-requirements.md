@@ -28,7 +28,8 @@
 
 ## 5. 治理要求
 
-- README 作为凝练版需求说明。
-- `architecture/04-solution-strategy.md` 作为详细版需求说明。
+- `README.md` 作为模块阅读入口。
+- `SPEC.md` 作为凝练版需求说明。
+- `architecture/04-solution-strategy.md` 作为详细版需求 / 落地策略说明。
 - `INTERFACE_CONTRACT.md` 作为稳定接口契约。
 - 实现、测试、证据包入口变化必须同步对应文档。

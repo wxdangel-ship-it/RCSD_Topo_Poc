@@ -1,6 +1,6 @@
 # 04 Solution Strategy
 
-本文件是 T09 的详细版需求说明。它用业务语言说明每个步骤如何落地，不替代 `INTERFACE_CONTRACT.md` 的稳定输入输出契约。
+本文件是 T09 的详细版需求 / 落地策略说明。凝练版业务需求见 `../SPEC.md`，稳定输入输出和入口契约见 `../INTERFACE_CONTRACT.md`。
 
 ## 1. Step1 输入归一与语义路口准备
 

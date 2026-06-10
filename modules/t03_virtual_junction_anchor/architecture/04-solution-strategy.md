@@ -1,5 +1,7 @@
 # 04 Solution Strategy
 
+本文件是 T03 的详细版需求 / 落地策略说明。凝练版业务需求见 `../SPEC.md`，稳定输入输出、状态机和入口契约见 `../INTERFACE_CONTRACT.md`。
+
 ## 1. 策略总览
 
 T03 当前处理策略按正式业务主链 `Step1~Step7` 组织：

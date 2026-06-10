@@ -1,216 +1,47 @@
-# t03_virtual_junction_anchor
+# T03 交叉 / T 型虚拟路口锚定
 
-> 本文件是 `t03_virtual_junction_anchor` 的操作者入口说明。正式契约以 `INTERFACE_CONTRACT.md` 为准，业务步骤与实现阶段映射见 `architecture/10-business-steps-vs-implementation-stages.md`。
+本文件是 T03 的模块阅读入口和文档索引。凝练版业务需求见 `SPEC.md`，详细业务落地见 `architecture/04-solution-strategy.md`，稳定接口见 `INTERFACE_CONTRACT.md`。
 
-## 1. 模块定位
+## 1. 当前状态
 
-T03 面向当前语义路口，在冻结的合法活动空间内识别 RCSD 有效关联关系，构造受约束的最终路口面，并输出正式结果、复核结果与批量执行成果。
+- 生命周期：Active。
+- 当前主职责：面向 `center_junction` 与 `single_sided_t_mouth` 构建 Step1-Step7 虚拟锚定成果。
+- 上游：T07、T08、SWSD Road/Node、DriveZone、RCSDRoad、RCSDNode。
+- 下游：T04 downstream nodes、T05 surface / relation evidence。
 
-正式业务主链按 `Step1~Step7` 表达：
+## 2. 文档职责
 
-| 步骤 | 业务职责 |
+| 文档 | 承载内容 |
 |---|---|
-| `Step1` | 当前 case 受理、代表节点与局部上下文建立 |
-| `Step2` | 模板归类 |
-| `Step3` | 合法活动空间冻结 |
-| `Step4` | RCSD 关联语义识别 |
-| `Step5` | foreign / excluded 负向约束 |
-| `Step6` | 受约束几何生成 |
-| `Step7` | 最终验收与发布 |
+| `SPEC.md` | 凝练版模块业务需求。 |
+| `architecture/04-solution-strategy.md` | Step1-Step7 详细需求 / 落地策略。 |
+| `INTERFACE_CONTRACT.md` | 输入、输出、状态机、入口和验收契约。 |
+| `architecture/10-business-steps-vs-implementation-stages.md` | 正式业务步骤与历史实现阶段命名映射。 |
+| `architecture/05-building-block-view.md` | 实现构件职责映射。 |
+| `architecture/09-quality-requirements.md` | 当前质量要求。 |
+| `history/` | 历史阶段 closeout 材料，仅用于追溯。 |
 
-`Association` 与 `Finalization` 是历史实现阶段和兼容命名，不再作为正式需求主结构。
+## 3. 当前入口位置
 
-## 2. 当前正式支持范围
+入口命令、脚本、文本证据包与 internal full-input 运行方式以 `INTERFACE_CONTRACT.md` 为准。
 
-- 当前正式模板：
-  - `center_junction`
-  - `single_sided_t_mouth`
-- Anchor61 原始样本为 `61` 个 case；`922217 / 54265667 / 502058682` 已确认为 input-gate hard-stop case。
-- 默认正式全量验收集为排除上述 3 个 input-gate case 后的 `58` 个 case；显式传入 `--case-id` 时仍可单独复跑。
-- 不纳入当前 T03 正式范围：
-  - `diverge / merge / continuous divmerge / complex 128`
-  - 环岛
-  - 概率化排序、置信度学习、自动回捞
-  - 重写 T03 Step3 的冻结规则
+入口类别：
 
-## 3. 当前入口
+- `t03-rcsd-association`
+- `t03-step3-legal-space`
+- internal full-input 已登记脚本
+- T03/T04-ready 单文件文本证据包
 
-### 3.1 RCSD 关联阶段 CLI
+## 4. 阅读顺序
 
-```bash
-.venv/bin/python -m rcsd_topo_poc t03-rcsd-association --help
-```
+1. `SPEC.md`
+2. `architecture/04-solution-strategy.md`
+3. `INTERFACE_CONTRACT.md`
+4. `architecture/10-business-steps-vs-implementation-stages.md`
+5. `architecture/05-building-block-view.md`
+6. `architecture/09-quality-requirements.md`
+7. `AGENTS.md`
 
-该 CLI 是当前 `Step4 + Step5` RCSD 关联阶段入口；正式需求主结构仍按 `Step1~Step7` 表达。
+## 5. 入口治理提示
 
-### 3.2 合法空间冻结前置入口
-
-```bash
-.venv/bin/python -m rcsd_topo_poc t03-step3-legal-space --help
-```
-
-`Step3` 是当前 T03 正式主链中的合法空间冻结步骤，也是后续 `Step4~Step7` 不得反向篡改的前置事实。
-
-### 3.3 internal full-input 脚本
-
-```bash
-OUT_ROOT=/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t03_internal_full_input \
-RUN_ID=t03_innernet_full_$(date +%Y%m%d_%H%M%S) \
-./scripts/t03_run_internal_full_input_innernet.sh
-```
-
-如需使用已有 relation 汇总做最终 1:1 校验，可额外提供：
-
-```bash
-INTERSECTION_MATCH_ALL_PATH=/path/to/intersection_match_all.geojson \
-./scripts/t03_run_internal_full_input_innernet.sh
-```
-
-常用监控：
-
-```bash
-./scripts/t03_watch_internal_full_input_innernet.sh
-```
-
-主脚本事实：
-
-- `scripts/t03_run_internal_full_input_8workers.sh` 是 T03 internal full-input 主运行脚本。
-- 必选输入：`NODES_PATH / ROADS_PATH / DRIVEZONE_PATH / RCSDROAD_PATH / RCSDNODE_PATH`。
-- `INTERSECTION_MATCH_ALL_PATH` 为可选输入；提供后作为外部 relation 校验源参与最终 `intersection_match_t03.geojson` 的 1:1 校验。
-- `INTERSECTION_MATCH_T07_PATH` 保留为旧流程兼容可选输入；不得与不同文件的 `INTERSECTION_MATCH_ALL_PATH` 同时提供。
-- 未提供任何外部 relation 校验源时，T03 仍完整执行 candidate discovery / Step1~Step7 / batch closeout，并输出自身 `intersection_match_t03.geojson`；对应 summary 中 `external_validation_enabled = false`。
-- 正式 batch 输出至少包括 `preflight.json`、`summary.json`、`virtual_intersection_polygons.gpkg`、`nodes.gpkg`、`nodes_anchor_update_audit.csv/json`、`t03_swsd_rcsd_relation_evidence.csv/json`、`intersection_match_t03.geojson`、`intersection_match_t03_summary.json`、`intersection_match_t03_cardinality_errors.csv/json`。
-- `scripts/t03_watch_internal_full_input.sh` 是对应主监控脚本。
-- 历史 finalization wrapper 已退役；当前只保留上述主脚本与内网包装脚本。
-
-### 3.4 T03/T04-ready 单文件文本证据包
-
-T03 提供 T03/T04 共用文本证据包入口，按 SWSD 语义路口 `mainnodeid` 导出标准 case-package。证据包包含 T04 所需的 `DivStripZone`：
-
-```bash
-.venv/bin/python -m rcsd_topo_poc t03-export-text-bundle \
-  --nodes-path nodes.gpkg \
-  --roads-path roads.gpkg \
-  --drivezone-path DriveZone.gpkg \
-  --divstripzone-path DivStripZone.gpkg \
-  --rcsdroad-path RCSDRoad.gpkg \
-  --rcsdnode-path RCSDNode.gpkg \
-  --mainnodeid 706389 707476 \
-  --out-txt outputs/_work/t03_text_bundle/cases.txt
-
-.venv/bin/python -m rcsd_topo_poc t03-decode-text-bundle \
-  --bundle-txt outputs/_work/t03_text_bundle/cases.txt \
-  --out-dir outputs/_work/t03_text_bundle/decoded
-```
-
-当文本证据包超过默认 `250KB` 时，导出会自动写出 `*.part_XXXX_of_YYYY.txt` 分片；解包时传入第 1 个 part 即可自动拼接。脚本包装入口：
-
-- `scripts/t03_export_text_bundle_internal_multi_mainnodeids.sh`
-- `scripts/t04_export_text_bundle_internal_multi_mainnodeids.sh`
-
-内网脚本支持位置参数或 `--mainnodeid` 传多个语义路口 ID，并支持用命令参数覆盖所有输入文件路径：
-
-```bash
-scripts/t03_export_text_bundle_internal_multi_mainnodeids.sh \
-  --nodes-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/nodes.gpkg \
-  --roads-path /mnt/d/TestData/POC_Data/first_layer_road_net_v0/T02/roads.gpkg \
-  --drivezone-path /mnt/d/TestData/POC_Data/patch_all/DriveZone.gpkg \
-  --divstripzone-path /mnt/d/TestData/POC_Data/patch_all/DivStripZone.gpkg \
-  --rcsdroad-path /mnt/d/TestData/POC_Data/RC4/RCSDRoad.gpkg \
-  --rcsdnode-path /mnt/d/TestData/POC_Data/RC4/RCSDNode.gpkg \
-  --out-txt /mnt/d/TestData/POC_Data/T03/t03_bundle.txt \
-  --mainnodeid 706389 707476
-```
-
-## 4. 主要输出
-
-### 4.1 case 级正式输出
-
-- `step3_allowed_space.gpkg`
-- `step3_status.json`
-- `step3_audit.json`
-- `association_required_rcsdnode.gpkg`
-- `association_required_rcsdroad.gpkg`
-- `association_support_rcsdnode.gpkg`
-- `association_support_rcsdroad.gpkg`
-- `association_excluded_rcsdnode.gpkg`
-- `association_excluded_rcsdroad.gpkg`
-- `association_status.json`
-- `association_audit.json`
-- `step6_polygon_seed.gpkg`
-- `step6_polygon_final.gpkg`
-- `step6_constraint_foreign_mask.gpkg`
-- `step6_status.json`
-- `step6_audit.json`
-- `step7_final_polygon.gpkg`
-- `step7_status.json`
-- `step7_audit.json`
-
-说明：`association_*` 与 `step7_*` 是当前正式输出命名。
-
-### 4.2 review-only 输出
-
-- `association_review.png`
-- `step7_review.png`
-- `t03_review_index.csv`
-- `t03_review_summary.json`
-- `t03_review_flat/`
-- `t03_review_accepted/`
-- `t03_review_rejected/`
-- `t03_review_v2_risk/`
-- `visual_checks/`
-
-`V1~V5` 只属于人工复核层，不等价于机器正式状态。
-
-### 4.3 batch / full-input 正式成果
-
-- `preflight.json`
-- `summary.json`
-- `virtual_intersection_polygons.gpkg`
-- `nodes.gpkg`
-- `nodes_anchor_update_audit.csv`
-- `nodes_anchor_update_audit.json`
-- `t03_swsd_rcsd_relation_evidence.csv/json`
-- `intersection_match_t03.geojson`
-- `intersection_match_t03_summary.json`
-- `intersection_match_t03_cardinality_errors.csv/json`
-- `_internal/<RUN_ID>/terminal_case_records/<case_id>.json`
-
-`nodes.gpkg` 只更新当前批次代表 node 的 `is_anchor`：
-
-- `accepted -> yes`
-- `rejected / runtime_failed -> fail3`
-- 若 `intersection_match_t03` 校验发现同一 SWSD 语义路口对应多个 RCSD 语义路口，该代表 node 回退为 `no`
-
-`fail3` 只属于 T03 downstream output 语义，不回写输入原始 `nodes.gpkg`，也不反向修改上游输入契约。
-
-## 5. 当前正式边界
-
-- 所有空间处理统一使用 `EPSG:3857`。
-- `Step4~Step7` 必须消费冻结 `Step3 allowed space / step3_status / step3_audit`。
-- `association_class` 只允许 `A / B / C`。
-- `association_state` 只允许 `established / review / not_established`，这是当前兼容状态字段名。
-- `step7_state` 只允许 `accepted / rejected`。
-- `B / review` 是当前正式保守策略，不视为算法缺陷；其含义是“已有 support / hook zone，但 RCSD semantic core 仍不足以直接判定主关联”。
-- `support_only` 在 `Step6` 合法收敛后允许转为 `Step7 accepted`。
-- `degree = 2` 的 `RCSDNode` 不进入 required semantic core；经其串接的 candidate `RCSDRoad` 必须先按 chain 合并，再参与 `required / support / excluded` 分类。
-- 当前 case 只处理当前 SWSD 路口所在道路面；道路面外的 SWSD / RCSD 对象不进入当前 case 主结果集合。
-- `Step6` 是受约束几何层，不是 cleanup 驱动补救层。
-- `Step6` 必须先确定 directional boundary，再在 boundary 内构面；不允许“先裁剪再把 required RC 整体补回边界外”。
-- `required RC must-cover` 当前只对 directional boundary 内的 `local required RC` 成立。
-- `Step7` 只负责最终业务发布，不重新定义 `required / support / excluded / foreign`。
-- `terminal_case_records/<case_id>.json` 是 internal full-input 的 authoritative terminal state；`t03_streamed_case_results.jsonl` 是 compact append log。
-
-## 6. 文档索引
-
-- 正式契约：`INTERFACE_CONTRACT.md`
-- 业务步骤与实现阶段映射：`architecture/10-business-steps-vs-implementation-stages.md`
-- 方案策略：`architecture/04-solution-strategy.md`
-- 质量要求：`architecture/09-quality-requirements.md`
-- 历史 closeout：
-  - `history/step3-baseline-closeout.md`
-  - `history/step4-step5-association-closeout.md`
-  - `history/step6-readiness-prep.md`
-  - `history/step6-step7-finalization-closeout.md`
-
-历史 closeout 文档用于追溯阶段性实现，不替代当前 `Step1~Step7` 正式业务结构。
+历史 `Association` 与 `Finalization` 只作为实现阶段和兼容命名出现；正式需求主结构使用 `Step1~Step7`。

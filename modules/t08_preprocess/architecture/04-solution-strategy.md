@@ -1,5 +1,7 @@
 # 04 方案策略
 
+本文件是 T08 的详细版需求 / 落地策略说明。凝练版业务需求见 `../SPEC.md`，稳定输入输出、工具入口和参数契约见 `../INTERFACE_CONTRACT.md`。
+
 ## Tool1
 
 Tool1 使用参数化 SHP / GeoJSON / GPKG 列表作为输入，逐个流式读取、可选重投影，并将输出写回输入目录下追加 `_tool1` 的目标格式文件：SHP / GeoJSON 输出 GPKG，GPKG 输出 GeoJSON。命令脚本会输出单文件开始、定量要素转换进度、结束与失败信息。

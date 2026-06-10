@@ -2,7 +2,7 @@
 
 ## 范围
 
-- 盘点日期：2026-06-09
+- 盘点日期：2026-06-10
 - 目的：用项目级语言说明当前模块业务目标、上下游关系和治理缺口
 - 非职责：不展开模块内部实现步骤、字段规则、入口参数或验收细节
 
@@ -43,7 +43,7 @@
 
 ## 当前治理缺口
 
-1. `t09_swsd_field_rule_restoration` 已补登为正式模块，但缺少 `modules/t09_swsd_field_rule_restoration/` 标准模块文档面。
+1. `t09_swsd_field_rule_restoration` 已具备初始模块文档面，后续需结合 RCSD Laneinfo 与轨迹通行证据迭代完善。
 2. `t10_e2e_orchestration` 当前仍处于 contract validation / manifest-first Case 包阶段，真实执行编排和空间切片待后续推进。
 3. `t02_junction_anchor` 已 Retired，但入口登记仍需后续同步 retired / historical 口径。
 4. 模块级实现细节应保留在模块文档，项目级盘点只维护业务目标、关系和缺口。

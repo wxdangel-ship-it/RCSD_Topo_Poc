@@ -9,7 +9,9 @@
 
 ## 2. 入口约束
 
-当前不新增 repo CLI、root `scripts/`、`Makefile` 目标、模块 `run.py` 或模块 `__main__.py`。
+当前不新增 repo CLI、`Makefile` 目标、模块 `run.py` 或模块 `__main__.py`。
+
+当前唯一正式 root 脚本入口为 `scripts/t10_pack_innernet_cases.sh`，用于内网多 Case 证据包打包与文本 bundle 分片导出；新增其它稳定入口仍需单独授权并同步入口登记。
 
 ## 3. 数据约束
 

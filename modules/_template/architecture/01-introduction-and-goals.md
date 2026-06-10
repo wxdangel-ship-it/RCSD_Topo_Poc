@@ -26,9 +26,10 @@
 本模块启动时，至少应具备以下稳定文档面：
 
 - `AGENTS.md`
+- `README.md`：凝练版需求说明，说明业务目标、上下游、输入输出、关键步骤和对错边界。
 - `INTERFACE_CONTRACT.md`
 - `architecture/01-introduction-and-goals.md`
 - `architecture/03-context-and-scope.md`
-- `architecture/04-solution-strategy.md`
+- `architecture/04-solution-strategy.md`：详细版需求说明，用中文说明每个业务步骤如何落地。
 
-随着模块成熟，再逐步补齐其余 `architecture/*`、`README.md`、`review-summary.md`、`history/README.md`。
+随着模块成熟，再逐步补齐其余 `architecture/*`、`review-summary.md`、`history/README.md`。

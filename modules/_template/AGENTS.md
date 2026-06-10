@@ -3,9 +3,9 @@
 ## 开工前先读
 
 - 先对照 repo root `AGENTS.md`、`docs/doc-governance/README.md` 与 `SPEC.md`，确认项目级边界、阅读链路和当前模块登记口径。
-- 先读 `architecture/01-introduction-and-goals.md`、`architecture/03-context-and-scope.md`、`architecture/04-solution-strategy.md`。
+- 先读 `README.md`，确认凝练版需求说明、输入输出和对错边界。
+- 再读 `architecture/04-solution-strategy.md`，确认详细版需求说明和每个业务步骤如何落地。
 - 再读 `INTERFACE_CONTRACT.md`，确认稳定输入、输出、参数类别和验收标准。
-- 若需要操作者入口，再读 `README.md`。
 - 若需要治理摘要，再读 `review-summary.md`。
 - 如需标准可复用流程，应创建 repo root `.agents/skills/<skill-name>/SKILL.md`，而不是在模块根目录新建 `SKILL.md`。
 
@@ -13,12 +13,12 @@
 
 - 必建：
   - `AGENTS.md`
+  - `README.md`
   - `INTERFACE_CONTRACT.md`
   - `architecture/01-introduction-and-goals.md`
   - `architecture/03-context-and-scope.md`
   - `architecture/04-solution-strategy.md`
 - 建议尽早补齐：
-  - `README.md`
   - `architecture/02-constraints.md`
   - `architecture/05-building-block-view.md`
   - `architecture/10-quality-requirements.md`
@@ -45,6 +45,8 @@
 ## 禁做事项
 
 - 不把 `AGENTS.md` 写成模块真相主表面。
+- 不把 `README.md` 写成运行教程集合；它首先是凝练版需求说明。
+- 不把 `architecture/04-solution-strategy.md` 写成伪代码堆砌；每个步骤必须有中文业务说明。
 - 不在没有明确任务书的情况下扩写为业务实现计划。
 - 不在模块根目录新增 `SKILL.md`。
 - 不把 `README.md`、`review-summary.md` 或临时样例说明写成 source-of-truth。

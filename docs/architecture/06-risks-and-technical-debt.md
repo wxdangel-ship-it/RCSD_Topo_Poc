@@ -8,7 +8,7 @@
 | RCSD Laneinfo / 轨迹证据缺失 | T09 对混源路口通行能力还原仍不完整 | 先以 SWSD Laneinfo / restriction 和 F-RCSD 承载关系恢复，再专项补证 |
 | 混源 F-RCSD 解释风险 | SWSD Segment 替换后 Road / Node 语义可能难追溯 | T06 / T09 必须保留 source、relation evidence 和审计摘要 |
 | 锚定召回与准确率权衡 | 兜底关系提高替换率，但可能引入误关联 | T05 汇总关系时区分正式、兜底、review-only 证据 |
-| T09 模块文档面缺失 | 正式模块身份与模块级契约不匹配 | 后续逐模块治理补齐 T09 标准文档面 |
+| T09 通行证据缺口 | T09 已具备模块文档面，但 RCSD Laneinfo 与轨迹通行证据仍不足 | 后续专项补充 RCSD Laneinfo / 轨迹证据，并同步 T09 契约 |
 | T02 历史入口仍在 | Retired 生命周期与真实脚本入口容易混淆 | 后续入口治理中同步 retired / historical 口径 |
 
 ## 可接受技术债

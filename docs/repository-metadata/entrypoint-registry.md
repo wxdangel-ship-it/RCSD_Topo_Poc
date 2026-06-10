@@ -6,9 +6,9 @@
 
 ## 2. 当前登记摘要
 
-- 当前真实执行入口共 `90` 个。
+- 当前真实执行入口共 `92` 个。
 - 分布概览：
-  - repo 级入口文件：`62`（`Makefile` 1 + `scripts/` 60 + `.venv/bin/python -m rcsd_topo_poc` 1）
+  - repo 级入口文件：`64`（`Makefile` 1 + `scripts/` 62 + `.venv/bin/python -m rcsd_topo_poc` 1）
   - CLI 稳定子命令：`28`
 - 维护口径：
   - CLI 子命令以 `.venv/bin/python -m rcsd_topo_poc --help` 为准。
@@ -118,6 +118,7 @@
 | `t08_tool8_lane_arrow.py` | `scripts/t08_tool8_lane_arrow.py` | repo 级 | T08 Tool8 Laneinfo 箭头显性化，读取 SW Laneinfo、SW Node 与 SW Road，筛选 `LinkID` 存在于 SW Road 的记录，按 `LinkID + Lane_Dir` 将 `Arrow_Dir` 聚合为 Road 方向级 `arrow`，按 `direction / Lane_Dir` 输出 `sw_arrow_tool8.gpkg` 与 summary，不改写输入 | `active` | 否 |
 | `t08_tool9_rcsd_cleaning.py` | `scripts/t08_tool9_rcsd_cleaning.py` | repo 级 | T08 Tool9 RCSD 数据清理，读取 RCSDNode、RCSDRoad 与道路面 GPKG，按道路面覆盖语义组、Road 相交与起终点保留状态输出 `rcsdnode_clean_tool9.gpkg / rcsdroad_clean_tool9.gpkg` 与 summary，不改写输入 | `active` | 否 |
 | `t09_export_step3_input_text_bundle_innernet.sh` | `scripts/t09_export_step3_input_text_bundle_innernet.sh` | repo 级 | T09 内网 Step3 输入单文件文本证据包导出脚本；按中心点与 `SIZE_M` / `RADIUS_M` 空间窗口切片 SWSD nodes / roads / Segment、T08 Tool7 / Tool8 输出和 T06 Step3 FRCSD Road / Node，生成 base85 文本 bundle，超过 250KB 自动分片并可立即解包校验 | `active` | 否 |
+| `t10_pack_innernet_cases.sh` | `scripts/t10_pack_innernet_cases.sh` | repo 级 | T10 内网多 Case 证据包正式打包入口；以 SWSD semantic junction id 列表为 CaseID，读取 T10 v1 外部输入 slot，生成 `cases/<case_id>/` 结构的文件证据包并导出可自动分片的文本 bundle，可选立即解包校验 | `active` | 否 |
 
 ## 4. 新增入口脚本的准入规则
 

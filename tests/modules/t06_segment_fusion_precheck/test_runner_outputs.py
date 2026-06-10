@@ -460,6 +460,269 @@ def test_step2_rejects_rcsd_pair_nodes_that_collapse_to_one_semantic_node(tmp_pa
     assert props["failed_metric_value"]["canonical_rcsd_pair_nodes"] == ["100"]
 
 
+def test_step2_missing_junc_relation_is_optional_and_audited_as_auto_lift(tmp_path: Path) -> None:
+    segment = _write(
+        tmp_path / "segment.gpkg",
+        [
+            {
+                "properties": {"id": "s_junc", "sgrade": "主双", "pair_nodes": [1, 2], "junc_nodes": [3], "roads": ["sr1"]},
+                "geometry": LineString([(0, 0), (100, 0)]),
+            }
+        ],
+    )
+    fusion_units = _write(
+        tmp_path / "fusion_units.gpkg",
+        [
+            {
+                "properties": {"swsd_segment_id": "s_junc", "sgrade": "主双", "pair_nodes": [1, 2], "junc_nodes": [3], "roads": ["sr1"]},
+                "geometry": LineString([(0, 0), (100, 0)]),
+            }
+        ],
+    )
+    nodes = _write(
+        tmp_path / "nodes.gpkg",
+        [
+            {"properties": {"id": 1, "mainnodeid": 0, "kind_2": 4}, "geometry": Point(0, 0)},
+            {"properties": {"id": 2, "mainnodeid": 0, "kind_2": 4}, "geometry": Point(100, 0)},
+            {"properties": {"id": 3, "mainnodeid": 0, "kind_2": 4}, "geometry": Point(50, 10)},
+        ],
+    )
+    swsd_roads = _write(tmp_path / "swsd_roads.gpkg", [_road("sr1", 1, 2, 0)])
+    relation = _write(
+        tmp_path / "intersection_match_all.geojson",
+        [
+            {"properties": {"target_id": 1, "base_id": 10, "status": 0}, "geometry": Point(0, 0)},
+            {"properties": {"target_id": 2, "base_id": 20, "status": 0}, "geometry": Point(100, 0)},
+        ],
+    )
+    rcsd_nodes = _write(
+        tmp_path / "rcsdnode_out.gpkg",
+        [
+            {"properties": {"id": 10, "mainnodeid": 0}, "geometry": Point(0, 0)},
+            {"properties": {"id": 20, "mainnodeid": 0}, "geometry": Point(100, 0)},
+        ],
+    )
+    rcsd_roads = _write(
+        tmp_path / "rcsdroad_out.gpkg",
+        [{"properties": {"id": "rr1", "snodeid": 10, "enodeid": 20, "direction": 0}, "geometry": LineString([(0, 0), (100, 0)])}],
+    )
+
+    artifacts = run_t06_step2_extract_rcsd_segments(
+        swsd_fusion_units_path=fusion_units,
+        swsd_segment_path=segment,
+        swsd_roads_path=swsd_roads,
+        swsd_nodes_path=nodes,
+        intersection_match_path=relation,
+        rcsdroad_path=rcsd_roads,
+        rcsdnode_path=rcsd_nodes,
+        out_root=tmp_path / "out",
+        run_id="run",
+    )
+
+    summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
+    assert summary["replaceable_count"] == 1
+    assert summary["junc_required_blocked_count"] == 1
+    assert summary["scenario_b_auto_lift_count"] == 1
+    assert Path(summary["outputs"]["failure_business_audit_json"]).exists()
+
+    replaceable_payload = json.loads(artifacts.replaceable_gpkg_path.with_suffix(".json").read_text(encoding="utf-8"))
+    replaceable_props = replaceable_payload["features"][0]["properties"]
+    assert replaceable_props["required_rcsd_nodes"] == ["10", "20"]
+    assert replaceable_props["dropped_junc_nodes"] == ["3"]
+    assert replaceable_props["junc_attach_loss_reason"] == "junc_relation_missing_or_invalid"
+
+    audit = json.loads((artifacts.step_root / "t06_rcsd_segment_failure_business_audit.json").read_text(encoding="utf-8"))
+    audit_props = audit["features"][0]["properties"]
+    assert audit_props["failure_business_category"] == "junc_required_blocked"
+    assert audit_props["auto_fix_candidate"] is True
+
+
+def test_step2_pair_relation_failure_outputs_buffer_only_repair_candidate(tmp_path: Path) -> None:
+    segment = _write(
+        tmp_path / "segment.gpkg",
+        [
+            {
+                "properties": {"id": "s_pair", "sgrade": "主双", "pair_nodes": [1, 2], "junc_nodes": [], "roads": ["sr1"]},
+                "geometry": LineString([(0, 0), (100, 0)]),
+            }
+        ],
+    )
+    fusion_units = _write(
+        tmp_path / "fusion_units.gpkg",
+        [
+            {
+                "properties": {"swsd_segment_id": "s_pair", "sgrade": "主双", "pair_nodes": [1, 2], "junc_nodes": [], "roads": ["sr1"]},
+                "geometry": LineString([(0, 0), (100, 0)]),
+            }
+        ],
+    )
+    nodes = _write(
+        tmp_path / "nodes.gpkg",
+        [
+            {"properties": {"id": 1, "mainnodeid": 0, "kind_2": 4}, "geometry": Point(0, 0)},
+            {"properties": {"id": 2, "mainnodeid": 0, "kind_2": 4}, "geometry": Point(100, 0)},
+        ],
+    )
+    swsd_roads = _write(tmp_path / "swsd_roads.gpkg", [_road("sr1", 1, 2, 0)])
+    relation = _write(
+        tmp_path / "intersection_match_all.geojson",
+        [{"properties": {"target_id": 1, "base_id": 10, "status": 0}, "geometry": Point(0, 0)}],
+    )
+    rcsd_nodes = _write(
+        tmp_path / "rcsdnode_out.gpkg",
+        [
+            {"properties": {"id": 10, "mainnodeid": 0}, "geometry": Point(0, 0)},
+            {"properties": {"id": 20, "mainnodeid": 0}, "geometry": Point(100, 0)},
+        ],
+    )
+    rcsd_roads = _write(
+        tmp_path / "rcsdroad_out.gpkg",
+        [{"properties": {"id": "rr1", "snodeid": 10, "enodeid": 20, "direction": 0}, "geometry": LineString([(0, 0), (100, 0)])}],
+    )
+
+    artifacts = run_t06_step2_extract_rcsd_segments(
+        swsd_fusion_units_path=fusion_units,
+        swsd_segment_path=segment,
+        swsd_roads_path=swsd_roads,
+        swsd_nodes_path=nodes,
+        intersection_match_path=relation,
+        rcsdroad_path=rcsd_roads,
+        rcsdnode_path=rcsd_nodes,
+        out_root=tmp_path / "out",
+        run_id="run",
+    )
+
+    summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
+    assert summary["replaceable_count"] == 0
+    assert summary["rejected_count"] == 1
+    assert summary["repair_candidate_count"] == 1
+    assert summary["pair_anchor_suspected_error_count"] == 1
+    assert summary["pair_anchor_error_located_count"] == 1
+    assert summary["scenario_b_auto_lift_count"] == 0
+    assert summary["scenario_b_manual_review_count"] == 0
+    assert Path(summary["outputs"]["buffer_only_probe_json"]).exists()
+    assert Path(summary["outputs"]["repair_candidates_json"]).exists()
+
+    probe = json.loads((artifacts.step_root / "t06_rcsd_buffer_only_probe.json").read_text(encoding="utf-8"))
+    probe_props = probe["features"][0]["properties"]
+    assert probe_props["buffer_only_candidate_status"] == "corridor_found"
+    assert probe_props["failure_business_category"] == "pair_anchor_mismatch"
+
+    repair = json.loads((artifacts.step_root / "t06_rcsd_repair_candidates.json").read_text(encoding="utf-8"))
+    repair_props = repair["features"][0]["properties"]
+    assert repair_props["candidate_rcsd_pair_node_sets"] == [["10", "20"]]
+    assert repair_props["manual_review_required"] is False
+    assert repair_props["repair_recommendation"] == "high_confidence_pair_anchor_candidate"
+    assert repair_props["pair_anchor_error_swsd_nodes"] == ["2"]
+    assert repair_props["pair_anchor_error_original_rcsd_nodes"] == [""]
+    assert repair_props["pair_anchor_error_candidate_rcsd_nodes"] == ["20"]
+
+    replaceable = json.loads((artifacts.step_root / "t06_rcsd_segment_replaceable.json").read_text(encoding="utf-8"))
+    assert replaceable["features"] == []
+
+    audit = json.loads((artifacts.step_root / "t06_rcsd_segment_failure_business_audit.json").read_text(encoding="utf-8"))
+    audit_props = audit["features"][0]["properties"]
+    assert audit_props["segment_outcome"] == "rejected"
+    assert audit_props["manual_review_required"] is False
+    assert audit_props["repair_recommendation"] == "high_confidence_pair_anchor_candidate"
+    assert audit_props["pair_anchor_error_swsd_nodes"] == ["2"]
+    assert audit_props["pair_anchor_error_candidate_rcsd_nodes"] == ["20"]
+
+
+def test_step2_pair_anchor_diagnostic_outputs_short_connected_endpoint_cluster(tmp_path: Path) -> None:
+    segment = _write(
+        tmp_path / "segment.gpkg",
+        [
+            {
+                "properties": {"id": "s_cluster", "sgrade": "主双", "pair_nodes": [1, 2], "junc_nodes": [], "roads": ["sr1"]},
+                "geometry": LineString([(0, 0), (100, 0)]),
+            }
+        ],
+    )
+    fusion_units = _write(
+        tmp_path / "fusion_units.gpkg",
+        [
+            {
+                "properties": {"swsd_segment_id": "s_cluster", "sgrade": "主双", "pair_nodes": [1, 2], "junc_nodes": [], "roads": ["sr1"]},
+                "geometry": LineString([(0, 0), (100, 0)]),
+            }
+        ],
+    )
+    nodes = _write(
+        tmp_path / "nodes.gpkg",
+        [
+            {"properties": {"id": 1, "mainnodeid": 0, "kind_2": 4}, "geometry": Point(0, 0)},
+            {"properties": {"id": 2, "mainnodeid": 0, "kind_2": 4}, "geometry": Point(100, 0)},
+        ],
+    )
+    swsd_roads = _write(tmp_path / "swsd_roads.gpkg", [_road("sr1", 1, 2, 0)])
+    relation = _write(
+        tmp_path / "intersection_match_all.geojson",
+        [
+            {"properties": {"target_id": 1, "base_id": 11, "status": 0}, "geometry": Point(5, 0)},
+            {"properties": {"target_id": 2, "base_id": 11, "status": 0}, "geometry": Point(5, 0)},
+        ],
+    )
+    rcsd_nodes = _write(
+        tmp_path / "rcsdnode_out.gpkg",
+        [
+            {"properties": {"id": 10, "mainnodeid": 0}, "geometry": Point(0, 0)},
+            {"properties": {"id": 11, "mainnodeid": 0}, "geometry": Point(5, 0)},
+            {"properties": {"id": 20, "mainnodeid": 0}, "geometry": Point(100, 0)},
+        ],
+    )
+    rcsd_roads = _write(
+        tmp_path / "rcsdroad_out.gpkg",
+        [
+            {"properties": {"id": "rr_bridge", "snodeid": 10, "enodeid": 11, "direction": 0}, "geometry": LineString([(0, 0), (5, 0)])},
+            {"properties": {"id": "rr_main", "snodeid": 10, "enodeid": 20, "direction": 0}, "geometry": LineString([(0, 0), (100, 0)])},
+        ],
+    )
+
+    artifacts = run_t06_step2_extract_rcsd_segments(
+        swsd_fusion_units_path=fusion_units,
+        swsd_segment_path=segment,
+        swsd_roads_path=swsd_roads,
+        swsd_nodes_path=nodes,
+        intersection_match_path=relation,
+        rcsdroad_path=rcsd_roads,
+        rcsdnode_path=rcsd_nodes,
+        out_root=tmp_path / "out",
+        run_id="run",
+    )
+
+    summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
+    assert summary["replaceable_count"] == 0
+    assert summary["rejected_count"] == 1
+    assert summary["pair_anchor_suspected_error_count"] == 1
+    assert summary["pair_anchor_error_located_count"] == 1
+    assert summary["scenario_b_auto_lift_count"] == 0
+    assert summary["scenario_b_manual_review_count"] == 0
+
+    repair = json.loads((artifacts.step_root / "t06_rcsd_repair_candidates.json").read_text(encoding="utf-8"))
+    repair_props = repair["features"][0]["properties"]
+    assert repair_props["original_rcsd_pair_nodes"] == ["11", "11"]
+    assert repair_props["candidate_rcsd_pair_node_sets"] == [["10", "20"]]
+    assert repair_props["pair_anchor_error_swsd_nodes"] == ["1", "2"]
+    assert repair_props["pair_anchor_error_original_rcsd_nodes"] == ["11", "11"]
+    assert repair_props["pair_anchor_error_candidate_rcsd_nodes"] == ["10", "20"]
+    assert repair_props["pair_anchor_diagnostic_source"] == "buffer_only_endpoint_cluster"
+    assert repair_props["pair_anchor_diagnostic_reason"] == "short_connected_endpoint_cluster"
+    assert repair_props["pair_anchor_endpoint_cluster_nodes"] == [["10", "11"], ["20"]]
+    assert repair_props["pair_anchor_bridge_road_ids"] == ["rr_bridge"]
+    assert repair_props["pair_anchor_bridge_length_m"] == 5.0
+
+    replaceable = json.loads((artifacts.step_root / "t06_rcsd_segment_replaceable.json").read_text(encoding="utf-8"))
+    assert replaceable["features"] == []
+
+    audit = json.loads((artifacts.step_root / "t06_rcsd_segment_failure_business_audit.json").read_text(encoding="utf-8"))
+    audit_props = audit["features"][0]["properties"]
+    assert audit_props["segment_outcome"] == "rejected"
+    assert audit_props["repair_recommendation"] == "high_confidence_pair_anchor_candidate"
+    assert audit_props["pair_anchor_error_swsd_nodes"] == ["1", "2"]
+    assert audit_props["pair_anchor_endpoint_cluster_nodes"] == [["10", "11"], ["20"]]
+
+
 def test_step2_blocks_whole_special_junction_group_when_one_segment_is_not_replaceable(tmp_path: Path) -> None:
     segments = _write(
         tmp_path / "segment.gpkg",

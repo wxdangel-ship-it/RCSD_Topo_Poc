@@ -8,6 +8,7 @@
 - `step1_identify_fusion_units.py`：Step1 eligibility。
 - `relation_mapping.py`：T05 relation loader 与 pair/junc mapping 校验。
 - `graph_builders.py`：RCSD semantic node canonicalizer 与 buffer graph edge dataclass。
+- `buffer_only_probe.py`：Step2 失败后的 relation-independent RCSD corridor 诊断、候选 pair 打分与人工质检建议生成。
 - `step2_extract_rcsd_segments.py`：Step2 orchestration。
 - `buffer_segment_extraction.py`：Step2 buffer-based RCSDSegment 候选子图、提前右转二度链接保留 / required corridor 保留 / 排除、连通分量覆盖、最小 corridor 子图构建、裁剪与硬审计。
 - `step3_segment_replacement.py`：Step3 替换单元解析、SWSD road/node 删除集、RCSD road/node 引入集、junction C 重建与 F-RCSD 输出。当前为计划新增模块。
@@ -20,13 +21,14 @@
 - Step2 先 relation mapping，再使用 buffer-based 策略构建唯一 RCSD Segment 审查成果。
 - buffer candidate graph 使用 RCSD semantic canonical key，避免 RCSDRoad 挂在 subnode 上时把同一语义路口误判为断连。
 - seed pruning 的语义节点集合来自 T05 relation base nodes 与 `rcsdnode_out` 全局语义路口组，不只依赖当前 Segment 的 mapped nodes。
-- pruning 先保护 required-to-required 必要通道；双向 SWSD 额外保护 pair 两端正反向 directed corridor；必要通道上的额外语义节点输出为 `inner_nodes`，旁支语义节点输出为 `out_nodes` 并裁剪。
-- required semantic nodes 必须落在同一候选连通分量内；不满足时输出 buffer rejected。
-- 候选连通分量不直接作为正式 RCSDSegment；裁剪后必须基于 required semantic nodes 构建最小 corridor 子图，避免闭环与旁支被错误保留。
+- pruning 先保护 pair required-to-required 必要通道；双向 SWSD 额外保护 pair 两端正反向 directed corridor；必要通道上的额外语义节点和 optional junc 输出为 `inner_nodes`，旁支语义节点和孤立 optional junc 输出为 `out_nodes` 并裁剪。
+- pair required semantic nodes 必须落在同一候选连通分量内；不满足时输出 buffer rejected。
+- 候选连通分量不直接作为正式 RCSDSegment；裁剪后必须基于 pair required semantic nodes 构建最小 corridor 子图，避免闭环与旁支被错误保留。
 - 双向最小 corridor 的路径权重会惩罚明显短于 SWSD Segment 的 required-to-required connector，避免用路口内短连接替代完整方向 road。
 - 双向 retained corridor 内部若存在 `formway & 1024 != 0` 的调头 road，且两端 node 均已在 retained corridor 内，则保留该调头 road。
-- 裁剪后的 retained graph 必须只以 pair 对应 RCSD semantic nodes 为叶子端点；junc 或其它节点成为叶子端点时输出 buffer rejected。
+- 裁剪后的 retained graph 必须只以 pair 对应 RCSD semantic nodes 为叶子端点；未被剪除的 junc 或其它节点成为叶子端点时输出 buffer rejected，已剪除的 optional junc 必须进入 dropped / lost attach 审计。
 - 裁剪后的 retained RCSDRoad 逐条复核与 SWSD Segment buffer 的 overlap ratio；低于 `min_buffer_road_overlap_ratio` 的完整 Road 不允许进入 replaceable，以避免端点命中或极小相交把长 Road 错带入 Segment；retained RCSD 与 SWSD 的整体 50m buffer 覆盖不一致比例默认不得超过 `10%`，绝对长度默认不得超过 `20m`，任一超限即拒绝。
-- `t06_rcsd_segment_candidates` 是 buffer 成功构建的候选，`t06_rcsd_segment_replaceable` 是经过全部硬审计与特殊路口组门控后的最终可替换集合；不再执行旧 pair-to-pair BFS、主轴 / 粗长度趋势或唯一性筛选；`swsd_directionality=single` 先按 SWSDRoad `snodeid / enodeid / direction` 推导 pair source/target，再构建覆盖全部 required semantic nodes 的同向 RCSD corridor；`swsd_directionality=dual` 的 retained graph 需通过 RCSD direction 双向可达审计；`kind_2=64/128` 特殊路口按关联 Segment 全组通过后才允许进入 replaceable。
+- `t06_rcsd_segment_candidates` 是 buffer 成功构建的候选，`t06_rcsd_segment_replaceable` 是经过全部硬审计与特殊路口组门控后的最终可替换集合；不再执行旧 pair-to-pair BFS、主轴 / 粗长度趋势或唯一性筛选；`swsd_directionality=single` 先按 SWSDRoad `snodeid / enodeid / direction` 推导 pair source/target，再构建覆盖 pair required semantic nodes 的同向 RCSD corridor；`swsd_directionality=dual` 的 retained graph 需通过 RCSD direction 双向可达审计；`kind_2=64/128` 特殊路口按关联 Segment 全组通过后才允许进入 replaceable。
+- `t06_rcsd_buffer_only_probe / t06_rcsd_repair_candidates / t06_rcsd_segment_failure_business_audit` 由 Step2 orchestration 在失败或 optional junc 自动提升时生成；probe 只做诊断和候选建议。pair 锚定疑似错误若满足唯一高置信候选，或候选端点可被短距离联通 endpoint cluster 解释为同一复合路口，Step2 仍不得据此重新构建 replaceable，只把原始 pair、候选 pair、错误 SWSD 端点、cluster nodes、bridge roads 与长度写入审计。
 - Step3 以 Step2 replaceable 为唯一替换白名单，不重新做 RCSD Segment 搜索或特殊组放行判定；先按 Segment 聚合删除 / 引入集合，再消费 Step2 passed 特殊路口组审计中的内部 RCSDRoad / RCSDNode 作为组级补充，最后按语义路口 C 聚合重建 mainnodeid 与继承属性，避免逐 Segment 覆盖同一 C 造成不一致。
 - Step3 原始 id 冲突不重写、不拒绝，统一依赖 `source` 字段区分，并输出 id collision audit；新 main node 选择顺序为原 main node、剩余 SWSD node 最小 id、加入 C 的 RCSD node 最小 id。

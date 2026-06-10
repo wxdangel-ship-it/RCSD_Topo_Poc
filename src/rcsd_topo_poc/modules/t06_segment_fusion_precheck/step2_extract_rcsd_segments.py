@@ -4,11 +4,28 @@ from collections import Counter, defaultdict, deque
 from pathlib import Path
 from typing import Any
 
+from .buffer_only_probe import BufferOnlyProbe, BufferOnlyProbeResult
 from .buffer_segment_extraction import BufferExtractionConfig, BufferSegmentExtractor, BufferSegmentResult
+from .failure_business_audit import (
+    buffer_only_probe_row as _buffer_only_probe_row,
+    business_audit_stats as _business_audit_stats,
+    failure_business_audit_row as _failure_business_audit_row,
+    failure_business_category as _failure_business_category,
+    junc_failure_business_category as _junc_failure_business_category,
+    repair_candidate_row as _repair_candidate_row,
+    scenario_type as _scenario_type,
+    should_emit_repair_candidate as _should_emit_repair_candidate,
+)
 from .graph_builders import NodeCanonicalizer
 from .io import prepare_run_roots, read_features, write_feature_triplet, write_json
 from .parsing import ParseError, directionality_from_sgrade, normalize_id, parse_id_list, unique_preserve_order
+from .pair_anchor_diagnostics import PairAnchorIssueDiagnostic, build_pair_anchor_issue_diagnostic
 from .relation_mapping import RelationRecord, accepted_base_ids, build_relation_map, check_segment_relations
+from .step2_output_rows import (
+    buffer_candidate_row as _buffer_candidate_row,
+    buffer_replaceable_row as _buffer_replaceable_row,
+    buffer_segment_row as _buffer_segment_row,
+)
 from .schemas import (
     STEP2_CANDIDATE_FIELDS,
     STEP2_CANDIDATES_STEM,
@@ -16,7 +33,13 @@ from .schemas import (
     STEP2_BUFFER_REJECTED_STEM,
     STEP2_BUFFER_SEGMENT_FIELDS,
     STEP2_BUFFER_SEGMENTS_STEM,
+    STEP2_BUFFER_ONLY_PROBE_FIELDS,
+    STEP2_BUFFER_ONLY_PROBE_STEM,
     STEP2_DIR,
+    STEP2_FAILURE_BUSINESS_AUDIT_FIELDS,
+    STEP2_FAILURE_BUSINESS_AUDIT_STEM,
+    STEP2_REPAIR_CANDIDATE_FIELDS,
+    STEP2_REPAIR_CANDIDATES_STEM,
     STEP2_REJECTED_FIELDS,
     STEP2_REJECTED_STEM,
     STEP2_REPLACEABLE_FIELDS,
@@ -66,6 +89,7 @@ def run_t06_step2_extract_rcsd_segments(
     rcsd_junction_road_ids = _rcsd_internal_road_ids(rcsd_roads, rcsd_node_canonicalizer)
     rcsd_graph_edges = _rcsd_graph_edges(rcsd_roads, rcsd_node_canonicalizer)
     buffer_extractor = BufferSegmentExtractor(rcsd_road_features=rcsd_roads, rcsd_node_features=rcsd_node_features)
+    buffer_probe = BufferOnlyProbe(rcsd_road_features=rcsd_roads, rcsd_node_features=rcsd_node_features)
     buffer_config = BufferExtractionConfig(
         buffer_distance_m=buffer_distance_m,
         min_road_overlap_ratio=min_buffer_road_overlap_ratio,
@@ -79,6 +103,9 @@ def run_t06_step2_extract_rcsd_segments(
     rejected_rows: list[dict[str, Any]] = []
     buffer_segment_rows: list[dict[str, Any]] = []
     buffer_rejected_rows: list[dict[str, Any]] = []
+    buffer_only_probe_rows: list[dict[str, Any]] = []
+    repair_candidate_rows: list[dict[str, Any]] = []
+    failure_business_audit_rows: list[dict[str, Any]] = []
     relation_success_count = 0
     single_input_count = 0
     dual_input_count = 0
@@ -118,6 +145,33 @@ def run_t06_step2_extract_rcsd_segments(
 
         relation = check_segment_relations(pair_nodes=pair_nodes, junc_nodes=relation_junc_nodes, relation_map=relation_map)
         if not relation.ok:
+            probe_result = buffer_probe.probe(
+                segment_geometry=segment.get("geometry"),
+                original_rcsd_pair_nodes=relation.rcsd_pair_nodes,
+                directionality=directionality,
+                config=buffer_config,
+            )
+            failure_category = _failure_business_category(
+                relation.reject_reason or "relation_mapping_failed",
+                probe_result=probe_result,
+                relation=relation,
+                junc_audit=None,
+                diagnostic=None,
+            )
+            optional_allowed_rcsd_nodes = _optional_allowed_rcsd_nodes(
+                relation=relation,
+                relation_junc_nodes=relation_junc_nodes,
+                junc_kind2_exempt_nodes=junc_kind2_exempt_nodes,
+                relation_map=relation_map,
+            )
+            pair_anchor_diagnostic = _pair_anchor_issue_diagnostic(
+                probe_result=probe_result,
+                relation=relation,
+                failure_business_category=failure_category,
+                pair_nodes=pair_nodes,
+                rcsd_roads=rcsd_roads,
+                rcsd_node_canonicalizer=rcsd_node_canonicalizer,
+            )
             rejected_rows.append(
                 _reject(
                     segment_id,
@@ -129,6 +183,53 @@ def run_t06_step2_extract_rcsd_segments(
                     junc_kind2_exempt_nodes=junc_kind2_exempt_nodes,
                 )
             )
+            buffer_only_probe_rows.append(
+                feature(
+                    _buffer_only_probe_row(
+                        segment_id=segment_id,
+                        pair_nodes=pair_nodes,
+                        original_rcsd_pair_nodes=relation.rcsd_pair_nodes,
+                        probe_result=probe_result,
+                        failure_business_category=failure_category,
+                        source_reject_reason=relation.reject_reason or "relation_mapping_failed",
+                    ),
+                    probe_result.geometry,
+                )
+            )
+            if _should_emit_repair_candidate(probe_result):
+                repair_candidate_rows.append(
+                    feature(
+                        _repair_candidate_row(
+                            segment_id=segment_id,
+                            pair_nodes=pair_nodes,
+                            original_rcsd_pair_nodes=relation.rcsd_pair_nodes,
+                            probe_result=probe_result,
+                            failure_business_category=failure_category,
+                            source_reject_reason=relation.reject_reason or "relation_mapping_failed",
+                            pair_anchor_diagnostic=pair_anchor_diagnostic,
+                        ),
+                        probe_result.geometry,
+                    )
+                )
+            failure_business_audit_rows.append(
+                feature(
+                    _failure_business_audit_row(
+                        segment_id=segment_id,
+                        segment_outcome="rejected",
+                        reject_reason=relation.reject_reason or "relation_mapping_failed",
+                        scenario_type=_scenario_type(failure_category),
+                        failure_business_category=failure_category,
+                        pair_nodes=pair_nodes,
+                        junc_nodes=junc_nodes,
+                        relation=relation,
+                        junc_audit=None,
+                        probe_result=probe_result,
+                        root_cause_category=None,
+                        **_pair_anchor_issue_audit_kwargs(pair_anchor_diagnostic),
+                    ),
+                    segment.get("geometry"),
+                )
+            )
             continue
         relation_success_count += 1
         if directionality == "single":
@@ -136,6 +237,19 @@ def run_t06_step2_extract_rcsd_segments(
         elif directionality == "dual":
             dual_input_count += 1
         if len(set(pair_nodes)) < 2:
+            probe_result = buffer_probe.probe(
+                segment_geometry=segment.get("geometry"),
+                original_rcsd_pair_nodes=relation.rcsd_pair_nodes,
+                directionality=directionality,
+                config=buffer_config,
+            )
+            failure_category = _failure_business_category(
+                "swsd_pair_nodes_not_distinct",
+                probe_result=probe_result,
+                relation=relation,
+                junc_audit=None,
+                diagnostic=None,
+            )
             rejected_rows.append(
                 _reject(
                     segment_id,
@@ -149,9 +263,67 @@ def run_t06_step2_extract_rcsd_segments(
                     notes="SWSD Segment pair_nodes must represent two distinct semantic junctions for RCSD Segment replacement",
                 )
             )
+            buffer_only_probe_rows.append(
+                feature(
+                    _buffer_only_probe_row(
+                        segment_id=segment_id,
+                        pair_nodes=pair_nodes,
+                        original_rcsd_pair_nodes=relation.rcsd_pair_nodes,
+                        probe_result=probe_result,
+                        failure_business_category=failure_category,
+                        source_reject_reason="swsd_pair_nodes_not_distinct",
+                    ),
+                    probe_result.geometry,
+                )
+            )
+            failure_business_audit_rows.append(
+                feature(
+                    _failure_business_audit_row(
+                        segment_id=segment_id,
+                        segment_outcome="rejected",
+                        reject_reason="swsd_pair_nodes_not_distinct",
+                        scenario_type=_scenario_type(failure_category),
+                        failure_business_category=failure_category,
+                        pair_nodes=pair_nodes,
+                        junc_nodes=junc_nodes,
+                        relation=relation,
+                        junc_audit=None,
+                        probe_result=probe_result,
+                        root_cause_category=None,
+                    ),
+                    segment.get("geometry"),
+                )
+            )
             continue
         canonical_rcsd_pair_nodes = _canonical_rcsd_ids(relation.rcsd_pair_nodes, rcsd_node_canonicalizer)
         if len(set(canonical_rcsd_pair_nodes)) < 2:
+            probe_result = buffer_probe.probe(
+                segment_geometry=segment.get("geometry"),
+                original_rcsd_pair_nodes=relation.rcsd_pair_nodes,
+                directionality=directionality,
+                config=buffer_config,
+            )
+            failure_category = _failure_business_category(
+                "rcsd_pair_nodes_not_distinct",
+                probe_result=probe_result,
+                relation=relation,
+                junc_audit=None,
+                diagnostic=None,
+            )
+            optional_allowed_rcsd_nodes = _optional_allowed_rcsd_nodes(
+                relation=relation,
+                relation_junc_nodes=relation_junc_nodes,
+                junc_kind2_exempt_nodes=junc_kind2_exempt_nodes,
+                relation_map=relation_map,
+            )
+            pair_anchor_diagnostic = _pair_anchor_issue_diagnostic(
+                probe_result=probe_result,
+                relation=relation,
+                failure_business_category=failure_category,
+                pair_nodes=pair_nodes,
+                rcsd_roads=rcsd_roads,
+                rcsd_node_canonicalizer=rcsd_node_canonicalizer,
+            )
             rejected_rows.append(
                 _reject(
                     segment_id,
@@ -168,6 +340,53 @@ def run_t06_step2_extract_rcsd_segments(
                     notes="T05 relation maps the SWSD pair to the same RCSD semantic junction, so no replaceable RCSD Segment can be constructed",
                 )
             )
+            buffer_only_probe_rows.append(
+                feature(
+                    _buffer_only_probe_row(
+                        segment_id=segment_id,
+                        pair_nodes=pair_nodes,
+                        original_rcsd_pair_nodes=relation.rcsd_pair_nodes,
+                        probe_result=probe_result,
+                        failure_business_category=failure_category,
+                        source_reject_reason="rcsd_pair_nodes_not_distinct",
+                    ),
+                    probe_result.geometry,
+                )
+            )
+            if _should_emit_repair_candidate(probe_result):
+                repair_candidate_rows.append(
+                    feature(
+                        _repair_candidate_row(
+                            segment_id=segment_id,
+                            pair_nodes=pair_nodes,
+                            original_rcsd_pair_nodes=relation.rcsd_pair_nodes,
+                            probe_result=probe_result,
+                            failure_business_category=failure_category,
+                            source_reject_reason="rcsd_pair_nodes_not_distinct",
+                            pair_anchor_diagnostic=pair_anchor_diagnostic,
+                        ),
+                        probe_result.geometry,
+                    )
+                )
+            failure_business_audit_rows.append(
+                feature(
+                    _failure_business_audit_row(
+                        segment_id=segment_id,
+                        segment_outcome="rejected",
+                        reject_reason="rcsd_pair_nodes_not_distinct",
+                        scenario_type=_scenario_type(failure_category),
+                        failure_business_category=failure_category,
+                        pair_nodes=pair_nodes,
+                        junc_nodes=junc_nodes,
+                        relation=relation,
+                        junc_audit=None,
+                        probe_result=probe_result,
+                        root_cause_category=None,
+                        **_pair_anchor_issue_audit_kwargs(pair_anchor_diagnostic),
+                    ),
+                    segment.get("geometry"),
+                )
+            )
             continue
 
         directed_swsd_pair_nodes: list[str] = []
@@ -180,6 +399,19 @@ def run_t06_step2_extract_rcsd_segments(
                 swsd_node_canonicalizer=swsd_node_canonicalizer,
             )
             if direction_reason is not None:
+                probe_result = buffer_probe.probe(
+                    segment_geometry=segment.get("geometry"),
+                    original_rcsd_pair_nodes=relation.rcsd_pair_nodes,
+                    directionality=directionality,
+                    config=buffer_config,
+                )
+                failure_category = _failure_business_category(
+                    direction_reason,
+                    probe_result=probe_result,
+                    relation=relation,
+                    junc_audit=None,
+                    diagnostic=None,
+                )
                 rejected_rows.append(
                     _reject(
                         segment_id,
@@ -193,6 +425,51 @@ def run_t06_step2_extract_rcsd_segments(
                         notes="single SWSD Segment direction must be resolved from SWSDRoad snodeid/enodeid/direction",
                     )
                 )
+                buffer_only_probe_rows.append(
+                    feature(
+                        _buffer_only_probe_row(
+                            segment_id=segment_id,
+                            pair_nodes=pair_nodes,
+                            original_rcsd_pair_nodes=relation.rcsd_pair_nodes,
+                            probe_result=probe_result,
+                            failure_business_category=failure_category,
+                            source_reject_reason=direction_reason,
+                        ),
+                        probe_result.geometry,
+                    )
+                )
+                if _should_emit_repair_candidate(probe_result):
+                    repair_candidate_rows.append(
+                        feature(
+                            _repair_candidate_row(
+                                segment_id=segment_id,
+                                pair_nodes=pair_nodes,
+                                original_rcsd_pair_nodes=relation.rcsd_pair_nodes,
+                                probe_result=probe_result,
+                                failure_business_category=failure_category,
+                                source_reject_reason=direction_reason,
+                            ),
+                            probe_result.geometry,
+                        )
+                    )
+                failure_business_audit_rows.append(
+                    feature(
+                        _failure_business_audit_row(
+                            segment_id=segment_id,
+                            segment_outcome="rejected",
+                            reject_reason=direction_reason,
+                            scenario_type=_scenario_type(failure_category),
+                            failure_business_category=failure_category,
+                            pair_nodes=pair_nodes,
+                            junc_nodes=junc_nodes,
+                            relation=relation,
+                            junc_audit=None,
+                            probe_result=probe_result,
+                            root_cause_category=None,
+                        ),
+                        segment.get("geometry"),
+                    )
+                )
                 continue
             directed_rcsd_pair_nodes = _map_directed_swsd_pair_to_rcsd(
                 pair_nodes=pair_nodes,
@@ -200,6 +477,19 @@ def run_t06_step2_extract_rcsd_segments(
                 directed_swsd_pair_nodes=directed_swsd_pair_nodes,
             )
             if len(directed_rcsd_pair_nodes) != 2:
+                probe_result = buffer_probe.probe(
+                    segment_geometry=segment.get("geometry"),
+                    original_rcsd_pair_nodes=relation.rcsd_pair_nodes,
+                    directionality=directionality,
+                    config=buffer_config,
+                )
+                failure_category = _failure_business_category(
+                    "swsd_single_direction_relation_mismatch",
+                    probe_result=probe_result,
+                    relation=relation,
+                    junc_audit=None,
+                    diagnostic=None,
+                )
                 rejected_rows.append(
                     _reject(
                         segment_id,
@@ -213,8 +503,58 @@ def run_t06_step2_extract_rcsd_segments(
                         notes="resolved SWSD directed pair cannot be mapped to relation RCSD pair nodes",
                     )
                 )
+                buffer_only_probe_rows.append(
+                    feature(
+                        _buffer_only_probe_row(
+                            segment_id=segment_id,
+                            pair_nodes=pair_nodes,
+                            original_rcsd_pair_nodes=relation.rcsd_pair_nodes,
+                            probe_result=probe_result,
+                            failure_business_category=failure_category,
+                            source_reject_reason="swsd_single_direction_relation_mismatch",
+                        ),
+                        probe_result.geometry,
+                    )
+                )
+                if _should_emit_repair_candidate(probe_result):
+                    repair_candidate_rows.append(
+                        feature(
+                            _repair_candidate_row(
+                                segment_id=segment_id,
+                                pair_nodes=pair_nodes,
+                                original_rcsd_pair_nodes=relation.rcsd_pair_nodes,
+                                probe_result=probe_result,
+                                failure_business_category=failure_category,
+                                source_reject_reason="swsd_single_direction_relation_mismatch",
+                            ),
+                            probe_result.geometry,
+                        )
+                    )
+                failure_business_audit_rows.append(
+                    feature(
+                        _failure_business_audit_row(
+                            segment_id=segment_id,
+                            segment_outcome="rejected",
+                            reject_reason="swsd_single_direction_relation_mismatch",
+                            scenario_type=_scenario_type(failure_category),
+                            failure_business_category=failure_category,
+                            pair_nodes=pair_nodes,
+                            junc_nodes=junc_nodes,
+                            relation=relation,
+                            junc_audit=None,
+                            probe_result=probe_result,
+                            root_cause_category=None,
+                        ),
+                        segment.get("geometry"),
+                    )
+                )
                 continue
-        optional_allowed_rcsd_nodes = _accepted_base_ids_for_nodes_ordered(junc_kind2_exempt_nodes, relation_map)
+        optional_allowed_rcsd_nodes = _optional_allowed_rcsd_nodes(
+            relation=relation,
+            relation_junc_nodes=relation_junc_nodes,
+            junc_kind2_exempt_nodes=junc_kind2_exempt_nodes,
+            relation_map=relation_map,
+        )
         buffer_result = buffer_extractor.extract(
             segment_geometry=segment.get("geometry"),
             relation=relation,
@@ -225,6 +565,14 @@ def run_t06_step2_extract_rcsd_segments(
             require_directed_pair=directionality == "single",
             require_bidirectional=directionality == "dual",
             config=buffer_config,
+        )
+        junc_audit = _junc_attach_audit(
+            junc_nodes=relation_junc_nodes,
+            relation=relation,
+            relation_map=relation_map,
+            buffer_result=buffer_result,
+            rcsd_roads=rcsd_roads,
+            rcsd_node_canonicalizer=rcsd_node_canonicalizer,
         )
         if buffer_result.ok:
             buffer_feature = feature(_buffer_segment_row(segment_id, buffer_result), buffer_result.geometry)
@@ -238,18 +586,59 @@ def run_t06_step2_extract_rcsd_segments(
                     relation=relation,
                     junc_nodes=junc_nodes,
                     junc_kind2_exempt_nodes=junc_kind2_exempt_nodes,
+                    junc_audit=junc_audit,
                     result=buffer_result,
                 ),
                 buffer_result.geometry,
             )
             candidate_rows.append(candidate_feature)
             replaceable_rows.append(_buffer_replaceable_row(candidate_feature))
+            if junc_audit.get("dropped_junc_nodes"):
+                failure_business_audit_rows.append(
+                    feature(
+                        _failure_business_audit_row(
+                            segment_id=segment_id,
+                            segment_outcome="replaceable",
+                            reject_reason="",
+                            scenario_type="B",
+                            failure_business_category=_junc_failure_business_category(junc_audit),
+                            pair_nodes=pair_nodes,
+                            junc_nodes=junc_nodes,
+                            relation=relation,
+                            junc_audit=junc_audit,
+                            probe_result=None,
+                            root_cause_category=None,
+                        ),
+                        buffer_result.geometry,
+                    )
+                )
         else:
             diagnostic = _buffer_failure_diagnostic(
                 result=buffer_result,
                 directionality=directionality,
                 rcsd_pair_nodes=relation.rcsd_pair_nodes,
                 rcsd_graph_edges=rcsd_graph_edges,
+                rcsd_node_canonicalizer=rcsd_node_canonicalizer,
+            )
+            probe_result = buffer_probe.probe(
+                segment_geometry=segment.get("geometry"),
+                original_rcsd_pair_nodes=relation.rcsd_pair_nodes,
+                directionality=directionality,
+                config=buffer_config,
+            )
+            failure_category = _failure_business_category(
+                buffer_result.reason,
+                probe_result=probe_result,
+                relation=relation,
+                junc_audit=junc_audit,
+                diagnostic=diagnostic,
+            )
+            pair_anchor_diagnostic = _pair_anchor_issue_diagnostic(
+                probe_result=probe_result,
+                relation=relation,
+                failure_business_category=failure_category,
+                pair_nodes=pair_nodes,
+                rcsd_roads=rcsd_roads,
                 rcsd_node_canonicalizer=rcsd_node_canonicalizer,
             )
             buffer_rejected = _buffer_rejected_row(segment_id, buffer_result, diagnostic)
@@ -269,6 +658,53 @@ def run_t06_step2_extract_rcsd_segments(
                     candidate_graph_status=diagnostic.get("candidate_graph_status"),
                     directional_status=diagnostic.get("directional_status"),
                     notes=diagnostic.get("diagnostic_notes") or "buffer-based RCSD Segment construction failed",
+                )
+            )
+            buffer_only_probe_rows.append(
+                feature(
+                    _buffer_only_probe_row(
+                        segment_id=segment_id,
+                        pair_nodes=pair_nodes,
+                        original_rcsd_pair_nodes=relation.rcsd_pair_nodes,
+                        probe_result=probe_result,
+                        failure_business_category=failure_category,
+                        source_reject_reason=buffer_result.reason,
+                    ),
+                    probe_result.geometry,
+                )
+            )
+            if _should_emit_repair_candidate(probe_result):
+                repair_candidate_rows.append(
+                    feature(
+                        _repair_candidate_row(
+                            segment_id=segment_id,
+                            pair_nodes=pair_nodes,
+                            original_rcsd_pair_nodes=relation.rcsd_pair_nodes,
+                            probe_result=probe_result,
+                            failure_business_category=failure_category,
+                            source_reject_reason=buffer_result.reason,
+                            pair_anchor_diagnostic=pair_anchor_diagnostic,
+                        ),
+                        probe_result.geometry,
+                    )
+                )
+            failure_business_audit_rows.append(
+                feature(
+                    _failure_business_audit_row(
+                        segment_id=segment_id,
+                        segment_outcome="rejected",
+                        reject_reason=buffer_result.reason,
+                        scenario_type=_scenario_type(failure_category),
+                        failure_business_category=failure_category,
+                        pair_nodes=pair_nodes,
+                        junc_nodes=junc_nodes,
+                        relation=relation,
+                        junc_audit=junc_audit,
+                        probe_result=probe_result,
+                        root_cause_category=diagnostic.get("root_cause_category"),
+                        **_pair_anchor_issue_audit_kwargs(pair_anchor_diagnostic),
+                    ),
+                    segment.get("geometry"),
                 )
             )
 
@@ -295,27 +731,88 @@ def run_t06_step2_extract_rcsd_segments(
         blocking_groups_by_segment=blocking_groups_by_segment,
     )
     if removed_replaceable_segment_ids:
+        candidate_props_by_segment = {
+            str((row.get("properties") or {}).get("swsd_segment_id")): dict(row.get("properties") or {})
+            for row in candidate_rows
+            if (row.get("properties") or {}).get("swsd_segment_id") is not None
+        }
         replaceable_rows = [
             row for row in replaceable_rows if (row.get("properties") or {}).get("swsd_segment_id") not in removed_replaceable_segment_ids
         ]
-        rejected_rows.extend(
-            _reject(
-                segment_id,
-                None,
-                "special_junction_group_gate",
-                "special_junction_group_not_fully_replaceable",
-                failed_metric_name="special_junction_group_ids",
-                failed_metric_value=blocking_groups_by_segment.get(segment_id, []),
-                notes="roundabout or complex junction group has at least one associated Segment that is not replaceable",
+        for segment_id in sorted(removed_replaceable_segment_ids):
+            rejected_rows.append(
+                _reject(
+                    segment_id,
+                    None,
+                    "special_junction_group_gate",
+                    "special_junction_group_not_fully_replaceable",
+                    failed_metric_name="special_junction_group_ids",
+                    failed_metric_value=blocking_groups_by_segment.get(segment_id, []),
+                    notes="roundabout or complex junction group has at least one associated Segment that is not replaceable",
+                )
             )
-            for segment_id in sorted(removed_replaceable_segment_ids)
-        )
+            props = candidate_props_by_segment.get(segment_id, {})
+            failure_business_audit_rows.append(
+                feature(
+                    {
+                        "swsd_segment_id": segment_id,
+                        "segment_outcome": "special_gate_removed",
+                        "reject_reason": "special_junction_group_not_fully_replaceable",
+                        "scenario_type": "B",
+                        "buffer_only_candidate_status": "corridor_found",
+                        "failure_business_category": "multi_anchor_ambiguous",
+                        "auto_fix_candidate": False,
+                        "manual_review_required": True,
+                        "repair_recommendation": "manual_review_required",
+                        "swsd_pair_nodes": props.get("swsd_pair_nodes", []),
+                        "swsd_junc_nodes": props.get("swsd_junc_nodes", []),
+                        "original_rcsd_pair_nodes": props.get("rcsd_pair_nodes", []),
+                        "rcsd_pair_nodes": props.get("rcsd_pair_nodes", []),
+                        "rcsd_junc_nodes": props.get("rcsd_junc_nodes", []),
+                        "required_rcsd_nodes": props.get("required_rcsd_nodes", []),
+                        "optional_junc_nodes": props.get("optional_junc_nodes", []),
+                        "optional_junc_rcsd_nodes": props.get("optional_junc_rcsd_nodes", []),
+                        "dropped_junc_nodes": props.get("dropped_junc_nodes", []),
+                        "dropped_junc_relation_nodes": props.get("dropped_junc_relation_nodes", []),
+                        "lost_attach_road_ids": props.get("lost_attach_road_ids", []),
+                        "isolated_attach_loss_count": props.get("isolated_attach_loss_count", 0),
+                        "junc_attach_loss_reason": props.get("junc_attach_loss_reason", ""),
+                        "candidate_rcsd_pair_node_sets": [props.get("rcsd_pair_nodes", [])],
+                        "candidate_score": 0.0,
+                        "geometry_overlap_ratio": 0.0,
+                        "directionality_score": 0.0,
+                        "connectivity_score": 0.0,
+                        "shape_similarity_score": 0.0,
+                        "root_cause_category": "special_junction_group_gate",
+                        "upstream_issue_owner": "T06",
+                    },
+                    None,
+                )
+            )
 
     candidate_paths = write_feature_triplet(step_root=step_root, stem=STEP2_CANDIDATES_STEM, features=candidate_rows, fieldnames=STEP2_CANDIDATE_FIELDS)
     replaceable_paths = write_feature_triplet(step_root=step_root, stem=STEP2_REPLACEABLE_STEM, features=replaceable_rows, fieldnames=STEP2_REPLACEABLE_FIELDS)
     rejected_paths = write_feature_triplet(step_root=step_root, stem=STEP2_REJECTED_STEM, features=rejected_rows, fieldnames=STEP2_REJECTED_FIELDS)
     buffer_segment_paths = write_feature_triplet(step_root=step_root, stem=STEP2_BUFFER_SEGMENTS_STEM, features=buffer_segment_rows, fieldnames=STEP2_BUFFER_SEGMENT_FIELDS)
     buffer_rejected_paths = write_feature_triplet(step_root=step_root, stem=STEP2_BUFFER_REJECTED_STEM, features=buffer_rejected_rows, fieldnames=STEP2_BUFFER_REJECTED_FIELDS)
+    buffer_only_probe_paths = write_feature_triplet(
+        step_root=step_root,
+        stem=STEP2_BUFFER_ONLY_PROBE_STEM,
+        features=buffer_only_probe_rows,
+        fieldnames=STEP2_BUFFER_ONLY_PROBE_FIELDS,
+    )
+    repair_candidate_paths = write_feature_triplet(
+        step_root=step_root,
+        stem=STEP2_REPAIR_CANDIDATES_STEM,
+        features=repair_candidate_rows,
+        fieldnames=STEP2_REPAIR_CANDIDATE_FIELDS,
+    )
+    failure_business_audit_paths = write_feature_triplet(
+        step_root=step_root,
+        stem=STEP2_FAILURE_BUSINESS_AUDIT_STEM,
+        features=failure_business_audit_rows,
+        fieldnames=STEP2_FAILURE_BUSINESS_AUDIT_FIELDS,
+    )
     special_group_paths = write_feature_triplet(
         step_root=step_root,
         stem=STEP2_SPECIAL_JUNCTION_GROUPS_STEM,
@@ -323,6 +820,7 @@ def run_t06_step2_extract_rcsd_segments(
         fieldnames=STEP2_SPECIAL_JUNCTION_GROUP_FIELDS,
     )
     rcsd_road_stats = _rcsd_road_coverage_stats(rcsd_roads=rcsd_roads, replaceable_rows=replaceable_rows)
+    business_stats = _business_audit_stats(failure_business_audit_rows, replaceable_rows, input_count=len(fusion_units))
     summary_path = step_root / STEP2_SUMMARY
     write_json(
         summary_path,
@@ -377,6 +875,10 @@ def run_t06_step2_extract_rcsd_segments(
             "special_junction_blocked_segment_count": len(blocked_segment_ids),
             "special_junction_gate_removed_replaceable_count": len(removed_replaceable_segment_ids),
             "special_junction_group_type_counts": dict(Counter(item["properties"].get("special_junction_type") for item in special_group_rows)),
+            "buffer_only_probe_count": len(buffer_only_probe_rows),
+            "repair_candidate_count": len(repair_candidate_rows),
+            "failure_business_audit_count": len(failure_business_audit_rows),
+            **business_stats,
             **rcsd_road_stats,
             "rcsd_semantic_node_alias_count": sum(1 for raw_id, canonical_id in rcsd_node_canonicalizer.aliases.items() if raw_id != canonical_id),
             "rcsd_semantic_node_group_count": len(rcsd_node_canonicalizer.semantic_node_ids),
@@ -386,6 +888,9 @@ def run_t06_step2_extract_rcsd_segments(
                 **{f"rejected_{k}": str(v) for k, v in rejected_paths.items()},
                 **{f"buffer_segments_{k}": str(v) for k, v in buffer_segment_paths.items()},
                 **{f"buffer_rejected_{k}": str(v) for k, v in buffer_rejected_paths.items()},
+                **{f"buffer_only_probe_{k}": str(v) for k, v in buffer_only_probe_paths.items()},
+                **{f"repair_candidates_{k}": str(v) for k, v in repair_candidate_paths.items()},
+                **{f"failure_business_audit_{k}": str(v) for k, v in failure_business_audit_paths.items()},
                 **{f"special_junction_group_audit_{k}": str(v) for k, v in special_group_paths.items()},
             },
             "gis_topology_checks": {
@@ -1012,107 +1517,139 @@ def _unexpected_base_ids_for_segment(allowed_node_ids: list[str], relation_map: 
     return result
 
 
-def _buffer_segment_row(segment_id: str, result: BufferSegmentResult) -> dict[str, Any]:
-    return {
-        "swsd_segment_id": segment_id,
-        "buffer_candidate_id": f"{segment_id}_buffer_segment",
-        "buffer_status": "passed",
-        "buffer_reason": result.reason,
-        "required_rcsd_nodes": result.required_rcsd_nodes,
-        "optional_allowed_rcsd_nodes": result.optional_allowed_rcsd_nodes,
-        "directed_rcsd_pair_nodes": result.directed_rcsd_pair_nodes,
-        "retained_rcsd_road_ids": result.retained_road_ids,
-        "candidate_rcsd_road_ids": result.candidate_road_ids,
-        "candidate_rcsd_node_ids": result.candidate_node_ids,
-        "excluded_advance_right_turn_road_ids": result.excluded_advance_right_turn_road_ids,
-        "retained_node_ids": result.retained_node_ids,
-        "inner_node_ids": result.inner_node_ids,
-        "out_node_ids": result.out_node_ids,
-        "unexpected_endpoint_node_ids": result.unexpected_endpoint_node_ids,
-        "unexpected_mapped_semantic_node_ids": result.unexpected_mapped_semantic_node_ids,
-        "selected_component_id": result.selected_component_id,
-        "candidate_road_count": result.candidate_road_count,
-        "retained_road_count": result.retained_road_count,
-        "candidate_node_count": result.candidate_node_count,
-        "retained_node_count": result.retained_node_count,
-    }
-
-
-def _buffer_candidate_row(
+def _junc_attach_audit(
     *,
-    segment_id: str,
-    props: dict[str, Any],
-    directionality: str,
-    directed_swsd_pair_nodes: list[str],
-    relation: Any,
     junc_nodes: list[str],
-    junc_kind2_exempt_nodes: list[str],
-    result: BufferSegmentResult,
+    relation: Any,
+    relation_map: dict[str, RelationRecord],
+    buffer_result: BufferSegmentResult,
+    rcsd_roads: list[dict[str, Any]],
+    rcsd_node_canonicalizer: NodeCanonicalizer,
 ) -> dict[str, Any]:
+    swsd_to_rcsd: dict[str, str] = {}
+    for node_id in junc_nodes:
+        item = relation_map.get(node_id)
+        if item is None or item.status != 0 or item.base_id <= 0:
+            continue
+        try:
+            swsd_to_rcsd[node_id] = rcsd_node_canonicalizer.canonicalize(str(item.base_id))
+        except ParseError:
+            swsd_to_rcsd[node_id] = str(item.base_id)
+
+    optional_junc_nodes = list(swsd_to_rcsd)
+    optional_junc_rcsd_nodes = unique_preserve_order(list(swsd_to_rcsd.values()))
+    out_nodes = set(buffer_result.out_node_ids)
+    retained_nodes = set(buffer_result.retained_node_ids)
+    dropped_relation_nodes = [
+        node_id
+        for node_id in optional_junc_rcsd_nodes
+        if node_id in out_nodes or (buffer_result.ok and node_id not in retained_nodes)
+    ]
+    dropped_junc_nodes = unique_preserve_order(
+        [
+            *(relation.failed_junc_nodes or []),
+            *[swsd_id for swsd_id, rcsd_id in swsd_to_rcsd.items() if rcsd_id in dropped_relation_nodes],
+        ]
+    )
+    lost_attach_road_ids = _lost_attach_road_ids(
+        dropped_relation_nodes=dropped_relation_nodes,
+        buffer_result=buffer_result,
+        rcsd_roads=rcsd_roads,
+        rcsd_node_canonicalizer=rcsd_node_canonicalizer,
+    )
+    reasons: list[str] = []
+    if relation.failed_junc_nodes:
+        reasons.append("junc_relation_missing_or_invalid")
+    if dropped_relation_nodes:
+        reasons.append("isolated_optional_junc_pruned")
     return {
-        "swsd_segment_id": segment_id,
-        "rcsd_candidate_id": f"{segment_id}_buffer_segment",
-        "candidate_strategy": "buffer_segment_extraction",
-        "candidate_status": "passed",
-        "candidate_reason": result.reason,
-        "swsd_sgrade": props.get("sgrade"),
-        "swsd_directionality": directionality,
-        "swsd_pair_nodes": props.get("pair_nodes"),
-        "directed_swsd_pair_nodes": directed_swsd_pair_nodes,
-        "rcsd_pair_nodes": relation.rcsd_pair_nodes,
-        "directed_rcsd_pair_nodes": result.directed_rcsd_pair_nodes,
-        "swsd_junc_nodes": junc_nodes,
-        "junc_kind2_exempt_nodes": junc_kind2_exempt_nodes,
-        "rcsd_junc_nodes": relation.rcsd_junc_nodes,
-        "required_rcsd_nodes": result.required_rcsd_nodes,
-        "optional_allowed_rcsd_nodes": result.optional_allowed_rcsd_nodes,
-        "candidate_rcsd_road_ids": result.candidate_road_ids,
-        "candidate_rcsd_node_ids": result.candidate_node_ids,
-        "retained_rcsd_road_ids": result.retained_road_ids,
-        "retained_node_ids": result.retained_node_ids,
-        "inner_node_ids": result.inner_node_ids,
-        "out_node_ids": result.out_node_ids,
-        "unexpected_endpoint_node_ids": result.unexpected_endpoint_node_ids,
-        "unexpected_mapped_semantic_node_ids": result.unexpected_mapped_semantic_node_ids,
-        "excluded_advance_right_turn_road_ids": result.excluded_advance_right_turn_road_ids,
-        "selected_component_id": result.selected_component_id,
-        "candidate_road_count": result.candidate_road_count,
-        "retained_road_count": result.retained_road_count,
-        "candidate_node_count": result.candidate_node_count,
-        "retained_node_count": result.retained_node_count,
+        "optional_junc_nodes": optional_junc_nodes,
+        "optional_junc_rcsd_nodes": optional_junc_rcsd_nodes,
+        "dropped_junc_nodes": dropped_junc_nodes,
+        "dropped_junc_relation_nodes": dropped_relation_nodes,
+        "lost_attach_road_ids": lost_attach_road_ids,
+        "isolated_attach_loss_count": len(dropped_junc_nodes),
+        "junc_attach_loss_reason": ";".join(reasons),
     }
 
 
-def _buffer_replaceable_row(candidate_feature: dict[str, Any]) -> dict[str, Any]:
-    props = dict(candidate_feature["properties"])
-    return feature(
-        {
-            "swsd_segment_id": props.get("swsd_segment_id"),
-            "rcsd_candidate_id": props.get("rcsd_candidate_id"),
-            "replacement_ready": True,
-            "replacement_strategy": props.get("candidate_strategy"),
-            "swsd_sgrade": props.get("swsd_sgrade"),
-            "swsd_directionality": props.get("swsd_directionality"),
-            "swsd_pair_nodes": props.get("swsd_pair_nodes"),
-            "directed_swsd_pair_nodes": props.get("directed_swsd_pair_nodes"),
-            "rcsd_pair_nodes": props.get("rcsd_pair_nodes"),
-            "directed_rcsd_pair_nodes": props.get("directed_rcsd_pair_nodes"),
-            "swsd_junc_nodes": props.get("swsd_junc_nodes"),
-            "junc_kind2_exempt_nodes": props.get("junc_kind2_exempt_nodes"),
-            "rcsd_junc_nodes": props.get("rcsd_junc_nodes"),
-            "rcsd_road_ids": props.get("retained_rcsd_road_ids"),
-            "required_rcsd_nodes": props.get("required_rcsd_nodes"),
-            "optional_allowed_rcsd_nodes": props.get("optional_allowed_rcsd_nodes"),
-            "retained_node_ids": props.get("retained_node_ids"),
-            "inner_node_ids": props.get("inner_node_ids"),
-            "out_node_ids": props.get("out_node_ids"),
-            "unexpected_endpoint_node_ids": props.get("unexpected_endpoint_node_ids"),
-            "unexpected_mapped_semantic_node_ids": props.get("unexpected_mapped_semantic_node_ids"),
-            "excluded_advance_right_turn_road_ids": props.get("excluded_advance_right_turn_road_ids"),
-            "hard_filter_passed": True,
-        },
-        candidate_feature.get("geometry"),
+def _optional_allowed_rcsd_nodes(
+    *,
+    relation: Any,
+    relation_junc_nodes: list[str],
+    junc_kind2_exempt_nodes: list[str],
+    relation_map: dict[str, RelationRecord],
+) -> list[str]:
+    return unique_preserve_order(
+        [
+            *relation.rcsd_junc_nodes,
+            *_accepted_base_ids_for_nodes_ordered(relation_junc_nodes, relation_map),
+            *_accepted_base_ids_for_nodes_ordered(junc_kind2_exempt_nodes, relation_map),
+        ]
     )
+
+
+def _pair_anchor_issue_diagnostic(
+    *,
+    probe_result: BufferOnlyProbeResult,
+    relation: Any,
+    failure_business_category: str,
+    pair_nodes: list[str],
+    rcsd_roads: list[dict[str, Any]],
+    rcsd_node_canonicalizer: NodeCanonicalizer,
+) -> PairAnchorIssueDiagnostic | None:
+    return build_pair_anchor_issue_diagnostic(
+        probe_result=probe_result,
+        relation=relation,
+        failure_business_category=failure_business_category,
+        pair_nodes=pair_nodes,
+        rcsd_road_features=rcsd_roads,
+        rcsd_node_canonicalizer=rcsd_node_canonicalizer,
+    )
+
+
+def _pair_anchor_issue_audit_kwargs(diagnostic: PairAnchorIssueDiagnostic | None) -> dict[str, Any]:
+    if diagnostic is None:
+        return {}
+    return {
+        "original_rcsd_pair_nodes": diagnostic.original_rcsd_pair_nodes,
+        "pair_anchor_error_swsd_nodes": diagnostic.error_swsd_pair_nodes,
+        "pair_anchor_error_original_rcsd_nodes": diagnostic.error_original_rcsd_nodes,
+        "pair_anchor_error_candidate_rcsd_nodes": diagnostic.error_candidate_rcsd_nodes,
+        "pair_anchor_endpoint_cluster_nodes": diagnostic.endpoint_cluster_nodes,
+        "pair_anchor_bridge_road_ids": diagnostic.endpoint_bridge_road_ids,
+        "pair_anchor_bridge_length_m": diagnostic.endpoint_bridge_length_m,
+        "pair_anchor_diagnostic_source": diagnostic.diagnostic_source,
+        "pair_anchor_diagnostic_reason": diagnostic.diagnostic_reason,
+    }
+
+
+def _lost_attach_road_ids(
+    *,
+    dropped_relation_nodes: list[str],
+    buffer_result: BufferSegmentResult,
+    rcsd_roads: list[dict[str, Any]],
+    rcsd_node_canonicalizer: NodeCanonicalizer,
+) -> list[str]:
+    dropped = set(dropped_relation_nodes)
+    if not dropped:
+        return []
+    candidate_ids = set(buffer_result.candidate_road_ids)
+    retained_ids = set(buffer_result.retained_road_ids)
+    result: list[str] = []
+    for road in rcsd_roads:
+        props = dict(road.get("properties") or {})
+        try:
+            road_id = normalize_id(_first_present(props, ["id", "road_id", "roadid"]))
+            source = rcsd_node_canonicalizer.canonicalize(_first_present(props, ["snodeid", "snode_id", "source", "from_node"]))
+            target = rcsd_node_canonicalizer.canonicalize(_first_present(props, ["enodeid", "enode_id", "target", "to_node"]))
+        except (KeyError, ParseError):
+            continue
+        if road_id not in candidate_ids or road_id in retained_ids:
+            continue
+        if source in dropped or target in dropped:
+            result.append(road_id)
+    return unique_preserve_order(result)
 
 
 def _buffer_rejected_row(segment_id: str, result: BufferSegmentResult, diagnostic: dict[str, Any] | None = None) -> dict[str, Any]:

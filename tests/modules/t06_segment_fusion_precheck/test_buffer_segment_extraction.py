@@ -53,7 +53,8 @@ def test_buffer_extraction_keeps_intersecting_roads_and_excludes_advance_right()
     assert result.retained_road_ids == ["main_a", "main_b"]
     assert set(result.candidate_node_ids) == {"10", "20", "30"}
     assert result.excluded_advance_right_turn_road_ids == ["right_turn"]
-    assert result.required_rcsd_nodes == ["10", "20", "30"]
+    assert result.required_rcsd_nodes == ["10", "20"]
+    assert result.optional_allowed_rcsd_nodes == ["30"]
 
 
 def test_retained_road_must_satisfy_buffer_overlap_ratio() -> None:
@@ -268,7 +269,7 @@ def test_junc_kind2_optional_nodes_are_not_required() -> None:
     assert result.missing_required_node_ids == []
 
 
-def test_missing_required_nodes_fail_component_coverage() -> None:
+def test_missing_optional_junc_nodes_do_not_fail_pair_component_coverage() -> None:
     extractor = BufferSegmentExtractor(
         rcsd_road_features=[_road("main", 10, 20, [(0, 0), (100, 0)])],
         rcsd_node_features=[_node(10, 0, 0), _node(20, 100, 0)],
@@ -282,9 +283,10 @@ def test_missing_required_nodes_fail_component_coverage() -> None:
         config=BufferExtractionConfig(buffer_distance_m=10),
     )
 
-    assert not result.ok
-    assert result.reason == "required_semantic_nodes_missing_from_buffer_graph"
-    assert result.missing_required_node_ids == ["30"]
+    assert result.ok
+    assert result.required_rcsd_nodes == ["10", "20"]
+    assert result.optional_allowed_rcsd_nodes == ["30"]
+    assert result.missing_required_node_ids == []
 
 
 def test_seed_pruning_allows_inner_extra_mapped_semantic_nodes_on_required_corridor() -> None:
@@ -635,7 +637,7 @@ def test_seed_pruning_removes_out_semantic_branch_and_keeps_clean_corridor() -> 
     assert result.retained_road_ids == ["direct"]
 
 
-def test_required_junc_leaf_endpoint_is_rejected() -> None:
+def test_optional_junc_leaf_endpoint_is_pruned_without_rejecting_main_corridor() -> None:
     extractor = BufferSegmentExtractor(
         rcsd_road_features=[
             _road("direct", 10, 20, [(0, 0), (100, 0)]),
@@ -652,10 +654,13 @@ def test_required_junc_leaf_endpoint_is_rejected() -> None:
         config=BufferExtractionConfig(buffer_distance_m=25),
     )
 
-    assert not result.ok
-    assert result.reason == "unexpected_retained_endpoint_nodes"
-    assert result.unexpected_endpoint_node_ids == ["30"]
-    assert result.retained_road_ids == ["direct", "junc_branch"]
+    assert result.ok
+    assert result.reason == "passed"
+    assert result.required_rcsd_nodes == ["10", "20"]
+    assert result.optional_allowed_rcsd_nodes == ["30"]
+    assert result.out_node_ids == ["30"]
+    assert result.unexpected_endpoint_node_ids == []
+    assert result.retained_road_ids == ["direct"]
 
 
 def test_seed_pruning_keeps_required_corridor_and_removes_out_branch() -> None:
@@ -700,7 +705,7 @@ def test_optional_allowed_semantic_nodes_can_be_retained() -> None:
     )
 
     assert result.ok
-    assert result.inner_node_ids == []
+    assert result.inner_node_ids == ["30"]
     assert result.retained_road_ids == ["main_a", "main_b"]
 
 

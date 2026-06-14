@@ -27,7 +27,8 @@ Common env:
   T05_READONLY_WORKERS Default: 4
 
 Input override env:
-  SWSD_INPUT_NODES, SWSD_INPUT_ROADS
+  SWSD_INPUT_NODES   Prepared SWSD nodes input for T01
+  SWSD_INPUT_ROADS   Prepared SWSD roads input for T01
   DRIVEZONE_PATH, DIVSTRIPZONE_PATH, RCSD_INTERSECTION_PATH
   RCSDROAD_PATH, RCSDNODE_PATH
   SW_CONDITION_GPKG, SW_LANE_GPKG, SW_NODE_GPKG, SW_ROAD_GPKG
@@ -175,6 +176,79 @@ path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf
 PY
 }
 
+validate_swsd_t01_inputs() {
+  local nodes_path="$1"
+  local roads_path="$2"
+  "$PYTHON_BIN" - "$nodes_path" "$roads_path" <<'PY'
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+import fiona
+
+
+def _schema(path: Path) -> tuple[str, set[str], str]:
+    try:
+        layers = list(fiona.listlayers(str(path)))
+        if not layers:
+            raise ValueError("GeoPackage has no layers.")
+        layer = layers[0]
+        with fiona.open(str(path), layer=layer) as source:
+            schema = source.schema or {}
+            fields = {str(key).lower() for key in (schema.get("properties") or {}).keys()}
+            geometry = str(schema.get("geometry") or "")
+        return layer, fields, geometry
+    except Exception as exc:  # noqa: BLE001 - shell preflight should surface the original path.
+        print(f"[BLOCK] cannot inspect vector schema: {path}: {exc}", file=sys.stderr)
+        raise SystemExit(2) from exc
+
+
+nodes_path = Path(sys.argv[1])
+roads_path = Path(sys.argv[2])
+node_layer, node_fields, node_geometry = _schema(nodes_path)
+road_layer, road_fields, road_geometry = _schema(roads_path)
+road_required = {"snodeid", "enodeid"}
+errors: list[str] = []
+
+if nodes_path.resolve() == roads_path.resolve():
+    errors.append("SWSD_INPUT_NODES and SWSD_INPUT_ROADS point to the same file.")
+if "id" not in node_fields:
+    errors.append("SWSD_INPUT_NODES is missing required node field 'id'.")
+if road_required.issubset(node_fields):
+    errors.append("SWSD_INPUT_NODES looks like a road layer because it has snodeid/enodeid.")
+missing_road_fields = sorted(road_required - road_fields)
+if missing_road_fields:
+    errors.append(f"SWSD_INPUT_ROADS is missing required road fields: {', '.join(missing_road_fields)}.")
+
+if errors:
+    print("[BLOCK] T01 SWSD input role validation failed.", file=sys.stderr)
+    print(
+        f"[BLOCK] nodes={nodes_path} layer={node_layer} geometry={node_geometry} "
+        f"fields={','.join(sorted(node_fields))}",
+        file=sys.stderr,
+    )
+    print(
+        f"[BLOCK] roads={roads_path} layer={road_layer} geometry={road_geometry} "
+        f"fields={','.join(sorted(road_fields))}",
+        file=sys.stderr,
+    )
+    for error in errors:
+        print(f"[BLOCK] {error}", file=sys.stderr)
+    if road_required.issubset(node_fields) and not road_required.issubset(road_fields):
+        print(
+            "[TIP] SWSD_INPUT_NODES and SWSD_INPUT_ROADS appear to be swapped.",
+            file=sys.stderr,
+        )
+    raise SystemExit(2)
+
+print(
+    f"[INFO] T01 input role validation passed: "
+    f"nodes_layer={node_layer} roads_layer={road_layer}"
+)
+PY
+}
+
 export REPO_DIR RUN_ID RUN_ROOT
 write_manifest
 
@@ -317,6 +391,7 @@ fi
 
 require_file SW_RESTRICTION_TOOL7 "$SW_RESTRICTION_TOOL7"
 require_file SW_ARROW_TOOL8 "$SW_ARROW_TOOL8"
+validate_swsd_t01_inputs "$SWSD_NODES_FOR_T01" "$SWSD_ROADS_FOR_T01"
 
 manifest_set outputs swsd_nodes_after_t08 "$SWSD_NODES_FOR_T01"
 manifest_set outputs swsd_roads_after_t08 "$SWSD_ROADS_FOR_T01"

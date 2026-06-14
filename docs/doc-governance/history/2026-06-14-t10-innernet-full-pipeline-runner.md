@@ -11,6 +11,8 @@
 3. 全量 runner 默认读取 `/mnt/d/TestData/POC_Data`，所有阶段输出统一写入 `outputs/_work/t10_innernet_full_pipeline/<RUN_ID>/`。
 4. 全量 runner 写入 `t10_innernet_full_pipeline_manifest.json`，记录原始输入、阶段 handoff 输出、最终 FRCSD Road/Node 与 T09 restriction 输出。
 5. 同步更新 T10 README、架构约束、接口契约和 repo 入口登记表，将 Case 级入口与全量入口分开登记。
+6. 内网首次手动指定输入运行时暴露 `SWSD_INPUT_NODES` / `SWSD_INPUT_ROADS` 易传反问题：T01 bootstrap 会在字段解析阶段报 `invalid literal for int() with base 10: '060a'`，错误位置滞后且不直观。
+7. 在全量 runner 调用 T01 前增加 SWSD nodes/roads schema 角色校验：nodes 输入必须具备 node `id` 且不能像 road 层一样同时具备 `snodeid/enodeid`；roads 输入必须具备 `snodeid/enodeid`。若判断为传反，脚本在 T01 前直接 `[BLOCK]` 并输出明确提示。
 
 ## 业务逻辑变更
 
@@ -21,6 +23,8 @@ T08 在 T10 v1 callable 与 Case runner 中仍然保持独立，不被 Case 级 
 Tool7/Tool8 默认使用 `auto` 模式：只有原始 SW 条件、车道、节点、道路输入齐全时才自动生成；否则要求调用方提供既有 `SW_RESTRICTION_TOOL7` 与 `SW_ARROW_TOOL8` 输出，避免静默伪造 T09 输入。
 
 T08 Tool9 默认不启用；如内网需要在全量链路中使用 RCSD 清理输出，需显式设置 `RUN_T08_TOOL9=1` 或 `RUN_T08_TOOL9=auto`。
+
+全量 runner 对手工指定的 `SWSD_INPUT_NODES` 与 `SWSD_INPUT_ROADS` 做入口层防呆校验。该校验只确认 T01 的输入角色是否符合最小 schema 预期，不根据局部数据内容推断新的业务字段语义。
 
 ## QA 覆盖
 

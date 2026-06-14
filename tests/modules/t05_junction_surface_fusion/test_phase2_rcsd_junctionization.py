@@ -4,7 +4,7 @@ import csv
 import json
 from pathlib import Path
 
-from shapely.geometry import LineString, Point, box
+from shapely.geometry import LineString, MultiLineString, Point, box
 
 from rcsd_topo_poc.modules.t00_utility_toolbox.common import write_vector
 from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import read_vector_layer
@@ -134,6 +134,37 @@ def test_existing_rcsd_semantic_junction_outputs_success_relation(tmp_path: Path
     assert _summary(artifacts)["consistency"]["status_0_base_id_nonzero"]
 
 
+def test_phase2_rcsdroad_out_preserves_multilinestring_input_geometry(tmp_path: Path) -> None:
+    artifacts = _run_phase2(
+        tmp_path,
+        surface_features=[_surface("120")],
+        swsd_nodes=[_node(120, 0, 0, mainnodeid="120")],
+        rcsd_roads=[
+            {
+                "properties": {"id": 1, "snodeid": 1, "enodeid": 2, "direction": "B"},
+                "geometry": MultiLineString([[(0, 0), (5, 0)], [(5, 0), (10, 0)]]),
+            }
+        ],
+        rcsd_nodes=[_node(1, 0, 0), _node(2, 10, 0), _node(10, 5, 0)],
+        t03_rows=[
+            {
+                "target_id": "120",
+                "case_id": "120",
+                "junction_type": "center_junction",
+                "association_class": "A",
+                "required_rcsdnode_ids": "10",
+                "step7_state": "accepted",
+                "base_id_candidate": "10",
+                "status_suggested": 0,
+                "relation_state": "success_required_rcsd_junction",
+            }
+        ],
+    )
+
+    geometries = [feature.geometry.geom_type for feature in read_vector_layer(artifacts.rcsdroad_out_path).features]
+    assert geometries == ["MultiLineString"]
+
+
 def test_t02_existing_rcsdintersection_uses_evidence_rcsd_point(tmp_path: Path) -> None:
     artifacts = _run_phase2(
         tmp_path,
@@ -161,6 +192,222 @@ def test_t02_existing_rcsdintersection_uses_evidence_rcsd_point(tmp_path: Path) 
     assert relation["properties"]["base_id"] == 77
     coords = relation["geometry"]["coordinates"]
     assert coords[0] != coords[1]
+
+
+def test_t07_existing_rcsdintersection_groups_multiple_rcsd_semantic_nodes(tmp_path: Path) -> None:
+    artifacts = _run_phase2(
+        tmp_path,
+        surface_features=[_surface("151")],
+        swsd_nodes=[_node(151, 0, 0, mainnodeid="151", grade=2, closed_con=1)],
+        rcsd_roads=[_road(1, (-10, 0), (10, 0))],
+        rcsd_nodes=[
+            _node(1, -10, 0),
+            _node(2, 10, 0),
+            _node(70, -1, 0, mainnodeid="70"),
+            _node(71, 1, 0, mainnodeid="71"),
+        ],
+        t07_rows=[
+            {
+                "target_id": "151",
+                "case_id": "151",
+                "junction_type": "center_junction",
+                "relation_source": "T07",
+                "relation_target_type": "RCSDIntersection",
+                "relation_state": "existing_rcsdintersection_matched",
+                "status_suggested": 0,
+                "base_id_candidate": 70,
+            }
+        ],
+    )
+
+    relation = _relation_features(artifacts.relation_geojson_path)[0]
+    assert relation["properties"]["base_id"] in {70, 71}
+    audit_rows = list(csv.DictReader(artifacts.rcsd_junctionization_audit_csv_path.open("r", encoding="utf-8")))
+    assert audit_rows[0]["scene"] == "group_existing_rcsd_nodes"
+    assert audit_rows[0]["reason"] == "existing_rcsdintersection_multi_rcsdnode_surface"
+    assert audit_rows[0]["grouped_rcsdnode_ids"] == "70|71"
+    assert len(read_vector_layer(artifacts.rcsdnode_grouped_path).features) == 2
+
+
+def test_t07_existing_rcsdintersection_groups_nearby_nonbase_node(tmp_path: Path) -> None:
+    artifacts = _run_phase2(
+        tmp_path,
+        surface_features=[_surface("153")],
+        swsd_nodes=[_node(153, 0, 0, mainnodeid="153", grade=2, closed_con=1)],
+        rcsd_roads=[_road(1, (0, 0), (8.5, 0), snodeid=90, enodeid=91)],
+        rcsd_nodes=[
+            _node(90, 0, 0, mainnodeid="90"),
+            _node(91, 8.5, 0, mainnodeid=0),
+        ],
+        t07_rows=[
+            {
+                "target_id": "153",
+                "case_id": "153",
+                "junction_type": "center_junction",
+                "relation_source": "T07",
+                "relation_target_type": "RCSDIntersection",
+                "relation_state": "existing_rcsdintersection_matched",
+                "status_suggested": 0,
+                "base_id_candidate": 90,
+            }
+        ],
+    )
+
+    relation = _relation_features(artifacts.relation_geojson_path)[0]
+    assert relation["properties"]["base_id"] == 90
+    audit_rows = list(csv.DictReader(artifacts.rcsd_junctionization_audit_csv_path.open("r", encoding="utf-8")))
+    assert audit_rows[0]["scene"] == "group_existing_rcsd_nodes"
+    assert audit_rows[0]["reason"] == "existing_rcsdintersection_nearby_nonbase_node_grouping"
+    assert audit_rows[0]["grouped_rcsdnode_ids"] == "90|91"
+    grouped = {
+        feature.properties["id"]: feature.properties["mainnodeid"]
+        for feature in read_vector_layer(artifacts.rcsdnode_grouped_path).features
+    }
+    assert grouped == {90: 90, 91: 90}
+
+
+def test_t07_existing_rcsdintersection_keeps_nearby_success_base_node(tmp_path: Path) -> None:
+    artifacts = _run_phase2(
+        tmp_path,
+        surface_features=[_surface("154"), _surface("155", x=30.0)],
+        swsd_nodes=[
+            _node(154, 0, 0, mainnodeid="154", grade=2, closed_con=1),
+            _node(155, 30, 0, mainnodeid="155", grade=2, closed_con=1),
+        ],
+        rcsd_roads=[_road(1, (0, 0), (8.5, 0), snodeid=92, enodeid=93)],
+        rcsd_nodes=[
+            _node(92, 0, 0, mainnodeid="92"),
+            _node(93, 8.5, 0, mainnodeid=0),
+        ],
+        t07_rows=[
+            {
+                "target_id": "154",
+                "case_id": "154",
+                "junction_type": "center_junction",
+                "relation_source": "T07",
+                "relation_target_type": "RCSDIntersection",
+                "relation_state": "existing_rcsdintersection_matched",
+                "status_suggested": 0,
+                "base_id_candidate": 92,
+            },
+            {
+                "target_id": "155",
+                "case_id": "155",
+                "junction_type": "center_junction",
+                "relation_source": "T07",
+                "relation_target_type": "RCSDIntersection",
+                "relation_state": "existing_rcsdintersection_matched",
+                "status_suggested": 0,
+                "base_id_candidate": 93,
+            },
+        ],
+    )
+
+    audit_rows = {
+        row["target_id"]: row
+        for row in csv.DictReader(artifacts.rcsd_junctionization_audit_csv_path.open("r", encoding="utf-8"))
+    }
+    assert audit_rows["154"]["scene"] == "direct_existing_rcsd_junction"
+    assert audit_rows["154"]["grouped_rcsdnode_ids"] == ""
+    output_nodes = {
+        feature.properties["id"]: feature.properties.get("mainnodeid")
+        for feature in read_vector_layer(artifacts.rcsdnode_out_path).features
+    }
+    assert str(output_nodes[93]) == "0"
+
+
+def test_t07_existing_rcsdintersection_keeps_road_split_endpoint_node(tmp_path: Path) -> None:
+    artifacts = _run_phase2(
+        tmp_path,
+        surface_features=[_surface("156"), _surface("157", x=40.0)],
+        swsd_nodes=[
+            _node(156, 0, 0, mainnodeid="156", grade=2, closed_con=1),
+            _node(157, 40, 0, mainnodeid="157", grade=2, closed_con=1),
+        ],
+        rcsd_roads=[
+            _road(1, (0, 0), (8.5, 0), snodeid=94, enodeid=95),
+            _road(2, (8.5, 0), (40, 0), snodeid=95, enodeid=96),
+        ],
+        rcsd_nodes=[
+            _node(94, 0, 0, mainnodeid="94"),
+            _node(95, 8.5, 0, mainnodeid=0),
+            _node(96, 40, 0, mainnodeid=0),
+        ],
+        t07_rows=[
+            {
+                "target_id": "156",
+                "case_id": "156",
+                "junction_type": "center_junction",
+                "relation_source": "T07",
+                "relation_target_type": "RCSDIntersection",
+                "relation_state": "existing_rcsdintersection_matched",
+                "status_suggested": 0,
+                "base_id_candidate": 94,
+            }
+        ],
+        t03_rows=[
+            {
+                "target_id": "157",
+                "case_id": "157",
+                "junction_type": "single_sided_t_mouth",
+                "association_class": "B",
+                "support_rcsdroad_ids": "2",
+                "step7_state": "accepted",
+                "surface_candidate_present": 1,
+                "base_id_candidate": -1,
+                "status_suggested": 1,
+                "relation_state": "rcsd_present_not_junction",
+                "reason": "synthetic_road_split_endpoint",
+            }
+        ],
+    )
+
+    audit_rows = {
+        row["target_id"]: row
+        for row in csv.DictReader(artifacts.rcsd_junctionization_audit_csv_path.open("r", encoding="utf-8"))
+    }
+    assert audit_rows["156"]["scene"] == "direct_existing_rcsd_junction"
+    assert audit_rows["156"]["grouped_rcsdnode_ids"] == ""
+    output_nodes = {
+        feature.properties["id"]: feature.properties.get("mainnodeid")
+        for feature in read_vector_layer(artifacts.rcsdnode_out_path).features
+    }
+    assert str(output_nodes[95]) == "0"
+
+
+def test_t07_multiple_intersections_for_group_builds_existing_rcsd_group(tmp_path: Path) -> None:
+    artifacts = _run_phase2(
+        tmp_path,
+        surface_features=[_surface("152")],
+        swsd_nodes=[_node(152, 0, 0, mainnodeid="152", grade=2, closed_con=1)],
+        rcsd_roads=[_road(1, (-10, 0), (10, 0))],
+        rcsd_nodes=[
+            _node(1, -10, 0),
+            _node(2, 10, 0),
+            _node(80, -1, 0, mainnodeid="80"),
+            _node(81, 1, 0, mainnodeid="81"),
+        ],
+        t07_rows=[
+            {
+                "target_id": "152",
+                "case_id": "152",
+                "junction_type": "center_junction",
+                "relation_source": "T07",
+                "relation_target_type": "RCSDIntersection",
+                "matched_rcsdintersection_ids": "80|81",
+                "relation_state": "multiple_intersections_for_group",
+                "status_suggested": 1,
+                "base_id_candidate": "80|81",
+            }
+        ],
+    )
+
+    relation = _relation_features(artifacts.relation_geojson_path)[0]
+    assert relation["properties"]["base_id"] in {80, 81}
+    audit_rows = list(csv.DictReader(artifacts.rcsd_junctionization_audit_csv_path.open("r", encoding="utf-8")))
+    assert audit_rows[0]["scene"] == "group_existing_rcsd_nodes"
+    assert audit_rows[0]["reason"] == "t07_multiple_intersections_for_group"
+    assert audit_rows[0]["grouped_rcsdnode_ids"] == "80|81"
 
 
 def test_t07_historical_anchor_relation_without_surface_outputs_success(tmp_path: Path) -> None:
@@ -959,6 +1206,43 @@ def test_multiple_unmergeable_base_ids_block_without_relation(tmp_path: Path) ->
     summary = _summary(artifacts)
     assert summary["passed"] is False
     assert summary["consistency"]["target_id_unique"]
+
+
+def test_phase2_canonicalizes_rcsd_member_nodes_before_grouping(tmp_path: Path) -> None:
+    artifacts = _run_phase2(
+        tmp_path,
+        surface_features=[_surface("900")],
+        swsd_nodes=[_node(900, 0, 0, mainnodeid="900", grade=2, closed_con=1)],
+        rcsd_roads=[_road(1, (-10, 0), (10, 0))],
+        rcsd_nodes=[
+            _node(10, 1, 0, mainnodeid=20),
+            _node(20, 0, 0, mainnodeid=20),
+            _node(30, 5, 0, mainnodeid=30),
+        ],
+        t03_rows=[
+            {
+                "target_id": "900",
+                "case_id": "900",
+                "junction_type": "single_sided_t_mouth",
+                "association_class": "A",
+                "required_rcsdnode_ids": "10|30",
+                "step7_state": "accepted",
+                "base_id_candidate": "10|30",
+                "status_suggested": 0,
+                "relation_state": "success_required_rcsd_junction",
+            }
+        ],
+    )
+
+    relation = _relation_features(artifacts.relation_geojson_path)[0]
+    assert relation["properties"]["base_id"] == 20
+    out_nodes = {row["id"]: row for row in _layer_props(artifacts.rcsdnode_out_path)}
+    assert out_nodes[10]["mainnodeid"] == 20
+    assert out_nodes[20]["mainnodeid"] == 20
+    assert out_nodes[30]["mainnodeid"] == 20
+    summary = _summary(artifacts)
+    assert summary["rcsdnode_grouped_count"] == 3
+    assert summary["relation_cardinality_passed"] is True
 
 
 def _relation_features(path: Path) -> list[dict]:

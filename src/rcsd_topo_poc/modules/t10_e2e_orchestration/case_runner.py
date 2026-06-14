@@ -21,6 +21,7 @@ T10_E2E_STAGE_ORDER = (
     "t03",
     "t04",
     "t05",
+    "t07_step3",
     "t06_step12",
     "t06_step3",
     "t09_step12",
@@ -33,6 +34,7 @@ T10_E2E_STAGE_MODULES = {
     "t03": "t03_virtual_junction_anchor",
     "t04": "t04_divmerge_virtual_polygon",
     "t05": "t05_junction_surface_fusion",
+    "t07_step3": "t07_semantic_junction_anchor",
     "t06_step12": "t06_segment_fusion_precheck",
     "t06_step3": "t06_segment_fusion_precheck",
     "t09_step12": "t09_swsd_field_rule_restoration",
@@ -269,6 +271,8 @@ def _run_stage(
         return _run_t04(case_id, stage_dir, repo_root, external_inputs, handoffs)
     if stage_id == "t05":
         return _run_t05(case_id, stage_dir, repo_root, python_bin, external_inputs, handoffs)
+    if stage_id == "t07_step3":
+        return _run_t07_step3(case_id, stage_dir, repo_root, python_bin, handoffs)
     if stage_id == "t06_step12":
         return _run_t06_step12(case_id, stage_dir, repo_root, python_bin, handoffs)
     if stage_id == "t06_step3":
@@ -450,31 +454,38 @@ def _run_t05(
     handoffs: Mapping[str, str],
 ) -> tuple[dict[str, Any], dict[str, str]]:
     inputs = {
-        "t07_run_root": _path_from(handoffs.get("t07_run_root")),
         "t07_nodes": _path_from(handoffs.get("t07_nodes")),
         "t07_surface": _path_from(handoffs.get("t07_surface")),
         "t07_relation_evidence": _path_from(handoffs.get("t07_relation_evidence")),
-        "t03_run_root": _path_from(handoffs.get("t03_run_root")),
         "t03_surface": _path_from(handoffs.get("t03_surface")),
         "t03_relation_evidence": _path_from(handoffs.get("t03_relation_evidence")),
-        "t04_run_root": _path_from(handoffs.get("t04_run_root")),
         "t04_surface": _path_from(handoffs.get("t04_surface")),
         "t04_relation_evidence": _path_from(handoffs.get("t04_relation_evidence")),
+        "t04_summary": _path_from(handoffs.get("t04_summary")),
+        "t04_audit": _path_from(handoffs.get("t04_audit")),
         "rcsdroad": external_inputs.get("rcsdroad"),
         "rcsdnode": external_inputs.get("rcsdnode"),
     }
-    missing = _missing_files(inputs)
+    required_inputs = {key: value for key, value in inputs.items() if key not in {"t04_summary", "t04_audit"}}
+    missing = _missing_files(required_inputs)
     if missing:
         return _blocked_record("t05", stage_dir, "Missing T05 explicit file inputs.", inputs=inputs, missing=missing), {}
+    t04_case_root = _path_from(handoffs.get("t04_case_root"))
     command = [
         str(python_bin),
         "scripts/t05_innernet_experiment.py",
-        "--t07-dir",
-        str(inputs["t07_run_root"]),
-        "--t03-dir",
-        str(inputs["t03_run_root"]),
-        "--t04-dir",
-        str(inputs["t04_run_root"]),
+        "--t07-input",
+        str(inputs["t07_surface"]),
+        "--t07-evidence",
+        str(inputs["t07_relation_evidence"]),
+        "--t03-surface",
+        str(inputs["t03_surface"]),
+        "--t03-evidence",
+        str(inputs["t03_relation_evidence"]),
+        "--t04-surface",
+        str(inputs["t04_surface"]),
+        "--t04-evidence",
+        str(inputs["t04_relation_evidence"]),
         "--rcsdroad",
         str(inputs["rcsdroad"]),
         "--rcsdnode",
@@ -492,7 +503,15 @@ def _run_t05(
         "--progress-interval",
         os.environ.get("T10_T05_PROGRESS_INTERVAL", "100"),
     ]
+    if inputs["t04_summary"] and inputs["t04_summary"].is_file():
+        command.extend(["--t04-summary", str(inputs["t04_summary"])])
+    if inputs["t04_audit"] and inputs["t04_audit"].is_file():
+        command.extend(["--t04-audit", str(inputs["t04_audit"])])
+    if t04_case_root and t04_case_root.is_dir():
+        command.extend(["--t04-case-root", str(t04_case_root)])
     record = _execute_command("t05", stage_dir, repo_root, command, {}, inputs)
+    if t04_case_root:
+        record["execution_context"] = _paths_payload({"t04_case_root": t04_case_root})
     phase1_root = stage_dir / "t05_phase1"
     phase2_root = stage_dir / "t05_phase2"
     produced = {
@@ -502,7 +521,53 @@ def _run_t05(
         "t05_intersection_match_all": _path_text(phase2_root / "intersection_match_all.geojson"),
         "t05_rcsdroad_out": _path_text(phase2_root / "rcsdroad_out.gpkg"),
         "t05_rcsdnode_out": _path_text(phase2_root / "rcsdnode_out.gpkg"),
-        "t05_phase2_summary": _path_text(phase2_root / "t05_phase2_summary.json"),
+        "t05_phase2_summary": _path_text(phase2_root / "summary.json"),
+    }
+    _attach_outputs(record, produced)
+    return record, produced
+
+
+def _run_t07_step3(
+    case_id: str,
+    stage_dir: Path,
+    repo_root: Path,
+    python_bin: Path | str,
+    handoffs: Mapping[str, str],
+) -> tuple[dict[str, Any], dict[str, str]]:
+    inputs = {
+        "t07_nodes": _path_from(handoffs.get("t07_nodes")),
+        "t05_intersection_match_all": _path_from(handoffs.get("t05_intersection_match_all")),
+        "t05_rcsdnode_out": _path_from(handoffs.get("t05_rcsdnode_out")),
+    }
+    missing = _missing_files(inputs)
+    if missing:
+        return _blocked_record("t07_step3", stage_dir, "Missing T07 Step3 backfill inputs.", inputs=inputs, missing=missing), {}
+    env = {
+        "PYTHON_BIN": str(python_bin),
+        "NODES_PATH": str(inputs["t07_nodes"]),
+        "INTERSECTION_MATCH_ALL_PATH": str(inputs["t05_intersection_match_all"]),
+        "RCSDNODE_PATH": str(inputs["t05_rcsdnode_out"]),
+        "OUT_ROOT": str(stage_dir),
+        "RUN_ID": "t07_step3",
+    }
+    record = _execute_command(
+        "t07_step3",
+        stage_dir,
+        repo_root,
+        ["bash", "scripts/t07_run_step3_intersection_match_innernet.sh"],
+        env,
+        inputs,
+    )
+    step3_root = stage_dir / "t07_step3" / "step3_intersection_match"
+    produced = {
+        "t07_step2_nodes": _path_text(inputs["t07_nodes"]),
+        "t07_step3_root": _path_text(step3_root),
+        "t07_nodes": _path_text(step3_root / "nodes.gpkg"),
+        "t07_step3_nodes": _path_text(step3_root / "nodes.gpkg"),
+        "t07_intersection_match_t07": _path_text(step3_root / "intersection_match_t07.geojson"),
+        "t07_surface": _path_text(step3_root / "t07_rcsdintersection_anchor_surface.gpkg"),
+        "t07_relation_evidence": _path_text(step3_root / "t07_swsd_rcsd_relation_evidence.csv"),
+        "t07_step3_summary": _path_text(step3_root / "t07_step3_summary.json"),
     }
     _attach_outputs(record, produced)
     return record, produced
@@ -567,8 +632,11 @@ def _run_t06_step3(
     handoffs: Mapping[str, str],
 ) -> tuple[dict[str, Any], dict[str, str]]:
     t06_run_root = _path_from(handoffs.get("t06_run_root"))
+    t06_step2_replaceable = _path_from(handoffs.get("t06_step2_replaceable"))
+    if (t06_run_root is None or not t06_run_root.is_dir()) and t06_step2_replaceable is not None:
+        t06_run_root = t06_step2_replaceable.parent.parent
     inputs = {
-        "t06_run_root": t06_run_root,
+        "t06_step2_replaceable": t06_step2_replaceable,
         "t01_segment": _path_from(handoffs.get("t01_segment")),
         "t01_roads": _path_from(handoffs.get("t01_roads")),
         "t07_nodes": _path_from(handoffs.get("t07_nodes")),
@@ -578,6 +646,8 @@ def _run_t06_step3(
     missing = _missing_files(inputs)
     if missing:
         return _blocked_record("t06_step3", stage_dir, "Missing T06 Step3 inputs.", inputs=inputs, missing=missing), {}
+    if t06_run_root is None or not t06_run_root.is_dir():
+        return _blocked_record("t06_step3", stage_dir, "Missing T06 Step3 execution context.", inputs=inputs, missing=["t06_run_root"]), {}
     command = [
         str(python_bin),
         "scripts/t06_run_step3_segment_replacement.py",
@@ -600,6 +670,7 @@ def _run_t06_step3(
         "--no-progress",
     ]
     record = _execute_command("t06_step3", stage_dir, repo_root, command, {}, inputs)
+    record["execution_context"] = _paths_payload({"t06_run_root": t06_run_root})
     step3_root = t06_run_root / "step3_segment_replacement"
     produced = {
         "t06_step3_root": _path_text(step3_root),
@@ -835,14 +906,18 @@ def _discover_case_dirs(*, package_root: Path, case_ids: Sequence[str] | None) -
     wanted = {_safe_case_id(str(case_id)) for case_id in (case_ids or []) if str(case_id).strip()}
     candidates_root = package_root / "cases"
     if candidates_root.is_dir():
-        case_dirs = [path for path in sorted(candidates_root.iterdir()) if (path / "t10_case_evidence_manifest.json").is_file()]
+        case_dirs = _manifest_case_dirs(candidates_root)
     elif (package_root / "t10_case_evidence_manifest.json").is_file():
         case_dirs = [package_root]
     else:
-        case_dirs = []
+        case_dirs = _manifest_case_dirs(package_root)
     if wanted:
         case_dirs = [path for path in case_dirs if _safe_case_id(path.name) in wanted]
     return case_dirs
+
+
+def _manifest_case_dirs(root: Path) -> list[Path]:
+    return [path for path in sorted(root.iterdir()) if path.is_dir() and (path / "t10_case_evidence_manifest.json").is_file()]
 
 
 def _external_input_paths(*, case_manifest: Mapping[str, Any], case_dir: Path) -> dict[str, Path]:

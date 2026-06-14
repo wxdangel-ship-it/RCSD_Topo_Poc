@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import shutil
 import sqlite3
+import time
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -71,8 +72,31 @@ def copy_gpkg_and_update_field_by_id(
 
     output.parent.mkdir(parents=True, exist_ok=True)
     if output.exists():
-        output.unlink()
+        _unlink_with_retry(output)
     shutil.copy2(source, output)
+
+    return update_gpkg_field_by_id(
+        path=output,
+        updates_by_id=updates_by_id,
+        id_field=id_field,
+        update_field=update_field,
+        layer_name=layer_name,
+        strategy="sqlite_copy_update",
+    )
+
+
+def update_gpkg_field_by_id(
+    *,
+    path: str | Path,
+    updates_by_id: Mapping[str, Any],
+    id_field: str = "id",
+    update_field: str = "is_anchor",
+    layer_name: str | None = None,
+    strategy: str = "sqlite_in_place_update",
+) -> dict[str, Any]:
+    target = Path(path)
+    if not target.is_file():
+        raise FileNotFoundError(f"GeoPackage not found: {target}")
 
     normalized_updates = {
         str(key): value
@@ -81,18 +105,18 @@ def copy_gpkg_and_update_field_by_id(
     }
     if not normalized_updates:
         return {
-            "strategy": "sqlite_copy_update",
+            "strategy": strategy,
             "layer_name": "",
             "requested_update_count": 0,
             "sqlite_changed_row_count": 0,
         }
 
-    with sqlite3.connect(str(output)) as connection:
+    with sqlite3.connect(str(target)) as connection:
         _register_gpkg_trigger_functions(connection)
         table_name = _resolve_feature_table(
             connection,
             layer_name=layer_name,
-            fallback_stem=source.stem,
+            fallback_stem=target.stem,
         )
         columns = _table_columns(connection, table_name)
         missing = [field for field in (id_field, update_field) if field not in columns]
@@ -111,11 +135,22 @@ def copy_gpkg_and_update_field_by_id(
         changed = connection.total_changes - before
 
     return {
-        "strategy": "sqlite_copy_update",
+        "strategy": strategy,
         "layer_name": table_name,
         "requested_update_count": len(normalized_updates),
         "sqlite_changed_row_count": changed,
     }
+
+
+def _unlink_with_retry(path: Path, *, attempts: int = 5, delay_sec: float = 0.05) -> None:
+    for attempt in range(attempts):
+        try:
+            path.unlink()
+            return
+        except PermissionError:
+            if attempt == attempts - 1:
+                raise
+            time.sleep(delay_sec)
 
 
 __all__ = ["copy_gpkg_and_update_field_by_id"]

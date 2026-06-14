@@ -119,10 +119,10 @@ def test_t07_evidence_auto_discovery_accepts_json(tmp_path: Path) -> None:
     assert resolved == evidence_path
 
 
-def test_t03_backfill_mode_defaults_to_never(monkeypatch) -> None:
+def test_t03_backfill_mode_defaults_to_auto(monkeypatch) -> None:
     module = _load_script_module()
     monkeypatch.setattr(sys, "argv", ["t05_innernet_experiment.py"])
 
     args = module._parse_args()
 
-    assert args.t03_backfill_mode == "never"
+    assert args.t03_backfill_mode == "auto"

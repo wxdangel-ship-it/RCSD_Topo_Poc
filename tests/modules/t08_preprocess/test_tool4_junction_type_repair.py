@@ -10,6 +10,10 @@ import fiona
 from pyproj import CRS
 from shapely.geometry import LineString, Point
 
+from rcsd_topo_poc.modules.t08_preprocess.junction_type_repair import (
+    TOOL6_ERROR_CROSS_NON_CROSS,
+    TOOL6_MANUAL_FIX_FIELD,
+)
 from rcsd_topo_poc.modules.t08_preprocess.vector_io import write_gpkg
 
 
@@ -535,6 +539,90 @@ def test_tool4_consumes_optional_tool6_qc_and_outputs_roads(tmp_path: Path) -> N
     assert summary["counts"]["deleted_road_count"] == 1
     assert summary["counts"]["roads_output_feature_count"] == 4
     assert summary["deleted_road_ids"] == ["r-div-merge"]
+
+
+def test_tool4_consumes_tool6_cross_non_cross_when_roads_have_missing_clipped_nodes(tmp_path: Path) -> None:
+    nodes_gpkg = tmp_path / "input" / "nodes.gpkg"
+    roads_gpkg = tmp_path / "input" / "roads.gpkg"
+    tool6_csv = tmp_path / "input" / "node_error_tool6.csv"
+    nodes_output = tmp_path / "out" / "nodes_fix_tool4.gpkg"
+    audit_nodes_output = tmp_path / "out" / "audit_nodes_tool4.gpkg"
+    summary_output = tmp_path / "out" / "summary_tool4.json"
+
+    nodes = [
+        _node("cross", 4, 0.0, 0.0),
+        _node("remote", 1, 10.0, 0.0),
+    ]
+    roads = [
+        _road("r-valid", "cross", "remote", [(0.0, 0.0), (10.0, 0.0)], direction=0),
+        _road("r-clipped", "cross", "missing_clip_node", [(0.0, 0.0), (0.0, 10.0)], direction=2),
+    ]
+    write_gpkg(nodes_gpkg, nodes, crs_text="EPSG:3857")
+    write_gpkg(roads_gpkg, roads, crs_text="EPSG:3857")
+    _write_tool6_csv(
+        tool6_csv,
+        [
+            {
+                "error_id": "cross_non",
+                "error_group_id": "cross_non",
+                "error_type": TOOL6_ERROR_CROSS_NON_CROSS,
+                "semantic_node_id": "cross",
+                "source_node_id": "cross",
+                "role": "cross_non_cross",
+                "kind_2": "4",
+                "in_degree": "1",
+                "out_degree": "1",
+                "paired_semantic_node_id": "",
+                "related_node_ids": "cross",
+                "related_road_ids": "r-valid",
+                "reason": "only_one_incident_road",
+                "audit_json": "{}",
+                TOOL6_MANUAL_FIX_FIELD: "1",
+            }
+        ],
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "scripts/t08_tool4_junction_type_repair.py",
+            "--nodes-gpkg",
+            str(nodes_gpkg),
+            "--roads-gpkg",
+            str(roads_gpkg),
+            "--tool6-node-error-csv",
+            str(tool6_csv),
+            "--nodes-output",
+            str(nodes_output),
+            "--audit-nodes-output",
+            str(audit_nodes_output),
+            "--summary-output",
+            str(summary_output),
+        ],
+        cwd=Path(__file__).resolve().parents[3],
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    _, nodes_fix = _read_rows(nodes_output, key_field="id")
+    _, audit_rows = _read_rows(audit_nodes_output, key_field="audit_id")
+    summary = json.loads(summary_output.read_text(encoding="utf-8"))
+    assert nodes_fix["cross"]["kind_2"] == 1
+    assert "tool6_qc_repair:cross_non:cross" in audit_rows
+    assert summary["counts"]["road_feature_count"] == 2
+    assert summary["counts"]["topology_road_count"] == 1
+    assert summary["counts"]["skipped_missing_node_road_count"] == 1
+    assert summary["skipped_missing_node_roads"] == [
+        {
+            "road_id": "r-clipped",
+            "missing_node_id": "missing_clip_node",
+            "snodeid": "cross",
+            "enodeid": "missing_clip_node",
+        }
+    ]
 
 
 def test_tool4_script_help() -> None:

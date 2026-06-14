@@ -14,6 +14,7 @@
 - Step1：基于 SWSD Node / Road 与 T01 Segment 构建 SWSD Arm。
 - Step2：基于 restriction、arrow 与特殊 carrier 证据还原 SWSD Movement 级现场规则。
 - Step3：基于 T06 SWSD-FRCSD Segment relation，将显式禁止通行 Movement 投影为 F-RCSD `LinkID -> outLinkID` restriction。
+- Step3：若 T09 Arm 的 seed road 未进入 T06 Segment relation，但该 SWSD Road 仍以 `source=2` 出现在 T06 Step3 F-RCSD Road 输出中，可按原 SWSD junction alias 与 road direction 作为保留 SWSD carrier fallback，并在 risk flags 中标记。
 - 输出结构化 GPKG / CSV / JSON 与 summary，支持人工复核和 T10 Case 证据组织。
 
 ### 1.2 当前非目标
@@ -123,6 +124,8 @@ Step3 支持 GPKG / CSV / JSON 中的结构化输入，但 F-RCSD Road 输入必
 - `fully_prohibited` 必须能追溯到 `explicit_restriction`。
 - `partially_prohibited` 不自动放大为 F-RCSD 全 Arm 禁行。
 - `no_prohibition_evidence / unknown / not_a_traffic_rule` 不生成 F-RCSD restriction。
+- `relation_status=retained_swsd` 或 `relation_status=replaced+retained_swsd` 的 `source=2` relation road 只能在其 road id 属于当前 T09 Arm 的 `approach_road_ids` / `exit_road_ids` 时进入该 Arm 的 F-RCSD approach / exit carrier；不得仅因同属一个 T06 Segment relation 且端点命中 junction alias，就把其他 Arm 的 SWSD Road 混入当前 Movement。
+- 未进入 Segment relation 的 Arm seed road 只有在同 ID road 以 `source=2` 仍存在于 T06 F-RCSD Road 输出、且端点方向能在 SWSD junction alias 上解释为 approach / exit 时，才可作为 `retained_swsd_seed_fallback` carrier；该路径必须输出 `retained_swsd_seed_carrier_fallback` 风险标记。
 - Step3 去重键为 `LinkID + outLinkID + junction_id + movement_type`。
 
 ## 5. EntryPoints
@@ -155,6 +158,6 @@ from rcsd_topo_poc.modules.t09_swsd_field_rule_restoration import (
 
 1. Step1 / Step2 输出 arms、movements、evidence、restored rules 和 summary。
 2. Step3 只对 `fully_prohibited + explicit_restriction` 生成 F-RCSD restriction。
-3. 每条 restored rule 和 F-RCSD restriction 都能回溯证据、Movement 和 T06 relation。
+3. 每条 restored rule 和 F-RCSD restriction 都能回溯证据、Movement 和 T06 relation；若使用 retained SWSD seed fallback，必须能回溯到 T09 Arm seed road 与 T06 F-RCSD `source=2` road。
 4. 没有 restriction 的 arrow 排除、特殊 carrier、拓扑不可达不生成禁止规则。
 5. summary 记录输入计数、输出计数、跳过原因、CRS、审计与性能信息。

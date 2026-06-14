@@ -18,7 +18,7 @@ T07 迁移 T02 Step1 / Step2 的语义路口级锚定能力，并提供独立 St
 
 - Step1：计算代表 node `has_evd`。
 - Step2：计算代表 node `is_anchor / anchor_reason`。
-- Step3：基于 T05 relation 对 `kind_2 in {4,8,16}` 的候选补锚。
+- Step3：基于 T05 relation 对 `kind_2 in {4,8,16,128}` 的候选补锚，其中 `128` 只走 T05 成功 relation 补锚，不走 T07 Step2 surface 推导。
 - 处理代表 node `kind_2 in {4, 8, 16, 64, 128, 2048}` 的 Step1/2 字段。
 - 输出 `t07_rcsdintersection_anchor_surface.gpkg` 与 `t07_swsd_rcsd_relation_evidence.*`。
 
@@ -72,7 +72,7 @@ T07 迁移 T02 Step1 / Step2 的语义路口级锚定能力，并提供独立 St
 | Step2 anchor | 只对 `has_evd = yes` 的语义路口基于 `RCSDIntersection` 判定 `yes/no/fail1/fail2`。 |
 | Step2 handoff | 输出 T07 版 surface 与 relation evidence。 |
 | Step3 surface 1V1 | 基于 Step2 surface 查询 RCSDNode，唯一 RCSD 语义路口时建立 relation。 |
-| Step3 T05 relation 补锚 | 对候选 `is_anchor = no` 的 existing surface 路口消费 T05 成功 relation。 |
+| Step3 T05 relation 补锚 | 对候选 `is_anchor = no` 的 existing surface 路口和 `kind_2=128` 专项 relation 路口消费 T05 成功 relation。 |
 | Step3 基数质检 | 对 1:N、N:1、重复 target 进行压制和回写。 |
 
 ## 8. 什么是对

@@ -37,6 +37,7 @@ DEFAULT_RUN_ID_PREFIX = "t01_step6_segment_aggregation_"
 STEP6_SEGMENT_GRADE_VALUE = "0-0双"
 STEP6_ERROR_TYPE_S_GRADE_CONFLICT = "s_grade_conflict"
 STEP6_ERROR_TYPE_GRADE_KIND_CONFLICT = "grade_kind_conflict"
+STEP6_ERROR_TYPE_MISSING_ENDPOINT_NODE = "missing_endpoint_node"
 STEP6_ONEWAY_SEGMENT_GRADE_VALUES = ("0-0单", "0-1单", "0-2单")
 STEP6_S_GRADE_PRIORITY_ORDER = ("0-0双", "0-0单", "0-1双", "0-1单", "0-2双", "0-2单")
 DEAD_END_BUILD_SOURCE = "dead_end_leaf"
@@ -79,6 +80,8 @@ class SegmentRecord:
     error_desc: Optional[str]
     grade_kind_conflict_waived: bool
     grade_kind_conflict_waived_nodes: tuple[str, ...]
+    missing_endpoint_road_ids: tuple[str, ...] = ()
+    missing_endpoint_details: tuple[str, ...] = ()
 
 
 def _build_default_run_id(now: Optional[datetime] = None) -> str:
@@ -254,9 +257,22 @@ def _build_group_to_allowed_road_ids(
         for node_id in (road.snodeid, road.enodeid):
             node = node_by_id.get(node_id)
             if node is None:
-                raise ValueError(f"Road '{road.road_id}' references missing node '{node_id}'.")
+                continue
             group_to_allowed_road_ids[node.semantic_node_id].add(road.road_id)
     return group_to_allowed_road_ids
+
+
+def _missing_endpoint_details(
+    *,
+    road: RoadFeatureRecord,
+    node_by_id: dict[str, NodeFeatureRecord],
+) -> tuple[str, ...]:
+    details: list[str] = []
+    if road.snodeid not in node_by_id:
+        details.append(f"{road.road_id}:snodeid={road.snodeid}")
+    if road.enodeid not in node_by_id:
+        details.append(f"{road.road_id}:enodeid={road.enodeid}")
+    return tuple(details)
 
 
 def _collect_segment_records(
@@ -267,7 +283,7 @@ def _collect_segment_records(
     road_properties_map: Optional[dict[str, dict[str, Any]]] = None,
     mainnode_groups: Optional[dict[str, MainnodeGroup]] = None,
     group_to_allowed_road_ids: Optional[dict[str, set[str]]] = None,
-) -> tuple[list[SegmentRecord], dict[str, list[NodeFeatureRecord]]]:
+) -> tuple[list[SegmentRecord], list[SegmentRecord], dict[str, list[NodeFeatureRecord]]]:
     node_by_id = {node.node_id: node for node in nodes}
     groups: dict[str, list[str]] = {}
     for node in nodes:
@@ -291,6 +307,7 @@ def _collect_segment_records(
         )
     inner_nodes_by_segment: dict[str, list[NodeFeatureRecord]] = defaultdict(list)
     segment_records: list[SegmentRecord] = []
+    skipped_segment_records: list[SegmentRecord] = []
 
     for segment_id in sorted(roads_by_segment_id, key=_segment_sort_key):
         segment_roads = roads_by_segment_id[segment_id]
@@ -336,15 +353,46 @@ def _collect_segment_records(
 
         flattened_lines: list[LineString] = []
         covered_group_ids: set[str] = set()
+        missing_endpoint_details: list[str] = []
         for road in segment_roads:
             flattened_lines.extend(_flatten_lines(road.geometry))
+            missing_endpoint_details.extend(_missing_endpoint_details(road=road, node_by_id=node_by_id))
             snode = node_by_id.get(road.snodeid)
             enode = node_by_id.get(road.enodeid)
             if snode is None or enode is None:
-                raise ValueError(f"Segment road '{road.road_id}' references missing endpoint node.")
+                continue
             covered_group_ids.add(snode.semantic_node_id)
             covered_group_ids.add(enode.semantic_node_id)
         multiline = MultiLineString(flattened_lines)
+        if missing_endpoint_details:
+            missing_endpoint_road_ids = tuple(
+                sorted({detail.split(":", 1)[0] for detail in missing_endpoint_details}, key=_sort_key)
+            )
+            missing_endpoint_details_sorted = tuple(sorted(set(missing_endpoint_details), key=_sort_key))
+            skipped_segment_records.append(
+                SegmentRecord(
+                    segment_id=segment_id,
+                    pair_nodes=pair_nodes,
+                    road_ids=road_ids,
+                    multiline=multiline,
+                    sgrade_old=_join_optional_values(sgrade_conflict_values),
+                    sgrade_new=_resolve_highest_s_grade(sgrade_conflict_values),
+                    junc_nodes=(),
+                    inner_group_ids=(),
+                    adjusted=False,
+                    adjust_reason=None,
+                    sgrade_conflict_values=sgrade_conflict_values,
+                    dead_end_leaf=dead_end_leaf,
+                    error_type=STEP6_ERROR_TYPE_MISSING_ENDPOINT_NODE,
+                    error_desc="segment references endpoint nodes missing from Step6 node input: "
+                    + ";".join(missing_endpoint_details_sorted),
+                    grade_kind_conflict_waived=False,
+                    grade_kind_conflict_waived_nodes=(),
+                    missing_endpoint_road_ids=missing_endpoint_road_ids,
+                    missing_endpoint_details=missing_endpoint_details_sorted,
+                )
+            )
+            continue
 
         pair_groups: list[MainnodeGroup] = []
         pair_node_equivalent_ids: set[str] = set()
@@ -444,7 +492,7 @@ def _collect_segment_records(
             )
         )
 
-    return segment_records, inner_nodes_by_segment
+    return segment_records, skipped_segment_records, inner_nodes_by_segment
 
 
 def _segment_feature(record: SegmentRecord) -> dict[str, Any]:
@@ -476,6 +524,8 @@ def _segment_error_feature(record: SegmentRecord) -> dict[str, Any]:
             "dead_end_leaf": record.dead_end_leaf,
             "flag_s_grade_conflict": record.error_type == STEP6_ERROR_TYPE_S_GRADE_CONFLICT,
             "flag_grade_kind_conflict": record.error_type == STEP6_ERROR_TYPE_GRADE_KIND_CONFLICT,
+            "missing_endpoint_road_ids": _join_ids(record.missing_endpoint_road_ids),
+            "missing_endpoint_details": ";".join(record.missing_endpoint_details),
         },
         "geometry": record.multiline,
     }
@@ -484,6 +534,7 @@ def _segment_error_feature(record: SegmentRecord) -> dict[str, Any]:
 def _write_step6_outputs(
     *,
     segment_records: list[SegmentRecord],
+    skipped_segment_records: list[SegmentRecord],
     inner_nodes_by_segment: dict[str, list[NodeFeatureRecord]],
     out_root: Path,
     run_id: str,
@@ -522,6 +573,7 @@ def _write_step6_outputs(
     write_vector(inner_nodes_path, inner_node_features)
 
     segment_error_records = [record for record in segment_records if record.error_type is not None]
+    segment_error_records.extend(skipped_segment_records)
     write_vector(segment_error_path, (_segment_error_feature(record) for record in segment_error_records))
     for error_type, error_path in error_layer_paths.items():
         matching_records = [record for record in segment_error_records if record.error_type == error_type]
@@ -533,6 +585,9 @@ def _write_step6_outputs(
         "input_node_path": str(Path(input_node_path)),
         "input_road_path": str(Path(input_road_path)),
         "segment_count": len(segment_records),
+        "skipped_segment_count": len(skipped_segment_records),
+        "missing_endpoint_segment_count": len(skipped_segment_records),
+        "missing_endpoint_road_count": sum(len(record.missing_endpoint_road_ids) for record in skipped_segment_records),
         "segment_with_junc_count": sum(1 for record in segment_records if record.junc_nodes),
         "segment_with_inner_nodes_count": sum(1 for record in segment_records if record.inner_group_ids),
         "dead_end_segment_count": sum(1 for record in segment_records if record.dead_end_leaf),
@@ -559,6 +614,7 @@ def _write_step6_outputs(
     }
     write_json(segment_summary_path, segment_summary)
 
+    build_records = [*segment_records, *skipped_segment_records]
     build_rows = [
         {
             "segmentid": record.segment_id,
@@ -576,7 +632,7 @@ def _write_step6_outputs(
             "error_type": record.error_type,
             "has_error": record.error_type is not None,
         }
-        for record in segment_records
+        for record in build_records
     ]
     write_csv(
         segment_build_table_path,
@@ -645,7 +701,7 @@ def run_step6_segment_aggregation_from_records(
         node_properties_map=node_properties_map,
         road_properties_map=road_properties_map,
     )
-    segment_records, inner_nodes_by_segment = _collect_segment_records(
+    segment_records, skipped_segment_records, inner_nodes_by_segment = _collect_segment_records(
         nodes=nodes,
         roads=roads,
         node_properties_map=node_properties_map,
@@ -655,6 +711,7 @@ def run_step6_segment_aggregation_from_records(
     )
     return _write_step6_outputs(
         segment_records=segment_records,
+        skipped_segment_records=skipped_segment_records,
         inner_nodes_by_segment=inner_nodes_by_segment,
         out_root=resolved_out_root,
         run_id=resolved_run_id,

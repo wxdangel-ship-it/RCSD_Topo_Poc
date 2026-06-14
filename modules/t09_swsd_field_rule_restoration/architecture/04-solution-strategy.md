@@ -79,10 +79,13 @@ Step3 使用 T06 `t06_step3_swsd_frcsd_segment_relation` 映射 SWSD Arm 的 `se
 
 - `relation_status=replaced` 时，使用 `source=1` 的 F-RCSD Road 表达 RCSD 承载。
 - `relation_status=retained_swsd` 时，使用 `source=2` 的 F-RCSD Road 表达保留 SWSD 承载。
+- `relation_status=replaced+retained_swsd` 时，`source=1` 的 F-RCSD Road 表达 RCSD 主通道承载，`source=2` 的 F-RCSD Road 仅表达 detached junc 局部 SWSD carrier。
+- 对 `relation_status=retained_swsd` 或 `relation_status=replaced+retained_swsd` 的 `source=2` relation road，Step3 必须继续受 T09 Arm 的 `approach_road_ids` / `exit_road_ids` 约束：只有属于当前 Arm seed 的 road 才能作为该 Arm 的 approach / exit carrier。T06 Segment relation 可能包含同一 Segment 内多个 Arm 的 SWSD Road，不能仅凭共享 junction alias 将其他 Arm 的 road 混入当前 Movement。
+- 对于 T09 Arm 中未进入 T06 Segment relation 的 seed road，若该 road 仍以 `source=2` 存在于 T06 F-RCSD Road 输出，且按 SWSD junction alias 与 road direction 可解释为 approach / exit，可作为 `retained_swsd_seed_fallback` carrier；该场景必须进入 risk flags，不得静默当作普通 relation。
 - 一个 Arm 涉及多个 Segment 时允许形成混源承载，但必须进入 `source_mix / risk_flags`。
 - 缺失 Segment relation、缺失 F-RCSD Road 或端点 Node 时，不生成 restriction，并记录跳过原因。
 
-正确结果是：F-RCSD Arm 承载来自 T06 relation，而不是 Road ID 同名假设。错误结果是：跳过 T06 relation，直接把 SWSD Road ID 当作 F-RCSD Road ID。
+正确结果是：F-RCSD Arm 承载来自 T06 relation，或来自 T06 F-RCSD 输出中仍保留的 `source=2` SWSD seed road fallback。错误结果是：跳过 T06 输出校验，直接把任意 SWSD Road ID 当作 F-RCSD Road ID。
 
 ## 9. Step3 F-RCSD restriction 生成
 

@@ -178,6 +178,189 @@ def test_step3_replaces_roads_endpoint_nodes_only_rebuilds_c_and_audits_id_colli
     assert Path(summary["outputs"]["unreplaced_rcsd_roads_json"]).exists()
 
 
+def test_step3_retains_detached_junc_swsd_roads_as_local_carriers(tmp_path: Path) -> None:
+    segment = _write(
+        tmp_path / "segment.gpkg",
+        [
+            {
+                "properties": {"id": "s1", "sgrade": "0-0双", "pair_nodes": [1, 2], "junc_nodes": [3], "roads": ["main", "side"]},
+                "geometry": LineString([(1, 0), (2, 0)]),
+            }
+        ],
+    )
+    swsd_roads = _write(
+        tmp_path / "swsd_roads.gpkg",
+        [
+            _road("main", 1, 2),
+            _road("side", 3, 4),
+        ],
+    )
+    swsd_nodes = _write(
+        tmp_path / "swsd_nodes.gpkg",
+        [
+            _node(1, 1, mainnodeid=1),
+            _node(2, 2, mainnodeid=2),
+            _node(3, 3, mainnodeid=3),
+            _node(4, 4, mainnodeid=4),
+        ],
+    )
+    rcsd_roads = _write(
+        tmp_path / "rcsdroad_out.gpkg",
+        [{"properties": {"id": "rr1", "snodeid": 10, "enodeid": 20, "direction": 0}, "geometry": LineString([(1, 0), (2, 0)])}],
+    )
+    rcsd_nodes = _write(
+        tmp_path / "rcsdnode_out.gpkg",
+        [_node(10, 1, mainnodeid=10), _node(20, 2, mainnodeid=20)],
+    )
+    replaceable = _write(
+        tmp_path / "t06_rcsd_segment_replaceable.gpkg",
+        [
+            {
+                "properties": {
+                    "swsd_segment_id": "s1",
+                    "swsd_pair_nodes": [1, 2],
+                    "swsd_junc_nodes": [],
+                    "rcsd_pair_nodes": [10, 20],
+                    "rcsd_junc_nodes": [],
+                    "rcsd_road_ids": ["rr1"],
+                    "retained_node_ids": [10, 20],
+                    "hard_filter_passed": True,
+                },
+                "geometry": LineString([(1, 0), (2, 0)]),
+            }
+        ],
+    )
+
+    artifacts = run_t06_step3_segment_replacement(
+        step2_replaceable_path=replaceable,
+        swsd_segment_path=segment,
+        swsd_roads_path=swsd_roads,
+        swsd_nodes_path=swsd_nodes,
+        rcsdroad_path=rcsd_roads,
+        rcsdnode_path=rcsd_nodes,
+        out_root=tmp_path / "out",
+        run_id="run",
+    )
+
+    summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
+    assert summary["detached_junc_retained_segment_count"] == 1
+    assert summary["detached_junc_retained_swsd_road_count"] == 1
+    assert summary["removed_swsd_road_count"] == 1
+
+    roads = _props(artifacts.frcsd_road_gpkg_path)
+    assert {("main", 2), ("side", 2), ("rr1", 1)} & {(item["id"], item["source"]) for item in roads} == {
+        ("side", 2),
+        ("rr1", 1),
+    }
+
+    units = _props(artifacts.replacement_units_gpkg_path)
+    assert units[0]["detached_junc_nodes"] == ["3"]
+    assert units[0]["retained_detached_swsd_road_ids"] == ["side"]
+    assert units[0]["removed_swsd_road_ids"] == ["main"]
+
+    relations = _props(artifacts.swsd_frcsd_segment_relation_gpkg_path)
+    relation = relations[0]
+    assert relation["relation_status"] == "replaced+retained_swsd"
+    assert relation["frcsd_road_ids"] == ["rr1", "side"]
+    assert relation["frcsd_road_source_values"] == [1, 2]
+    assert relation["retained_detached_swsd_road_ids"] == ["side"]
+    assert relation["source_mix"] == "source_1+source_2"
+    detached_map = [item for item in relation["swsd_to_frcsd_node_map"] if item["swsd_node_id"] == "3"][0]
+    assert detached_map["frcsd_node_ids"] == ["3"]
+    assert detached_map["mapping_status"] == "identity_retained_swsd"
+
+
+def test_step3_preserves_removed_node_when_retained_swsd_segment_still_references_it(tmp_path: Path) -> None:
+    segment = _write(
+        tmp_path / "segment.gpkg",
+        [
+            {
+                "properties": {"id": "main_seg", "sgrade": "main", "pair_nodes": [1, 2], "junc_nodes": [], "roads": ["main_a", "main_b"]},
+                "geometry": LineString([(1, 0), (2, 0)]),
+            },
+            {
+                "properties": {"id": "side_seg", "sgrade": "side", "pair_nodes": [3, 4], "junc_nodes": [], "roads": ["side"]},
+                "geometry": LineString([(3, 0), (4, 0)]),
+            },
+        ],
+    )
+    swsd_roads = _write(
+        tmp_path / "swsd_roads.gpkg",
+        [
+            _road("main_a", 1, 3),
+            _road("main_b", 3, 2),
+            _road("side", 3, 4),
+        ],
+    )
+    swsd_nodes = _write(
+        tmp_path / "swsd_nodes.gpkg",
+        [
+            _node(1, 1, mainnodeid=1),
+            _node(2, 2, mainnodeid=2),
+            _node(3, 3, mainnodeid=3),
+            _node(4, 4, mainnodeid=4),
+        ],
+    )
+    rcsd_roads = _write(
+        tmp_path / "rcsdroad_out.gpkg",
+        [{"properties": {"id": "rr1", "snodeid": 10, "enodeid": 20, "direction": 0}, "geometry": LineString([(1, 0), (2, 0)])}],
+    )
+    rcsd_nodes = _write(
+        tmp_path / "rcsdnode_out.gpkg",
+        [_node(10, 1, mainnodeid=10), _node(20, 2, mainnodeid=20)],
+    )
+    replaceable = _write(
+        tmp_path / "t06_rcsd_segment_replaceable.gpkg",
+        [
+            {
+                "properties": {
+                    "swsd_segment_id": "main_seg",
+                    "swsd_pair_nodes": [1, 2],
+                    "swsd_junc_nodes": [],
+                    "rcsd_pair_nodes": [10, 20],
+                    "rcsd_junc_nodes": [],
+                    "rcsd_road_ids": ["rr1"],
+                    "retained_node_ids": [10, 20],
+                    "hard_filter_passed": True,
+                },
+                "geometry": LineString([(1, 0), (2, 0)]),
+            }
+        ],
+    )
+
+    artifacts = run_t06_step3_segment_replacement(
+        step2_replaceable_path=replaceable,
+        swsd_segment_path=segment,
+        swsd_roads_path=swsd_roads,
+        swsd_nodes_path=swsd_nodes,
+        rcsdroad_path=rcsd_roads,
+        rcsdnode_path=rcsd_nodes,
+        out_root=tmp_path / "out",
+        run_id="run",
+    )
+
+    summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
+    assert summary["removed_swsd_node_preserved_by_retained_road_count"] == 1
+
+    roads = _props(artifacts.frcsd_road_gpkg_path)
+    nodes = _props(artifacts.frcsd_node_gpkg_path)
+    node_ids = {str(item["id"]) for item in nodes if item["source"] == 2}
+    assert "3" in node_ids
+    assert ("side", 2) in {(item["id"], item["source"]) for item in roads}
+    assert not {
+        str(road[endpoint])
+        for road in roads
+        for endpoint in ("snodeid", "enodeid")
+        if road["source"] == 2
+    }.difference(node_ids)
+
+    relations = {item["swsd_segment_id"]: item for item in _props(artifacts.swsd_frcsd_segment_relation_gpkg_path)}
+    assert relations["main_seg"]["relation_status"] == "replaced"
+    assert relations["side_seg"]["relation_status"] == "retained_swsd"
+    assert relations["side_seg"]["frcsd_road_ids"] == ["side"]
+    assert relations["side_seg"]["swsd_to_frcsd_node_map"][0]["frcsd_node_ids"] == ["3"]
+
+
 def test_step3_adds_passed_special_junction_internal_rcsd_entities(tmp_path: Path) -> None:
     segment = _write(
         tmp_path / "segment.gpkg",

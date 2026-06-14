@@ -129,6 +129,7 @@ class Topology:
     incident_road_indices: dict[str, frozenset[int]]
     internal_road_count: int
     direction_errors: tuple[str, ...]
+    skipped_missing_node_roads: tuple[dict[str, str], ...]
 
 
 def run_t08_junction_type_repair(
@@ -390,6 +391,7 @@ def run_t08_junction_type_repair(
             "node_feature_count": node_feature_count,
             "semantic_node_count": len(semantic_nodes),
             "road_feature_count": len(parsed_roads),
+            "topology_road_count": len(parsed_roads) - len(topology.skipped_missing_node_roads),
             "roads_output_feature_count": roads_output_feature_count,
             "error_feature_count": len(errors),
             "repaired_semantic_node_count": len(repair_rows),
@@ -401,11 +403,13 @@ def run_t08_junction_type_repair(
             "error_count_by_type": dict(sorted(counts_by_type.items())),
             "internal_road_count": topology.internal_road_count,
             "direction_error_count": len(topology.direction_errors),
+            "skipped_missing_node_road_count": len(topology.skipped_missing_node_roads),
             "advance_right_turn_road_count": sum(1 for road in parsed_roads if road.is_advance_right_turn),
             "auxiliary_road_count": sum(1 for road in parsed_roads if road.is_auxiliary),
             "degree_exception_suppressed_count": sum(1 for row in degree_exception_rows if row["status"] == "suppressed"),
         },
         "direction_errors": list(topology.direction_errors),
+        "skipped_missing_node_roads": list(topology.skipped_missing_node_roads),
         "degree_exceptions": degree_exception_rows,
         "tool6_skipped": tool6_skipped_rows,
         "deleted_road_ids": [parsed_roads[index].road_id for index in sorted(deleted_road_indices)],
@@ -733,6 +737,7 @@ def _build_topology(
     reverse_edges: dict[str, list[DirectedEdge]] = defaultdict(list)
     incident_road_indices: dict[str, set[int]] = defaultdict(set)
     direction_errors: list[str] = []
+    skipped_missing_node_roads: list[dict[str, str]] = []
     internal_road_count = 0
 
     for road_index, road in enumerate(parsed_roads):
@@ -742,7 +747,15 @@ def _build_topology(
         target_semantic = node_to_semantic.get(road.enodeid)
         if source_semantic is None or target_semantic is None:
             missing_node = road.snodeid if source_semantic is None else road.enodeid
-            raise ValueError(f"Road '{road.road_id}' references missing node '{missing_node}'.")
+            skipped_missing_node_roads.append(
+                {
+                    "road_id": road.road_id,
+                    "missing_node_id": missing_node,
+                    "snodeid": road.snodeid,
+                    "enodeid": road.enodeid,
+                }
+            )
+            continue
         incident_road_indices[source_semantic].add(road_index)
         if source_semantic == target_semantic:
             internal_road_count += 1
@@ -818,6 +831,7 @@ def _build_topology(
         incident_road_indices={key: frozenset(value) for key, value in incident_road_indices.items()},
         internal_road_count=internal_road_count,
         direction_errors=tuple(direction_errors),
+        skipped_missing_node_roads=tuple(skipped_missing_node_roads),
     )
 
 

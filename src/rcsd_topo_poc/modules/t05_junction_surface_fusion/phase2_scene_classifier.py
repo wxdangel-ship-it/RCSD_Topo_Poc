@@ -95,6 +95,20 @@ def classify_evidence(evidence: Phase2Evidence, *, junction_type: str) -> SceneD
             multi_base_relation=len(base_ids) > 1,
         )
 
+    if source == SOURCE_T07 and relation_state == "multiple_intersections_for_group":
+        if len(base_ids) > 1:
+            return SceneDecision(
+                scene=SCENE_GROUP_EXISTING,
+                action="group_existing_rcsd_nodes",
+                reason="t07_multiple_intersections_for_group",
+                source_module=source,
+                source_case_id=case_id,
+                base_id_candidates=base_ids,
+                rcsdnode_ids=base_ids,
+                multi_base_relation=True,
+            )
+        return _failure_or_no_rcsd(evidence, "t07_multiple_intersections_missing_base_ids")
+
     if base_ids and status_suggested == "0":
         return SceneDecision(
             scene=SCENE_DIRECT,

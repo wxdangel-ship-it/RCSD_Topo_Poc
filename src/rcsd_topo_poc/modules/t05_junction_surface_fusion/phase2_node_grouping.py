@@ -37,6 +37,31 @@ def apply_mainnodeid_grouping(
     return updated
 
 
+def canonical_mainnode_id(node_id: int, node_features_by_id: dict[int, dict[str, Any]]) -> int:
+    feature = node_features_by_id.get(node_id)
+    if feature is None:
+        return node_id
+    props = feature.get("properties") or {}
+    mainnodeid = _int_value(_field_value(props, "mainnodeid"))
+    if mainnodeid in (None, 0, -1):
+        return node_id
+    if mainnodeid not in node_features_by_id:
+        return node_id
+    return mainnodeid
+
+
+def canonical_mainnode_ids(node_ids: list[int], node_features_by_id: dict[int, dict[str, Any]]) -> list[int]:
+    ordered: list[int] = []
+    seen: set[int] = set()
+    for node_id in node_ids:
+        canonical_id = canonical_mainnode_id(node_id, node_features_by_id)
+        if canonical_id in seen:
+            continue
+        seen.add(canonical_id)
+        ordered.append(canonical_id)
+    return ordered
+
+
 def generated_node_kind(swsd_properties: dict[str, Any]) -> tuple[Any, str]:
     if swsd_properties.get("kind") not in (None, ""):
         return swsd_properties.get("kind"), "swsd_kind"
@@ -56,3 +81,19 @@ def _mainnodeid_field(properties: dict[str, Any]) -> str:
         if key.lower() == "mainnodeid":
             return key
     return "mainnodeid"
+
+
+def _field_value(properties: dict[str, Any], field_name: str) -> Any:
+    for key, value in properties.items():
+        if key.lower() == field_name.lower():
+            return value
+    return None
+
+
+def _int_value(value: Any) -> int | None:
+    if value in (None, ""):
+        return None
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return None

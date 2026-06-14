@@ -18,11 +18,22 @@ INTERSECTION_CRS="${INTERSECTION_CRS:-}"
 OUT_ROOT="${OUT_ROOT:-$REPO_DIR/outputs/_work/t07_semantic_junction_anchor_innernet}"
 RUN_ID="${RUN_ID:-t07_semantic_junction_anchor_innernet_$(date +%Y%m%d_%H%M%S)}"
 
-if [[ -n "$PYTHON_BIN" && "$PYTHON_BIN" != "$REPO_DIR/.venv/bin/python" && "$PYTHON_BIN" != ".venv/bin/python" ]]; then
+path_compare_key() {
+  local value
+  value="$(realpath -sm "$1")"
+  if [[ "$value" == /mnt/[A-Za-z]/* ]]; then
+    printf '%s' "$value" | tr '[:upper:]' '[:lower:]'
+  else
+    printf '%s' "$value"
+  fi
+}
+
+EXPECTED_PYTHON_BIN="$REPO_DIR/.venv/bin/python"
+if [[ -n "$PYTHON_BIN" && "$PYTHON_BIN" != ".venv/bin/python" && "$(path_compare_key "$PYTHON_BIN")" != "$(path_compare_key "$EXPECTED_PYTHON_BIN")" ]]; then
   echo "[BLOCK] PYTHON_BIN must point to repo .venv/bin/python: $REPO_DIR/.venv/bin/python" >&2
   exit 2
 fi
-PYTHON_BIN="$REPO_DIR/.venv/bin/python"
+PYTHON_BIN="$EXPECTED_PYTHON_BIN"
 if [[ ! -x "$PYTHON_BIN" ]]; then
   echo "[BLOCK] Missing repo python: $PYTHON_BIN" >&2
   echo "[TIP] Run: make env-sync && make doctor" >&2

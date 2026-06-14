@@ -373,6 +373,22 @@ artifacts = run_t05_export_junctionization_bundle(
 - `rcsdroad.geojson` 优先纳入 relation evidence / Phase2 audit 中显式引用的 `support / selected / fallback / required / original` RCSDRoad，并补充目标 surface / SWSD node 周边 `context_buffer_m` 内的 RCSDRoad。
 - `rcsdnode.geojson` 纳入 evidence / audit 显式引用的 RCSDNode、被选 RCSDRoad 的 `snodeid / enodeid`，并补充目标 context 内 RCSDNode。
 
+## 9.1 2026-06-14 补充规则：T07 fail1 多 RCSDIntersection 分组
+
+- Phase2 允许消费 T07 `relation_state = multiple_intersections_for_group` 的 relation evidence，但前提是 `base_id_candidate` 已显式给出两个及以上非零 RCSD base id。
+- 满足上述条件时，Phase2 以 `group_existing_rcsd_nodes` 构建一个 RCSD 语义路口关系，审计 reason 为 `t07_multiple_intersections_for_group`，并保持 `multi_base_relation = 1`。
+- Phase2 不从 `matched_rcsdintersection_ids` 反推 RCSDNode 语义；若 T07 未提供明确 `base_id_candidate`，该场景仍作为失败 evidence 处理。
+- 该规则只处理 T07 已识别的 SWSD 1:N RCSDIntersection 工艺差异，不修改 T03/T04 主链算法，也不放宽 T06 Segment buffer 审计。
+
+## 9.2 2026-06-14 补充规则：T07 direct relation 邻近非主 RCSDNode 归组
+
+- 当 T07 relation evidence 已确认 `existing_rcsdintersection_matched`、`status_suggested = 0`，且只有一个有效 `base_id_candidate` 时，Phase2 默认仍按 direct relation 发布该 SWSD-RCSD 关系。
+- 若同一 SWSD target 的 Phase1 surface 外 `5m` 内、且 SWSD 语义路口投影点 `50m` 内存在 `mainnodeid = 0` 或空值的 RCSDNode，Phase2 可将这些邻近非主节点与 direct base id 一起执行 copy-on-write `mainnodeid` 归组，并以 `group_existing_rcsd_nodes` 输出唯一 relation。
+- 该归组只用于补齐 T07 已锚定路口面边缘遗漏的 RCSD 拓扑节点，使下游 T06 在同一个 RCSD 语义路口上消费分歧/合流通道；不得基于任意远距离 RCSDRoad 或未知字段反推路口归属。
+- 以下节点必须排除在该归组之外：其它成功 relation 的 base id；T03/T04 road-only split、endpoint reuse、support/fallback/required road 证据涉及的原始 RCSDRoad 起终点；以及同一 RCSDNode 同时命中多个 direct base 的冲突候选。
+- 成功归组必须写入 `rcsd_junctionization_audit.csv/json`，`reason = existing_rcsdintersection_nearby_nonbase_node_grouping`，并记录 `original_node_ids / grouped_node_ids / selected_main_node_id`。
+- 该规则不修改 Phase1 surface，不新增 RCSDRoad/RCSDNode，不放宽 T06 buffer 与方向性检查；若归组后触发 relation cardinality QC，仍按 Phase2 失败输出并要求上游证据继续收敛。
+
 ## 10. T03 Relation Evidence Backfill
 
 T05 提供 T03 -> Phase 2 handoff 补齐工具。该能力只作为旧 T03 产物兼容路径；当前 T03 已提供完整 relation evidence 时，Phase 2 应直接消费原始 `t03_swsd_rcsd_relation_evidence.*`，不需要补齐。

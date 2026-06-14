@@ -37,7 +37,7 @@ strict input read -> semantic junction assembly -> representative node selection
 
 ### Step3
 
-- 处理 `kind_2 in {4, 8, 16}` 的代表 node。
+- Step2 surface 1V1 推导处理 `kind_2 in {4, 8, 16}` 的代表 node；T05 relation 补充处理 `kind_2 in {4, 8, 16, 128}` 的代表 node。
 - 先读取 Step2 surface，用 `RCSDIntersection` 面查询输入 `RCSDNode` 语义路口，形成 Step2 surface 1V1 关系或 `RCSDNode_error.gpkg`。
 - 再读取 T05 relation 主表中 `target_id / base_id / status`，对 `has_evd = yes / is_anchor = no` 的候选补充关系。
 - 校验成功 relation 的 RCSD `base_id` 是否存在于输入 `RCSDNode.id/mainnodeid` 且未被 Step2 surface 1V1 阶段占用。

@@ -8,7 +8,7 @@ T09 基于 SWSD Laneinfo、restriction、SWSD Road / Node、T01 Segment 与 T06 
 
 - 将 SWSD restriction / Laneinfo 证据还原为可审计的 Arm、Movement、Evidence 和 RestoredRule。
 - 明确区分显式禁止通行、无禁止证据、拓扑不可达、方向不适用和人工复核。
-- 使用 T06 SWSD-FRCSD Segment relation，把确认的 SWSD 禁止通行规则恢复到 F-RCSD。
+- 使用 T06 SWSD-FRCSD Segment relation，把确认的 SWSD 禁止通行规则恢复到 F-RCSD；对未进入 Segment relation 但仍在 T06 F-RCSD 输出中以 `source=2` 保留的 SWSD Arm seed road，可作为保留 SWSD carrier fallback。
 - 为 T10 Case 证据包、人工分析和真实数据复核提供稳定文件证据。
 
 ## 3. 当前范围
@@ -47,7 +47,7 @@ T09 基于 SWSD Laneinfo、restriction、SWSD Road / Node、T01 Segment 与 T06 
 | T01 Segment | 辅助 Arm 主方向、连续性和 Step3 承载映射。 |
 | T08 restriction | 最高优先级的显式禁止通行证据。 |
 | T08 arrow | 车道箭头现场证据，用于支持、排除、冲突和复核审计。 |
-| T06 F-RCSD Road/Node/relation | Step3 将 SWSD 禁止规则投影到 F-RCSD 的承载关系。 |
+| T06 F-RCSD Road/Node/relation | Step3 将 SWSD 禁止规则投影到 F-RCSD 的承载关系；`source=2` 且仍在 F-RCSD 输出中的 SWSD seed road 可用于保留 carrier fallback。 |
 
 ## 6. 输出
 
@@ -71,14 +71,14 @@ T09 基于 SWSD Laneinfo、restriction、SWSD Road / Node、T01 Segment 与 T06 
 | restriction 匹配 | road-pair restriction 是唯一能改变禁行结论的显式禁止证据。 |
 | arrow / carrier 解释 | arrow 和特殊 carrier 只作为现场证据、解释证据、冲突证据或风险。 |
 | 规则还原 | 只有 explicit restriction 支撑的 `fully_prohibited` 才输出稳定禁止规则。 |
-| F-RCSD 投影 | 通过 T06 relation 映射 Arm 承载，生成 F-RCSD restriction。 |
+| F-RCSD 投影 | 通过 T06 relation 映射 Arm 承载；`retained_swsd` 与 `replaced+retained_swsd` 的 `source=2` relation road 必须仍属于当前 Arm 的 approach / exit seed；未进入 relation 但仍由 T06 以 `source=2` 保留的 SWSD seed road 可补充保留 carrier，生成 F-RCSD restriction。 |
 
 ## 8. 什么是对
 
 - `fully_prohibited` 必须来自显式 restriction，且能追溯到 evidence。
 - 单条 road-pair restriction 不能放大为整个 Arm-Movement 禁止。
 - arrow 排除没有 restriction 时不能单独生成禁止规则。
-- F-RCSD restriction 必须通过 T06 relation 映射。
+- F-RCSD restriction 必须通过 T06 relation 映射，或通过 T06 F-RCSD 输出中仍保留的 `source=2` SWSD seed road fallback 映射。
 - 所有输出必须记录输入、参数、证据、匹配方式和跳过原因。
 
 ## 9. 什么是错

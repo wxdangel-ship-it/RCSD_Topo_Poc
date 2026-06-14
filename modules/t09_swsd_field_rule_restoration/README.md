@@ -6,6 +6,7 @@
 
 - 生命周期：Active。
 - 当前主职责：基于 SWSD restriction / Laneinfo 和 T06 F-RCSD 承载关系恢复路口通行规则。
+- Step3 支持对 T09 Arm 中未进入 T06 Segment relation、但仍以 `source=2` 保留在 T06 F-RCSD 输出中的 SWSD seed road 做 carrier fallback，并输出风险标记。
 - 上游：T08、T01、T06。
 - 下游：T10、人工 Case 分析和后续通行能力建模。
 

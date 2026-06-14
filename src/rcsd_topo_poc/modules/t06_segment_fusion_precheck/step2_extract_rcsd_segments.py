@@ -4,6 +4,15 @@ from collections import Counter, defaultdict, deque
 from pathlib import Path
 from typing import Any
 
+from .attach_promotion import promote_isolated_attach_roads as _promote_isolated_attach_roads
+from .adaptive_buffer_retry import high_grade_adaptive_buffer_retry_plan as _high_grade_adaptive_buffer_retry_plan
+from .buffer_failure_diagnostics import (
+    buffer_failed_metric_name as _buffer_failed_metric_name,
+    buffer_failed_metric_value as _buffer_failed_metric_value,
+    buffer_failed_threshold_value as _buffer_failed_threshold_value,
+    buffer_failure_diagnostic as _buffer_failure_diagnostic,
+    canonical_rcsd_ids as _canonical_rcsd_ids,
+)
 from .buffer_only_probe import BufferOnlyProbe, BufferOnlyProbeResult
 from .buffer_segment_extraction import BufferExtractionConfig, BufferSegmentExtractor, BufferSegmentResult
 from .failure_business_audit import (
@@ -18,9 +27,16 @@ from .failure_business_audit import (
 )
 from .graph_builders import NodeCanonicalizer
 from .io import prepare_run_roots, read_features, write_feature_triplet, write_json
+from .pair_anchor_auto_retry import high_confidence_pair_anchor_relation as _high_confidence_pair_anchor_relation
 from .parsing import ParseError, directionality_from_sgrade, normalize_id, parse_id_list, unique_preserve_order
 from .pair_anchor_diagnostics import PairAnchorIssueDiagnostic, build_pair_anchor_issue_diagnostic
-from .relation_mapping import RelationRecord, accepted_base_ids, build_relation_map, check_segment_relations
+from .pair_anchor_relation_retry import (
+    append_buffer_extraction_formal_retry_if_safe as _append_buffer_extraction_formal_retry_if_safe,
+    append_relation_mapping_formal_retry_if_safe as _append_relation_mapping_formal_retry_if_safe,
+)
+from .rejected_context import annotate_rejected_swsd_context as _annotate_rejected_swsd_context
+from .relation_mapping import RelationCheck, RelationRecord, accepted_base_ids, build_relation_map, check_segment_relations
+from .single_graph_connectivity_retry import SingleGraphConnectivityRetry as _SGR
 from .step2_output_rows import (
     buffer_candidate_row as _buffer_candidate_row,
     buffer_replaceable_row as _buffer_replaceable_row,
@@ -89,6 +105,7 @@ def run_t06_step2_extract_rcsd_segments(
     rcsd_junction_road_ids = _rcsd_internal_road_ids(rcsd_roads, rcsd_node_canonicalizer)
     rcsd_graph_edges = _rcsd_graph_edges(rcsd_roads, rcsd_node_canonicalizer)
     buffer_extractor = BufferSegmentExtractor(rcsd_road_features=rcsd_roads, rcsd_node_features=rcsd_node_features)
+    graph_retry = _SGR(rcsd_road_features=rcsd_roads, rcsd_node_features=rcsd_node_features)
     buffer_probe = BufferOnlyProbe(rcsd_road_features=rcsd_roads, rcsd_node_features=rcsd_node_features)
     buffer_config = BufferExtractionConfig(
         buffer_distance_m=buffer_distance_m,
@@ -106,11 +123,22 @@ def run_t06_step2_extract_rcsd_segments(
     buffer_only_probe_rows: list[dict[str, Any]] = []
     repair_candidate_rows: list[dict[str, Any]] = []
     failure_business_audit_rows: list[dict[str, Any]] = []
+    formal_retry_rows = (
+        buffer_segment_rows,
+        candidate_rows,
+        replaceable_rows,
+        buffer_only_probe_rows,
+        repair_candidate_rows,
+        failure_business_audit_rows,
+    )
     relation_success_count = 0
     single_input_count = 0
     dual_input_count = 0
     junc_kind2_relation_exempt_segment_count = 0
     junc_kind2_relation_exempt_node_count = 0
+    adaptive_high_grade_buffer_retry_count = 0
+    adaptive_high_grade_single_buffer_retry_count = 0
+    adaptive_high_grade_dual_buffer_retry_count = 0
     segment_special_junctions: dict[str, list[str]] = {}
     special_junction_segments: dict[str, list[str]] = defaultdict(list)
 
@@ -141,9 +169,15 @@ def run_t06_step2_extract_rcsd_segments(
         if junc_kind2_exempt_nodes:
             junc_kind2_relation_exempt_segment_count += 1
             junc_kind2_relation_exempt_node_count += len(junc_kind2_exempt_nodes)
-        directionality = directionality_from_sgrade(segment_props.get("sgrade") or props.get("sgrade")) or "unknown"
+        segment_sgrade = segment_props.get("sgrade") or props.get("sgrade")
+        directionality = directionality_from_sgrade(segment_sgrade) or "unknown"
+        allow_single_missing_candidate_anchor_mismatch = directionality == "single" and str(segment_sgrade or "").startswith(("0-0", "0-1"))
 
         relation = check_segment_relations(pair_nodes=pair_nodes, junc_nodes=relation_junc_nodes, relation_map=relation_map)
+        auto_pair_anchor_probe_result: BufferOnlyProbeResult | None = None
+        auto_pair_anchor_original_relation: RelationCheck | None = None
+        auto_pair_anchor_diagnostic: PairAnchorIssueDiagnostic | None = None
+        auto_pair_anchor_source_reason = ""
         if not relation.ok:
             probe_result = buffer_probe.probe(
                 segment_geometry=segment.get("geometry"),
@@ -172,65 +206,146 @@ def run_t06_step2_extract_rcsd_segments(
                 rcsd_roads=rcsd_roads,
                 rcsd_node_canonicalizer=rcsd_node_canonicalizer,
             )
-            rejected_rows.append(
-                _reject(
-                    segment_id,
-                    None,
-                    "relation_mapping",
-                    relation.reject_reason or "relation_mapping_failed",
-                    failed_pair_nodes=relation.failed_pair_nodes or [],
-                    failed_junc_nodes=relation.failed_junc_nodes or [],
-                    junc_kind2_exempt_nodes=junc_kind2_exempt_nodes,
-                )
+            auto_relation = _high_confidence_pair_anchor_relation(
+                probe_result=probe_result,
+                relation=relation,
+                pair_anchor_diagnostic=pair_anchor_diagnostic,
+                failure_business_category=failure_category,
+                pair_nodes=pair_nodes,
+                relation_junc_nodes=relation_junc_nodes,
+                relation_map=relation_map,
+                allow_single_missing_candidate_anchor_mismatch=allow_single_missing_candidate_anchor_mismatch,
             )
-            buffer_only_probe_rows.append(
-                feature(
-                    _buffer_only_probe_row(
-                        segment_id=segment_id,
-                        pair_nodes=pair_nodes,
-                        original_rcsd_pair_nodes=relation.rcsd_pair_nodes,
-                        probe_result=probe_result,
-                        failure_business_category=failure_category,
-                        source_reject_reason=relation.reject_reason or "relation_mapping_failed",
-                    ),
-                    probe_result.geometry,
+            if auto_relation is not None:
+                auto_pair_anchor_probe_result = probe_result
+                auto_pair_anchor_original_relation = relation
+                auto_pair_anchor_diagnostic = pair_anchor_diagnostic
+                auto_pair_anchor_source_reason = relation.reject_reason or "relation_mapping_failed"
+                relation = auto_relation
+                buffer_only_probe_rows.append(
+                    feature(
+                        _buffer_only_probe_row(
+                            segment_id=segment_id,
+                            pair_nodes=pair_nodes,
+                            original_rcsd_pair_nodes=auto_pair_anchor_original_relation.rcsd_pair_nodes,
+                            probe_result=probe_result,
+                            failure_business_category=failure_category,
+                            source_reject_reason=auto_pair_anchor_source_reason,
+                        ),
+                        probe_result.geometry,
+                    )
                 )
-            )
-            if _should_emit_repair_candidate(probe_result):
                 repair_candidate_rows.append(
                     feature(
                         _repair_candidate_row(
+                            segment_id=segment_id,
+                            pair_nodes=pair_nodes,
+                            original_rcsd_pair_nodes=auto_pair_anchor_original_relation.rcsd_pair_nodes,
+                            probe_result=probe_result,
+                            failure_business_category=failure_category,
+                            source_reject_reason=auto_pair_anchor_source_reason,
+                            pair_anchor_diagnostic=pair_anchor_diagnostic,
+                        ),
+                        probe_result.geometry,
+                    )
+                )
+            else:
+                formal_retry_stats = _append_relation_mapping_formal_retry_if_safe(
+                    segment_id=segment_id,
+                    props=props,
+                    directionality=directionality,
+                    pair_nodes=pair_nodes,
+                    road_ids=_roads,
+                    junc_nodes=junc_nodes,
+                    junc_kind2_exempt_nodes=junc_kind2_exempt_nodes,
+                    relation=relation,
+                    failure_business_category=failure_category,
+                    probe_result=probe_result,
+                    pair_anchor_diagnostic=pair_anchor_diagnostic,
+                    relation_junc_nodes=relation_junc_nodes,
+                    relation_map=relation_map,
+                    segment_geometry=segment.get("geometry"),
+                    sgrade=segment_props.get("sgrade") or props.get("sgrade"),
+                    swsd_roads=swsd_roads,
+                    swsd_node_canonicalizer=swsd_node_canonicalizer,
+                    buffer_extractor=buffer_extractor,
+                    graph_retry=graph_retry,
+                    buffer_config=buffer_config,
+                    all_base_ids_for_segment=all_base_ids_for_segment,
+                    unexpected_base_ids_for_segment=unexpected_base_ids_for_segment,
+                    rcsd_graph_edges=rcsd_graph_edges,
+                    rcsd_node_canonicalizer=rcsd_node_canonicalizer,
+                    max_path_to_swsd_length_ratio=max_coarse_length_ratio,
+                    rcsd_roads=rcsd_roads,
+                    resolve_swsd_single_directed_pair=_resolve_swsd_single_directed_pair,
+                    junc_attach_audit=_junc_attach_audit,
+                    output_rows=formal_retry_rows,
+                )
+                if formal_retry_stats.applied:
+                    adaptive_high_grade_buffer_retry_count += formal_retry_stats.adaptive_high_grade_buffer_retry_count
+                    adaptive_high_grade_single_buffer_retry_count += (
+                        formal_retry_stats.adaptive_high_grade_single_buffer_retry_count
+                    )
+                    continue
+                rejected_rows.append(
+                    _reject(
+                        segment_id,
+                        None,
+                        "relation_mapping",
+                        relation.reject_reason or "relation_mapping_failed",
+                        failed_pair_nodes=relation.failed_pair_nodes or [],
+                        failed_junc_nodes=relation.failed_junc_nodes or [],
+                        junc_kind2_exempt_nodes=junc_kind2_exempt_nodes,
+                    )
+                )
+                buffer_only_probe_rows.append(
+                    feature(
+                        _buffer_only_probe_row(
                             segment_id=segment_id,
                             pair_nodes=pair_nodes,
                             original_rcsd_pair_nodes=relation.rcsd_pair_nodes,
                             probe_result=probe_result,
                             failure_business_category=failure_category,
                             source_reject_reason=relation.reject_reason or "relation_mapping_failed",
-                            pair_anchor_diagnostic=pair_anchor_diagnostic,
                         ),
                         probe_result.geometry,
                     )
                 )
-            failure_business_audit_rows.append(
-                feature(
-                    _failure_business_audit_row(
-                        segment_id=segment_id,
-                        segment_outcome="rejected",
-                        reject_reason=relation.reject_reason or "relation_mapping_failed",
-                        scenario_type=_scenario_type(failure_category),
-                        failure_business_category=failure_category,
-                        pair_nodes=pair_nodes,
-                        junc_nodes=junc_nodes,
-                        relation=relation,
-                        junc_audit=None,
-                        probe_result=probe_result,
-                        root_cause_category=None,
-                        **_pair_anchor_issue_audit_kwargs(pair_anchor_diagnostic),
-                    ),
-                    segment.get("geometry"),
+                if _should_emit_repair_candidate(probe_result):
+                    repair_candidate_rows.append(
+                        feature(
+                            _repair_candidate_row(
+                                segment_id=segment_id,
+                                pair_nodes=pair_nodes,
+                                original_rcsd_pair_nodes=relation.rcsd_pair_nodes,
+                                probe_result=probe_result,
+                                failure_business_category=failure_category,
+                                source_reject_reason=relation.reject_reason or "relation_mapping_failed",
+                                pair_anchor_diagnostic=pair_anchor_diagnostic,
+                            ),
+                            probe_result.geometry,
+                        )
+                    )
+                failure_business_audit_rows.append(
+                    feature(
+                        _failure_business_audit_row(
+                            segment_id=segment_id,
+                            segment_outcome="rejected",
+                            reject_reason=relation.reject_reason or "relation_mapping_failed",
+                            scenario_type=_scenario_type(failure_category),
+                            failure_business_category=failure_category,
+                            pair_nodes=pair_nodes,
+                            junc_nodes=junc_nodes,
+                            relation=relation,
+                            junc_audit=None,
+                            probe_result=probe_result,
+                            root_cause_category=None,
+                            **_pair_anchor_issue_audit_kwargs(pair_anchor_diagnostic),
+                        ),
+                        segment.get("geometry"),
+                    )
                 )
-            )
-            continue
+                continue
         relation_success_count += 1
         if directionality == "single":
             single_input_count += 1
@@ -324,70 +439,114 @@ def run_t06_step2_extract_rcsd_segments(
                 rcsd_roads=rcsd_roads,
                 rcsd_node_canonicalizer=rcsd_node_canonicalizer,
             )
-            rejected_rows.append(
-                _reject(
-                    segment_id,
-                    None,
-                    "semantic_pair_validation",
-                    "rcsd_pair_nodes_not_distinct",
-                    failed_pair_nodes=relation.rcsd_pair_nodes,
-                    junc_kind2_exempt_nodes=junc_kind2_exempt_nodes,
-                    failed_metric_name="rcsd_pair_nodes",
-                    failed_metric_value={
-                        "rcsd_pair_nodes": relation.rcsd_pair_nodes,
-                        "canonical_rcsd_pair_nodes": canonical_rcsd_pair_nodes,
-                    },
-                    notes="T05 relation maps the SWSD pair to the same RCSD semantic junction, so no replaceable RCSD Segment can be constructed",
-                )
+            auto_relation = _high_confidence_pair_anchor_relation(
+                probe_result=probe_result,
+                relation=relation,
+                pair_anchor_diagnostic=pair_anchor_diagnostic,
+                failure_business_category=failure_category,
+                pair_nodes=pair_nodes,
+                relation_junc_nodes=relation_junc_nodes,
+                relation_map=relation_map,
+                allow_single_missing_candidate_anchor_mismatch=allow_single_missing_candidate_anchor_mismatch,
             )
-            buffer_only_probe_rows.append(
-                feature(
-                    _buffer_only_probe_row(
-                        segment_id=segment_id,
-                        pair_nodes=pair_nodes,
-                        original_rcsd_pair_nodes=relation.rcsd_pair_nodes,
-                        probe_result=probe_result,
-                        failure_business_category=failure_category,
-                        source_reject_reason="rcsd_pair_nodes_not_distinct",
-                    ),
-                    probe_result.geometry,
+            if auto_relation is not None:
+                auto_pair_anchor_probe_result = probe_result
+                auto_pair_anchor_original_relation = relation
+                auto_pair_anchor_diagnostic = pair_anchor_diagnostic
+                auto_pair_anchor_source_reason = "rcsd_pair_nodes_not_distinct"
+                relation = auto_relation
+                buffer_only_probe_rows.append(
+                    feature(
+                        _buffer_only_probe_row(
+                            segment_id=segment_id,
+                            pair_nodes=pair_nodes,
+                            original_rcsd_pair_nodes=auto_pair_anchor_original_relation.rcsd_pair_nodes,
+                            probe_result=probe_result,
+                            failure_business_category=failure_category,
+                            source_reject_reason=auto_pair_anchor_source_reason,
+                        ),
+                        probe_result.geometry,
+                    )
                 )
-            )
-            if _should_emit_repair_candidate(probe_result):
                 repair_candidate_rows.append(
                     feature(
                         _repair_candidate_row(
+                            segment_id=segment_id,
+                            pair_nodes=pair_nodes,
+                            original_rcsd_pair_nodes=auto_pair_anchor_original_relation.rcsd_pair_nodes,
+                            probe_result=probe_result,
+                            failure_business_category=failure_category,
+                            source_reject_reason=auto_pair_anchor_source_reason,
+                            pair_anchor_diagnostic=pair_anchor_diagnostic,
+                        ),
+                        probe_result.geometry,
+                    )
+                )
+            else:
+                rejected_rows.append(
+                    _reject(
+                        segment_id,
+                        None,
+                        "semantic_pair_validation",
+                        "rcsd_pair_nodes_not_distinct",
+                        failed_pair_nodes=relation.rcsd_pair_nodes,
+                        junc_kind2_exempt_nodes=junc_kind2_exempt_nodes,
+                        failed_metric_name="rcsd_pair_nodes",
+                        failed_metric_value={
+                            "rcsd_pair_nodes": relation.rcsd_pair_nodes,
+                            "canonical_rcsd_pair_nodes": canonical_rcsd_pair_nodes,
+                        },
+                        notes="T05 relation maps the SWSD pair to the same RCSD semantic junction, so no replaceable RCSD Segment can be constructed",
+                    )
+                )
+                buffer_only_probe_rows.append(
+                    feature(
+                        _buffer_only_probe_row(
                             segment_id=segment_id,
                             pair_nodes=pair_nodes,
                             original_rcsd_pair_nodes=relation.rcsd_pair_nodes,
                             probe_result=probe_result,
                             failure_business_category=failure_category,
                             source_reject_reason="rcsd_pair_nodes_not_distinct",
-                            pair_anchor_diagnostic=pair_anchor_diagnostic,
                         ),
                         probe_result.geometry,
                     )
                 )
-            failure_business_audit_rows.append(
-                feature(
-                    _failure_business_audit_row(
-                        segment_id=segment_id,
-                        segment_outcome="rejected",
-                        reject_reason="rcsd_pair_nodes_not_distinct",
-                        scenario_type=_scenario_type(failure_category),
-                        failure_business_category=failure_category,
-                        pair_nodes=pair_nodes,
-                        junc_nodes=junc_nodes,
-                        relation=relation,
-                        junc_audit=None,
-                        probe_result=probe_result,
-                        root_cause_category=None,
-                        **_pair_anchor_issue_audit_kwargs(pair_anchor_diagnostic),
-                    ),
-                    segment.get("geometry"),
+                if _should_emit_repair_candidate(probe_result):
+                    repair_candidate_rows.append(
+                        feature(
+                            _repair_candidate_row(
+                                segment_id=segment_id,
+                                pair_nodes=pair_nodes,
+                                original_rcsd_pair_nodes=relation.rcsd_pair_nodes,
+                                probe_result=probe_result,
+                                failure_business_category=failure_category,
+                                source_reject_reason="rcsd_pair_nodes_not_distinct",
+                                pair_anchor_diagnostic=pair_anchor_diagnostic,
+                            ),
+                            probe_result.geometry,
+                        )
+                    )
+                failure_business_audit_rows.append(
+                    feature(
+                        _failure_business_audit_row(
+                            segment_id=segment_id,
+                            segment_outcome="rejected",
+                            reject_reason="rcsd_pair_nodes_not_distinct",
+                            scenario_type=_scenario_type(failure_category),
+                            failure_business_category=failure_category,
+                            pair_nodes=pair_nodes,
+                            junc_nodes=junc_nodes,
+                            relation=relation,
+                            junc_audit=None,
+                            probe_result=probe_result,
+                            root_cause_category=None,
+                            **_pair_anchor_issue_audit_kwargs(pair_anchor_diagnostic),
+                        ),
+                        segment.get("geometry"),
+                    )
                 )
-            )
-            continue
+                continue
 
         directed_swsd_pair_nodes: list[str] = []
         directed_rcsd_pair_nodes: list[str] = []
@@ -584,6 +743,9 @@ def run_t06_step2_extract_rcsd_segments(
                     directionality=directionality,
                     directed_swsd_pair_nodes=directed_swsd_pair_nodes,
                     relation=relation,
+                    original_rcsd_pair_nodes=auto_pair_anchor_original_relation.rcsd_pair_nodes
+                    if auto_pair_anchor_original_relation is not None
+                    else None,
                     junc_nodes=junc_nodes,
                     junc_kind2_exempt_nodes=junc_kind2_exempt_nodes,
                     junc_audit=junc_audit,
@@ -593,7 +755,27 @@ def run_t06_step2_extract_rcsd_segments(
             )
             candidate_rows.append(candidate_feature)
             replaceable_rows.append(_buffer_replaceable_row(candidate_feature))
-            if junc_audit.get("dropped_junc_nodes"):
+            if auto_pair_anchor_probe_result is not None and auto_pair_anchor_original_relation is not None:
+                failure_business_audit_rows.append(
+                    feature(
+                        _failure_business_audit_row(
+                            segment_id=segment_id,
+                            segment_outcome="replaceable",
+                            reject_reason=auto_pair_anchor_source_reason,
+                            scenario_type="B",
+                            failure_business_category="pair_anchor_mismatch",
+                            pair_nodes=pair_nodes,
+                            junc_nodes=junc_nodes,
+                            relation=relation,
+                            junc_audit=junc_audit,
+                            probe_result=auto_pair_anchor_probe_result,
+                            root_cause_category=None,
+                            **_pair_anchor_issue_audit_kwargs(auto_pair_anchor_diagnostic),
+                        ),
+                        buffer_result.geometry,
+                    )
+                )
+            elif junc_audit.get("dropped_junc_nodes"):
                 failure_business_audit_rows.append(
                     feature(
                         _failure_business_audit_row(
@@ -641,6 +823,264 @@ def run_t06_step2_extract_rcsd_segments(
                 rcsd_roads=rcsd_roads,
                 rcsd_node_canonicalizer=rcsd_node_canonicalizer,
             )
+            auto_relation = _high_confidence_pair_anchor_relation(
+                probe_result=probe_result,
+                relation=relation,
+                pair_anchor_diagnostic=pair_anchor_diagnostic,
+                failure_business_category=failure_category,
+                pair_nodes=pair_nodes,
+                relation_junc_nodes=relation_junc_nodes,
+                relation_map=relation_map,
+            )
+            auto_directed_rcsd_pair_nodes: list[str] = []
+            if auto_relation is not None and directionality == "single":
+                auto_directed_rcsd_pair_nodes = _map_directed_swsd_pair_to_rcsd(
+                    pair_nodes=pair_nodes,
+                    rcsd_pair_nodes=auto_relation.rcsd_pair_nodes,
+                    directed_swsd_pair_nodes=directed_swsd_pair_nodes,
+                )
+                if len(auto_directed_rcsd_pair_nodes) != 2:
+                    auto_relation = None
+            if auto_relation is not None:
+                auto_optional_allowed_rcsd_nodes = _optional_allowed_rcsd_nodes(
+                    relation=auto_relation,
+                    relation_junc_nodes=relation_junc_nodes,
+                    junc_kind2_exempt_nodes=junc_kind2_exempt_nodes,
+                    relation_map=relation_map,
+                )
+                auto_buffer_result = buffer_extractor.extract(
+                    segment_geometry=segment.get("geometry"),
+                    relation=auto_relation,
+                    optional_allowed_rcsd_nodes=auto_optional_allowed_rcsd_nodes,
+                    all_relation_base_ids=all_base_ids_for_segment,
+                    unexpected_relation_base_ids=unexpected_base_ids_for_segment,
+                    directed_pair_nodes=auto_directed_rcsd_pair_nodes,
+                    require_directed_pair=directionality == "single",
+                    require_bidirectional=directionality == "dual",
+                    config=buffer_config,
+                )
+                auto_junc_audit = _junc_attach_audit(
+                    junc_nodes=relation_junc_nodes,
+                    relation=auto_relation,
+                    relation_map=relation_map,
+                    buffer_result=auto_buffer_result,
+                    rcsd_roads=rcsd_roads,
+                    rcsd_node_canonicalizer=rcsd_node_canonicalizer,
+                )
+                if auto_buffer_result.ok:
+                    buffer_only_probe_rows.append(
+                        feature(
+                            _buffer_only_probe_row(
+                                segment_id=segment_id,
+                                pair_nodes=pair_nodes,
+                                original_rcsd_pair_nodes=relation.rcsd_pair_nodes,
+                                probe_result=probe_result,
+                                failure_business_category=failure_category,
+                                source_reject_reason=buffer_result.reason,
+                            ),
+                            probe_result.geometry,
+                        )
+                    )
+                    repair_candidate_rows.append(
+                        feature(
+                            _repair_candidate_row(
+                                segment_id=segment_id,
+                                pair_nodes=pair_nodes,
+                                original_rcsd_pair_nodes=relation.rcsd_pair_nodes,
+                                probe_result=probe_result,
+                                failure_business_category=failure_category,
+                                source_reject_reason=buffer_result.reason,
+                                pair_anchor_diagnostic=pair_anchor_diagnostic,
+                            ),
+                            probe_result.geometry,
+                        )
+                    )
+                    buffer_feature = feature(_buffer_segment_row(segment_id, auto_buffer_result), auto_buffer_result.geometry)
+                    buffer_segment_rows.append(buffer_feature)
+                    candidate_feature = feature(
+                        _buffer_candidate_row(
+                            segment_id=segment_id,
+                            props=props,
+                            directionality=directionality,
+                            directed_swsd_pair_nodes=directed_swsd_pair_nodes,
+                            relation=auto_relation,
+                            original_rcsd_pair_nodes=relation.rcsd_pair_nodes,
+                            junc_nodes=junc_nodes,
+                            junc_kind2_exempt_nodes=junc_kind2_exempt_nodes,
+                            junc_audit=auto_junc_audit,
+                            result=auto_buffer_result,
+                        ),
+                        auto_buffer_result.geometry,
+                    )
+                    candidate_rows.append(candidate_feature)
+                    replaceable_rows.append(_buffer_replaceable_row(candidate_feature))
+                    failure_business_audit_rows.append(
+                        feature(
+                            _failure_business_audit_row(
+                                segment_id=segment_id,
+                                segment_outcome="replaceable",
+                                reject_reason=buffer_result.reason,
+                                scenario_type="B",
+                                failure_business_category="pair_anchor_mismatch",
+                                pair_nodes=pair_nodes,
+                                junc_nodes=junc_nodes,
+                                relation=auto_relation,
+                                junc_audit=auto_junc_audit,
+                                probe_result=probe_result,
+                                root_cause_category=diagnostic.get("root_cause_category"),
+                                **_pair_anchor_issue_audit_kwargs(pair_anchor_diagnostic),
+                            ),
+                            auto_buffer_result.geometry,
+                        )
+                    )
+                    continue
+            adaptive_plan = _high_grade_adaptive_buffer_retry_plan(
+                sgrade=segment_props.get("sgrade") or props.get("sgrade"),
+                directionality=directionality,
+                buffer_result=buffer_result,
+                diagnostic=diagnostic,
+                base_buffer_distance_m=buffer_config.buffer_distance_m,
+            )
+            if adaptive_plan is not None and auto_pair_anchor_original_relation is None:
+                adaptive_success = False
+                adaptive_failure_category = _adaptive_buffer_failure_category(buffer_result.reason, diagnostic)
+                for adaptive_distance_m in adaptive_plan.distances_m:
+                    src_reason = buffer_result.reason
+                    if directionality == "single":
+                        graph = graph_retry.retry(
+                            segment.get("geometry"),
+                            relation,
+                            optional_allowed_rcsd_nodes,
+                            unexpected_base_ids_for_segment,
+                            directed_rcsd_pair_nodes,
+                            segment_props.get("sgrade") or props.get("sgrade"),
+                            directionality,
+                            buffer_result,
+                            diagnostic,
+                            buffer_config,
+                            max_coarse_length_ratio,
+                        )
+                        if graph is None:
+                            continue
+                        r = graph.buffer_result
+                        adaptive_distance_m = graph.reference_distance_m
+                        src_reason = graph.source_reason
+                    else:
+                        r = buffer_extractor.extract(
+                            segment_geometry=segment.get("geometry"),
+                            relation=relation,
+                            optional_allowed_rcsd_nodes=optional_allowed_rcsd_nodes,
+                            all_relation_base_ids=all_base_ids_for_segment,
+                            unexpected_relation_base_ids=unexpected_base_ids_for_segment,
+                            directed_pair_nodes=directed_rcsd_pair_nodes,
+                            require_directed_pair=False,
+                            require_bidirectional=True,
+                            config=_buffer_config_with_distance(buffer_config, adaptive_distance_m),
+                        )
+                    adaptive_junc_audit = _junc_attach_audit(
+                        junc_nodes=relation_junc_nodes,
+                        relation=relation,
+                        relation_map=relation_map,
+                        buffer_result=r,
+                        rcsd_roads=rcsd_roads,
+                        rcsd_node_canonicalizer=rcsd_node_canonicalizer,
+                    )
+                    if not r.ok:
+                        continue
+                    buffer_feature = feature(_buffer_segment_row(segment_id, r), r.geometry)
+                    _annotate_adaptive_buffer_metadata(
+                        buffer_feature,
+                        distance_m=adaptive_distance_m,
+                        source_reason=src_reason,
+                    )
+                    buffer_segment_rows.append(buffer_feature)
+                    candidate_feature = feature(
+                        _buffer_candidate_row(
+                            segment_id=segment_id,
+                            props=props,
+                            directionality=directionality,
+                            directed_swsd_pair_nodes=directed_swsd_pair_nodes,
+                            relation=relation,
+                            original_rcsd_pair_nodes=None,
+                            junc_nodes=junc_nodes,
+                            junc_kind2_exempt_nodes=junc_kind2_exempt_nodes,
+                            junc_audit=adaptive_junc_audit,
+                            result=r,
+                        ),
+                        r.geometry,
+                    )
+                    _annotate_adaptive_buffer_metadata(
+                        candidate_feature,
+                        distance_m=adaptive_distance_m,
+                        source_reason=src_reason,
+                    )
+                    candidate_rows.append(candidate_feature)
+                    replaceable_rows.append(_buffer_replaceable_row(candidate_feature))
+                    failure_business_audit_rows.append(
+                        feature(
+                            _failure_business_audit_row(
+                                segment_id=segment_id,
+                                segment_outcome="replaceable",
+                                reject_reason=buffer_result.reason,
+                                scenario_type=_scenario_type(adaptive_failure_category),
+                                failure_business_category=adaptive_failure_category,
+                                pair_nodes=pair_nodes,
+                                junc_nodes=junc_nodes,
+                                relation=relation,
+                                junc_audit=adaptive_junc_audit,
+                                probe_result=None,
+                                root_cause_category=diagnostic.get("root_cause_category"),
+                                adaptive_buffer_distance_m=adaptive_distance_m,
+                                adaptive_buffer_source_reason=src_reason,
+                                adaptive_buffer_recommendation=_adaptive_buffer_recommendation(directionality),
+                            ),
+                            r.geometry,
+                        )
+                    )
+                    adaptive_high_grade_buffer_retry_count += 1
+                    if directionality == "single":
+                        adaptive_high_grade_single_buffer_retry_count += 1
+                    elif directionality == "dual":
+                        adaptive_high_grade_dual_buffer_retry_count += 1
+                    adaptive_success = True
+                    break
+                if adaptive_success:
+                    continue
+            formal_retry_stats = _append_buffer_extraction_formal_retry_if_safe(
+                segment_id=segment_id,
+                props=props,
+                directionality=directionality,
+                directed_swsd_pair_nodes=directed_swsd_pair_nodes,
+                pair_nodes=pair_nodes,
+                junc_nodes=junc_nodes,
+                junc_kind2_exempt_nodes=junc_kind2_exempt_nodes,
+                relation=relation,
+                failure_business_category=failure_category,
+                source_reject_reason=buffer_result.reason,
+                probe_result=probe_result,
+                pair_anchor_diagnostic=pair_anchor_diagnostic,
+                relation_junc_nodes=relation_junc_nodes,
+                relation_map=relation_map,
+                segment_geometry=segment.get("geometry"),
+                sgrade=segment_props.get("sgrade") or props.get("sgrade"),
+                buffer_extractor=buffer_extractor,
+                graph_retry=graph_retry,
+                buffer_config=buffer_config,
+                all_base_ids_for_segment=all_base_ids_for_segment,
+                unexpected_base_ids_for_segment=unexpected_base_ids_for_segment,
+                rcsd_graph_edges=rcsd_graph_edges,
+                rcsd_node_canonicalizer=rcsd_node_canonicalizer,
+                max_path_to_swsd_length_ratio=max_coarse_length_ratio,
+                rcsd_roads=rcsd_roads,
+                junc_attach_audit=_junc_attach_audit,
+                output_rows=formal_retry_rows,
+            )
+            if formal_retry_stats.applied:
+                adaptive_high_grade_buffer_retry_count += formal_retry_stats.adaptive_high_grade_buffer_retry_count
+                adaptive_high_grade_single_buffer_retry_count += (
+                    formal_retry_stats.adaptive_high_grade_single_buffer_retry_count
+                )
+                continue
             buffer_rejected = _buffer_rejected_row(segment_id, buffer_result, diagnostic)
             buffer_rejected_rows.append(buffer_rejected)
             rejected_rows.append(
@@ -790,6 +1230,13 @@ def run_t06_step2_extract_rcsd_segments(
                 )
             )
 
+    attach_promotion_stats = _promote_isolated_attach_roads(
+        candidate_rows=candidate_rows,
+        replaceable_rows=replaceable_rows,
+        failure_business_audit_rows=failure_business_audit_rows,
+    )
+    _annotate_rejected_swsd_context(rejected_rows, fusion_units=fusion_units, segments=segments)
+    _normalize_repair_candidate_rows_from_business_audit(repair_candidate_rows, failure_business_audit_rows)
     candidate_paths = write_feature_triplet(step_root=step_root, stem=STEP2_CANDIDATES_STEM, features=candidate_rows, fieldnames=STEP2_CANDIDATE_FIELDS)
     replaceable_paths = write_feature_triplet(step_root=step_root, stem=STEP2_REPLACEABLE_STEM, features=replaceable_rows, fieldnames=STEP2_REPLACEABLE_FIELDS)
     rejected_paths = write_feature_triplet(step_root=step_root, stem=STEP2_REJECTED_STEM, features=rejected_rows, fieldnames=STEP2_REJECTED_FIELDS)
@@ -878,6 +1325,10 @@ def run_t06_step2_extract_rcsd_segments(
             "buffer_only_probe_count": len(buffer_only_probe_rows),
             "repair_candidate_count": len(repair_candidate_rows),
             "failure_business_audit_count": len(failure_business_audit_rows),
+            "adaptive_high_grade_buffer_retry_count": adaptive_high_grade_buffer_retry_count,
+            "adaptive_high_grade_single_buffer_retry_count": adaptive_high_grade_single_buffer_retry_count,
+            "adaptive_high_grade_dual_buffer_retry_count": adaptive_high_grade_dual_buffer_retry_count,
+            **attach_promotion_stats,
             **business_stats,
             **rcsd_road_stats,
             "rcsd_semantic_node_alias_count": sum(1 for raw_id, canonical_id in rcsd_node_canonicalizer.aliases.items() if raw_id != canonical_id),
@@ -897,7 +1348,7 @@ def run_t06_step2_extract_rcsd_segments(
                 "crs_normalized_to": "EPSG:3857",
                 "topology_consistency": "buffer-based RCSD Segment graph uses canonicalized RCSD semantic nodes, explicit component coverage checks and special junction group gating",
                 "geometry_semantics": "SWSD geometry defines the buffer window; RCSD geometry is used for intersects/overlap candidate selection and retained output geometry",
-                "audit_traceability": "input paths, params, counts, reasons and outputs recorded",
+                "audit_traceability": "input paths, params, counts, reasons, adaptive buffer retry distance and outputs recorded",
                 "performance_verifiable": "input counts, candidate counts and output sizes are reproducible from summary",
             },
         },
@@ -913,6 +1364,65 @@ def _segment_index(features: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
         except ParseError:
             continue
     return result
+
+
+def _normalize_repair_candidate_rows_from_business_audit(
+    repair_candidate_rows: list[dict[str, Any]],
+    failure_business_audit_rows: list[dict[str, Any]],
+) -> None:
+    auto_repair_by_segment: dict[str, str] = {}
+    for row in failure_business_audit_rows:
+        props = row.get("properties") or {}
+        recommendation = props.get("repair_recommendation")
+        if props.get("segment_outcome") != "replaceable":
+            continue
+        if recommendation not in {"high_confidence_pair_anchor_candidate", "side_preserving_missing_pair_anchor_completion"}:
+            continue
+        auto_repair_by_segment[str(props.get("swsd_segment_id"))] = str(recommendation)
+    for row in repair_candidate_rows:
+        props = row.get("properties") or {}
+        recommendation = auto_repair_by_segment.get(str(props.get("swsd_segment_id")))
+        if recommendation is None:
+            continue
+        props["manual_review_required"] = False
+        props["repair_recommendation"] = recommendation
+
+
+def _buffer_config_with_distance(config: BufferExtractionConfig, distance_m: float) -> BufferExtractionConfig:
+    return BufferExtractionConfig(
+        buffer_distance_m=distance_m,
+        min_road_overlap_ratio=config.min_road_overlap_ratio,
+        min_road_overlap_length_m=config.min_road_overlap_length_m,
+        advance_right_formway_bit=config.advance_right_formway_bit,
+        max_geometry_buffer_mismatch_ratio=config.max_geometry_buffer_mismatch_ratio,
+        min_geometry_buffer_mismatch_length_m=config.min_geometry_buffer_mismatch_length_m,
+    )
+
+
+def _annotate_adaptive_buffer_metadata(
+    row: dict[str, Any],
+    *,
+    distance_m: float,
+    source_reason: str,
+) -> None:
+    props = row.setdefault("properties", {})
+    props["adaptive_buffer_status"] = "applied"
+    props["adaptive_buffer_distance_m"] = distance_m
+    props["adaptive_buffer_source_reason"] = source_reason
+
+
+def _adaptive_buffer_failure_category(reason: str, diagnostic: dict[str, Any]) -> str:
+    if reason in {"retained_geometry_outside_swsd_buffer_scope", "swsd_geometry_not_covered_by_retained_rcsd"}:
+        return "geometry_shape_mismatch"
+    if diagnostic.get("full_graph_status") == "required_nodes_connected":
+        return "rcsd_graph_break_inside_buffer"
+    return "evidence_slice_incomplete"
+
+
+def _adaptive_buffer_recommendation(directionality: str) -> str:
+    if directionality == "dual":
+        return "adaptive_high_grade_dual_buffer_retry"
+    return "single_graph_first_longitudinal_retry"
 
 
 def _special_swsd_junction_types(features: list[dict[str, Any]], canonicalizer: NodeCanonicalizer) -> dict[str, str]:
@@ -1000,210 +1510,6 @@ def _rcsd_graph_edges(features: list[dict[str, Any]], canonicalizer: NodeCanonic
             continue
         edges.append((road_id, source, target, _coerce_int(props.get("direction"))))
     return edges
-
-
-def _buffer_failure_diagnostic(
-    *,
-    result: BufferSegmentResult,
-    directionality: str,
-    rcsd_pair_nodes: list[str],
-    rcsd_graph_edges: list[tuple[str, str, str, int | None]],
-    rcsd_node_canonicalizer: NodeCanonicalizer,
-) -> dict[str, Any]:
-    required_nodes = _canonical_rcsd_ids(result.required_rcsd_nodes, rcsd_node_canonicalizer)
-    pair_nodes = _canonical_rcsd_ids(rcsd_pair_nodes, rcsd_node_canonicalizer)
-    directed_pair_nodes = _canonical_rcsd_ids(result.directed_rcsd_pair_nodes, rcsd_node_canonicalizer)
-    candidate_road_ids = set(result.candidate_road_ids)
-    full_nodes, full_undirected, full_directed = _graph_views(rcsd_graph_edges)
-    candidate_nodes, candidate_undirected, candidate_directed = _graph_views(rcsd_graph_edges, road_ids=candidate_road_ids)
-    full_graph_status = _required_graph_status(required_nodes, full_nodes, full_undirected)
-    candidate_graph_status = _required_graph_status(required_nodes, candidate_nodes, candidate_undirected)
-    full_direction_status = _direction_status(
-        directionality,
-        full_directed,
-        pair_nodes=pair_nodes,
-        directed_pair_nodes=directed_pair_nodes,
-    )
-    candidate_direction_status = _direction_status(
-        directionality,
-        candidate_directed,
-        pair_nodes=pair_nodes,
-        directed_pair_nodes=directed_pair_nodes,
-    )
-    root_cause = _root_cause_category(
-        result.reason,
-        directionality=directionality,
-        full_graph_status=full_graph_status,
-        candidate_graph_status=candidate_graph_status,
-        full_direction_status=full_direction_status,
-        candidate_direction_status=candidate_direction_status,
-    )
-    return {
-        "root_cause_category": root_cause,
-        "full_graph_status": full_graph_status,
-        "candidate_graph_status": candidate_graph_status,
-        "directional_status": f"full={full_direction_status};candidate={candidate_direction_status}",
-        "diagnostic_notes": _diagnostic_notes(root_cause),
-    }
-
-
-def _canonical_rcsd_ids(values: list[str], canonicalizer: NodeCanonicalizer) -> list[str]:
-    result: list[str] = []
-    seen: set[str] = set()
-    for value in values:
-        try:
-            node_id = canonicalizer.canonicalize(value)
-        except ParseError:
-            node_id = str(value)
-        if node_id in seen:
-            continue
-        seen.add(node_id)
-        result.append(node_id)
-    return result
-
-
-def _graph_views(
-    edges: list[tuple[str, str, str, int | None]],
-    *,
-    road_ids: set[str] | None = None,
-) -> tuple[set[str], dict[str, set[str]], dict[str, set[str]]]:
-    nodes: set[str] = set()
-    undirected: dict[str, set[str]] = defaultdict(set)
-    directed: dict[str, set[str]] = defaultdict(set)
-    for road_id, source, target, direction in edges:
-        if road_ids is not None and road_id not in road_ids:
-            continue
-        nodes.update([source, target])
-        undirected[source].add(target)
-        undirected[target].add(source)
-        if direction in {0, 1, 2}:
-            directed[source].add(target)
-        if direction in {0, 1, 3}:
-            directed[target].add(source)
-    return nodes, dict(undirected), dict(directed)
-
-
-def _required_graph_status(required_nodes: list[str], graph_nodes: set[str], adjacency: dict[str, set[str]]) -> str:
-    missing = [node for node in required_nodes if node not in graph_nodes]
-    if missing:
-        return "missing_required_nodes"
-    if _nodes_connected(adjacency, required_nodes):
-        return "required_nodes_connected"
-    return "required_nodes_disconnected"
-
-
-def _direction_status(
-    directionality: str,
-    adjacency: dict[str, set[str]],
-    *,
-    pair_nodes: list[str],
-    directed_pair_nodes: list[str],
-) -> str:
-    if directionality == "dual":
-        if len(pair_nodes) != 2:
-            return "pair_unavailable"
-        forward = _directed_reachable(adjacency, pair_nodes[0], pair_nodes[1])
-        reverse = _directed_reachable(adjacency, pair_nodes[1], pair_nodes[0])
-        return _direction_pair_status(forward, reverse)
-    if directionality == "single":
-        effective = directed_pair_nodes if len(directed_pair_nodes) == 2 else pair_nodes
-        if len(effective) != 2:
-            return "directed_pair_unavailable"
-        return "directed_path_present" if _directed_reachable(adjacency, effective[0], effective[1]) else "directed_path_missing"
-    return "not_checked"
-
-
-def _direction_pair_status(forward: bool, reverse: bool) -> str:
-    if forward and reverse:
-        return "bidirectional"
-    if forward:
-        return "forward_only"
-    if reverse:
-        return "reverse_only"
-    return "no_directed_pair_path"
-
-
-def _root_cause_category(
-    reason: str,
-    *,
-    directionality: str,
-    full_graph_status: str,
-    candidate_graph_status: str,
-    full_direction_status: str,
-    candidate_direction_status: str,
-) -> str:
-    if reason in {"required_semantic_nodes_missing_from_buffer_graph", "required_semantic_nodes_not_connected_in_buffer"}:
-        if full_graph_status == "missing_required_nodes":
-            return "full_rcsd_graph_missing_required_nodes"
-        if full_graph_status == "required_nodes_disconnected":
-            return "full_rcsd_graph_required_nodes_disconnected"
-        if candidate_graph_status == "missing_required_nodes":
-            return "buffer_candidate_missing_required_nodes"
-        if candidate_graph_status == "required_nodes_disconnected":
-            return "buffer_candidate_required_nodes_disconnected"
-        return "candidate_connected_but_pruned_by_hard_rules"
-    if reason == "rcsd_not_bidirectional_for_swsd_dual":
-        if directionality != "dual":
-            return "directionality_rule_mismatch"
-        if full_direction_status == "bidirectional" and candidate_direction_status != "bidirectional":
-            return "buffer_candidate_missing_bidirectional_corridor"
-        if full_direction_status in {"forward_only", "reverse_only"}:
-            return "full_rcsd_graph_one_direction_only"
-        if full_direction_status == "no_directed_pair_path":
-            return "full_rcsd_graph_no_directed_pair_path"
-        return "candidate_bidirectional_but_pruned_by_hard_rules"
-    if reason == "rcsd_directed_path_missing":
-        if directionality == "single":
-            if full_direction_status == "directed_path_present" and candidate_direction_status != "directed_path_present":
-                return "buffer_candidate_missing_directed_corridor"
-            if full_direction_status == "directed_path_missing":
-                return "full_rcsd_graph_missing_directed_path"
-            return "candidate_directed_path_pruned_by_hard_rules"
-        return "directed_pair_unavailable_or_degenerate"
-    if reason == "buffer_pruned_to_empty":
-        return "candidate_pruned_to_empty_by_hard_rules"
-    if reason == "retained_road_buffer_overlap_insufficient":
-        return "retained_road_outside_buffer_scope"
-    if reason in {"retained_geometry_outside_swsd_buffer_scope", "swsd_geometry_not_covered_by_retained_rcsd"}:
-        return "retained_geometry_buffer_coverage_mismatch"
-    return "buffer_extraction_rule_rejected"
-
-
-def _diagnostic_notes(root_cause_category: str) -> str:
-    notes = {
-        "full_rcsd_graph_missing_required_nodes": "required semantic nodes have no incident RCSDRoad in the full RCSD graph",
-        "full_rcsd_graph_required_nodes_disconnected": "required semantic nodes are disconnected in the full RCSD graph",
-        "buffer_candidate_missing_required_nodes": "required semantic nodes exist in the full graph but are missing from the 50m buffer candidate graph",
-        "buffer_candidate_required_nodes_disconnected": "required semantic nodes exist in the 50m buffer graph but are not connected inside the candidate graph",
-        "buffer_candidate_missing_bidirectional_corridor": "full RCSD graph is bidirectional, but the 50m buffer candidate graph misses at least one direction corridor",
-        "full_rcsd_graph_one_direction_only": "dual SWSD Segment requires bidirectional RCSD, but the full RCSD graph has only one directed path",
-        "full_rcsd_graph_no_directed_pair_path": "dual SWSD Segment requires bidirectional RCSD, but the full RCSD graph has no directed pair path",
-        "buffer_candidate_missing_directed_corridor": "full RCSD graph has the directed path, but the 50m buffer candidate graph misses it",
-        "full_rcsd_graph_missing_directed_path": "single SWSD Segment requires the inferred direction, but the full RCSD graph does not have that directed path",
-        "candidate_pruned_to_empty_by_hard_rules": "candidate RCSD graph was removed by hard pruning rules",
-        "candidate_connected_but_pruned_by_hard_rules": "candidate RCSD graph is connected before pruning but fails retained-graph hard rules",
-        "candidate_bidirectional_but_pruned_by_hard_rules": "candidate RCSD graph is bidirectional before pruning but fails retained-graph hard rules",
-        "candidate_directed_path_pruned_by_hard_rules": "candidate RCSD graph has the directed path before pruning but fails retained-graph hard rules",
-        "retained_road_outside_buffer_scope": "retained RCSDRoad geometry has insufficient overlap with the SWSD Segment buffer",
-        "retained_geometry_buffer_coverage_mismatch": "retained RCSD geometry and SWSD Segment geometry are not mutually covered by the configured buffer scope",
-    }
-    return notes.get(root_cause_category, "buffer-based RCSD Segment construction failed")
-
-
-def _nodes_connected(adjacency: dict[str, set[str]], nodes: list[str]) -> bool:
-    if not nodes:
-        return True
-    source = nodes[0]
-    seen = {source}
-    queue: deque[str] = deque([source])
-    while queue:
-        current = queue.popleft()
-        for neighbor in adjacency.get(current, set()):
-            if neighbor in seen:
-                continue
-            seen.add(neighbor)
-            queue.append(neighbor)
-    return set(nodes).issubset(seen)
 
 
 def _special_junction_gate(
@@ -1685,62 +1991,6 @@ def _buffer_rejected_row(segment_id: str, result: BufferSegmentResult, diagnosti
         },
         None,
     )
-
-
-def _buffer_failed_metric_name(result: BufferSegmentResult) -> str | None:
-    if result.low_buffer_overlap_road_ids:
-        return "retained_road_buffer_overlap_ratio"
-    if result.geometry_buffer_coverage_issue:
-        return "geometry_buffer_coverage"
-    if result.unexpected_mapped_semantic_node_ids:
-        return "unexpected_mapped_semantic_node_ids"
-    if result.unexpected_endpoint_node_ids:
-        return "unexpected_endpoint_node_ids"
-    if result.reason in {"rcsd_not_bidirectional_for_swsd_dual", "rcsd_directed_path_missing"}:
-        return "rcsd_pair_directionality"
-    if result.out_node_ids:
-        return "out_node_ids"
-    if result.inner_node_ids:
-        return "inner_node_ids"
-    return None
-
-
-def _buffer_failed_metric_value(result: BufferSegmentResult) -> Any:
-    if result.low_buffer_overlap_road_ids:
-        return {
-            "low_buffer_overlap_road_ids": result.low_buffer_overlap_road_ids,
-            "min_retained_road_buffer_overlap_ratio": result.min_retained_road_buffer_overlap_ratio,
-        }
-    if result.geometry_buffer_coverage_issue:
-        return {
-            "geometry_buffer_coverage_issue": result.geometry_buffer_coverage_issue,
-            "rcsd_outside_swsd_buffer_length_m": result.rcsd_outside_swsd_buffer_length_m,
-            "rcsd_outside_swsd_buffer_ratio": result.rcsd_outside_swsd_buffer_ratio,
-            "swsd_uncovered_by_rcsd_length_m": result.swsd_uncovered_by_rcsd_length_m,
-            "swsd_uncovered_by_rcsd_ratio": result.swsd_uncovered_by_rcsd_ratio,
-        }
-    if result.unexpected_mapped_semantic_node_ids:
-        return result.unexpected_mapped_semantic_node_ids
-    if result.unexpected_endpoint_node_ids:
-        return result.unexpected_endpoint_node_ids
-    if result.reason in {"rcsd_not_bidirectional_for_swsd_dual", "rcsd_directed_path_missing"}:
-        return result.directed_rcsd_pair_nodes or result.required_rcsd_nodes[:2]
-    if result.out_node_ids:
-        return result.out_node_ids
-    if result.inner_node_ids:
-        return result.inner_node_ids
-    return None
-
-
-def _buffer_failed_threshold_value(result: BufferSegmentResult, config: BufferExtractionConfig) -> Any:
-    if result.reason == "retained_road_buffer_overlap_insufficient":
-        return config.min_road_overlap_ratio
-    if result.reason in {"retained_geometry_outside_swsd_buffer_scope", "swsd_geometry_not_covered_by_retained_rcsd"}:
-        return {
-            "max_geometry_buffer_mismatch_ratio": config.max_geometry_buffer_mismatch_ratio,
-            "min_geometry_buffer_mismatch_length_m": config.min_geometry_buffer_mismatch_length_m,
-        }
-    return None
 
 
 def _reject(

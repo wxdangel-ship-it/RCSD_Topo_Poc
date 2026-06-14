@@ -3,10 +3,12 @@ from __future__ import annotations
 from dataclasses import replace
 
 from shapely.geometry.base import BaseGeometry
+from shapely.strtree import STRtree
 
 from rcsd_topo_poc.modules.t09_swsd_field_rule_restoration.arrow_evidence import (
     evaluate_complete_arrow_exclusion,
 )
+from rcsd_topo_poc.modules.t09_swsd_field_rule_restoration.geometry_match import MAX_GEOMETRY_MATCH_DISTANCE_M
 from rcsd_topo_poc.modules.t09_swsd_field_rule_restoration.restriction_evidence import (
     match_restriction_evidence,
 )
@@ -51,6 +53,11 @@ def restore_field_rules(
     roads_by_id = {road.road_id: road for road in roads}
     arms_by_id = {arm.arm_id: arm for arm in arms}
     road_geometries = road_geometries or {}
+    restrictions_by_pair = _restrictions_by_pair(restrictions)
+    restriction_geometry_index = _GeometryCandidateIndex(restrictions)
+    arrows_by_road_id = _arrows_by_road_id(arrows)
+    arrow_geometry_index = _GeometryCandidateIndex(arrows)
+    arrow_candidates_by_road_cache: dict[str, tuple[ArrowInput, ...]] = {}
     special_status_by_arm: dict[str, set[str]] = {}
     for arm in arms:
         arm_roads = tuple(
@@ -95,7 +102,12 @@ def restore_field_rules(
 
         restriction_result = match_restriction_evidence(
             movement,
-            restrictions=restrictions,
+            restrictions=_candidate_restrictions_for_movement(
+                movement,
+                restrictions_by_pair=restrictions_by_pair,
+                geometry_index=restriction_geometry_index,
+                road_geometries=road_geometries,
+            ),
             roads_by_id=roads_by_id,
             road_geometries=road_geometries,
             arms_by_id=arms_by_id,
@@ -103,7 +115,13 @@ def restore_field_rules(
         arrow_result = (
             evaluate_complete_arrow_exclusion(
                 movement,
-                arrows=arrows,
+                arrows=_candidate_arrows_for_movement(
+                    movement,
+                    arrows_by_road_id=arrows_by_road_id,
+                    geometry_index=arrow_geometry_index,
+                    road_geometries=road_geometries,
+                    candidates_by_road_cache=arrow_candidates_by_road_cache,
+                ),
                 roads_by_id=roads_by_id,
                 road_geometries=road_geometries,
                 arms_by_id=arms_by_id,
@@ -195,6 +213,91 @@ def restore_field_rules(
         restored_rules=tuple(restored_rules),
         summary=to_jsonable(summary),
     )
+
+
+class _GeometryCandidateIndex:
+    def __init__(self, items: tuple[RestrictionInput, ...] | tuple[ArrowInput, ...]) -> None:
+        self._items = tuple(item for item in items if item.geometry is not None)
+        self._geometries = tuple(item.geometry for item in self._items)
+        self._tree = STRtree(self._geometries) if self._geometries else None
+        self._geometry_id_to_index = {id(geometry): index for index, geometry in enumerate(self._geometries)}
+
+    def query(self, geometry: BaseGeometry | None) -> tuple[RestrictionInput, ...] | tuple[ArrowInput, ...]:
+        if self._tree is None or geometry is None or geometry.is_empty:
+            return tuple()
+        query_geometry = geometry.buffer(MAX_GEOMETRY_MATCH_DISTANCE_M).envelope
+        results = self._tree.query(query_geometry)
+        candidates = []
+        for result in results:
+            if hasattr(result, "__index__"):
+                index = int(result)
+            else:
+                index = self._geometry_id_to_index.get(id(result))
+                if index is None:
+                    continue
+            candidates.append(self._items[index])
+        return tuple(candidates)
+
+
+def _restrictions_by_pair(restrictions: tuple[RestrictionInput, ...]) -> dict[tuple[str, str], tuple[RestrictionInput, ...]]:
+    indexed: dict[tuple[str, str], list[RestrictionInput]] = {}
+    for restriction in restrictions:
+        indexed.setdefault((restriction.in_link_id, restriction.out_link_id), []).append(restriction)
+    return {key: tuple(value) for key, value in indexed.items()}
+
+
+def _arrows_by_road_id(arrows: tuple[ArrowInput, ...]) -> dict[str, tuple[ArrowInput, ...]]:
+    indexed: dict[str, list[ArrowInput]] = {}
+    for arrow in arrows:
+        indexed.setdefault(arrow.road_id, []).append(arrow)
+    return {key: tuple(value) for key, value in indexed.items()}
+
+
+def _candidate_restrictions_for_movement(
+    movement: T09ArmMovement,
+    *,
+    restrictions_by_pair: dict[tuple[str, str], tuple[RestrictionInput, ...]],
+    geometry_index: _GeometryCandidateIndex,
+    road_geometries: dict[str, BaseGeometry],
+) -> tuple[RestrictionInput, ...]:
+    candidates: dict[tuple[str, str, str], RestrictionInput] = {}
+    candidate_road_ids: set[str] = set()
+    for pair in movement.carrier_road_pairs:
+        candidate_road_ids.add(pair.from_road_id)
+        candidate_road_ids.add(pair.to_road_id)
+        for restriction in restrictions_by_pair.get((pair.from_road_id, pair.to_road_id), tuple()):
+            candidates.setdefault(_restriction_candidate_key(restriction), restriction)
+    for road_id in candidate_road_ids:
+        for restriction in geometry_index.query(road_geometries.get(road_id)):
+            candidates.setdefault(_restriction_candidate_key(restriction), restriction)
+    return tuple(candidates.values())
+
+
+def _restriction_candidate_key(restriction: RestrictionInput) -> tuple[str, str, str]:
+    return (restriction.restriction_id, restriction.in_link_id, restriction.out_link_id)
+
+
+def _candidate_arrows_for_movement(
+    movement: T09ArmMovement,
+    *,
+    arrows_by_road_id: dict[str, tuple[ArrowInput, ...]],
+    geometry_index: _GeometryCandidateIndex,
+    road_geometries: dict[str, BaseGeometry],
+    candidates_by_road_cache: dict[str, tuple[ArrowInput, ...]],
+) -> tuple[ArrowInput, ...]:
+    candidates: dict[str, ArrowInput] = {}
+    approach_road_ids = {pair.from_road_id for pair in movement.carrier_road_pairs}
+    for road_id in approach_road_ids:
+        if road_id not in candidates_by_road_cache:
+            road_candidates: dict[str, ArrowInput] = {
+                arrow.arrow_id: arrow for arrow in arrows_by_road_id.get(road_id, tuple())
+            }
+            for arrow in geometry_index.query(road_geometries.get(road_id)):
+                road_candidates.setdefault(arrow.arrow_id, arrow)
+            candidates_by_road_cache[road_id] = tuple(road_candidates.values())
+        for arrow in candidates_by_road_cache[road_id]:
+            candidates.setdefault(arrow.arrow_id, arrow)
+    return tuple(candidates.values())
 
 
 def _topology_not_applicable_evidence(movement: T09ArmMovement) -> T09EvidenceItem:

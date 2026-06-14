@@ -30,7 +30,7 @@
 - Step1 对处理范围内语义路口，必须组内所有 node 均落入或接触 `DriveZone ∪ RCSDIntersection` 才写 `has_evd = yes`；任一组内 node 未命中该合并 evidence 面则写 `has_evd = no`。
 - 不在上述集合内的语义路口，代表 node 的 `has_evd / is_anchor / anchor_reason` 均保持或写为 `NULL`。
 - `has_evd / is_anchor / anchor_reason` 只写代表 node；从属 node 空值不是失败或未处理结果。
-- Step3 处理代表 node `kind_2 in {4, 8, 16}` 的语义路口，先用 Step2 surface 1V1 推导关系，再对 `has_evd = yes / is_anchor = no` 的候选使用 T05 relation 主表补充关系。
+- Step3 的 Step2 surface 1V1 推导只处理代表 node `kind_2 in {4, 8, 16}` 的语义路口；T05 relation 主表补充候选处理代表 node `kind_2 in {4, 8, 16, 128}`，其中 `128` 只能在 T05 已发布成功 relation 且 RCSD base 存在时补写 anchor。
 - Step3 只接受 T05 relation 主表中 `target_id = SWSD 语义路口 id`、`status = 0`、`base_id != 0` 的成功关系，并要求 `base_id` 在输入 `RCSDNode.id/mainnodeid` 中存在且未被 Step2 surface 1V1 阶段占用。
 - Step3 必须输出 `RCSDNode_error.gpkg` 记录 Step2 surface 面内多个 RCSD 语义路口错误；必须对最终候选成功 relation 做 T05 同口径基数质检，并输出 `relation_cardinality_errors.csv/json`，覆盖 1:N、N:1 与重复 success target；若出现 SWSD 1:N，必须取消该 SWSD 已建立关系并回写 `is_anchor = no`。
 - Step3 接受后只写代表 node `is_anchor = yes`，`anchor_reason` 保持 `NULL`；同时输出 relation 子集 `intersection_match_t07.geojson`。

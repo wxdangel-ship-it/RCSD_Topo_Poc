@@ -78,6 +78,7 @@ def test_step1_uses_representative_kind2_and_writes_only_representative(tmp_path
             _feature({"id": 201, "mainnodeid": 2, "kind_2": 0}, Point(101, 0)),
             _feature({"id": 3, "mainnodeid": 3, "kind_2": 16}, Point(200, 0)),
             _feature({"id": 4, "mainnodeid": 4, "kind_2": 1}, Point(0, 0)),
+            _feature({"id": 5, "mainnodeid": 5, "kind_2": 4}, Point(11.2, 0)),
         ],
     )
     _write_geojson(
@@ -104,13 +105,15 @@ def test_step1_uses_representative_kind2_and_writes_only_representative(tmp_path
     assert props["201"]["has_evd"] is None
     assert props["3"]["has_evd"] == "no"
     assert props["4"]["has_evd"] is None
+    assert props["5"]["has_evd"] == "yes"
 
     summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
-    assert summary["processed_kind2_count"] == 3
+    assert summary["processed_kind2_count"] == 4
     assert summary["skipped_kind2_count"] == 1
-    assert summary["has_evd_yes_count"] == 2
+    assert summary["has_evd_yes_count"] == 3
     assert summary["has_evd_no_count"] == 1
     assert summary["has_evd_null_count"] == 1
+    assert summary["params"]["has_evd_evidence_tolerance_m"] == 1.5
     assert summary["input_paths"]["intersection"] == str(intersections_path)
     assert "stage_timings" in summary["performance"]
     assert "write_nodes_seconds" in summary["performance"]["stage_timings"]
@@ -187,7 +190,7 @@ def test_step2_outputs_anchor_states_reasons_and_conflicts(tmp_path: Path) -> No
     assert summary["anchor_null_count"] == 1
     assert summary["t_reason_count"] == 0
     assert summary["relation_evidence_row_count"] == 10
-    assert summary["surface_candidate_count"] == 1
+    assert summary["surface_candidate_count"] == 3
     assert artifacts.relation_evidence_csv_path is not None
     assert artifacts.relation_evidence_csv_path.is_file()
     assert artifacts.relation_evidence_json_path is not None
@@ -204,13 +207,19 @@ def test_step2_outputs_anchor_states_reasons_and_conflicts(tmp_path: Path) -> No
     assert relation_rows["4"]["relation_state"] == "t_junction_deferred_to_t03"
     assert relation_rows["4"]["status_suggested"] == 1
     assert relation_rows["5"]["relation_state"] == "multiple_intersections_for_group"
+    assert relation_rows["5"]["status_suggested"] == 1
+    assert relation_rows["5"]["base_id_candidate"] == "fail1a|fail1b"
     assert relation_rows["6"]["relation_state"] == "intersection_shared_by_multiple_groups"
     assert relation_rows["8"]["relation_state"] == "not_evaluated_no_evidence"
     assert relation_rows["9"]["relation_state"] == "intersection_shared_by_multiple_groups"
     assert artifacts.anchor_surface_path is not None
     with fiona.open(str(artifacts.anchor_surface_path)) as src:
         surface_rows = [dict(feature["properties"]) for feature in src]
-    assert {str(row["target_id"]) for row in surface_rows} == {"1"}
+    assert {str(row["target_id"]) for row in surface_rows} == {"1", "5"}
+    assert [str(row["target_id"]) for row in surface_rows].count("5") == 2
+    fail1_surfaces = [row for row in surface_rows if str(row["target_id"]) == "5"]
+    assert {row["relation_state"] for row in fail1_surfaces} == {"multiple_intersections_for_group"}
+    assert {row["status_suggested"] for row in fail1_surfaces} == {1}
     assert {row["source_module"] for row in surface_rows} == {"T07_STEP2"}
     assert "stage_timings" in summary["performance"]
     assert "build_intersection_index_seconds" in summary["performance"]["stage_timings"]

@@ -354,6 +354,7 @@ def _build_arm_carriers(
                 if road is None:
                     risk_flags.append(f"frcsd_road_missing:{ref.source}:{ref.road_id}")
                     continue
+                retained_swsd_ref = status in {"retained_swsd", "replaced+retained_swsd"} and ref.source == "2"
                 road_roles = _road_roles_at_junction(road, central_aliases)
                 if road_roles is None:
                     if ref.source == "2":
@@ -363,10 +364,23 @@ def _build_arm_carriers(
                             exit_refs.add(ref)
                     continue
                 inbound, outbound = road_roles
-                if inbound:
+                if inbound and (not retained_swsd_ref or ref.road_id in approach_seed_ids):
                     approach_refs.add(ref)
-                if outbound:
+                if outbound and (not retained_swsd_ref or ref.road_id in exit_seed_ids):
                     exit_refs.add(ref)
+        fallback_refs = _add_retained_swsd_seed_refs(
+            approach_refs=approach_refs,
+            exit_refs=exit_refs,
+            approach_seed_ids=approach_seed_ids,
+            exit_seed_ids=exit_seed_ids,
+            junction_node_ids=junction_node_ids,
+            road_by_ref=road_by_ref,
+            road_refs_by_id=road_refs_by_id,
+            node_aliases=node_aliases,
+        )
+        if fallback_refs:
+            statuses.append("retained_swsd_seed_fallback")
+            risk_flags.append("retained_swsd_seed_carrier_fallback")
         carriers[arm_id] = _ArmCarrier(
             arm_id=arm_id,
             frcsd_arm_id=f"frcsd:{arm_id}",
@@ -379,6 +393,46 @@ def _build_arm_carriers(
             risk_flags=tuple(sorted(set(risk_flags))),
         )
     return carriers
+
+
+def _add_retained_swsd_seed_refs(
+    *,
+    approach_refs: set[_RoadRef],
+    exit_refs: set[_RoadRef],
+    approach_seed_ids: set[str],
+    exit_seed_ids: set[str],
+    junction_node_ids: set[str],
+    road_by_ref: dict[_RoadRef, _FrcsdRoad],
+    road_refs_by_id: dict[str, tuple[_RoadRef, ...]],
+    node_aliases: dict[str, set[str]],
+) -> set[_RoadRef]:
+    central_aliases = _junction_node_aliases(junction_node_ids, node_aliases)
+    added: set[_RoadRef] = set()
+    for road_id in sorted(approach_seed_ids | exit_seed_ids, key=_sort_key):
+        for ref in road_refs_by_id.get(road_id, tuple()):
+            if ref.source != "2":
+                continue
+            road = road_by_ref.get(ref)
+            if road is None:
+                continue
+            road_roles = _road_roles_at_junction(road, central_aliases)
+            if road_roles is None:
+                continue
+            inbound, outbound = road_roles
+            if inbound and road_id in approach_seed_ids and ref not in approach_refs:
+                approach_refs.add(ref)
+                added.add(ref)
+            if outbound and road_id in exit_seed_ids and ref not in exit_refs:
+                exit_refs.add(ref)
+                added.add(ref)
+    return added
+
+
+def _junction_node_aliases(junction_node_ids: set[str], node_aliases: dict[str, set[str]]) -> set[str]:
+    aliases: set[str] = set()
+    for node_id in junction_node_ids:
+        aliases.update(node_aliases.get(node_id, {node_id}))
+    return aliases
 
 
 def _central_node_aliases(
@@ -591,13 +645,13 @@ def _summary(
             "prohibition_source": "explicit_restriction_only",
             "partial_rule_policy": "do_not_expand_to_frcsd_restriction",
             "non_restriction_evidence_policy": "arrow and special carrier evidence never generate FRCSD restriction alone",
-            "carrier_mapping_source": "T06 swsd_frcsd_segment_relation",
+            "carrier_mapping_source": "T06 swsd_frcsd_segment_relation plus retained source=2 SWSD seed roads still present in T06 F-RCSD output",
             "frcsd_link_fields": ["LinkID", "outLinkID"],
         },
         "qa": {
             "crs_transform_executed": f"vector inputs are read through vector_io target EPSG:{target_epsg}; T09 JSON/CSV evidence is treated as already-normalized module output",
             "topology_silent_fix": False,
-            "topology_consistency": "FRCSD carrier roads are selected only through T06 segment relation and endpoint direction at mapped junction aliases",
+            "topology_consistency": "FRCSD carrier roads are selected through T06 segment relation; retained source=2 SWSD seed fallback requires the road to remain in T06 F-RCSD output and pass endpoint direction at the SWSD junction aliases",
             "geometry_semantics": "restriction geometry connects the selected FRCSD incoming carrier road to the outgoing carrier road without repairing source geometry",
             "audit_traceability": "each output row retains source arm ids, movement id, supporting evidence ids, source values and relation status",
             "performance_verifiable": {

@@ -1,16 +1,20 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from pathlib import Path
 from typing import Any
 
 from shapely.geometry import LineString, Point, mapping
 
 from rcsd_topo_poc.modules.t00_utility_toolbox.common import write_vector
-from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import read_vector_layer
+from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import LayerFeature
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.full_input_shared_layers import load_shared_nodes
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.full_input_streamed_results import T03StreamedCaseResult
-from rcsd_topo_poc.modules.t03_virtual_junction_anchor.t03_batch_closeout import write_updated_nodes_outputs
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.t03_batch_closeout import (
+    write_t03_relation_evidence,
+    write_updated_nodes_outputs,
+)
 
 
 def _accepted_result(case_id: str) -> T03StreamedCaseResult:
@@ -115,8 +119,7 @@ def test_intersection_match_t03_validates_t07_and_rolls_back_one_to_many(tmp_pat
     published_targets = {feature["properties"]["target_id"] for feature in match_payload["features"]}
     summary = json.loads(outputs["intersection_match_t03_summary_path"].read_text(encoding="utf-8"))
     errors = json.loads(outputs["intersection_match_t03_cardinality_errors_json_path"].read_text(encoding="utf-8"))
-    updated_nodes = read_vector_layer(outputs["nodes_path"]).features
-    updated_node_map = {str(feature.properties["id"]): feature.properties.get("is_anchor") for feature in updated_nodes}
+    updated_node_map = _node_anchor_map(outputs["nodes_path"])
     audit = json.loads(outputs["audit_json_path"].read_text(encoding="utf-8"))
 
     assert published_targets == {"100004"}
@@ -130,6 +133,55 @@ def test_intersection_match_t03_validates_t07_and_rolls_back_one_to_many(tmp_pat
     assert updated_node_map["100004"] == "yes"
     assert audit["updated_to_no_count"] == 1
     assert audit["rows"][-1]["reason"] == "intersection_match_t03_one_target_to_many_base"
+
+
+def test_t03_relation_evidence_reads_step6_status_without_legacy_association_status(tmp_path: Path) -> None:
+    run_root = tmp_path / "run"
+    run_root.mkdir()
+    shared_nodes = (
+        LayerFeature(
+            properties={
+                "id": "100001",
+                "mainnodeid": "100001",
+                "has_evd": "yes",
+                "is_anchor": "no",
+                "kind_2": 2048,
+            },
+            geometry=Point(0, 0),
+        ),
+    )
+    case_dir = run_root / "cases" / "100001"
+    case_dir.mkdir(parents=True)
+    (case_dir / "step6_status.json").write_text(
+        json.dumps(
+            {
+                "template_class": "single_sided_t_mouth",
+                "association_class": "A",
+                "required_rcsdnode_ids": ["200001", "200002"],
+                "required_rcsdroad_ids": ["300001"],
+                "support_rcsdroad_ids": ["300002"],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    outputs = write_t03_relation_evidence(
+        run_root=run_root,
+        shared_nodes=shared_nodes,
+        selected_case_ids=["100001"],
+        streamed_results={"100001": _accepted_result("100001")},
+        failed_case_ids=[],
+    )
+
+    payload = json.loads(outputs["relation_evidence_json_path"].read_text(encoding="utf-8"))
+    row = payload["rows"][0]
+    assert row["required_rcsdnode_ids"] == "200001|200002"
+    assert row["required_rcsdroad_ids"] == "300001"
+    assert row["support_rcsdroad_ids"] == "300002"
+    assert row["base_id_candidate"] == "200001|200002"
+    assert row["status_suggested"] == 0
+    assert row["relation_state"] == "success_required_rcsd_junction"
 
 
 def test_intersection_match_t03_accepts_optional_intersection_match_all(tmp_path: Path) -> None:
@@ -181,8 +233,7 @@ def test_intersection_match_t03_accepts_optional_intersection_match_all(tmp_path
     match_payload = json.loads(outputs["intersection_match_t03_path"].read_text(encoding="utf-8"))
     published_targets = {feature["properties"]["target_id"] for feature in match_payload["features"]}
     summary = json.loads(outputs["intersection_match_t03_summary_path"].read_text(encoding="utf-8"))
-    updated_nodes = read_vector_layer(outputs["nodes_path"]).features
-    updated_node_map = {str(feature.properties["id"]): feature.properties.get("is_anchor") for feature in updated_nodes}
+    updated_node_map = _node_anchor_map(outputs["nodes_path"])
 
     assert published_targets == {"100002"}
     assert summary["relation_validation_source"] == "intersection_match_all"
@@ -193,3 +244,12 @@ def test_intersection_match_t03_accepts_optional_intersection_match_all(tmp_path
     assert summary["rollback_target_ids"] == ["100001"]
     assert updated_node_map["100001"] == "no"
     assert updated_node_map["100002"] == "yes"
+
+
+def _node_anchor_map(path: Path) -> dict[str, str]:
+    with sqlite3.connect(str(path)) as connection:
+        table_name = connection.execute(
+            "SELECT table_name FROM gpkg_contents WHERE data_type = 'features' ORDER BY table_name LIMIT 1"
+        ).fetchone()[0]
+        rows = connection.execute(f'SELECT id, is_anchor FROM "{table_name}"').fetchall()
+    return {str(row[0]): row[1] for row in rows}

@@ -106,6 +106,7 @@ def test_step3_anchors_candidates_with_successful_t05_relation_and_existing_rcsd
             _feature({"id": 7, "mainnodeid": 7, "kind_2": 4, "has_evd": "yes", "is_anchor": "no"}, Point(60, 0)),
             _feature({"id": 8, "mainnodeid": 8, "kind_2": 4, "has_evd": "yes", "is_anchor": "no"}, Point(70, 0)),
             _feature({"id": 9, "mainnodeid": 9, "kind_2": 4, "has_evd": "yes", "is_anchor": "no"}, Point(80, 0)),
+            _feature({"id": 10, "mainnodeid": 10, "kind_2": 128, "has_evd": "yes", "is_anchor": "no"}, Point(90, 0)),
         ],
     )
     _write_crs84_geojson(
@@ -118,6 +119,7 @@ def test_step3_anchors_candidates_with_successful_t05_relation_and_existing_rcsd
             _feature({"target_id": 5, "base_id": 900, "status": 0, "level": 1, "is_highway": 0}, LineString([(40, 0), (40, 1)])),
             _feature({"target_id": 7, "base_id": 0, "status": 1, "level": 1, "is_highway": 0}, LineString([(60, 0), (60, 1)])),
             _feature({"target_id": 9, "base_id": 800, "status": 0, "level": 1, "is_highway": 0}, LineString([(80, 0), (80, 1)])),
+            _feature({"target_id": 10, "base_id": 902, "status": 0, "level": 1, "is_highway": 0}, LineString([(90, 0), (90, 1)])),
         ],
     )
     _write_geojson(
@@ -126,6 +128,7 @@ def test_step3_anchors_candidates_with_successful_t05_relation_and_existing_rcsd
             _feature({"id": 800, "mainnodeid": None}, Point(99, 0)),
             _feature({"id": 900, "mainnodeid": None}, Point(100, 0)),
             _feature({"id": 901, "mainnodeid": 901}, Point(101, 0)),
+            _feature({"id": 902, "mainnodeid": None}, Point(101.5, 0)),
             _feature({"id": 999, "mainnodeid": None}, Point(102, 0)),
         ],
     )
@@ -169,36 +172,37 @@ def test_step3_anchors_candidates_with_successful_t05_relation_and_existing_rcsd
     assert props["101"]["is_anchor"] is None
     assert props["2"]["is_anchor"] == "yes"
     assert props["3"]["is_anchor"] == "yes"
-    assert props["4"]["is_anchor"] == "no"
+    assert props["4"]["is_anchor"] == "yes"
     assert props["5"]["is_anchor"] == "no"
     assert props["6"]["is_anchor"] == "no"
     assert props["7"]["is_anchor"] == "no"
     assert props["8"]["is_anchor"] == "no"
     assert props["9"]["is_anchor"] == "no"
+    assert props["10"]["is_anchor"] == "yes"
 
-    assert _relation_targets(artifacts.intersection_match_t07_path) == {"1", "2"}
+    assert _relation_targets(artifacts.intersection_match_t07_path) == {"1", "2", "4", "10"}
     relation_payload = json.loads(artifacts.intersection_match_t07_path.read_text(encoding="utf-8"))
     assert relation_payload["crs"]["properties"]["name"] == "CRS84"
     relation_features = {str(feature["properties"]["target_id"]): feature for feature in relation_payload["features"]}
     assert relation_features["2"]["geometry"]["coordinates"] == [[10.0, 0.0], [10.0, 1.0]]
 
     summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
-    assert summary["candidate_count"] == 4
-    assert summary["accepted_count"] == 2
+    assert summary["candidate_count"] == 6
+    assert summary["accepted_count"] == 4
     assert summary["step2_surface_1v1_relation_count"] == 1
-    assert summary["intersection_match_backfill_relation_count"] == 1
+    assert summary["intersection_match_backfill_relation_count"] == 3
     assert summary["relation_missing_count"] == 1
     assert summary["relation_failure_count"] == 1
     assert summary["rcsd_missing_count"] == 0
     assert summary["already_linked_base_skip_count"] == 1
     assert summary["rcsdnode_error_count"] == 0
     assert summary["swsd_multi_rcsd_error_count"] == 0
-    assert summary["skipped_kind2_count"] == 2
+    assert summary["skipped_kind2_count"] == 1
     assert summary["crs"]["intersection_match_t07"] == "CRS84"
-    assert summary["relation_evidence_row_count"] == 3
+    assert summary["relation_evidence_row_count"] == 5
     assert summary["step2_anchor_count"] == 1
-    assert summary["step3_anchor_count"] == 2
-    assert summary["total_anchor_count"] == 3
+    assert summary["step3_anchor_count"] == 4
+    assert summary["total_anchor_count"] == 5
     assert summary["relation_cardinality_error_count"] == 0
     assert summary["relation_cardinality_passed"] is True
     assert summary["output_strategy"]["anchor_surface_write_mode"] == "copy_step2_surface"
@@ -221,8 +225,8 @@ def test_step3_anchors_candidates_with_successful_t05_relation_and_existing_rcsd
     assert len(csv_rows) == evidence_payload["row_count"]
     assert evidence_payload["anchor_counts"] == {
         "step2_anchor_count": 1,
-        "step3_anchor_count": 2,
-        "total_anchor_count": 3,
+        "step3_anchor_count": 4,
+        "total_anchor_count": 5,
     }
     evidence_rows = {str(row["target_id"]): row for row in evidence_payload["rows"]}
     assert evidence_rows["1"]["relation_source"] == "T07_STEP3_STEP2_SURFACE"
@@ -230,6 +234,8 @@ def test_step3_anchors_candidates_with_successful_t05_relation_and_existing_rcsd
     assert evidence_rows["1"]["status_suggested"] == 0
     assert evidence_rows["1"]["base_id_candidate"] == "800"
     assert evidence_rows["2"]["base_id_candidate"] == "901"
+    assert evidence_rows["4"]["base_id_candidate"] == "999"
+    assert evidence_rows["10"]["base_id_candidate"] == "902"
     assert evidence_rows["8"]["relation_source"] == "T07_STEP2"
     assert artifacts.relation_cardinality_errors_csv_path.is_file()
     cardinality_payload = json.loads(artifacts.relation_cardinality_errors_json_path.read_text(encoding="utf-8"))

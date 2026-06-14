@@ -35,6 +35,8 @@ NEGATIVE_MASK_BUFFER_M = 1.0
 STEP3_DISTANCE_CAP_M = 50.0
 TARGET_NODE_COVER_TOLERANCE_M = 0.5
 TARGET_NODE_INCIDENT_ROAD_COVER_TOLERANCE_M = 10.0
+TARGET_COMPONENT_TOUCH_BUFFER_M = 1.0
+SINGLE_SIDED_TARGET_DRIVEZONE_EDGE_TOUCH_M = 1.5
 INTRUSION_AREA_TOLERANCE_M2 = 0.05
 DRIVEZONE_OUTSIDE_AREA_TOLERANCE_M2 = 0.05
 ADJACENT_REVERSE_MASK_LENGTH_M = 1.0
@@ -1483,6 +1485,81 @@ def _component_touching_target(geometry: BaseGeometry | None, target_geometry: B
     return _clean_geometry(unary_union(kept))
 
 
+def _target_edge_touch_fields(
+    *,
+    enabled: bool = False,
+    reason: str = "not_applicable",
+    tolerance_m: float = TARGET_COMPONENT_TOUCH_BUFFER_M,
+    target_drivezone_distances_m: list[float] | None = None,
+) -> dict[str, Any]:
+    return {
+        "target_edge_touch_enabled": enabled,
+        "target_edge_touch_reason": reason,
+        "target_edge_touch_tolerance_m": round(tolerance_m, 6),
+        "target_drivezone_distances_m": target_drivezone_distances_m or [],
+    }
+
+
+def _node_has_incident_drivezone_support(context: Step1Context, node: Any) -> bool:
+    point = _point_like(node.geometry)
+    for road in context.roads:
+        if node.node_id not in {road.snodeid, road.enodeid}:
+            continue
+        drivezone_line = _extract_line_geometry(road.geometry.intersection(context.drivezone_geometry))
+        if drivezone_line is None:
+            continue
+        if point.distance(drivezone_line) <= TARGET_NODE_INCIDENT_ROAD_COVER_TOLERANCE_M:
+            return True
+    return False
+
+
+def _target_component_touch_reference(
+    context: Step1Context,
+    template_result: Step2TemplateResult,
+) -> tuple[BaseGeometry, dict[str, Any]]:
+    distances = [
+        float(_point_like(node.geometry).distance(context.drivezone_geometry))
+        for node in context.target_group.nodes
+    ]
+    rounded_distances = [round(distance, 6) for distance in distances]
+    tolerance_m = TARGET_COMPONENT_TOUCH_BUFFER_M
+    edge_fields = _target_edge_touch_fields(
+        tolerance_m=tolerance_m,
+        target_drivezone_distances_m=rounded_distances,
+    )
+    if template_result.template_class != "single_sided_t_mouth":
+        return unary_union([node.geometry.buffer(tolerance_m) for node in context.target_group.nodes]), edge_fields
+    if not distances or max(distances) <= TARGET_COMPONENT_TOUCH_BUFFER_M:
+        edge_fields = _target_edge_touch_fields(
+            reason="target_inside_default_touch",
+            tolerance_m=tolerance_m,
+            target_drivezone_distances_m=rounded_distances,
+        )
+        return unary_union([node.geometry.buffer(tolerance_m) for node in context.target_group.nodes]), edge_fields
+    if max(distances) > SINGLE_SIDED_TARGET_DRIVEZONE_EDGE_TOUCH_M:
+        edge_fields = _target_edge_touch_fields(
+            reason="target_too_far_from_drivezone",
+            tolerance_m=tolerance_m,
+            target_drivezone_distances_m=rounded_distances,
+        )
+        return unary_union([node.geometry.buffer(tolerance_m) for node in context.target_group.nodes]), edge_fields
+    if not all(_node_has_incident_drivezone_support(context, node) for node in context.target_group.nodes):
+        edge_fields = _target_edge_touch_fields(
+            reason="target_lacks_incident_drivezone_support",
+            tolerance_m=tolerance_m,
+            target_drivezone_distances_m=rounded_distances,
+        )
+        return unary_union([node.geometry.buffer(tolerance_m) for node in context.target_group.nodes]), edge_fields
+    tolerance_m = SINGLE_SIDED_TARGET_DRIVEZONE_EDGE_TOUCH_M
+    edge_fields = _target_edge_touch_fields(
+        enabled=True,
+        reason="single_sided_target_near_drivezone_with_incident_support",
+        tolerance_m=tolerance_m,
+        target_drivezone_distances_m=rounded_distances,
+    )
+    return unary_union([node.geometry.buffer(tolerance_m) for node in context.target_group.nodes]), edge_fields
+
+
 def _node_has_incident_allowed_support(
     context: Step1Context,
     node: NodeRecord,
@@ -1780,7 +1857,7 @@ def build_step3_case_result(
         if use_reachable_support_cache
         else None
     )
-    reference_target_geometry = unary_union([node.geometry.buffer(1.0) for node in context.target_group.nodes])
+    reference_target_geometry, target_edge_touch_fields = _target_component_touch_reference(context, template_result)
     base_allowed_road_ids: set[str] | None = None
     excluded_opposite_road_ids: set[str] = set()
     excluded_opposite_rc_road_ids: set[str] = set()
@@ -2145,6 +2222,7 @@ def build_step3_case_result(
         "opposite_side_guard_note": opposite_side_guard_note,
         **rcsd_opposite_fallback,
         **single_sided_direction_resolution,
+        **target_edge_touch_fields,
         "hard_path_passed": hard_path_passed,
         "cleanup_preview_passed": cleanup_preview_passed,
         "rescue_reason": "post_difference_preview_only" if cleanup_dependency else None,
@@ -2172,6 +2250,7 @@ def build_step3_case_result(
         "two_node_t_bridge_applied": bridge_hard_fields["two_node_t_bridge_applied"],
         "shared_two_in_two_out_as_through_node": shared_two_in_two_out_fields["shared_two_in_two_out_as_through_node"],
         "single_sided_horizontal_pair_detected": single_sided_direction_resolution["single_sided_horizontal_pair_detected"],
+        "target_edge_touch_enabled": target_edge_touch_fields["target_edge_touch_enabled"],
         **drivezone_metrics,
     }
     visual_review_class = _review_visual_class(step3_state, review_signals, reason)
@@ -2214,6 +2293,7 @@ def build_step3_case_result(
             "rcsd_semantic_bridge_max_target_distance_m": RCSD_SEMANTIC_BRIDGE_MAX_TARGET_DISTANCE_M,
             **shared_two_in_two_out_fields,
             **single_sided_direction_resolution,
+            **target_edge_touch_fields,
             **rcsd_opposite_fallback,
             **drivezone_metrics,
             "visual_review_class": visual_review_class,

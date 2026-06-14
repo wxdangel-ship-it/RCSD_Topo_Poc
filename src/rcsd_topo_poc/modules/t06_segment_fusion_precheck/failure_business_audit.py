@@ -97,12 +97,37 @@ def failure_business_audit_row(
     pair_anchor_bridge_length_m: float = 0.0,
     pair_anchor_diagnostic_source: str = "",
     pair_anchor_diagnostic_reason: str = "",
+    adaptive_buffer_distance_m: float | None = None,
+    adaptive_buffer_source_reason: str = "",
+    adaptive_buffer_recommendation: str = "single_graph_first_longitudinal_retry",
 ) -> dict[str, Any]:
     junc_audit = junc_audit or {}
     candidate_pair_sets = probe_result.candidate_pair_sets if probe_result is not None else []
     original_pair = original_rcsd_pair_nodes if original_rcsd_pair_nodes is not None else relation.rcsd_pair_nodes
     manual_review_required = probe_result.manual_review_required if probe_result is not None else False
     repair_recommendation = probe_result.repair_recommendation if probe_result is not None else ""
+    if (
+        segment_outcome == "replaceable"
+        and failure_business_category == "pair_anchor_mismatch"
+        and reject_reason in {"missing_pair_relation", "invalid_pair_relation_status", "invalid_pair_base_id"}
+        and repair_recommendation == "manual_review_required"
+    ):
+        manual_review_required = False
+        repair_recommendation = "side_preserving_missing_pair_anchor_completion"
+    if segment_outcome == "replaceable" and adaptive_buffer_distance_m is not None:
+        manual_review_required = False
+        repair_recommendation = adaptive_buffer_recommendation
+    auto_fix_candidate = segment_outcome == "replaceable" and (
+        bool(junc_audit.get("dropped_junc_nodes"))
+        or repair_recommendation
+        in {
+            "high_confidence_pair_anchor_candidate",
+            "side_preserving_missing_pair_anchor_completion",
+            "single_graph_first_longitudinal_retry",
+            "adaptive_high_grade_single_buffer_retry",
+            "adaptive_high_grade_dual_buffer_retry",
+        }
+    )
     return {
         "swsd_segment_id": segment_id,
         "segment_outcome": segment_outcome,
@@ -110,9 +135,12 @@ def failure_business_audit_row(
         "scenario_type": scenario_type,
         "buffer_only_candidate_status": probe_result.status if probe_result is not None else "",
         "failure_business_category": failure_business_category,
-        "auto_fix_candidate": segment_outcome == "replaceable" and bool(junc_audit.get("dropped_junc_nodes")),
+        "auto_fix_candidate": auto_fix_candidate,
         "manual_review_required": manual_review_required,
         "repair_recommendation": repair_recommendation,
+        "adaptive_buffer_status": "applied" if adaptive_buffer_distance_m is not None else "not_applied",
+        "adaptive_buffer_distance_m": adaptive_buffer_distance_m,
+        "adaptive_buffer_source_reason": adaptive_buffer_source_reason,
         "pair_anchor_error_swsd_nodes": pair_anchor_error_swsd_nodes or [],
         "pair_anchor_error_original_rcsd_nodes": pair_anchor_error_original_rcsd_nodes or [],
         "pair_anchor_error_candidate_rcsd_nodes": pair_anchor_error_candidate_rcsd_nodes or [],
@@ -132,6 +160,10 @@ def failure_business_audit_row(
         "dropped_junc_nodes": junc_audit.get("dropped_junc_nodes", relation.failed_junc_nodes or []),
         "dropped_junc_relation_nodes": junc_audit.get("dropped_junc_relation_nodes", []),
         "lost_attach_road_ids": junc_audit.get("lost_attach_road_ids", []),
+        "promoted_attach_road_ids": junc_audit.get("promoted_attach_road_ids", []),
+        "blocked_attach_road_ids": junc_audit.get("blocked_attach_road_ids", []),
+        "attach_promotion_status": junc_audit.get("attach_promotion_status", "not_applicable"),
+        "attach_promotion_reason": junc_audit.get("attach_promotion_reason", ""),
         "isolated_attach_loss_count": junc_audit.get("isolated_attach_loss_count", len(relation.failed_junc_nodes or [])),
         "junc_attach_loss_reason": junc_audit.get("junc_attach_loss_reason", ""),
         "candidate_rcsd_pair_node_sets": candidate_pair_sets,
@@ -153,6 +185,8 @@ def failure_business_category(
     junc_audit: dict[str, Any] | None,
     diagnostic: dict[str, Any] | None,
 ) -> str:
+    if reason in {"rcsd_not_bidirectional_for_swsd_dual", "rcsd_directed_path_missing"}:
+        return "directionality_mismatch_fixable"
     if junc_audit and junc_audit.get("dropped_junc_nodes"):
         return junc_failure_business_category(junc_audit)
     if reason in {"missing_pair_relation", "invalid_pair_relation_status", "invalid_pair_base_id", "rcsd_pair_nodes_not_distinct"}:
@@ -165,8 +199,6 @@ def failure_business_category(
         return "multi_anchor_ambiguous"
     if probe_result.status == "corridor_found_with_anchor_mismatch":
         return "pair_anchor_mismatch"
-    if reason in {"rcsd_not_bidirectional_for_swsd_dual", "rcsd_directed_path_missing"}:
-        return "directionality_mismatch_fixable"
     if reason in {"retained_geometry_outside_swsd_buffer_scope", "swsd_geometry_not_covered_by_retained_rcsd"}:
         return "geometry_shape_mismatch"
     root_cause = (diagnostic or {}).get("root_cause_category")

@@ -171,7 +171,8 @@ Step1 不负责最终正确性判断，也不负责几何生成。
 6. must-cover 规则：当前 case 的核心语义对象必须被合法空间覆盖，否则直接暴露为异常。
 7. single-sided opposite-side guard 规则：单侧 T 型场景下要抑制对向误扩张。
 8. RCSD 语义组直连保护规则：若同一非空 `mainnodeid` 的 RCSDNode 之间直线连接区域靠近当前目标语义路口，Step3 可将该直连 corridor 作为合法空间保护证据；该保护必须受 DriveZone、blocker 与审计字段约束，不得静默突破 foreign / adjacent cut。
-9. no-silent-fallback 规则：关键道路集缺失时必须显式失败，不能隐式放宽。
+9. single-sided DriveZone 边界微偏移规则：`single_sided_t_mouth` 中，若目标语义节点离 DriveZone 边界仅有小容差级偏移，且每个目标节点均存在进入 DriveZone 的 incident road 支撑，Step3 可扩大“候选组件是否触达目标”的参考容差；最终 `allowed_space` 仍必须完全落在 DriveZone 内，且必须在 `target_edge_touch_*` 审计字段中记录启用原因、容差与目标节点到 DriveZone 的距离。
+10. no-silent-fallback 规则：关键道路集缺失时必须显式失败，不能隐式放宽。
 
 冻结前置校验：
 

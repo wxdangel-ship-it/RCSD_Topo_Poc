@@ -25,6 +25,10 @@ from .schemas import (
 
 
 JUNC_NODE_KIND2_STEP1_EXEMPT_VALUES = {1, 4096, 8192}
+STEP1_DETACHED_JUNC_BLOCKED_KIND2_VALUES = {64, 128}
+STEP2_PROBE_RELAXED_PAIR_KIND2_VALUES = {2048}
+STEP2_PROBE_RELAXED_PAIR_FAIL1_KIND2_VALUES = {4}
+STEP2_PROBE_RELAXED_JUNC_KIND2_VALUES = {16, 2048}
 
 
 def run_t06_step1_identify_fusion_units(
@@ -63,6 +67,19 @@ def run_t06_step1_identify_fusion_units(
             rejected.append(parsed["reject"])
             continue
         pair_nodes = parsed["pair_nodes"]
+        if len(set(pair_nodes)) != 2:
+            rejected.append(
+                _rejected(
+                    segment_id,
+                    "before_evd",
+                    "swsd_pair_nodes_not_distinct",
+                    pair_nodes,
+                    props,
+                    segment.get("geometry"),
+                    node_index,
+                )
+            )
+            continue
         junc_nodes = parsed["junc_nodes"]
         semantic_nodes = unique_preserve_order(pair_nodes + junc_nodes)
         missing = [node_id for node_id in semantic_nodes if node_id not in node_index]
@@ -71,19 +88,58 @@ def run_t06_step1_identify_fusion_units(
             continue
         junc_kind2_exempt_nodes = _junc_kind2_exempt_nodes(junc_nodes, node_index)
         junc_kind2_exempt_node_set = set(junc_kind2_exempt_nodes)
-        eligibility_nodes = unique_preserve_order(
-            pair_nodes + [node_id for node_id in junc_nodes if node_id not in junc_kind2_exempt_node_set]
-        )
-        has_evd_missing = [node_id for node_id in eligibility_nodes if node_index[node_id].get("has_evd") in (None, "")]
-        if has_evd_missing:
-            rejected.append(_rejected(segment_id, "before_evd", "has_evd_missing", has_evd_missing, props, segment.get("geometry"), node_index))
+        detached_junc_reasons: dict[str, str] = {}
+        non_exempt_junc_nodes = [node_id for node_id in junc_nodes if node_id not in junc_kind2_exempt_node_set]
+
+        pair_has_evd_missing = [node_id for node_id in pair_nodes if node_index[node_id].get("has_evd") in (None, "")]
+        if pair_has_evd_missing:
+            rejected.append(_rejected(segment_id, "before_evd", "has_evd_missing", pair_has_evd_missing, props, segment.get("geometry"), node_index))
             continue
-        has_evd_failed = [node_id for node_id in eligibility_nodes if not yes_value(node_index[node_id].get("has_evd"))]
-        if has_evd_failed:
-            rejected.append(_rejected(segment_id, "before_evd", "has_evd_not_yes", has_evd_failed, props, segment.get("geometry"), node_index))
+        pair_has_evd_failed = [node_id for node_id in pair_nodes if not yes_value(node_index[node_id].get("has_evd"))]
+        if pair_has_evd_failed:
+            rejected.append(_rejected(segment_id, "before_evd", "has_evd_not_yes", pair_has_evd_failed, props, segment.get("geometry"), node_index))
             continue
 
-        row = _fusion_row(segment_id, props, pair_nodes, junc_nodes, semantic_nodes, junc_kind2_exempt_nodes)
+        junc_has_evd_missing = [node_id for node_id in non_exempt_junc_nodes if node_index[node_id].get("has_evd") in (None, "")]
+        blocked_junc_missing = _record_detached_junc_failures(
+            detached_junc_reasons=detached_junc_reasons,
+            failed_nodes=junc_has_evd_missing,
+            pair_nodes=pair_nodes,
+            node_index=node_index,
+            sgrade=sgrade_key,
+            reason="has_evd_missing",
+        )
+        if blocked_junc_missing:
+            rejected.append(_rejected(segment_id, "before_evd", "has_evd_missing", blocked_junc_missing, props, segment.get("geometry"), node_index))
+            continue
+        junc_has_evd_failed = [
+            node_id
+            for node_id in non_exempt_junc_nodes
+            if node_id not in detached_junc_reasons and not yes_value(node_index[node_id].get("has_evd"))
+        ]
+        blocked_junc_failed = _record_detached_junc_failures(
+            detached_junc_reasons=detached_junc_reasons,
+            failed_nodes=junc_has_evd_failed,
+            pair_nodes=pair_nodes,
+            node_index=node_index,
+            sgrade=sgrade_key,
+            reason="has_evd_not_yes",
+        )
+        if blocked_junc_failed:
+            rejected.append(_rejected(segment_id, "before_evd", "has_evd_not_yes", blocked_junc_failed, props, segment.get("geometry"), node_index))
+            continue
+
+        kept_junc_nodes = _kept_junc_nodes(junc_nodes, detached_junc_reasons)
+        semantic_nodes = unique_preserve_order(pair_nodes + kept_junc_nodes)
+        row = _fusion_row(
+            segment_id,
+            props,
+            pair_nodes,
+            kept_junc_nodes,
+            semantic_nodes,
+            junc_kind2_exempt_nodes,
+            detached_junc_reasons,
+        )
         row["has_fail4_fallback"] = any(
             str(node_index[node_id].get("is_anchor") or "").strip().lower() == "fail4_fallback"
             for node_id in semantic_nodes
@@ -91,12 +147,97 @@ def run_t06_step1_identify_fusion_units(
         evd_candidates.append(feature(row, segment.get("geometry")))
         evd_by_sgrade[sgrade_key] += 1
 
-        anchor_missing = [node_id for node_id in eligibility_nodes if node_index[node_id].get("is_anchor") in (None, "")]
+        anchor_required_nodes = [
+            node_id
+            for node_id in unique_preserve_order(
+                pair_nodes + [junc_id for junc_id in kept_junc_nodes if junc_id not in junc_kind2_exempt_node_set]
+            )
+            if not _step2_probe_relaxation_allowed(
+                node_id=node_id,
+                pair_nodes=pair_nodes,
+                node_index=node_index,
+                sgrade=sgrade_key,
+            )
+        ]
+        anchor_missing = [node_id for node_id in anchor_required_nodes if node_index[node_id].get("is_anchor") in (None, "")]
+        if anchor_missing:
+            blocked_anchor_missing = _record_detached_junc_failures(
+                detached_junc_reasons=detached_junc_reasons,
+                failed_nodes=[node_id for node_id in anchor_missing if node_id not in set(pair_nodes)],
+                pair_nodes=pair_nodes,
+                node_index=node_index,
+                sgrade=sgrade_key,
+                reason="is_anchor_missing",
+            )
+            pair_anchor_missing = [node_id for node_id in anchor_missing if node_id in set(pair_nodes)]
+            if not pair_anchor_missing and not blocked_anchor_missing:
+                kept_junc_nodes = _kept_junc_nodes(junc_nodes, detached_junc_reasons)
+                anchor_required_nodes = [
+                    node_id
+                    for node_id in unique_preserve_order(
+                        pair_nodes + [junc_id for junc_id in kept_junc_nodes if junc_id not in junc_kind2_exempt_node_set]
+                    )
+                    if not _step2_probe_relaxation_allowed(
+                        node_id=node_id,
+                        pair_nodes=pair_nodes,
+                        node_index=node_index,
+                        sgrade=sgrade_key,
+                    )
+                ]
+                anchor_missing = []
+            else:
+                anchor_missing = unique_preserve_order(pair_anchor_missing + blocked_anchor_missing)
         if anchor_missing:
             candidate_not_final.append(segment_id)
             rejected.append(_rejected(segment_id, "after_evd", "is_anchor_missing", anchor_missing, props, segment.get("geometry"), node_index))
             continue
-        anchor_failed = [node_id for node_id in eligibility_nodes if not anchor_eligible(node_index[node_id].get("is_anchor"))]
+        if detached_junc_reasons:
+            kept_junc_nodes = _kept_junc_nodes(junc_nodes, detached_junc_reasons)
+            semantic_nodes = unique_preserve_order(pair_nodes + kept_junc_nodes)
+            row = _fusion_row(
+                segment_id,
+                props,
+                pair_nodes,
+                kept_junc_nodes,
+                semantic_nodes,
+                junc_kind2_exempt_nodes,
+                detached_junc_reasons,
+            )
+            row["has_fail4_fallback"] = any(
+                str(node_index[node_id].get("is_anchor") or "").strip().lower() == "fail4_fallback"
+                for node_id in semantic_nodes
+            )
+        anchor_failed = [node_id for node_id in anchor_required_nodes if not anchor_eligible(node_index[node_id].get("is_anchor"))]
+        if anchor_failed:
+            blocked_anchor_failed = _record_detached_junc_failures(
+                detached_junc_reasons=detached_junc_reasons,
+                failed_nodes=[node_id for node_id in anchor_failed if node_id not in set(pair_nodes)],
+                pair_nodes=pair_nodes,
+                node_index=node_index,
+                sgrade=sgrade_key,
+                reason="is_anchor_not_eligible",
+            )
+            pair_anchor_failed = [node_id for node_id in anchor_failed if node_id in set(pair_nodes)]
+            if not pair_anchor_failed and not blocked_anchor_failed:
+                kept_junc_nodes = _kept_junc_nodes(junc_nodes, detached_junc_reasons)
+                semantic_nodes = unique_preserve_order(pair_nodes + kept_junc_nodes)
+                row = _fusion_row(
+                    segment_id,
+                    props,
+                    pair_nodes,
+                    kept_junc_nodes,
+                    semantic_nodes,
+                    junc_kind2_exempt_nodes,
+                    detached_junc_reasons,
+                )
+                row["has_fail4_fallback"] = any(
+                    str(node_index[node_id].get("is_anchor") or "").strip().lower() == "fail4_fallback"
+                    for node_id in semantic_nodes
+                )
+                fusion_units.append(feature(row, segment.get("geometry")))
+                final_by_sgrade[sgrade_key] += 1
+                continue
+            anchor_failed = unique_preserve_order(pair_anchor_failed + blocked_anchor_failed)
         if anchor_failed:
             candidate_not_final.append(segment_id)
             rejected.append(_rejected(segment_id, "after_evd", "is_anchor_not_eligible", anchor_failed, props, segment.get("geometry"), node_index))
@@ -137,6 +278,9 @@ def run_t06_step1_identify_fusion_units(
             "candidate_not_final_segment_ids": candidate_not_final,
             "junc_kind2_exempt_segment_count": sum(1 for item in fusion_units if item["properties"].get("junc_kind2_exempt_nodes")),
             "junc_kind2_exempt_node_count": sum(len(item["properties"].get("junc_kind2_exempt_nodes") or []) for item in fusion_units),
+            "detached_junc_segment_count": sum(1 for item in fusion_units if item["properties"].get("detached_junc_nodes")),
+            "detached_junc_node_count": sum(len(item["properties"].get("detached_junc_nodes") or []) for item in fusion_units),
+            "detached_junc_reason_counts": _detached_junc_reason_counts(fusion_units),
             "has_fail4_fallback_segment_count": sum(1 for item in fusion_units if item["properties"].get("has_fail4_fallback")),
             "outputs": {
                 **{f"swsd_candidates_{k}": str(v) for k, v in candidate_paths.items()},
@@ -222,6 +366,100 @@ def _parse_kind2(value: Any) -> int | None:
         return None
 
 
+def _step2_probe_relaxation_allowed(
+    *,
+    node_id: str,
+    pair_nodes: list[str],
+    node_index: dict[str, dict[str, Any]],
+    sgrade: str,
+) -> bool:
+    attrs = node_index[node_id]
+    if not yes_value(attrs.get("has_evd")):
+        return False
+    if attrs.get("is_anchor") in (None, "") or anchor_eligible(attrs.get("is_anchor")):
+        return False
+    kind2 = _parse_kind2(attrs.get("kind_2"))
+    pair_node_set = set(pair_nodes)
+    anchor_state = str(attrs.get("is_anchor") or "").strip().lower()
+    if _is_high_grade_sgrade(sgrade) and node_id in pair_node_set:
+        if anchor_state == "fail1":
+            return kind2 in STEP2_PROBE_RELAXED_PAIR_FAIL1_KIND2_VALUES
+        return kind2 in STEP2_PROBE_RELAXED_PAIR_KIND2_VALUES
+    if _is_high_grade_sgrade(sgrade):
+        return kind2 in STEP2_PROBE_RELAXED_JUNC_KIND2_VALUES
+    if node_id in pair_node_set and _is_virtual_t_pair_probe_sgrade(sgrade):
+        return kind2 in STEP2_PROBE_RELAXED_PAIR_KIND2_VALUES and _all_pair_nodes_are_virtual_t(pair_nodes, node_index)
+    return False
+
+
+def _is_high_grade_sgrade(value: Any) -> bool:
+    text = str(value or "").strip()
+    return text.startswith("0-0") or text.startswith("0-1")
+
+
+def _is_virtual_t_pair_probe_sgrade(value: Any) -> bool:
+    text = str(value or "").strip()
+    return text.startswith("0-2") and "双" in text
+
+
+def _all_pair_nodes_are_virtual_t(pair_nodes: list[str], node_index: dict[str, dict[str, Any]]) -> bool:
+    if len(pair_nodes) != 2:
+        return False
+    return all(_parse_kind2(node_index[node_id].get("kind_2")) in STEP2_PROBE_RELAXED_PAIR_KIND2_VALUES for node_id in pair_nodes)
+
+
+def _record_detached_junc_failures(
+    *,
+    detached_junc_reasons: dict[str, str],
+    failed_nodes: list[str],
+    pair_nodes: list[str],
+    node_index: dict[str, dict[str, Any]],
+    sgrade: str,
+    reason: str,
+) -> list[str]:
+    blocked: list[str] = []
+    pair_node_set = set(pair_nodes)
+    for node_id in failed_nodes:
+        if node_id in pair_node_set or not _step1_detached_junc_allowed(node_id=node_id, node_index=node_index, sgrade=sgrade):
+            blocked.append(node_id)
+            continue
+        detached_junc_reasons.setdefault(node_id, reason)
+    return blocked
+
+
+def _step1_detached_junc_allowed(
+    *,
+    node_id: str,
+    node_index: dict[str, dict[str, Any]],
+    sgrade: str,
+) -> bool:
+    if not _is_high_grade_sgrade(sgrade):
+        return False
+    kind2 = _parse_kind2(node_index[node_id].get("kind_2"))
+    if kind2 is None:
+        return False
+    return kind2 not in STEP1_DETACHED_JUNC_BLOCKED_KIND2_VALUES
+
+
+def _kept_junc_nodes(junc_nodes: list[str], detached_junc_reasons: dict[str, str]) -> list[str]:
+    detached = set(detached_junc_reasons)
+    return [node_id for node_id in junc_nodes if node_id not in detached]
+
+
+def _detached_reason_entries(detached_junc_reasons: dict[str, str]) -> list[str]:
+    return [f"{node_id}:{reason}" for node_id, reason in detached_junc_reasons.items()]
+
+
+def _detached_junc_reason_counts(fusion_units: list[dict[str, Any]]) -> dict[str, int]:
+    counts: Counter[str] = Counter()
+    for item in fusion_units:
+        for entry in item["properties"].get("detached_junc_reasons") or []:
+            text = str(entry)
+            reason = text.split(":", 1)[1] if ":" in text else text
+            counts[reason] += 1
+    return dict(counts)
+
+
 def _node_index(nodes: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     index: dict[str, dict[str, Any]] = {}
     for node in nodes:
@@ -269,12 +507,15 @@ def _fusion_row(
     junc_nodes: list[str],
     semantic_nodes: list[str],
     junc_kind2_exempt_nodes: list[str],
+    detached_junc_reasons: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     roads = []
     try:
         roads = parse_id_list(props.get("roads"), allow_empty=True)
     except ParseError:
         roads = []
+    detached_junc_reasons = detached_junc_reasons or {}
+    detached_junc_nodes = list(detached_junc_reasons)
     return {
         "swsd_segment_id": segment_id,
         "sgrade": props.get("sgrade"),
@@ -285,6 +526,8 @@ def _fusion_row(
         "pair_node_count": len(pair_nodes),
         "junc_node_count": len(junc_nodes),
         "junc_kind2_exempt_nodes": junc_kind2_exempt_nodes,
+        "detached_junc_nodes": detached_junc_nodes,
+        "detached_junc_reasons": _detached_reason_entries(detached_junc_reasons),
         "has_fail4_fallback": False,
     }
 

@@ -712,6 +712,7 @@ accepted surface 主层与 summary 至少应保留或可追溯：
   - `geometry_not_accepted`
   - `ambiguous_review`
 - `status_suggested = 0` 只允许在 `final_state = accepted` 且能确定 RCSD semantic junction candidate，或 Step8 fallback relation 成功且 `base_id_candidate` 已映射为 RCSD 语义路口 group id 时出现。
+- Step8 fallback relation 中，`base_id_candidate` 不得为 `0` / `-1` / 空值；`RCSDNode.mainnodeid = 0` 只能说明未归属多节点组，不能被 fallback 单独解释为 RCSD 语义路口。
 - 只有 RCSDRoad / RCSDNode 支持但不构成 RCSD 语义路口时，必须输出 `rcsd_present_not_junction / status_suggested = 1`，不得伪造成成功匹配。
 - `surface_candidate_present = 1` 仅表示存在 T04 accepted surface candidate；它不等同于最终 SWSD-RCSD semantic junction 匹配成功。
 

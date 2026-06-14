@@ -32,6 +32,7 @@ from rcsd_topo_poc.modules.t08_preprocess.vector_io import write_gpkg as write_g
 
 
 ALLOWED_KIND2 = {"4", "8", "16", "64", "128", "2048"}
+STEP1_HAS_EVD_EVIDENCE_TOLERANCE_M = 1.5
 INTERSECTION_ID_FIELDS = ("id", "intersection_id", "intersectionid", "fid", "objectid", "OBJECTID")
 PATCH_ID_FIELDS = ("patch_id", "patchid", "PATCH_ID", "PATCHID")
 RELATION_EVIDENCE_FIELDNAMES = [
@@ -748,7 +749,10 @@ def _write_relation_evidence_json(
             for intersection_id in matched_intersection_ids
             if (record := intersection_by_id.get(intersection_id)) is not None and record.base_id_candidate
         ]
-        base_id_candidate = _pipe_join_text(base_candidates) if status_suggested == 0 and base_candidates else -1
+        if relation_state in {"existing_rcsdintersection_matched", "multiple_intersections_for_group"} and base_candidates:
+            base_id_candidate = _pipe_join_text(base_candidates)
+        else:
+            base_id_candidate = -1
         rcsd_point_x, rcsd_point_y = _intersection_points(matched_intersection_ids, intersection_by_id)
         rows.append(
             {
@@ -795,6 +799,8 @@ def _surface_candidate_row(
     target_id: str,
     matched_intersection_ids: list[str],
     intersection_record: IntersectionRecord,
+    relation_state: str,
+    status_suggested: int,
 ) -> dict[str, Any]:
     representative_props = representative_feature.properties
     kind_2 = _normalize_id(representative_props.get("kind_2"))
@@ -817,11 +823,11 @@ def _surface_candidate_row(
         "grade_2": _value_or_minus_one(representative_props.get("grade_2")),
         "patch_id": patch_id or "",
         "patch_id_source": f"RCSDIntersection.{patch_id_field}" if patch_id_field else "unresolved",
-        "final_state": "accepted",
+        "final_state": "accepted" if status_suggested == 0 else "review_required",
         "anchor_reason": _normalize_id(representative_props.get("anchor_reason")) or "",
         "base_id_candidate": base_id_candidate,
-        "relation_state": "existing_rcsdintersection_matched",
-        "status_suggested": 0,
+        "relation_state": relation_state,
+        "status_suggested": status_suggested,
         "level": _value_or_minus_one(representative_props.get("grade")),
         "is_highway": _value_or_minus_one(representative_props.get("closed_con")),
         "swsd_point_x": swsd_point_x,
@@ -849,10 +855,15 @@ def _write_surface_candidate_gpkg(
         if group.representative is None:
             continue
         representative_feature = nodes_features[group.representative.output_index]
-        if _normalize_id(representative_feature.properties.get("is_anchor")) != "yes":
+        final_state = _normalize_id(representative_feature.properties.get("is_anchor"))
+        if final_state not in {"yes", "fail1"}:
             continue
         target_id = _normalize_id(representative_feature.properties.get("mainnodeid")) or group.representative.node_id or junction_id
         matched_intersection_ids = list(result.get("intersection_ids") or [])
+        if final_state == "fail1" and len(matched_intersection_ids) <= 1:
+            continue
+        relation_state = "multiple_intersections_for_group" if final_state == "fail1" else "existing_rcsdintersection_matched"
+        status_suggested = 1 if final_state == "fail1" else 0
         for intersection_id in matched_intersection_ids:
             intersection_record = intersection_by_id.get(intersection_id)
             if intersection_record is None:
@@ -863,6 +874,8 @@ def _write_surface_candidate_gpkg(
                 target_id=target_id,
                 matched_intersection_ids=matched_intersection_ids,
                 intersection_record=intersection_record,
+                relation_state=relation_state,
+                status_suggested=status_suggested,
             )
             surface_props = dict(intersection_record.properties)
             surface_props.update(row)
@@ -935,7 +948,8 @@ def run_t07_step1_has_evd(
     if intersection_layer_data is not None and not intersection_geoms:
         raise T07RunError("missing_required_field", "RCSDIntersection layer has no non-empty geometry.")
     evidence_geoms = drivezone_geoms + intersection_geoms
-    prepared_evidence_surface = prep(evidence_geoms[0] if len(evidence_geoms) == 1 else unary_union(evidence_geoms))
+    evidence_surface = evidence_geoms[0] if len(evidence_geoms) == 1 else unary_union(evidence_geoms)
+    prepared_evidence_surface = prep(evidence_surface)
 
     by_mainnodeid, singleton_by_id = _build_node_index(nodes_layer_data.features, audit_rows)
     junction_ids = _candidate_junction_ids(by_mainnodeid, singleton_by_id)
@@ -988,7 +1002,11 @@ def run_t07_step1_has_evd(
             continue
 
         counts["processed_kind2_count"] += 1
-        has_evd = "yes" if all(prepared_evidence_surface.intersects(record.geometry) for record in group.group_nodes) else "no"
+        has_evd = (
+            "yes"
+            if all(_hits_step1_evidence_surface(record.geometry, prepared_evidence_surface, evidence_surface) for record in group.group_nodes)
+            else "no"
+        )
         representative_props["has_evd"] = has_evd
         if has_evd == "yes":
             counts["has_evd_yes_count"] += 1
@@ -1014,6 +1032,7 @@ def run_t07_step1_has_evd(
         "input_paths": input_paths,
         "output_paths": {"nodes": str(nodes_output_path)},
         "target_crs": TARGET_CRS.to_string(),
+        "params": {"has_evd_evidence_tolerance_m": STEP1_HAS_EVD_EVIDENCE_TOLERANCE_M},
         "audit_count": len(audit_rows),
         "performance": {
             "elapsed_seconds": _elapsed_since(started_at),
@@ -1035,6 +1054,12 @@ def run_t07_step1_has_evd(
         },
     )
     return T07StageArtifacts(run_root, stage_root, nodes_output_path, summary_path, audit_csv_path, audit_json_path, perf_path)
+
+
+def _hits_step1_evidence_surface(geometry: BaseGeometry, prepared_surface: Any, evidence_surface: BaseGeometry) -> bool:
+    if prepared_surface.intersects(geometry):
+        return True
+    return float(evidence_surface.distance(geometry)) <= STEP1_HAS_EVD_EVIDENCE_TOLERANCE_M
 
 
 def _intersection_identity(properties: dict[str, Any], feature_index: int) -> str:

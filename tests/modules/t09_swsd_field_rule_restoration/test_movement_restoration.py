@@ -297,6 +297,47 @@ def test_restoration_records_partial_restriction_basis_on_movement() -> None:
     assert restored.remaining_restriction_status == "no_restriction_evidence"
 
 
+def test_restoration_keeps_same_restriction_id_with_multiple_link_pairs() -> None:
+    movement = T09ArmMovement(
+        junction_id="j1",
+        movement_id="m_multi_link_restriction",
+        from_arm_id="from",
+        to_arm_id="to",
+        movement_type="straight",
+        candidate_road_pair_count=2,
+        carrier_universe_status="available",
+        carrier_road_pairs=(
+            RoadPair("in_1", "out_1"),
+            RoadPair("in_1", "out_2"),
+        ),
+    )
+
+    result = restore_field_rules(
+        arms=tuple(),
+        movements=(movement,),
+        restrictions=(
+            RestrictionInput(
+                restriction_id="same_cond",
+                in_link_id="in_1",
+                out_link_id="out_1",
+            ),
+            RestrictionInput(
+                restriction_id="same_cond",
+                in_link_id="in_1",
+                out_link_id="out_2",
+            ),
+        ),
+    )
+
+    restored = result.movements[0]
+    evidence_pairs = {item.road_pair for item in result.evidence_items if item.evidence_type == EvidenceType.RESTRICTION}
+
+    assert restored.prohibition_status == ProhibitionStatus.FULLY_PROHIBITED
+    assert restored.restriction_coverage == "all_restricted"
+    assert evidence_pairs == {RoadPair("in_1", "out_1"), RoadPair("in_1", "out_2")}
+    assert result.restored_rules[0].field_rule_status == ProhibitionStatus.FULLY_PROHIBITED
+
+
 def test_restoration_records_advance_right_status_on_right_movement() -> None:
     movement = T09ArmMovement(
         junction_id="j1",
@@ -318,3 +359,77 @@ def test_restoration_records_advance_right_status_on_right_movement() -> None:
     restored = result.movements[0]
     assert restored.advance_left_status == "not_applicable"
     assert restored.advance_right_status == "present_bypass_core_junction"
+
+
+def test_restoration_filters_evidence_candidates_without_losing_raw_geometry_match() -> None:
+    movement = T09ArmMovement(
+        junction_id="j1",
+        movement_id="m_geometry_index",
+        from_arm_id="arm_w",
+        to_arm_id="arm_n",
+        movement_type="right",
+        candidate_road_pair_count=1,
+        carrier_universe_status="available",
+        carrier_road_pairs=(RoadPair("swsd_in_w", "swsd_out_n"),),
+    )
+    irrelevant_restrictions = tuple(
+        RestrictionInput(
+            restriction_id=f"rst_far_{index}",
+            in_link_id=f"raw_far_in_{index}",
+            out_link_id=f"raw_far_out_{index}",
+            geometry=LineString([(1000 + index, 1000), (1010 + index, 1000)]),
+        )
+        for index in range(20)
+    )
+    irrelevant_arrows = tuple(
+        ArrowInput(
+            arrow_id=f"arrow_far_{index}",
+            road_id=f"raw_far_{index}",
+            lane_codes=("a",),
+            geometry=LineString([(1000 + index, 1000), (1010 + index, 1000)]),
+        )
+        for index in range(20)
+    )
+
+    result = restore_field_rules(
+        arms=(
+            T09SwsdArm(junction_id="j1", arm_id="arm_w", member_node_ids=("j1",)),
+            T09SwsdArm(junction_id="j1", arm_id="arm_n", member_node_ids=("j1",)),
+        ),
+        movements=(movement,),
+        restrictions=irrelevant_restrictions
+        + (
+            RestrictionInput(
+                restriction_id="rst_raw",
+                in_link_id="raw_in_w",
+                out_link_id="raw_out_n",
+                geometry=LineString([(-12.0, 0.0), (0.0, 0.0), (0.0, 12.0)]),
+            ),
+        ),
+        arrows=irrelevant_arrows
+        + (
+            ArrowInput(
+                arrow_id="arrow_raw",
+                road_id="raw_in_w",
+                lane_codes=("a",),
+                geometry=LineString([(-12.0, 0.0), (-1.0, 0.0)]),
+            ),
+        ),
+        roads=(
+            SWSDRoadInput("swsd_in_w", "n_w", "j1", 2),
+            SWSDRoadInput("swsd_out_n", "j1", "n_n", 2),
+        ),
+        road_geometries={
+            "swsd_in_w": LineString([(-20.0, 0.0), (0.0, 0.0)]),
+            "swsd_out_n": LineString([(0.0, 0.0), (0.0, 20.0)]),
+        },
+    )
+
+    restored = result.movements[0]
+    assert restored.prohibition_status == ProhibitionStatus.FULLY_PROHIBITED
+    assert restored.restriction_coverage == "all_restricted"
+    evidence_ids = {item.evidence_id for item in result.evidence_items}
+    assert any(item.provenance.source_id == "rst_raw" for item in result.evidence_items)
+    assert any(item.provenance.source_id == "arrow_raw" for item in result.evidence_items)
+    assert "restriction:m_geometry_index:1" in evidence_ids
+    assert "arrow:m_geometry_index:exclusion" in evidence_ids

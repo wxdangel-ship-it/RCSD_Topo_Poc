@@ -234,7 +234,15 @@ def _fallback_decision(
     missing_nodes = [node_id for node_id in required_nodes if node_id not in rcsd_group_by_node_id]
     if missing_nodes:
         return "failed", -1, "missing_rcsdnode_group_id:" + "|".join(missing_nodes)
-    group_ids = _ordered_values([rcsd_group_by_node_id[node_id] for node_id in required_nodes])
+    group_ids_by_node = {node_id: rcsd_group_by_node_id[node_id] for node_id in required_nodes}
+    invalid_group_nodes = [
+        f"{node_id}={group_id}"
+        for node_id, group_id in group_ids_by_node.items()
+        if not _is_valid_rcsd_group_id(group_id)
+    ]
+    if invalid_group_nodes:
+        return "failed", -1, "invalid_rcsdnode_group_id:" + "|".join(invalid_group_nodes)
+    group_ids = _ordered_values(group_ids_by_node.values())
     if len(group_ids) != 1:
         return "failed", -1, "ambiguous_rcsd_group_id:" + "|".join(group_ids)
     return "success", group_ids[0], "required_rcsd_node_group_resolved"
@@ -266,6 +274,11 @@ def _case_required_rcsd_nodes(*, run_root: Path, case_id: str) -> list[str]:
             if isinstance(selected_evidence, dict):
                 values.extend(_split_values(selected_evidence.get("required_rcsd_node")))
     return _ordered_values(values)
+
+
+def _is_valid_rcsd_group_id(value: Any) -> bool:
+    group_id = normalize_id(value)
+    return group_id is not None and group_id not in {"0", "-1"}
 
 
 def _rcsd_group_indexes(features: Iterable[Any]) -> tuple[dict[str, str], dict[str, tuple[Any, Any]]]:

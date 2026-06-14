@@ -101,6 +101,7 @@ class SwsdTargetContext:
     junction_type: str
     point: BaseGeometry
     projection_points: tuple[BaseGeometry, ...]
+    surface_geometry: BaseGeometry | None = None
     level: Any = -1
     is_highway: Any = -1
     representative_properties: dict[str, Any] = field(default_factory=dict)

@@ -137,6 +137,13 @@ WORKFLOW_STEPS: tuple[WorkflowStepSpec, ...] = (
         notes="T10 requires explicit T05 input/output files; directory-only module roots are rejected.",
     ),
     WorkflowStepSpec(
+        "t07_step3",
+        "t07_semantic_junction_anchor",
+        consumes=("t07_nodes", "t05_intersection_match_all", "t05_rcsdnode_out"),
+        produces=("t07_nodes", "t07_relation_evidence", "t07_surface"),
+        notes="Runs T07 Step3 after T05 and overwrites t07_nodes with relation-backfilled anchor nodes for T06/T09.",
+    ),
+    WorkflowStepSpec(
         "t06",
         "t06_segment_fusion_precheck",
         consumes=("t01_segment", "t01_roads", "t07_nodes", "t05_intersection_match_all", "t05_rcsdroad_out", "t05_rcsdnode_out"),

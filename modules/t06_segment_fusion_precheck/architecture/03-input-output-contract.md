@@ -35,11 +35,13 @@
 - `t06_step2_summary.json`
 
 `t06_rcsd_buffer_segments` 是 Step2 buffer 构建成果；`t06_rcsd_segment_candidates` 是 buffer 成功构建的 RCSDSegment 候选；`t06_rcsd_segment_replaceable` 是经过全部硬审计与特殊路口组门控后的最终可替换集合，不再表示 pair-to-pair BFS 路径候选。
+`t06_swsd_segment_rejected` 必须记录 `pair_nodes` 两端相同的 self-pair fallback，reason 为 `swsd_pair_nodes_not_distinct`；此类 Segment 不进入 `t06_swsd_segment_final_fusion_units`，也不进入 Step2 替换分母。
+`t06_swsd_segment_final_fusion_units` 对高等级 Segment 的非特殊 junc-only 失败节点必须记录 `detached_junc_nodes / detached_junc_reasons`，并从 final `junc_nodes / semantic_node_set` 中移除；这些节点不进入 Step2 pair-to-pair 主通道 relation 检查。
 `t06_rcsd_buffer_only_probe` 是 relation-independent 诊断输出，不依赖 T05 relation 绑定。
-`t06_rcsd_repair_candidates` 记录 pair 锚定疑似错误、1V多 / 多V1、高置信候选、错误 SWSD 端点与短联通 endpoint cluster 质检证据；不得静默覆盖 T05 relation，也不得驱动 Step2 自动替换。
-`t06_rcsd_segment_failure_business_audit` 记录场景 A / 场景 B 业务归因、B 类细分、人工复核、pair anchor 错误定位、上游责任归因和 optional junc lost attach 审计。
+`t06_rcsd_repair_candidates` 记录 pair 锚定疑似错误、1V多 / 多V1、高置信候选、错误 SWSD 端点与短联通 endpoint cluster 质检证据；不得静默覆盖或回写 T05 relation。满足受限高置信安全门槛的 pair anchor 候选可驱动 T06 当前 Segment 的一次 effective relation 重试；其它 repair candidate 不得驱动 Step2 自动替换。
+`t06_rcsd_segment_failure_business_audit` 记录场景 A / 场景 B 业务归因、B 类细分、人工复核、pair anchor 错误定位、adaptive buffer 距离、上游责任归因和 optional junc lost attach 审计。
 `t06_special_junction_group_audit` 记录 `kind_2=64/128` 特殊语义路口的关联 Segment、组门控状态、映射 RCSD 语义路口、组内 RCSDNode 与内部 RCSDRoad。
-`t06_step2_summary.json` 必须记录 RCSDRoad 覆盖统计：全量 RCSDRoad 去重数量 / 长度、最终可替换 Segment 引用的去重 RCSDRoad 数量 / 长度、按引用次数累计的 RCSDRoad 数量 / 长度，以及 replaceable 引用缺失数量；同时记录场景 A 数量、场景 B 已提升数量、场景 B 人工复核数量、pair 锚定疑似错误数量、pair 锚定错误位置已定位数量、junc required 拖垮数量、RCSDRoad 质量问题数量、当前替换率、人工修复后理论提升上限，并给出发生次数、去重 Segment、唯一 SWSD semantic node 与唯一 RCSD semantic node 口径统计。
+`t06_step2_summary.json` 必须记录 RCSDRoad 覆盖统计：全量 RCSDRoad 去重数量 / 长度、最终可替换 Segment 引用的去重 RCSDRoad 数量 / 长度、按引用次数累计的 RCSDRoad 数量 / 长度，以及 replaceable 引用缺失数量；同时记录场景 A 数量、场景 B 已提升数量、场景 B 人工复核数量、pair 锚定疑似错误数量、pair 锚定错误位置已定位数量、高等级 single graph-first / dual adaptive 受限重审总数及 single / dual 分组数量、junc required 拖垮数量、RCSDRoad 质量问题数量、当前替换率、人工修复后理论提升上限，并给出发生次数、去重 Segment、唯一 SWSD semantic node 与唯一 RCSD semantic node 口径统计。
 
 ## Step3 输出
 
@@ -71,6 +73,7 @@ Step3 默认从 Step2 replaceable 同目录读取 `t06_special_junction_group_au
 `t06_step3_swsd_frcsd_segment_relation` 是面向下游 T09 的稳定关系证据，用于表达每个 SWSD Segment 在 F-RCSD 中的承载结果，而不是表达 Road 级限制结论。关系状态包括：
 
 - `replaced`：该 SWSD Segment 已由 RCSD corridor 替换，`frcsd_road_ids` 必须指向 `t06_frcsd_road` 中 `source=1` 的 Road。
+- `replaced+retained_swsd`：该 SWSD Segment 主通道已由 RCSD corridor 替换，但 Step1 detached junc 触达的局部 SWSDRoad 仍以 `source=2` 保留为 T09 通行限制 carrier；`frcsd_road_ids` 可同时包含 `source=1` 与 `source=2`。
 - `retained_swsd`：该 SWSD Segment 未被替换，仍由原 SWSD Road 承载，`frcsd_road_ids` 必须指向 `t06_frcsd_road` 中 `source=2` 的 Road。
 - `failed`：该 SWSD Segment 无法建立稳定 F-RCSD 承载关系，必须在 `relation_reason / risk_flags` 中说明原因。
 
@@ -82,8 +85,10 @@ Step3 默认从 Step2 replaceable 同目录读取 `t06_special_junction_group_au
 - `swsd_pair_nodes`
 - `swsd_junc_nodes`
 - `junc_kind2_exempt_nodes`
+- `detached_junc_nodes`
 - `swsd_road_ids`
 - `removed_swsd_road_ids`
+- `retained_detached_swsd_road_ids`
 - `frcsd_road_ids`
 - `frcsd_road_source_values`
 - `rcsd_pair_nodes`
@@ -93,7 +98,7 @@ Step3 默认从 Step2 replaceable 同目录读取 `t06_special_junction_group_au
 - `source_mix`
 - `risk_flags`
 
-下游不得根据同名 Road ID 假设 SWSD 与 F-RCSD 已匹配；必须使用本关系输出中的 `swsd_segment_id + relation_status + frcsd_road_ids + swsd_to_frcsd_node_map` 建立 Arm 级承载关系。
+下游不得根据同名 Road ID 假设 SWSD 与 F-RCSD 已匹配；必须使用本关系输出中的 `swsd_segment_id + relation_status + frcsd_road_ids + swsd_to_frcsd_node_map` 建立 Arm 级承载关系。`identity_retained_swsd` node map 只表示 detached junc 的局部 SWSD carrier 原样保留，不表示该节点已经映射到 RCSD。
 
 ## 文本证据包 helper 输出
 
@@ -141,8 +146,8 @@ T06 模块内 `text_bundle.py` 提供非官方压缩 / 解压 helper，不新增
 - 拓扑一致性：候选抽取不 silent fix 输入拓扑，pair required semantic node 连通覆盖、最小 corridor 子图构建与裁剪结果都进入审计。
 - 语义节点裁剪可解释性：额外 T05 mapped semantic nodes 与 optional junc 必须按 seed-based pruning 输出 `inner_node_ids / out_node_ids`，并在剔除 out 分支后重新校验 pair required semantic node 连通性；处于 pair required corridor 内部的额外 mapped semantic node 可作为 `inner_nodes` 保留审计，非 inner 且仍进入 retained graph 时输出 `unexpected_mapped_semantic_node_ids` 并拒绝；retained graph 叶子端点必须限定为 pair 对应 RCSD semantic nodes，非 pair 叶子端点输出 `unexpected_endpoint_node_ids` 并拒绝。
 - 几何语义可解释性：SWSD 几何用于 buffer 窗口，RCSD 几何用于 `intersects + overlap threshold` 候选筛选与最终输出，不替代 relation / required semantic node 规则。
-- 审计可追溯性：summary 记录输入路径、参数、计数、失败原因与输出路径。
-- Step3 审计可追溯性：summary 必须记录 replaceable Segment 数量、删除 SWSDRoad / SWSDNode 数量、加入 RCSDRoad / RCSDNode 数量、特殊路口组消费数量与组级加入 RCSDRoad / RCSDNode 数量、未替换 RCSDRoad 数量 / 长度、重建 C 数量、main node 重选数量与失败原因。
+- 审计可追溯性：summary 记录输入路径、参数、计数、失败原因、adaptive buffer 实际重审距离与输出路径。
+- Step3 审计可追溯性：summary 必须记录 replaceable Segment 数量、删除 SWSDRoad / SWSDNode 数量、加入 RCSDRoad / RCSDNode 数量、detached junc 局部保留 Segment / SWSDRoad 数量、特殊路口组消费数量与组级加入 RCSDRoad / RCSDNode 数量、未替换 RCSDRoad 数量 / 长度、重建 C 数量、main node 重选数量与失败原因。
 - 文本证据包审计可追溯性：bundle 内必须保留输入路径、解析结果、文件大小、SHA256、参数与复跑命令。
 - 性能可验证性：summary 记录输入规模、candidate 数、replaceable 数和 reject reason 统计。
 - 语义节点归一化可追溯性：Step2 summary 记录 `rcsd_semantic_node_alias_count`，并在 `retained_node_ids` 等输出中使用 canonical RCSD semantic node id。

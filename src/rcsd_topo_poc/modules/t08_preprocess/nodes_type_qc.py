@@ -108,6 +108,7 @@ class Topology:
     incident_road_indices: dict[str, frozenset[int]]
     internal_road_count: int
     direction_errors: tuple[str, ...]
+    skipped_missing_node_roads: tuple[dict[str, str], ...]
 
 
 @dataclass(frozen=True)
@@ -307,6 +308,7 @@ def run_t08_nodes_type_qc(
             "node_feature_count": len(parsed_nodes),
             "semantic_node_count": len(semantic_nodes),
             "road_feature_count": len(parsed_roads),
+            "topology_road_count": len(parsed_roads) - len(topology.skipped_missing_node_roads),
             "error_feature_count": len(error_rows),
             "error_count_by_type": dict(sorted(counts_by_type.items())),
             "divmerge_error_group_count": len({row["error_group_id"] for row in divmerge_rows}),
@@ -314,8 +316,10 @@ def run_t08_nodes_type_qc(
             "divmerge_suppressed_count": len(divmerge_suppressed),
             "internal_road_count": topology.internal_road_count,
             "direction_error_count": len(topology.direction_errors),
+            "skipped_missing_node_road_count": len(topology.skipped_missing_node_roads),
         },
         "direction_errors": list(topology.direction_errors),
+        "skipped_missing_node_roads": list(topology.skipped_missing_node_roads),
         "divmerge_suppressed": divmerge_suppressed,
         "output_bounds": aggregate_bounds(feature["geometry"] for feature in gpkg_features),
         "performance": {
@@ -1044,7 +1048,19 @@ def _angle_groups_are_parallel(
 ) -> bool:
     if len(groups) != 2 or any(not group for group in groups):
         return False
-    return _parallel_angle_degrees(groups[0][0].outward_vector, groups[1][0].outward_vector) <= parallel_angle_degrees
+    left_axis = _angle_group_axis_vector(groups[0])
+    right_axis = _angle_group_axis_vector(groups[1])
+    return _parallel_angle_degrees(left_axis, right_axis) <= parallel_angle_degrees
+
+
+def _angle_group_axis_vector(group: list[IncidentLeg]) -> tuple[float, float]:
+    if not group:
+        return (1.0, 0.0)
+    x = sum(float(leg.outward_vector[0]) for leg in group)
+    y = sum(float(leg.outward_vector[1]) for leg in group)
+    if abs(x) > 1e-9 or abs(y) > 1e-9:
+        return _unit_vector((x, y))
+    return group[0].outward_vector
 
 
 def _find_cross_t_pattern(
@@ -1376,13 +1392,22 @@ def _build_topology(parsed_roads: list[ParsedRoad], *, node_to_semantic: dict[st
     out_edges: dict[str, list[DirectedEdge]] = defaultdict(list)
     incident_road_indices: dict[str, set[int]] = defaultdict(set)
     direction_errors: list[str] = []
+    skipped_missing_node_roads: list[dict[str, str]] = []
     internal_road_count = 0
     for road_index, road in enumerate(parsed_roads):
         source_semantic = node_to_semantic.get(road.snodeid)
         target_semantic = node_to_semantic.get(road.enodeid)
         if source_semantic is None or target_semantic is None:
             missing_node = road.snodeid if source_semantic is None else road.enodeid
-            raise ValueError(f"Road '{road.road_id}' references missing node '{missing_node}'.")
+            skipped_missing_node_roads.append(
+                {
+                    "road_id": road.road_id,
+                    "missing_node_id": missing_node,
+                    "snodeid": road.snodeid,
+                    "enodeid": road.enodeid,
+                }
+            )
+            continue
         incident_road_indices[source_semantic].add(road_index)
         if source_semantic == target_semantic:
             internal_road_count += 1
@@ -1458,6 +1483,7 @@ def _build_topology(parsed_roads: list[ParsedRoad], *, node_to_semantic: dict[st
         incident_road_indices={key: frozenset(value) for key, value in incident_road_indices.items()},
         internal_road_count=internal_road_count,
         direction_errors=tuple(direction_errors),
+        skipped_missing_node_roads=tuple(skipped_missing_node_roads),
     )
 
 

@@ -122,7 +122,7 @@ def write_phase2_outputs(
         "rcsdroad_out",
         rcsdroad_out_path,
         len(rcsdroad_out_features),
-        lambda: write_gpkg(rcsdroad_out_path, rcsdroad_out_features, geometry_type="LineString"),
+        lambda: write_gpkg(rcsdroad_out_path, rcsdroad_out_features, geometry_type="Unknown"),
         progress_logger=progress_logger,
         output_timings_sec=output_timings_sec,
         output_sizes_bytes=output_sizes_bytes,

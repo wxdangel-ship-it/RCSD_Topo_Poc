@@ -227,6 +227,67 @@ def test_tool6_flags_cross_with_one_or_two_incident_roads_as_non_cross(tmp_path:
     assert summary["counts"]["error_count_by_type"] == {"错误交叉路口_非交叉路口": 2}
 
 
+def test_tool6_skips_roads_with_missing_clipped_nodes(tmp_path: Path) -> None:
+    nodes = [
+        _node("cross", 4, 0.0, 0.0),
+        _node("remote", 1, 10.0, 0.0),
+    ]
+    roads = [
+        _road("r-valid", "cross", "remote", [(0.0, 0.0), (10.0, 0.0)], direction=0),
+        _road("r-clipped", "cross", "missing_clip_node", [(0.0, 0.0), (0.0, 10.0)], direction=2),
+    ]
+
+    csv_rows, gpkg_rows, summary = _run_tool6(tmp_path, case_name="missing_clipped_node", nodes=nodes, roads=roads)
+
+    assert {row["semantic_node_id"] for row in csv_rows} == {"cross"}
+    assert csv_rows[0]["reason"] == "only_one_incident_road"
+    assert len(gpkg_rows) == 1
+    assert summary["counts"]["road_feature_count"] == 2
+    assert summary["counts"]["topology_road_count"] == 1
+    assert summary["counts"]["skipped_missing_node_road_count"] == 1
+    assert summary["skipped_missing_node_roads"] == [
+        {
+            "road_id": "r-clipped",
+            "missing_node_id": "missing_clip_node",
+            "snodeid": "cross",
+            "enodeid": "missing_clip_node",
+        }
+    ]
+
+
+def test_tool6_flags_cross_with_same_remote_return_branch_as_non_cross(tmp_path: Path) -> None:
+    nodes = [
+        _node("cross", 4, 0.0, 0.0),
+        _node("through", 1, 0.0, -20.0),
+        _node("remote", 1, 0.0, 20.0),
+    ]
+    roads = [
+        _road("r-through", "cross", "through", [(0.0, 0.0), (0.0, -20.0)], direction=1),
+        _road("r-branch-in", "remote", "cross", [(-10.0, 10.0), (0.0, 0.0)], direction=2),
+        _road("r-branch-out", "cross", "remote", [(0.0, 0.0), (10.0, 10.0)], direction=2),
+    ]
+
+    csv_rows, gpkg_rows, summary = _run_tool6(
+        tmp_path,
+        case_name="same_remote_return_branch_non_cross",
+        nodes=nodes,
+        roads=roads,
+    )
+
+    assert {row["semantic_node_id"] for row in csv_rows} == {"cross"}
+    row = csv_rows[0]
+    assert row["role"] == "cross_non_cross"
+    assert row["reason"] == "two_parallel_outward_angle_groups_each_has_in_and_out"
+    audit = _audit(row)
+    assert audit["suggested_fix_kind_2"] is None
+    assert audit["outward_angle_group_count"] == 2
+    assert {reason["reason"] for group in audit["angle_groups"] for reason in group["merge_reasons"]} == {
+        "same_remote_semantic"
+    }
+    assert len(gpkg_rows) == 1
+    assert summary["counts"]["error_feature_count"] == 1
+
+
 def test_tool6_flags_oneway_cross_as_diverge_or_merge(tmp_path: Path) -> None:
     nodes = [
         _node("cross_diverge", 4, 0.0, 0.0),

@@ -26,7 +26,12 @@ from .phase2_models import (
     SwsdTargetContext,
     T05Phase2Artifacts,
 )
-from .phase2_node_grouping import apply_mainnodeid_grouping, choose_primary_node_id
+from .phase2_node_grouping import (
+    apply_mainnodeid_grouping,
+    canonical_mainnode_id,
+    canonical_mainnode_ids,
+    choose_primary_node_id,
+)
 from .phase2_outputs import write_phase2_outputs
 from .phase2_projection import project_points_to_active_roads, projection_points_for_decision
 from .phase2_relation import failure_relation_feature, relation_properties, success_relation_feature
@@ -42,6 +47,10 @@ from .phase2_scene_classifier import (
     classify_evidence,
 )
 from .phase2_split import split_roads
+
+
+DIRECT_NEARBY_NONBASE_SURFACE_GAP_M = 5.0
+DIRECT_NEARBY_NONBASE_TARGET_DISTANCE_M = 50.0
 
 
 def run_t05_phase2_rcsd_junctionization_and_relation(
@@ -155,10 +164,18 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
         roads_by_id=roads_by_id,
         rcsdnode_features_by_id=node_out_by_id,
     )
+    direct_nearby_node_ids_by_target = _direct_nearby_nonbase_node_ids_by_target(
+        sorted_contexts,
+        evidence_by_target,
+        rcsdnode_features_by_id=node_out_by_id,
+        protected_rcsdnode_ids=_protected_direct_nearby_node_ids(evidence_rows, roads_by_id=roads_by_id),
+    )
     decision_plan, plan_stats = _build_decision_plan(
         sorted_contexts,
         evidence_by_target,
+        rcsdnode_features_by_id=node_out_by_id,
         roundabout_aggregations=roundabout_aggregations,
+        direct_nearby_node_ids_by_target=direct_nearby_node_ids_by_target,
     )
     mark("build_plan_sec", plan_started)
     data_volume = {
@@ -268,21 +285,28 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
                 )
             )
             continue
-        multi_candidate_ids = _candidate_ids(actionable)
-        if len(actionable) > 1 or len(multi_candidate_ids) > 1:
+        raw_candidate_ids = _candidate_ids(actionable)
+        multi_candidate_ids = canonical_mainnode_ids(raw_candidate_ids, node_out_by_id)
+        if (
+            len(actionable) > 1
+            or len(multi_candidate_ids) > 1
+            or raw_candidate_ids != multi_candidate_ids
+        ) and not (len(actionable) == 1 and actionable[0].scene == SCENE_GROUP_EXISTING):
             if len(multi_candidate_ids) == 1:
                 decision = actionable[0]
+                base_id = multi_candidate_ids[0]
                 rcsd_point = _node_point(node_out_by_id.get(multi_candidate_ids[0])) or _evidence_rcsd_point(
                     _first_evidence_row(evidence_by_target.get(context.target_id, []), decision)
                 )
-                relation = success_relation_feature(context=context, base_id=multi_candidate_ids[0], rcsd_point=rcsd_point)
+                relation = success_relation_feature(context=context, base_id=base_id, rcsd_point=rcsd_point)
                 relation_features.append(relation)
                 audit_rows.append(_audit_row(context=context, decision=decision, relation=relation))
                 continue
-            if _all_node_ids_exist(multi_candidate_ids, node_out_by_id):
+            group_node_ids = _group_node_ids(raw_candidate_ids, multi_candidate_ids)
+            if _all_node_ids_exist(group_node_ids, node_out_by_id):
                 primary = choose_primary_node_id(multi_candidate_ids, nodes_by_id=node_out_by_id, reference_point=context.point)
                 grouped = apply_mainnodeid_grouping(
-                    node_ids=multi_candidate_ids,
+                    node_ids=group_node_ids,
                     primary_node_id=primary,
                     node_features_by_id=node_out_by_id,
                 )
@@ -295,8 +319,8 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
                         decision=actionable[0],
                         relation=relation,
                         reason="multiple_base_id_merged",
-                        original_node_ids=multi_candidate_ids,
-                        grouped_node_ids=multi_candidate_ids,
+                        original_node_ids=raw_candidate_ids,
+                        grouped_node_ids=group_node_ids,
                         selected_main_node_id=primary,
                     )
                 )
@@ -304,11 +328,11 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
             blocking_row = _blocking_error_row(
                 context=context,
                 decisions=actionable,
-                candidate_ids=multi_candidate_ids,
+                candidate_ids=group_node_ids,
                 notes="not_all_candidates_are_groupable_rcsdnodes",
             )
             blocking_errors.append(blocking_row)
-            audit_rows.append(_blocking_audit_row(context=context, decisions=actionable, candidate_ids=multi_candidate_ids))
+            audit_rows.append(_blocking_audit_row(context=context, decisions=actionable, candidate_ids=group_node_ids))
             continue
 
         for decision in actionable[:1]:
@@ -318,7 +342,7 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
                     relation_features.append(relation)
                     audit_rows.append(_audit_row(context=context, decision=decision, relation=relation, reason="missing_base_id_candidate"))
                     continue
-                base_id = decision.base_id_candidates[0]
+                base_id = canonical_mainnode_id(decision.base_id_candidates[0], node_out_by_id)
                 evidence = _first_evidence_row(evidence_by_target.get(context.target_id, []), decision)
                 rcsd_point = _node_point(node_out_by_id.get(base_id)) or _evidence_rcsd_point(evidence)
                 relation = success_relation_feature(context=context, base_id=base_id, rcsd_point=rcsd_point)
@@ -326,7 +350,10 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
                 audit_rows.append(_audit_row(context=context, decision=decision, relation=relation))
                 continue
             if decision.scene == SCENE_GROUP_EXISTING:
-                missing = [node_id for node_id in decision.rcsdnode_ids if node_id not in node_out_by_id]
+                raw_node_ids = list(decision.rcsdnode_ids)
+                canonical_node_ids = canonical_mainnode_ids(raw_node_ids, node_out_by_id)
+                group_node_ids = _group_node_ids(raw_node_ids, canonical_node_ids)
+                missing = [node_id for node_id in group_node_ids if node_id not in node_out_by_id]
                 if missing:
                     relation = failure_relation_feature(context=context)
                     relation_features.append(relation)
@@ -341,13 +368,13 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
                     )
                     continue
                 primary = choose_primary_node_id(
-                    list(decision.rcsdnode_ids),
+                    canonical_node_ids,
                     nodes_by_id=node_out_by_id,
                     reference_point=context.point,
-                    preferred_ids=list(decision.base_id_candidates or decision.rcsdnode_ids),
+                    preferred_ids=list(decision.base_id_candidates or canonical_node_ids),
                 )
                 grouped = apply_mainnodeid_grouping(
-                    node_ids=list(decision.rcsdnode_ids),
+                    node_ids=group_node_ids,
                     primary_node_id=primary,
                     node_features_by_id=node_out_by_id,
                 )
@@ -359,8 +386,8 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
                         context=context,
                         decision=decision,
                         relation=relation,
-                        original_node_ids=list(decision.rcsdnode_ids),
-                        grouped_node_ids=list(decision.rcsdnode_ids),
+                        original_node_ids=raw_node_ids,
+                        grouped_node_ids=group_node_ids,
                         selected_main_node_id=primary,
                     )
                 )
@@ -412,13 +439,15 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
                         min_endpoint_gap_m=min_endpoint_gap_m,
                     )
                     if endpoint_node_ids and not missing_endpoint_node_ids:
+                        canonical_endpoint_node_ids = canonical_mainnode_ids(endpoint_node_ids, node_out_by_id)
+                        group_node_ids = _group_node_ids(endpoint_node_ids, canonical_endpoint_node_ids)
                         primary = choose_primary_node_id(
-                            endpoint_node_ids,
+                            canonical_endpoint_node_ids,
                             nodes_by_id=node_out_by_id,
                             reference_point=context.point,
                         )
                         grouped = apply_mainnodeid_grouping(
-                            node_ids=endpoint_node_ids,
+                            node_ids=group_node_ids,
                             primary_node_id=primary,
                             node_features_by_id=node_out_by_id,
                         )
@@ -433,7 +462,7 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
                                 reason="road_only_projection_near_endpoint_reuse_rcsdnode",
                                 original_road_ids=list(decision.rcsdroad_ids),
                                 original_node_ids=endpoint_node_ids,
-                                grouped_node_ids=endpoint_node_ids if len(endpoint_node_ids) > 1 else [],
+                                grouped_node_ids=group_node_ids if len(group_node_ids) > 1 else [],
                                 selected_main_node_id=primary,
                                 projection_point_count=sum(len(items) for items in projected.values()),
                                 split_point_count=0,
@@ -678,6 +707,7 @@ def _target_contexts(
                 junction_type=_text(_field_value(props, "junction_type")) or "unknown",
                 point=point,
                 projection_points=projection_points or (point,),
+                surface_geometry=surface.get("geometry"),
                 level=_minus_one_or_missing(_field_value(rep_props, "grade")),
                 is_highway=_minus_one_or_missing(_field_value(rep_props, "closed_con")),
                 representative_properties=rep_props,
@@ -687,7 +717,11 @@ def _target_contexts(
     for evidence in evidence_rows or []:
         if evidence.target_id in known_targets:
             continue
-        if not (_is_t04_fallback_relation(evidence) or _is_t07_relation_only_success(evidence)):
+        if not (
+            _is_t04_fallback_relation(evidence)
+            or _is_t07_relation_only_success(evidence)
+            or _is_t07_multi_intersection_relation(evidence)
+        ):
             continue
         nodes = nodes_by_target.get(evidence.target_id, [])
         representative = _representative_node(nodes, evidence.target_id)
@@ -703,6 +737,7 @@ def _target_contexts(
                 junction_type=_text(evidence.row.get("junction_type")) or "unknown",
                 point=point,
                 projection_points=projection_points or (point,),
+                surface_geometry=None,
                 level=_minus_one_or_missing(_field_value(rep_props, "grade")),
                 is_highway=_minus_one_or_missing(_field_value(rep_props, "closed_con")),
                 representative_properties=rep_props,
@@ -729,6 +764,20 @@ def _is_t07_relation_only_success(evidence: Any) -> bool:
         getattr(evidence, "source_module", "") == SOURCE_T07
         and _text(row.get("status_suggested")) == "0"
         and _has_nonzero_base_id_candidate(row)
+    )
+
+
+def _is_t07_multi_intersection_relation(evidence: Any) -> bool:
+    row = getattr(evidence, "row", {}) or {}
+    base_ids = [
+        value
+        for value in _list_values(row.get("base_id_candidate"))
+        if _text(value) not in {"", "0", "-1"}
+    ]
+    return (
+        getattr(evidence, "source_module", "") == SOURCE_T07
+        and _text(row.get("relation_state")) == "multiple_intersections_for_group"
+        and len(base_ids) > 1
     )
 
 
@@ -894,7 +943,9 @@ def _build_decision_plan(
     contexts: list[SwsdTargetContext],
     evidence_by_target: dict[str, list[Any]],
     *,
+    rcsdnode_features_by_id: dict[int, dict[str, Any]],
     roundabout_aggregations: dict[str, Any] | None = None,
+    direct_nearby_node_ids_by_target: dict[str, list[int]] | None = None,
 ) -> tuple[dict[str, tuple[list[Any], list[Any]]], dict[str, int]]:
     plan: dict[str, tuple[list[Any], list[Any]]] = {}
     scene_counts: Counter[str] = Counter()
@@ -925,6 +976,12 @@ def _build_decision_plan(
                 for evidence in evidence_by_target.get(context.target_id, [])
             ]
             actionable = choose_actionable_decisions(decisions)
+            actionable = _upgrade_direct_rcsdintersection_multi_nodes(
+                context=context,
+                actionable=actionable,
+                rcsdnode_features_by_id=rcsdnode_features_by_id,
+                nearby_nonbase_node_ids=(direct_nearby_node_ids_by_target or {}).get(context.target_id, []),
+            )
         plan[context.target_id] = (decisions, actionable)
         if _is_readonly_plan(decisions, actionable):
             readonly_target_count += 1
@@ -965,6 +1022,232 @@ def _build_decision_plan(
             "mutable_target_count": len(contexts) - readonly_target_count,
         },
     )
+
+
+def _upgrade_direct_rcsdintersection_multi_nodes(
+    *,
+    context: SwsdTargetContext,
+    actionable: list[Any],
+    rcsdnode_features_by_id: dict[int, dict[str, Any]],
+    nearby_nonbase_node_ids: list[int],
+) -> list[Any]:
+    if len(actionable) != 1:
+        return actionable
+    decision = actionable[0]
+    if decision.scene != SCENE_DIRECT:
+        return actionable
+    if decision.source_module not in {SOURCE_T07, SOURCE_T02_INPUT}:
+        return actionable
+    if decision.reason != "existing_rcsdintersection_matched":
+        return actionable
+    semantic_ids = _surface_rcsd_semantic_ids(
+        context.surface_geometry,
+        rcsdnode_features_by_id=rcsdnode_features_by_id,
+    )
+    if len(semantic_ids) <= 1:
+        nearby_ids = _direct_nearby_group_node_ids(decision, nearby_nonbase_node_ids)
+        if not nearby_ids:
+            return actionable
+        return [
+            SceneDecision(
+                scene=SCENE_GROUP_EXISTING,
+                action="group_existing_rcsd_nodes",
+                reason="existing_rcsdintersection_nearby_nonbase_node_grouping",
+                source_module=decision.source_module,
+                source_case_id=decision.source_case_id,
+                base_id_candidates=tuple(decision.base_id_candidates),
+                rcsdnode_ids=tuple(nearby_ids),
+                multi_base_relation=True,
+            )
+        ]
+    return [
+        SceneDecision(
+            scene=SCENE_GROUP_EXISTING,
+            action="group_existing_rcsd_nodes",
+            reason="existing_rcsdintersection_multi_rcsdnode_surface",
+            source_module=decision.source_module,
+            source_case_id=decision.source_case_id,
+            base_id_candidates=tuple(decision.base_id_candidates),
+            rcsdnode_ids=tuple(semantic_ids),
+            multi_base_relation=True,
+        )
+    ]
+
+
+def _direct_nearby_group_node_ids(decision: Any, nearby_nonbase_node_ids: list[int]) -> list[int]:
+    if not nearby_nonbase_node_ids or len(getattr(decision, "base_id_candidates", ()) or ()) != 1:
+        return []
+    node_ids: list[int] = []
+    seen: set[int] = set()
+    for node_id in [*getattr(decision, "base_id_candidates", ()), *nearby_nonbase_node_ids]:
+        if node_id in seen:
+            continue
+        seen.add(node_id)
+        node_ids.append(node_id)
+    return node_ids if len(node_ids) > 1 else []
+
+
+def _direct_nearby_nonbase_node_ids_by_target(
+    contexts: list[SwsdTargetContext],
+    evidence_by_target: dict[str, list[Any]],
+    *,
+    rcsdnode_features_by_id: dict[int, dict[str, Any]],
+    protected_rcsdnode_ids: set[int],
+) -> dict[str, list[int]]:
+    raw_by_target: dict[str, list[int]] = {}
+    candidate_bases: dict[int, set[int]] = defaultdict(set)
+    for context in contexts:
+        decision = _single_direct_t07_existing_decision(
+            context=context,
+            evidence_by_target=evidence_by_target,
+        )
+        if decision is None or not decision.base_id_candidates:
+            continue
+        base_id = int(decision.base_id_candidates[0])
+        candidates = _nearby_nonbase_rcsdnode_ids(
+            context=context,
+            base_id=base_id,
+            rcsdnode_features_by_id=rcsdnode_features_by_id,
+            protected_rcsdnode_ids=protected_rcsdnode_ids,
+        )
+        if not candidates:
+            continue
+        raw_by_target[context.target_id] = candidates
+        for node_id in candidates:
+            candidate_bases[node_id].add(base_id)
+    conflicted = {node_id for node_id, base_ids in candidate_bases.items() if len(base_ids) > 1}
+    return {
+        target_id: [node_id for node_id in node_ids if node_id not in conflicted]
+        for target_id, node_ids in raw_by_target.items()
+        if any(node_id not in conflicted for node_id in node_ids)
+    }
+
+
+def _single_direct_t07_existing_decision(
+    *,
+    context: SwsdTargetContext,
+    evidence_by_target: dict[str, list[Any]],
+) -> Any | None:
+    decisions = [
+        classify_evidence(evidence, junction_type=context.junction_type)
+        for evidence in evidence_by_target.get(context.target_id, [])
+    ]
+    actionable = choose_actionable_decisions(decisions)
+    if len(actionable) != 1:
+        return None
+    decision = actionable[0]
+    if decision.scene != SCENE_DIRECT:
+        return None
+    if decision.source_module != SOURCE_T07:
+        return None
+    if decision.reason != "existing_rcsdintersection_matched":
+        return None
+    if len(decision.base_id_candidates) != 1:
+        return None
+    return decision
+
+
+def _nearby_nonbase_rcsdnode_ids(
+    *,
+    context: SwsdTargetContext,
+    base_id: int,
+    rcsdnode_features_by_id: dict[int, dict[str, Any]],
+    protected_rcsdnode_ids: set[int],
+) -> list[int]:
+    surface = context.surface_geometry
+    if surface is None or surface.is_empty:
+        return []
+    projection_points = [point for point in context.projection_points if point is not None and not point.is_empty]
+    if not projection_points:
+        return []
+    result: list[int] = []
+    for node_id, feature in rcsdnode_features_by_id.items():
+        if node_id == base_id or node_id in protected_rcsdnode_ids:
+            continue
+        props = feature.get("properties") or {}
+        if _positive_int_value(_field_value(props, "mainnodeid")) is not None:
+            continue
+        geometry = feature.get("geometry")
+        if geometry is None or geometry.is_empty:
+            continue
+        surface_distance = float(geometry.distance(surface))
+        if surface_distance <= 0.0 or surface_distance > DIRECT_NEARBY_NONBASE_SURFACE_GAP_M:
+            continue
+        target_distance = min(float(geometry.distance(point)) for point in projection_points)
+        if target_distance > DIRECT_NEARBY_NONBASE_TARGET_DISTANCE_M:
+            continue
+        result.append(node_id)
+    return sorted(result)
+
+
+def _protected_direct_nearby_node_ids(evidence_rows: list[Any], *, roads_by_id: dict[int, dict[str, Any]]) -> set[int]:
+    protected = _accepted_relation_base_ids(evidence_rows)
+    for evidence in evidence_rows:
+        row = getattr(evidence, "row", {}) or {}
+        if _text(row.get("status_suggested")) == "0" and _has_nonzero_base_id_candidate(row):
+            continue
+        for road_id in _road_candidate_ids(row):
+            road = roads_by_id.get(road_id)
+            if road is None:
+                continue
+            props = road.get("properties") or {}
+            for field in ("snodeid", "enodeid"):
+                node_id = _positive_int_value(_field_value(props, field))
+                if node_id is not None:
+                    protected.add(node_id)
+    return protected
+
+
+def _accepted_relation_base_ids(evidence_rows: list[Any]) -> set[int]:
+    result: set[int] = set()
+    for evidence in evidence_rows:
+        row = getattr(evidence, "row", {}) or {}
+        if _text(row.get("status_suggested")) != "0":
+            continue
+        for value in _list_values(row.get("base_id_candidate")):
+            parsed = _positive_int_value(value)
+            if parsed is not None:
+                result.add(parsed)
+    return result
+
+
+def _road_candidate_ids(row: dict[str, Any]) -> list[int]:
+    result: list[int] = []
+    seen: set[int] = set()
+    for field in (
+        "fallback_rcsdroad_ids",
+        "support_rcsdroad_ids",
+        "selected_rcsdroad_ids",
+        "required_rcsdroad_ids",
+    ):
+        for value in _list_values(row.get(field)):
+            road_id = _positive_int_value(value)
+            if road_id is None or road_id in seen:
+                continue
+            seen.add(road_id)
+            result.append(road_id)
+    return result
+
+
+def _surface_rcsd_semantic_ids(
+    surface_geometry: BaseGeometry | None,
+    *,
+    rcsdnode_features_by_id: dict[int, dict[str, Any]],
+) -> list[int]:
+    if surface_geometry is None or surface_geometry.is_empty:
+        return []
+    semantic_ids: set[int] = set()
+    for feature in rcsdnode_features_by_id.values():
+        geometry = feature.get("geometry")
+        if geometry is None or geometry.is_empty:
+            continue
+        if not surface_geometry.covers(geometry):
+            continue
+        props = feature.get("properties") or {}
+        semantic_id = _int_field_value(props, "mainnodeid") or _int_field_value(props, "id")
+        if semantic_id is not None:
+            semantic_ids.add(semantic_id)
+    return sorted(semantic_ids)
 
 
 def _build_readonly_relation_results(
@@ -1023,7 +1306,7 @@ def _readonly_relation_for_context(
                 relation,
                 _audit_row(context=context, decision=decision, relation=relation, reason="missing_base_id_candidate"),
             )
-        base_id = decision.base_id_candidates[0]
+        base_id = canonical_mainnode_id(decision.base_id_candidates[0], node_features_by_id)
         evidence = _first_evidence_row(evidence_by_target.get(context.target_id, []), decision)
         rcsd_point = _node_point(node_features_by_id.get(base_id)) or _evidence_rcsd_point(evidence)
         relation = success_relation_feature(context=context, base_id=base_id, rcsd_point=rcsd_point)
@@ -1188,6 +1471,10 @@ def _candidate_ids(decisions: list[Any]) -> list[int]:
         ids.update(int(item) for item in getattr(decision, "base_id_candidates", ()) or ())
         ids.update(int(item) for item in getattr(decision, "rcsdnode_ids", ()) or ())
     return sorted(ids)
+
+
+def _group_node_ids(raw_node_ids: list[int], canonical_node_ids: list[int]) -> list[int]:
+    return sorted(set(raw_node_ids).union(canonical_node_ids))
 
 
 def _all_node_ids_exist(node_ids: list[int], nodes_by_id: dict[int, dict[str, Any]]) -> bool:
@@ -1438,6 +1725,14 @@ def _int_field_value(properties: dict[str, Any], field_name: str) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _positive_int_value(value: Any) -> int | None:
+    try:
+        parsed = int(float(value))
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
 
 
 def _minus_one_or_missing(value: Any) -> int:

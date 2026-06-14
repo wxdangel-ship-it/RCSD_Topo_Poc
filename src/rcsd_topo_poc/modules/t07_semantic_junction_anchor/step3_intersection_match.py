@@ -41,7 +41,8 @@ from .runner import (
 
 
 STEP3_SURFACE_KIND2 = {"4", "8", "16"}
-STEP3_BACKFILL_KIND2 = {"4", "8", "16"}
+STEP3_BACKFILL_KIND2 = {"4", "8", "16", "128", "2048"}
+STEP3_SCOPE_KIND2 = STEP3_SURFACE_KIND2 | STEP3_BACKFILL_KIND2
 
 
 @dataclass(frozen=True)
@@ -1185,7 +1186,7 @@ def run_t07_step3_intersection_match(
         kind_2 = _normalize_id(representative_props.get("kind_2"))
         has_evd = _normalize_id(representative_props.get("has_evd"))
         is_anchor = _normalize_id(representative_props.get("is_anchor"))
-        if kind_2 not in STEP3_SURFACE_KIND2:
+        if kind_2 not in STEP3_SCOPE_KIND2:
             counts["skipped_kind2_count"] += 1
             continue
         counts["step3_scope_kind2_count"] += 1
@@ -1197,7 +1198,7 @@ def run_t07_step3_intersection_match(
                     scope="semantic_junction",
                     status="skipped",
                     reason="not_step3_candidate",
-                    detail="Step3 T05 relation backfill only processes has_evd=yes and is_anchor=no representatives in kind_2 {4,8,16}.",
+                    detail="Step3 T05 relation backfill only processes has_evd=yes and is_anchor=no representatives in kind_2 {4,8,16,128,2048}.",
                     junction_id=junction_id,
                     node_id=group.representative.node_id,
                     kind_2=kind_2,

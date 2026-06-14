@@ -14,7 +14,10 @@ from rcsd_topo_poc.modules.t00_utility_toolbox.common import (
     write_json,
     write_vector,
 )
-from rcsd_topo_poc.modules.t00_utility_toolbox.gpkg_update import copy_gpkg_and_update_field_by_id
+from rcsd_topo_poc.modules.t00_utility_toolbox.gpkg_update import (
+    copy_gpkg_and_update_field_by_id,
+    update_gpkg_field_by_id,
+)
 from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import LayerFeature, read_vector_layer, write_csv
 from rcsd_topo_poc.modules.t02_junction_anchor.stage3_review_contract import (
     derive_stage3_official_review_decision,
@@ -190,6 +193,13 @@ def _read_json_if_exists(path: Path) -> dict[str, Any]:
     if not path.is_file():
         return {}
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _read_t03_handoff_status(case_dir: Path) -> dict[str, Any]:
+    status_doc = _read_json_if_exists(case_dir / "association_status.json")
+    if status_doc:
+        return status_doc
+    return _read_json_if_exists(case_dir / "step6_status.json")
 
 
 def _required_rcsd_point(case_dir: Path) -> tuple[float | str, float | str]:
@@ -1013,7 +1023,7 @@ def write_t03_relation_evidence(
         target_id = feature_mainnodeid(representative_feature) or representative_node_id
         swsd_point_x, swsd_point_y = _point_xy(representative_feature.geometry)
         case_dir = run_root / "cases" / case_id
-        status_doc = _read_json_if_exists(case_dir / "association_status.json")
+        status_doc = _read_t03_handoff_status(case_dir)
         record = streamed_results.get(case_id)
         if record is None:
             step7_state = "runtime_failed" if case_id in failed_case_id_set else "formal_result_missing"
@@ -1128,19 +1138,13 @@ def _apply_intersection_match_t03_node_rollbacks(
         for row in rollback_rows
         if str(row.get("representative_node_id") or "").strip()
     }
-    temp_nodes_path = nodes_output_path.with_name(f".{nodes_output_path.stem}.intersection_match_t03_tmp{nodes_output_path.suffix}")
-    shutil.copy2(nodes_output_path, temp_nodes_path)
-    try:
-        rollback_update_result = copy_gpkg_and_update_field_by_id(
-            source_path=temp_nodes_path,
-            output_path=nodes_output_path,
-            updates_by_id=updates_by_node_id,
-            id_field="id",
-            update_field="is_anchor",
-        )
-    finally:
-        if temp_nodes_path.exists():
-            temp_nodes_path.unlink()
+    rollback_update_result = update_gpkg_field_by_id(
+        path=nodes_output_path,
+        updates_by_id=updates_by_node_id,
+        id_field="id",
+        update_field="is_anchor",
+        strategy="sqlite_rollback_update",
+    )
 
     for row in rollback_rows:
         representative_node_id = str(row.get("representative_node_id") or "")

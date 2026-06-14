@@ -6,9 +6,9 @@
 
 ## 2. 当前登记摘要
 
-- 当前真实执行入口共 `92` 个。
+- 当前真实执行入口共 `93` 个。
 - 分布概览：
-  - repo 级入口文件：`64`（`Makefile` 1 + `scripts/` 62 + `.venv/bin/python -m rcsd_topo_poc` 1）
+  - repo 级入口文件：`65`（`Makefile` 1 + `scripts/` 63 + `.venv/bin/python -m rcsd_topo_poc` 1）
   - CLI 稳定子命令：`28`
 - 维护口径：
   - CLI 子命令以 `.venv/bin/python -m rcsd_topo_poc --help` 为准。
@@ -120,6 +120,7 @@
 | `t09_export_step3_input_text_bundle_innernet.sh` | `scripts/t09_export_step3_input_text_bundle_innernet.sh` | repo 级 | T09 内网 Step3 输入单文件文本证据包导出脚本；按中心点与 `SIZE_M` / `RADIUS_M` 空间窗口切片 SWSD nodes / roads / Segment、T08 Tool7 / Tool8 输出和 T06 Step3 FRCSD Road / Node，生成 base85 文本 bundle，超过 250KB 自动分片并可立即解包校验 | `active` | 否 |
 | `t10_pack_innernet_cases.sh` | `scripts/t10_pack_innernet_cases.sh` | repo 级 | T10 内网多 Case 证据包正式打包入口；以 SWSD semantic junction id 列表为 CaseID，读取 T10 v1 外部输入 slot，生成 `cases/<case_id>/` 结构的文件证据包并导出可自动分片的文本 bundle，可选立即解包校验 | `active` | 否 |
 | `t10_run_e2e_cases.sh` | `scripts/t10_run_e2e_cases.sh` | repo 级 | T10 Case 级端到端执行入口；从已生成或已解包的 T10 Case package 读取局部外部输入切片，串联 `T01 -> T07 -> T03 -> T04 -> T05 -> T06 -> T09` 的既有脚本或模块 callable，并输出阶段审计与 T06 数据漏斗 | `active` | 否 |
+| `t10_run_innernet_full_pipeline.sh` | `scripts/t10_run_innernet_full_pipeline.sh` | repo 级 | T10 内网全量端到端总控脚本；不走 Case package，串联 `T08 -> T01 -> T07 -> T03 -> T04 -> T05 -> T06 -> T09` 既有模块入口或 callable，所有阶段输出到 `outputs/_work/t10_innernet_full_pipeline/<RUN_ID>/` 并写入 manifest | `active` | 否 |
 
 ## 4. 新增入口脚本的准入规则
 

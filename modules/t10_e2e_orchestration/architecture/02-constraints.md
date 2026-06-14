@@ -3,7 +3,7 @@
 ## 1. 编排边界
 
 - T10 v1 不改变项目级主业务链。
-- T10 v1 不调用 T08。
+- T10 v1 callable 与 Case runner 不调用 T08；内网全量总控脚本可把 T08 作为独立前置阶段串入项目级主业务链。
 - T10 v1 不修改 T01-T09 模块算法。
 - T10 v1 不替代 T01-T09 的模块级契约。
 
@@ -11,7 +11,12 @@
 
 当前不新增 repo CLI、`Makefile` 目标、模块 `run.py` 或模块 `__main__.py`。
 
-当前唯一正式 root 脚本入口为 `scripts/t10_pack_innernet_cases.sh`，用于内网多 Case 证据包打包与文本 bundle 分片导出；新增其它稳定入口仍需单独授权并同步入口登记。
+当前正式 root 脚本入口为：
+- `scripts/t10_pack_innernet_cases.sh`：内网多 Case 证据包打包与文本 bundle 分片导出。
+- `scripts/t10_run_e2e_cases.sh`：Case 级端到端 replay，不调用 T08。
+- `scripts/t10_run_innernet_full_pipeline.sh`：内网全量端到端总控，不消费 Case package，可运行 T08 独立前置阶段并串联后续模块。
+
+新增其它稳定入口仍需单独授权并同步入口登记。
 
 ## 3. 数据约束
 

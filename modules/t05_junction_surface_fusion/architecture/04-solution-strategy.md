@@ -107,6 +107,11 @@ Phase 2 不重新融合路口面，不修改 Phase 1 `junction_anchor_surface.gp
 - SWSD 环岛 `kind_2 = 64`：所有 SWSD 子 node 必须被 Phase 1 路口面覆盖；覆盖面与 `RCSDRoad.roadtype = 8` 的 road `10m` buffer 合并后形成环岛候选面；候选 RCSD 语义路口必须全组 node 都在该面内，且候选语义路口之间通过 `roadtype = 8` 的 RCSDRoad 连通，才进入 RCSDNode grouping。
 - Phase 2 入口对 SWSD 语义路口主键统一做整数 canonical normalization，覆盖 evidence `target_id`、surface `mainnodeid`、nodes `id/mainnodeid`、known target 索引和最终 relation/audit 输出；`622700016` 与 `622700016.0` 在 T05 内部视为同一 target，并统一输出 `622700016`。
 - Phase 2 不改写 final SWSD nodes，也不输出 SWSD node copy-on-write 标记层；`no_related_rcsd` 仅通过失败 relation、junctionization audit 与 module relation audit 表达。
+- Cardinality QC 中，`one_target_to_many_base` 与重复 success target 仍是阻断错误，必须从主 relation 剔除并令 `summary.passed=false`；`many_target_to_one_base` 只作为非阻断审计保留，relation 继续发布给 T06，由 T06 的 Segment 端点 distinct、buffer、方向性和替换计划继续判定。
+- T04 `road_surface_fork` partial handoff 若同时给出局部 `base_id_candidate / required_rcsd_node_ids` 与原语义主点 `semantic_required_rcsd_node_ids`，Phase 2 必须先把这些 RCSDNode 按 `group_existing_rcsd_nodes` 归组，再发布唯一 relation；该修正应在 T05 完成，不交给 T06 双向 Segment 兜底。
+- T10 `T10_SIDE_GROUP` 与 `T10_PAIR_ANCHOR_CLUSTER` 仅作为补充证据：只能依附同 target 已有 T07/T03/T04/T02 成功 relation，或依附 T03/T04 road-only split 决策补充 RCSDNode grouping；不得单独创建 SWSD-RCSD relation，也不得覆盖 road-only split 主决策。
+- T07 `existing_rcsdintersection_matched` 的 `base_id_candidate` 必须先证明能落到 `rcsdnode_out.id/mainnodeid` 或可由 Phase 1 surface 内 RCSDNode 重绑定 / 归组后，才允许发布成功 relation；无法证明时输出失败 relation，不用最近点或 T06 结果反推。
+- `relation_graph_consumability_audit.*` 用于审计成功 relation 的 base 是否可被 `rcsdroad_out / rcsdnode_out` 图消费。该审计是质量追溯信号，不作为本阶段强制阻断项。
 
 ## 9. Phase 2 拓扑策略
 
@@ -114,6 +119,7 @@ Phase 2 不重新融合路口面，不修改 Phase 1 `junction_anchor_surface.gp
 - 被 split 的原始 RCSDRoad 不进入 active `rcsdroad_out.gpkg`，仅在 audit 中保留。
 - 投影点过近端点时不 split，复用端点 RCSDNode；多个端点节点命中时按现有 grouping 规则归为一个 RCSD 语义路口。
 - split 后新 road 继承原 road 非 `id / snodeid / enodeid / geometry` 字段，`direction` 默认继承。
+- `rcsdroad_out.gpkg` 是 copy-on-write 主网输出，允许承载输入中原有的 `LineString / MultiLineString` 混合几何；split 生成的新增 road 仍保持 `LineString`。
 - 同一 SWSD 路口只生成 1 个 RCSDNode 时 `mainnodeid = null`。
 - 同一 SWSD 路口生成或归组多个 RCSDNode 时，组内所有 RCSDNode 包括主节点自己 `mainnodeid = 主 RCSDNode.id`。
 - `intersection_match_all.geojson` 中 `target_id` 必须唯一，一个 SWSD 语义路口只允许输出一条 relation。

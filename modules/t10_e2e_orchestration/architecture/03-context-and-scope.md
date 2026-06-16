@@ -8,13 +8,13 @@
 T08 -> T01 -> T07 -> T03 -> T04 -> T05 -> T06 -> T09
 ```
 
-T10 v1 局部编排链路为：
+T10 v1 Case runner 局部编排链路为：
 
 ```text
-T01 -> T07 -> T03 -> T04 -> T05 -> T06 -> T09
+T01 -> T07 Step1/2 -> T03 -> T04 -> T05 -> T07 Step3 -> T06 -> T09
 ```
 
-两者不冲突：T08 仍是主业务链前置质量模块，但 T10 v1 不直接调度 T08。
+两者不冲突：T08 仍是主业务链前置质量模块，但 T10 v1 callable 与 Case runner 不直接调度 T08；内网全量总控可把 T08 作为独立前置阶段串联。
 
 ## 2. 外部输入范围
 
@@ -31,7 +31,7 @@ T10 v1 Case 证据包的外部输入包括：
 
 ## 3. 中间产物范围
 
-T01 / T07 / T03 / T04 / T05 / T06 / T09 的中间产物只作为 handoff audit，不进入 v1 Case 外部输入证据包。
+T01 / T07 Step1/2 / T03 / T04 / T05 / T07 Step3 / T06 / T09 的中间产物只作为 handoff audit，不进入 v1 Case 外部输入证据包。
 
 ## 4. Candidate Suggest Scope
 

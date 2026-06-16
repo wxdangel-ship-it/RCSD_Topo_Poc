@@ -3,8 +3,8 @@
 | 术语 | 含义 |
 |---|---|
 | T10 | 端到端业务流程编排与 Case 证据组织模块。 |
-| T10 v1 chain | `T01 -> T07 -> T03 -> T04 -> T05 -> T06 -> T09`。 |
-| T08 policy | T08 独立前置运行，T10 v1 不调用 T08。 |
+| T10 v1 chain | Case runner 链路为 `T01 -> T07 Step1/2 -> T03 -> T04 -> T05 -> T07 Step3 -> T06 -> T09`。 |
+| T08 policy | T08 独立前置运行，T10 v1 callable 与 Case runner 不调用 T08；内网全量总控可把 T08 作为独立前置阶段串联。 |
 | external input | T10 外部输入，包括 T08 独立运行后的成果和原始 RCSD / SWSD 支撑数据。 |
 | handoff | T01-T09 模块间中间产物。 |
 | directory-only handoff | 只配置模块输出目录、由下游自行猜测文件的输入方式；T10 v1 拒绝该模式。 |

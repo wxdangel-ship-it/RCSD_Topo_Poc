@@ -11,6 +11,7 @@ strict input read -> semantic junction assembly -> representative node selection
 ### 输入读取
 
 - 读取 `nodes / DriveZone / RCSDIntersection`。
+- Step2 可另读 `RCSDNode`，用于校验命中的 `RCSDIntersection` 是否可消费。
 - Step3 另读 T05 `intersection_match_all.geojson` 与输入 `RCSDNode`。
 - 严格解析 CRS。
 - 统一转换到 `EPSG:3857`。
@@ -24,20 +25,21 @@ strict input read -> semantic junction assembly -> representative node selection
 ### Step1
 
 - 判断代表 node `kind_2` 是否属于 `{4, 8, 16, 64, 128, 2048}`。
-- 只对处理范围内语义路口执行全组 node `DriveZone ∪ RCSDIntersection` 命中判定；所有 node 均命中该合并 evidence 面才写 `yes`。
+- 只对处理范围内语义路口执行全组 node `DriveZone ∪ RCSDIntersection` 命中判定；所有 node 均命中或到合并 evidence 面距离不超过 `1.5m` 才写 `yes`。
 - 写代表 node `has_evd`。
 
 ### Step2
 
 - 只处理 `has_evd = yes`。
 - 判断组内 node 与 `RCSDIntersection` 的空间命中关系。
+- 启用 `RCSDNode` 输入时，过滤面内没有可用 RCSD 语义节点的 `RCSDIntersection`，并把该场景记录为不可消费锚定。
 - 输出 `is_anchor / anchor_reason`。
 - 输出 `node_error_1 / node_error_2` 审计。
 - 输出 `t07_rcsdintersection_anchor_surface.gpkg` 与 `t07_swsd_rcsd_relation_evidence.csv/json`。
 
 ### Step3
 
-- Step2 surface 1V1 推导处理 `kind_2 in {4, 8, 16}` 的代表 node；T05 relation 补充处理 `kind_2 in {4, 8, 16, 128}` 的代表 node。
+- Step2 surface 1V1 推导处理 `kind_2 in {4, 8, 16}` 的代表 node；T05 relation 补充处理 `kind_2 in {4, 8, 16, 128, 2048}` 的代表 node。
 - 先读取 Step2 surface，用 `RCSDIntersection` 面查询输入 `RCSDNode` 语义路口，形成 Step2 surface 1V1 关系或 `RCSDNode_error.gpkg`。
 - 再读取 T05 relation 主表中 `target_id / base_id / status`，对 `has_evd = yes / is_anchor = no` 的候选补充关系。
 - 校验成功 relation 的 RCSD `base_id` 是否存在于输入 `RCSDNode.id/mainnodeid` 且未被 Step2 surface 1V1 阶段占用。

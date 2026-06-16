@@ -11,6 +11,8 @@ T04 在 T03 交叉 / T 型虚拟锚定之后，面向分歧、合流、连续分
 - 在无主证据、弱 RCSD、road-only、SWSD-only 等场景下提供可解释 fallback，不静默构面。
 - 输出 accepted / rejected 分层、summary、audit、review 和 downstream `nodes.gpkg`。
 - 对 T04 自身 relation 与 T07/T03 relation 做最终 1:1 cardinality 校验。
+- 对 T07/T03 可选外部校验输入执行容错读取：路径已提供但文件为空、非法 JSON 或缺少 GeoJSON `features` 时，只按不可消费外部输入审计并以 0 条外部成功关系继续，不阻断 T04 自身 Step1-7 构面和 relation closeout。
+- 对 `road_surface_fork + partial` 且局部 RCSD node 与远端语义主点分离的场景，面向 T05/T06 的 relation handoff base 采用局部 `local_rcsd_unit_id`，原 `required_rcsd_node` 保留为 `semantic_required_rcsd_node_ids` 审计链。
 
 ## 3. 当前范围
 
@@ -60,6 +62,7 @@ T04 在 T03 交叉 / T 型虚拟锚定之后，面向分歧、合流、连续分
 | `divmerge_virtual_anchor_surface_audit.gpkg` | 几何与业务过程审计。 |
 | `nodes.gpkg` | downstream 状态索引层。 |
 | `nodes_anchor_update_audit.*` | nodes copy-on-write 更新审计。 |
+| `t04_swsd_rcsd_relation_evidence.*` | T04 面向 T05 Phase2 的 relation evidence；partial handoff 场景中 `base_id_candidate` 可采用局部 RCSD node，并通过 `semantic_required_rcsd_node_ids` 保留原语义主点。 |
 | `intersection_match_t04.geojson` | T04 对 T05 发布的 SWSD-RCSD relation。 |
 | `step7_consistency_report.json` | 最终一致性报告。 |
 
@@ -82,6 +85,8 @@ T04 在 T03 交叉 / T 型虚拟锚定之后，面向分歧、合流、连续分
 - Reference Point 只能来自主证据；无主证据时不得反推虚拟 Reference Point。
 - Step5 只定义约束，Step6 才生成最终面。
 - Step7 最终状态机只允许 `accepted / rejected`。
+- 可选 T07/T03 外部 relation 校验输入不可消费时，应被显式审计为外部输入问题，而不是误判为 T04 构面失败。
+- `road_surface_fork + partial` 的局部 RCSD relation handoff 只调整下游关系基点，不改变 T04 accepted surface 本身，也不放宽 final relation 1:1 cardinality。
 
 ## 9. 什么是错
 

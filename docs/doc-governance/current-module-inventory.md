@@ -28,7 +28,7 @@
 | `t07_semantic_junction_anchor` | Active | 迁移 T02 语义路口级 1:1 锚定能力，并通过 T05 relation 做无路口面特征补锚。用于提高当前替换率，未来 RCSD 滚动构图方案下不作为长期依赖。 |
 | `t08_preprocess` | Active | SWSD / RCSD 正式预处理模块，提供格式转换、Road/Node 类型聚合、质检修复、restriction / Laneinfo 显性化与 RCSD 清理。为 T01、T03、T04、T05、T06、T09 提供规范输入。 |
 | `t09_swsd_field_rule_restoration` | Active | 基于 SWSD Laneinfo、restriction 与 T06 F-RCSD 混合承载关系，还原现场路口级通行规则。当前缺少 RCSD Laneinfo 与轨迹通行证据，需后续迭代完善。 |
-| `t10_e2e_orchestration` | Active | 端到端业务流程编排与 Case 级证据组织模块。v1 编排 T01 / T07 / T03 / T04 / T05 / T06 / T09，T08 保持独立前置预处理、质检与修复定位。当前先建立文件级 handoff contract validation 与 manifest-first Case 证据包。 |
+| `t10_e2e_orchestration` | Active | 端到端业务流程编排与 Case 级证据组织模块。v1 Case runner 编排 T01 / T07 Step1/2 / T03 / T04 / T05 / T07 Step3 / T06 / T09，T08 保持独立前置预处理、质检与修复定位；当前已支持空间切片 Case 包、Case 级 replay、T06 上游反馈包、反馈迭代防回退与内网全量总控。 |
 | `p01_arm_build` | Active POC / 成果模块 | 当前仓库中用户历史 `P10` 口径统一改称为 `P01`。P01 面向异构路口通行能力 / RoadNextRoad POC，不作为 T09 正式契约。 |
 
 ## 当前业务关系
@@ -38,12 +38,12 @@
 - 关系融合：T05 汇总 T07 / T03 / T04，生产 SWSD-RCSD 语义路口关系。
 - Segment 替换：T06 基于 T01 Segment 与 T05 relation 构建 RCSDSegment 并输出 F-RCSD 承载关系。
 - 通行恢复：T09 基于 SWSD 通行规则证据和 T06 F-RCSD 承载关系还原融合后路口通行能力。
-- 端到端编排：T10 v1 以文件级 handoff 方式编排 T01 / T07 / T03 / T04 / T05 / T06 / T09，并以 SWSD 语义路口 ID 与半径组织 Case 证据包。
+- 端到端编排：T10 v1 以文件级 handoff 方式组织 Case package、空间切片、Case 级 replay、T06 反馈闭环和内网全量总控；Case runner 不调用 T08，全量总控可把 T08 作为独立前置阶段串联。
 - POC 验证：P01 承载异构路口通行能力 POC，不替代 T09。
 
 ## 当前治理缺口
 
 1. `t09_swsd_field_rule_restoration` 已具备初始模块文档面，后续需结合 RCSD Laneinfo 与轨迹通行证据迭代完善。
-2. `t10_e2e_orchestration` 当前仍处于 contract validation / manifest-first Case 包阶段，真实执行编排和空间切片待后续推进。
+2. `t10_e2e_orchestration` 已具备 Case 级 replay、空间切片、反馈闭环与内网全量总控；后续需持续收敛真实数据下的反馈迭代质量、全量审计口径和跨模块 handoff 稳定性。
 3. `t02_junction_anchor` 已 Retired，但入口登记仍需后续同步 retired / historical 口径。
 4. 模块级实现细节应保留在模块文档，项目级盘点只维护业务目标、关系和缺口。

@@ -7,10 +7,10 @@
 T06 采用三步链路：
 
 1. Step1 从 T01 `segment.gpkg` 识别具备融合资格的 SWSD Segment。
-2. Step2 用 T05 relation 和 copy-on-write RCSD 网络构建 buffer-based RCSDSegment，并输出最终 `replaceable` 集合。
-3. Step3 只消费 Step2 replaceable，把对应 SWSD Segment 替换为 retained RCSDRoad / RCSDNode，输出 F-RCSD Road / Node。
+2. Step2 用 T05 relation 和 copy-on-write RCSD 网络构建 buffer-based RCSDSegment，并输出最终 `replaceable` 集合、统一 `t06_segment_replacement_plan.*` 与 `t06_segment_replacement_problem_registry.*`。
+3. Step3 优先消费 Step2 replacement plan，把标准 Segment、特殊路口组内部对象与 path-corridor group replacement 统一执行到 F-RCSD Road / Node；旧 replaceable + group/special audit 只作为兼容 fallback。
 
-模块的核心边界是“只替换已被 Step2 证明可替换的 Segment”。失败 Segment 可以输出诊断、候选修复证据和上游责任归因；pair anchor 锚定错误在满足受限高置信安全门槛时，可在 T06 当前 Segment 内构造 effective relation 并重新执行 Step2 硬审计，但不得静默覆盖或回写 T05 relation。
+模块的核心边界是“只替换已被 Step2 证明并发布到 replacement plan 的对象”。失败 Segment 可以输出诊断、候选修复证据和上游责任归因；pair anchor 锚定错误在满足受限高置信安全门槛时，可在 T06 当前 Segment 内构造 effective relation 并重新执行 Step2 硬审计，但不得静默覆盖或回写 T05 relation。
 
 ## 2. Step1：SWSD Segment 融合资格识别
 
@@ -128,10 +128,13 @@ T06 采用三步链路：
 - `t06_rcsd_segment_replaceable.*`
 - `t06_special_junction_group_audit.*`
 - `t06_step2_summary.json`
+- `t06_segment_replacement_plan.*`
+- `t06_segment_replacement_problem_registry.*`
 
 ### 5.4 对错边界
 
 - 对：`replaceable` 是经过全部硬审计与特殊组门控后的最终白名单。
+- 对：Step2 closeout 必须把普通 replaceable、passed 特殊路口组内部对象和 passed path-corridor group replacement 统一发布到 replacement plan，并把已覆盖、已解决、需上游迭代或已接受不可替换的问题写入 problem registry。
 - 错：把 candidates 当 replaceable，或特殊组部分通过就局部替换。
 
 ## 6. Step2 失败诊断与修复候选
@@ -158,23 +161,44 @@ T06 采用三步链路：
 - 对：诊断材料指向可能的上游问题。
 - 错：未满足高置信安全门槛时，用 probe 或 repair candidate 覆盖 T05 relation 并继续生成 replaceable；或把 T06 effective relation 回写为 T05 relation；或把 adaptive buffer 用作绕过硬审计的放行开关。
 
-## 7. Step3：Segment Replacement
+## 7. Step2 Closeout：Replacement Plan 与 Problem Registry
 
 ### 7.1 业务目的
 
-把 Step2 replaceable SWSD Segment 替换为 RCSD 承载，并输出融合后的 F-RCSD Road / Node。
+把 Step2 的标准 replaceable、特殊路口组补充实体、path-corridor group replacement 与失败诊断统一收口，形成 Step3 可执行计划和上游回流问题清单。
 
-### 7.2 输入与前提
+### 7.2 落地策略
 
-- Step2 `t06_rcsd_segment_replaceable.*`。
+- `t06_segment_replacement_plan.*` 是 Step3 的正式执行边界，`execution_scope` 至少覆盖 `standard_segment / special_junction_group_internal / path_corridor_group`。
+- path-corridor group replacement 只有在 group probe 已经证明闭包内 Segment、RCSD path 与特殊组覆盖均满足当前规则时，才能进入 ready plan；Step3 不再重新判断其可替换性。
+- `t06_segment_replacement_problem_registry.*` 必须登记 `covered_by_replacement_plan / resolved_in_step2_plan / accepted_non_replaceable / requires_upstream_iteration / requires_upstream_side_group_or_rcsd_directionality_review` 等状态。
+- `accepted_non_replaceable` 用于 T06 已确认无法形成可替换 RCSDSegment 但不应回流上游重跑的场景，例如 T05 relation 将 SWSD pair 两端归到同一 RCSD 语义路口。
+- `requires_upstream_side_group_or_rcsd_directionality_review` 用于双向 Segment 只能证明单向 RCSD 图通路的情况，先回流评估侧聚合或 RCSD 数据方向性，不由 Step3 兜底替换。
+
+### 7.3 对错边界
+
+- 对：Step2 把替换执行、已解决问题和待上游迭代问题都显式落表，T10/T05 可据此组织反馈。
+- 错：让 Step3 读取多个诊断文件自行扩大替换范围，或把 `accepted_non_replaceable` 继续推给上游重跑。
+
+## 8. Step3：Segment Replacement
+
+### 8.1 业务目的
+
+把 Step2 replacement plan 中的 ready action 替换为 RCSD 承载，并输出融合后的 F-RCSD Road / Node。
+
+### 8.2 输入与前提
+
+- Step2 `t06_segment_replacement_plan.*`，优先读取 JSON 以保留无 geometry 的特殊路口组 plan 行。
+- Step2 `t06_rcsd_segment_replaceable.*`，仅作为无 replacement plan 的旧结果兼容输入。
 - T01 SWSD `segment / roads / nodes`。
 - T05 Phase2 `rcsdroad_out / rcsdnode_out`。
-- 可选 Step2 `t06_special_junction_group_audit.*` 中 passed 特殊组。
+- 旧结果兼容路径可读 Step2 `t06_special_junction_group_audit.*` 与 `t06_segment_group_replacement_audit.*` 中 passed 行，但 summary 必须记录 legacy source。
 
-### 7.3 落地策略
+### 8.3 落地策略
 
-- Step3 只消费 replaceable，不处理 rejected。
+- Step3 优先消费 replacement plan，只执行 `plan_status=ready` 的 action，不处理 rejected，也不重新搜索 RCSD Segment。
 - 以 `swsd_segment_id` 建立替换单元，记录 SWSD `pair_nodes / junc_nodes / roads` 与 retained RCSD road/node。
+- `execution_scope=standard_segment` 执行普通 Segment 替换；`execution_scope=special_junction_group_internal` 引入特殊路口组内部 RCSD Road/Node；`execution_scope=path_corridor_group` 按 Step2 已验证的 group path corridor 合并生成组级替换单元。
 - 删除被替换 SWSDRoad；若 Step1/Step2 replaceable 的 final `junc_nodes` 少于 T01 原始 `junc_nodes`，detached junc 触达的原 SWSDRoad 以 `source=2` 保留为局部 restriction carrier，并在 Segment relation 中记录 `replaced+retained_swsd`。
 - SWSDNode 只删除被替换 SWSDRoad 的端点 Node，不删除整个 SWSD 语义路口组。
 - 引入 Step2 retained RCSDRoad / RCSDNode；passed 特殊组内部 RCSDRoad / RCSDNode 作为组级补充加入。
@@ -182,20 +206,22 @@ T06 采用三步链路：
 - 若 C 原 main node 被删除，按原 main node、剩余 SWSD node 最小 id、加入 C 的 RCSD node 最小 id 的优先级重选 main node。
 - C 内 Node 继承原 main node 的 `kind / grade / kind_2 / grade_2 / closed_con`。
 
-### 7.4 输出与审计
+### 8.4 输出与审计
 
 - `t06_frcsd_road.*`
 - `t06_frcsd_node.*`
 - `t06_step3_unreplaced_rcsd_roads.*`
 - id collision audit、删除 / 引入 / main node 重建审计。
+- summary 必须记录 `replacement_plan_source`、输入 plan 行数、按 `execution_scope` 的执行计数、path-corridor group 计数和 detached junc 保留计数。
 
-### 7.5 对错边界
+### 8.5 对错边界
 
 - 对：F-RCSD Road/Node 使用 `source=1` 表示 RCSD，`source=2` 表示 SWSD。
 - 对：detached junc 的 `identity_retained_swsd` node map 只表达局部 SWSD carrier 原样保留，不表达 RCSD 锚定成功。
+- 对：Step3 只执行 replacement plan 或 legacy fallback 产物已明确通过的对象，不用诊断文件补造新的替换对象。
 - 错：因 SWSD/RCSD 原始 id 冲突而重写 id；应保留原 id 并依赖 `source` 区分。
 
-## 8. 证据包与本地 Case
+## 9. 证据包与本地 Case
 
 - 文本证据包用于内外网回传 T06 运行审计结果，不登记为 repo 官方 CLI。
 - 输入切片包用于按中心点和范围抽取局部 SWSD / RCSD / relation 数据，形成可复现本地测试用例。

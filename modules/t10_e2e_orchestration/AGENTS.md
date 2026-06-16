@@ -6,12 +6,12 @@
 
 ## 模块边界
 
-- T10 v1 编排链路固定为 `T01 -> T07 -> T03 -> T04 -> T05 -> T06 -> T09`。
-- T08 是独立前置预处理、质检与修复模块；T10 v1 不调用 T08。
-- T10 可消费 T08 独立运行后的成果作为外部输入，但不得把 T08 纳入 v1 orchestration steps。
+- T10 v1 Case runner 编排链路固定为 `T01 -> T07 Step1/2 -> T03 -> T04 -> T05 -> T07 Step3 -> T06 -> T09`。
+- T08 是独立前置预处理、质检与修复模块；T10 v1 callable 与 Case runner 不调用 T08。
+- T10 可消费 T08 独立运行后的成果作为外部输入；内网全量总控脚本可把 T08 作为独立前置阶段串联，但不得把 T08 混入 Case runner orchestration steps。
 - T10 不修改 T01-T09 的业务算法与模块契约。
 - T10 不新增 repo CLI、`Makefile` 目标、模块 `run.py` 或模块 `__main__.py`，除非任务书单独授权并同步入口登记。
-- 当前已授权并登记的 root 脚本入口只有 `scripts/t10_pack_innernet_cases.sh` 与 `scripts/t10_run_e2e_cases.sh`。
+- 当前已授权并登记的 root 脚本入口只有 `scripts/t10_pack_innernet_cases.sh`、`scripts/t10_run_e2e_cases.sh` 与 `scripts/t10_run_innernet_full_pipeline.sh`。
 
 ## Handoff 规则
 

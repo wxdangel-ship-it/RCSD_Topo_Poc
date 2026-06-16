@@ -17,6 +17,7 @@ dist/
 # IDE
 .idea/
 .claude/
+.codex/config.toml
 
 # Generated outputs
 outputs/

@@ -16,7 +16,7 @@
 | T05 | 汇总 T07 / T03 / T04 关系，形成统一 SWSD-RCSD 语义路口关系和 RCSD junctionization 成果。 |
 | T06 | 以 T01 Segment 和 T05 语义关系为依据构建 RCSDSegment，并生成 F-RCSD 承载关系。 |
 | T09 | 基于 SWSD Laneinfo / restriction 与 F-RCSD 承载关系还原路口级通行规则。 |
-| T10 | 组织端到端编排与 Case 证据包；v1 局部编排 T01 / T07 / T03 / T04 / T05 / T06 / T09，T08 独立前置运行。 |
+| T10 | 组织端到端编排与 Case 证据包；v1 Case runner 编排 T01 / T07 Step1/2 / T03 / T04 / T05 / T07 Step3 / T06 / T09，T08 独立前置运行；内网全量总控可把 T08 作为独立阶段串入全量链路。 |
 
 ## 生命周期影响
 
@@ -30,4 +30,4 @@
 - 虚拟锚定与数据级锚定并存：前者支撑可解释关系建模，后者作为替换率和召回的兜底。
 - T06 之后的 F-RCSD 是 T09 还原规则的承载基础，但 RCSD Laneinfo 和轨迹通行证据仍是后续迭代缺口。
 - T07 的无路口特征补锚属于当前阶段兜底策略；未来 RCSD 滚动构图方案成熟后可退出主链。
-- T10 先以文件级 handoff contract validation 修正下游目录型消费问题，再逐步接入真实执行编排与空间切片 Case 包。
+- T10 以文件级 handoff contract validation 为基础，已经接入空间切片 Case 包、Case 级 replay、T06 上游反馈包和内网全量总控；后续重点是稳定真实数据反馈迭代、全量审计口径和跨模块 handoff 质量。

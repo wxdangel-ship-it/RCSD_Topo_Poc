@@ -34,7 +34,7 @@ T08 的预处理、质检与修复能力作为 T10 外部输入准备前提。T1
 
 ## 5. Case Runner 策略
 
-T10 Case runner 从 Case package 启动，优先使用 package 内局部切片，按 `T01 -> T07 -> T03 -> T04 -> T05 -> T06 -> T09` 调用既有脚本或模块 callable。
+T10 Case runner 从 Case package 启动，优先使用 package 内局部切片，按 `T01 -> T07 Step1/2 -> T03 -> T04 -> T05 -> T07 Step3 -> T06 -> T09` 调用既有脚本或模块 callable。
 
 runner 不修改 T01-T09 算法，也不把目录型结果隐式传给下游。每个阶段都记录显式文件输入、输出、命令、stdout log、耗时和状态。
 

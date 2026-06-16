@@ -120,6 +120,8 @@ Step3 支持 GPKG / CSV / JSON 中的结构化输入，但 F-RCSD Road 输入必
 ## 4. Business Rules
 
 - restriction 是唯一能改变 Movement 禁行结果的显式禁止证据。
+- Step2 restriction 候选身份必须使用 `(restriction_id, in_link_id, out_link_id)`；同一个 `restriction_id / CondID` 可以覆盖多组进出 link，不得只按 `restriction_id` 去重导致 link-pair 证据丢失。
+- Step2 可先按 `(in_link_id, out_link_id)` 精确索引匹配 restriction，再使用 restriction / arrow 空间候选索引补充几何邻近证据；候选过滤不得改变 raw geometry match 的可追溯性。
 - arrow、完整 arrow 排除、提前左转、提前右转和特殊 carrier 只作为现场证据、解释证据或冲突证据。
 - `fully_prohibited` 必须能追溯到 `explicit_restriction`。
 - `partially_prohibited` 不自动放大为 F-RCSD 全 Arm 禁行。
@@ -158,6 +160,6 @@ from rcsd_topo_poc.modules.t09_swsd_field_rule_restoration import (
 
 1. Step1 / Step2 输出 arms、movements、evidence、restored rules 和 summary。
 2. Step3 只对 `fully_prohibited + explicit_restriction` 生成 F-RCSD restriction。
-3. 每条 restored rule 和 F-RCSD restriction 都能回溯证据、Movement 和 T06 relation；若使用 retained SWSD seed fallback，必须能回溯到 T09 Arm seed road 与 T06 F-RCSD `source=2` road。
+3. 每条 restored rule 和 F-RCSD restriction 都能回溯证据、Movement 和 T06 relation；同一 restriction id 下的不同 `in_link_id / out_link_id` 必须能分别回溯；若使用 retained SWSD seed fallback，必须能回溯到 T09 Arm seed road 与 T06 F-RCSD `source=2` road。
 4. 没有 restriction 的 arrow 排除、特殊 carrier、拓扑不可达不生成禁止规则。
 5. summary 记录输入计数、输出计数、跳过原因、CRS、审计与性能信息。

@@ -8,6 +8,7 @@ T09 基于 SWSD Laneinfo、restriction、SWSD Road / Node、T01 Segment 与 T06 
 
 - 将 SWSD restriction / Laneinfo 证据还原为可审计的 Arm、Movement、Evidence 和 RestoredRule。
 - 明确区分显式禁止通行、无禁止证据、拓扑不可达、方向不适用和人工复核。
+- 在 road-pair 粒度消费 restriction 证据；同一 restriction id / CondID 下的多组 `in_link_id / out_link_id` 必须分别保留，不能因 restriction id 相同而折叠。
 - 使用 T06 SWSD-FRCSD Segment relation，把确认的 SWSD 禁止通行规则恢复到 F-RCSD；对未进入 Segment relation 但仍在 T06 F-RCSD 输出中以 `source=2` 保留的 SWSD Arm seed road，可作为保留 SWSD carrier fallback。
 - 为 T10 Case 证据包、人工分析和真实数据复核提供稳定文件证据。
 
@@ -77,6 +78,7 @@ T09 基于 SWSD Laneinfo、restriction、SWSD Road / Node、T01 Segment 与 T06 
 
 - `fully_prohibited` 必须来自显式 restriction，且能追溯到 evidence。
 - 单条 road-pair restriction 不能放大为整个 Arm-Movement 禁止。
+- 同一 restriction id 下的不同 `in_link_id / out_link_id` 是不同 road-pair 证据，必须分别参与 Movement 覆盖判断。
 - arrow 排除没有 restriction 时不能单独生成禁止规则。
 - F-RCSD restriction 必须通过 T06 relation 映射，或通过 T06 F-RCSD 输出中仍保留的 `source=2` SWSD seed road fallback 映射。
 - 所有输出必须记录输入、参数、证据、匹配方式和跳过原因。

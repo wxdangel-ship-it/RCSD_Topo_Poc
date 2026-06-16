@@ -18,7 +18,7 @@ T07 迁移 T02 Step1 / Step2 的语义路口级锚定能力，并提供独立 St
 
 - Step1：计算代表 node `has_evd`。
 - Step2：计算代表 node `is_anchor / anchor_reason`。
-- Step3：基于 T05 relation 对 `kind_2 in {4,8,16,128}` 的候选补锚，其中 `128` 只走 T05 成功 relation 补锚，不走 T07 Step2 surface 推导。
+- Step3：基于 T05 relation 对 `kind_2 in {4,8,16,128,2048}` 的候选补锚，其中 `128 / 2048` 只走 T05 成功 relation 补锚，不走 T07 Step2 surface 推导。
 - 处理代表 node `kind_2 in {4, 8, 16, 64, 128, 2048}` 的 Step1/2 字段。
 - 输出 `t07_rcsdintersection_anchor_surface.gpkg` 与 `t07_swsd_rcsd_relation_evidence.*`。
 
@@ -49,7 +49,7 @@ T07 迁移 T02 Step1 / Step2 的语义路口级锚定能力，并提供独立 St
 | `DriveZone.gpkg` | Step1 evidence 面。 |
 | `RCSDIntersection.gpkg` | Step1/Step2 existing surface 锚定面。 |
 | `intersection_match_all.geojson` | Step3 relation 补锚来源。 |
-| `RCSDNode.gpkg` | Step3 校验 `base_id` 是否存在。 |
+| `RCSDNode.gpkg` | Step2 可选校验 `RCSDIntersection` 是否可消费；Step3 校验 `base_id` 是否存在。 |
 
 ## 6. 输出
 
@@ -68,17 +68,17 @@ T07 迁移 T02 Step1 / Step2 的语义路口级锚定能力，并提供独立 St
 | 步骤 | 业务说明 |
 |---|---|
 | 语义路口组装 | 按 `mainnodeid` 聚合，空 `mainnodeid` 退化为 singleton，多节点组代表 node 必须 `id == mainnodeid`。 |
-| Step1 has_evd | 代表 node 类型在处理范围内时，要求组内所有 node 命中 `DriveZone ∪ RCSDIntersection` 才写 `yes`。 |
-| Step2 anchor | 只对 `has_evd = yes` 的语义路口基于 `RCSDIntersection` 判定 `yes/no/fail1/fail2`。 |
+| Step1 has_evd | 代表 node 类型在处理范围内时，要求组内所有 node 命中 `DriveZone ∪ RCSDIntersection` 或满足 `1.5m` evidence 面容差才写 `yes`。 |
+| Step2 anchor | 只对 `has_evd = yes` 的语义路口基于 `RCSDIntersection` 判定 `yes/no/fail1/fail2`；启用 `RCSDNode` 后，不可落到可用 RCSD 语义节点的面不算可消费锚定。 |
 | Step2 handoff | 输出 T07 版 surface 与 relation evidence。 |
 | Step3 surface 1V1 | 基于 Step2 surface 查询 RCSDNode，唯一 RCSD 语义路口时建立 relation。 |
-| Step3 T05 relation 补锚 | 对候选 `is_anchor = no` 的 existing surface 路口和 `kind_2=128` 专项 relation 路口消费 T05 成功 relation。 |
+| Step3 T05 relation 补锚 | 对候选 `is_anchor = no` 的 existing surface 路口，以及 `kind_2=128 / 2048` 专项 relation 路口消费 T05 成功 relation。 |
 | Step3 基数质检 | 对 1:N、N:1、重复 target 进行压制和回写。 |
 
 ## 8. 什么是对
 
 - `has_evd / is_anchor / anchor_reason` 只写代表 node。
-- `kind_2 = 2048` 不在 T07 建立 SWSD-RCSD 成功 relation，后续交由 T03。
+- `kind_2 = 2048` 在 Step2 不建立 surface 成功关系；Step3 只能在 T05 成功 relation 可验证时补写 anchor。
 - Step3 只接受 `status=0 / base_id!=0` 且 base_id 存在的 relation。
 - 输出 ID 必须 canonical normalization，避免 `"622700016.0"` 与 `"622700016"` 分裂。
 

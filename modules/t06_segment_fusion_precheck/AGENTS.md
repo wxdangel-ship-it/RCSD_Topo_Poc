@@ -6,8 +6,8 @@
 
 - 当前模块正式范围已扩展到 T06 三个阶段：
   - Step1：识别可参与融合的 SWSD Segment 单元。
-  - Step2：基于 T05 Phase 2 relation 与 copy-on-write RCSD 网络，仅使用 buffer-based 策略构建 RCSDSegment 候选，并在特殊路口组门控后输出最终 `replaceable` 集合。
-  - Step3：消费 Step2 可替换 RCSDSegment，按 Segment 单元输出融合后的 F-RCSD Road / Node，并重建涉及的语义路口关系。
+  - Step2：基于 T05 Phase 2 relation 与 copy-on-write RCSD 网络构建 RCSDSegment 候选，在特殊路口组门控后输出最终 `replaceable` 集合，并发布 `t06_segment_replacement_plan.*` 与 `t06_segment_replacement_problem_registry.*`。
+  - Step3：优先消费 Step2 replacement plan，按普通 Segment、特殊路口组内部对象与 path-corridor group action 输出融合后的 F-RCSD Road / Node，并重建涉及的语义路口关系；旧 replaceable / special / group audit 仅作为兼容 fallback。
 - Step3 已通过 `specs/t06-step3-segment-replacement/` 纳入 T06，并已提供模块内 runner 与独立脚本。
 - Step3 仍采用 copy-on-write，不修改 T01 / T05 / Step2 输入成果。
 
@@ -44,7 +44,7 @@
 - Step2 不再执行 pair-to-pair BFS 路径搜索、主轴 / 粗长度趋势或唯一性筛选；`swsd_directionality=single` 的 source/target 必须由 SWSDRoad `snodeid / enodeid / direction` 推导，禁止用 `pair_nodes` 顺序或 `segmentid A_B` 顺序兜底；`swsd_directionality=dual` 时必须执行 RCSD retained graph 双向可达硬审计。
 - retained RCSD graph 不允许存在 pair required corridor 内部解释节点以外的额外 T05 mapped semantic nodes；optional junc 若成为孤立挂接，可被剪除并进入 dropped / lost attach 审计。
 - Step2 对 final `nodes.gpkg.kind_2=64` 环岛路口与 `kind_2=128` 复杂路口执行特殊组门控：按 `pair_nodes + junc_nodes` 关联 Segment，组内未全部可替换时，组内所有原本可替换 Segment 必须移出 replaceable，并输出特殊组审计；不得只替换特殊路口的一部分关联 Segment。
-- Step3 只消费 Step2 replaceable 成果：删除被替换 SWSDRoad 及其端点 SWSDNode，引入 retained RCSDRoad / RCSDNode，输出 `source=1` 的 RCSD 数据与 `source=2` 的 SWSD 数据；不得删除整个 SWSD 语义路口组。
+- Step3 只执行 Step2 replacement plan 中 `plan_status=ready` 的 action；无 plan 的旧运行才可兼容读取 Step2 replaceable、passed special group audit 与 group replacement audit。Step3 删除被替换 SWSDRoad 及其端点 SWSDNode，引入 plan 发布的 retained RCSDRoad / RCSDNode，输出 `source=1` 的 RCSD 数据与 `source=2` 的 SWSD 数据；不得删除整个 SWSD 语义路口组，也不得重新判定 rejected Segment 是否可替换。
 - Step3 若发现 replaceable Segment 的 final `junc_nodes` 少于 T01 原始 `junc_nodes`，detached junc 触达的原 SWSDRoad 必须以 `source=2` 保留为局部通行限制 carrier，并在 Segment relation 中写 `relation_status=replaced+retained_swsd`、`detached_junc_nodes`、`retained_detached_swsd_road_ids` 与 `identity_retained_swsd` node map；该 node map 不代表 RCSD 锚定成功。
 - Step3 不重新判定特殊路口组是否可替换；若 Step2 同目录存在 `t06_special_junction_group_audit.*`，仅消费其中 `gate_status=passed` 的组级 RCSD 内部 Node/Road，并统一加入 F-RCSD。
 - Step3 重建的语义路口 C 来自 replaceable Segment 的 `pair_nodes + junc_nodes`；若原 main node 被删除，必须重新选择 main node，并让 C 内 Node 继承原 main node 的 `kind / grade / kind_2 / grade_2 / closed_con`。

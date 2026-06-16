@@ -8,6 +8,7 @@ T03 在 T07 完成已有路口面 1:1 锚定后，面向交叉路口与 T 型路
 
 - 将 `center_junction` 与 `single_sided_t_mouth` 类型路口转化为可审计的虚拟锚定面。
 - 通过 Step1-Step7 把局部上下文、合法空间、RCSD 关联、负向约束、几何生成和最终发布分离。
+- 对 `single_sided_t_mouth` 中目标语义节点贴近 DriveZone 边界的轻微偏移，允许在 incident road 支撑和审计字段齐备时扩大组件触达判定参考；最终面仍必须完全受 DriveZone 约束。
 - 为 T05 提供 T03 surface 与 `t03_swsd_rcsd_relation_evidence.*`。
 - 为 T04 提供 downstream `nodes.gpkg` 状态，不把 T03 surface 作为 T04 输入。
 - 保持 `Association / Finalization` 仅作为历史实现和兼容命名。
@@ -79,6 +80,7 @@ T03 在 T07 完成已有路口面 1:1 锚定后，面向交叉路口与 T 型路
 ## 8. 什么是对
 
 - `Step4~Step7` 必须消费冻结的 Step3 allowed space/status/audit。
+- `single_sided_t_mouth` 的 DriveZone 边界微偏移只影响 Step3 组件触达参考，不允许把 `allowed_space` 推出 DriveZone；触发时必须输出 `target_edge_touch_*` 审计字段。
 - `association_class` 是业务关联解释，不是最终视觉等级。
 - `B / review` 是保守策略，不等价于算法失败。
 - `Step6` 先确定 directional boundary，再在 boundary 内构面。

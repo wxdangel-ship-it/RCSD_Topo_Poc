@@ -4,7 +4,7 @@
 
 ## 1. 模块定位
 
-T10 用于组织 RCSD_Topo 端到端业务链路和 Case 级证据包。T10 v1 编排 `T01 -> T07 -> T03 -> T04 -> T05 -> T06 -> T09`，T08 独立运行，不纳入 v1 编排步骤。
+T10 用于组织 RCSD_Topo 端到端业务链路和 Case 级证据包。T10 v1 Case runner 编排 `T01 -> T07 Step1/2 -> T03 -> T04 -> T05 -> T07 Step3 -> T06 -> T09`，T08 独立运行，不纳入 Case runner 编排步骤。
 
 ## 2. 运行入口
 
@@ -18,7 +18,7 @@ bash scripts/t10_run_innernet_full_pipeline.sh
 
 脚本支持多个 SWSD semantic junction id，一次生成多 Case package，并导出自动分片的文本 bundle。`INCLUDE_FILES=1` 时默认按 `semantic_junction_id + RADIUS_M` 生成局部 GPKG 空间切片，不复制全量外部输入。默认内网数据根目录为 `/mnt/d/TestData/POC_Data`，也可通过 `PREPARED_SWSD_NODES`、`PREPARED_SWSD_ROADS`、`DRIVEZONE`、`DIVSTRIPZONE`、`RCSD_INTERSECTION`、`RCSDROAD`、`RCSDNODE`、`SW_RESTRICTION_TOOL7`、`SW_ARROW_TOOL8` 显式覆盖输入。
 
-`scripts/t10_run_e2e_cases.sh` 从已生成或已解包的 T10 Case package 启动 Case 级全链路执行。它按 `T01 -> T07 -> T03 -> T04 -> T05 -> T06 -> T09` 调用既有脚本或模块 callable，输出每阶段日志、handoff 审计和 `t10_t06_funnel.json/csv/md`。T08 仍是独立前置预处理和质量修复模块，不由该 runner 调用。
+`scripts/t10_run_e2e_cases.sh` 从已生成或已解包的 T10 Case package 启动 Case 级全链路执行。它按 `T01 -> T07 Step1/2 -> T03 -> T04 -> T05 -> T07 Step3 -> T06 -> T09` 调用既有脚本或模块 callable，输出每阶段日志、handoff 审计和 `t10_t06_funnel.json/csv/md`。T08 仍是独立前置预处理和质量修复模块，不由该 runner 调用。
 
 当需要验证 T06 上游反馈闭环时，可设置 `T10_FEEDBACK_ITERATIONS=1`。runner 会先执行 baseline pass，发布 `t10_upstream_side_group_endpoint_candidates.csv/json`，再把该 endpoint 级候选作为 T05 Phase2 可选输入执行下一 pass。顶层 summary 会比较 baseline 与最终 pass 的 replacement plan 和 Step3 replaced Segment；若已有 replaced Segment 被移除，`feedback_regression_guard_passed = false` 且本次 run 不通过。
 

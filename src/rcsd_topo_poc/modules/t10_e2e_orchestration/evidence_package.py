@@ -364,7 +364,7 @@ def _external_input_entry(
             target = package_dir / "external_inputs" / slot / source.name
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, target)
-            entry["package_path"] = str(target.relative_to(package_dir))
+            entry["package_path"] = target.relative_to(package_dir).as_posix()
     return entry
 
 

@@ -72,6 +72,10 @@
 - `intersection_path`：`RCSDIntersection.gpkg`。
 - `out_root`：输出根目录。
 
+可选输入：
+
+- `rcsdnode_path`：RCSD `RCSDNode.gpkg`。启用后，Step2 对命中的 `RCSDIntersection` 面执行可消费性校验：面内必须覆盖至少一个具有可用 `id/mainnodeid` 的 RCSDNode geometry，才允许作为 `is_anchor = yes` 的依据。
+
 `nodes` 依赖字段：
 
 - `id`
@@ -163,6 +167,12 @@
 - 若命中唯一 `RCSDIntersection`：
   - `is_anchor = yes`
   - `anchor_reason = NULL`
+- 若启用 `rcsdnode_path`，且命中的 `RCSDIntersection` 面内没有可用 RCSDNode 语义路口：
+  - 不将该命中视为可消费锚定
+  - 代表 node `is_anchor = no`
+  - relation evidence 写 `relation_state = rcsdintersection_no_rcsd_semantic_node / status_suggested = 1`
+  - 不发布该 `RCSDIntersection` 到 `t07_rcsdintersection_anchor_surface.gpkg`
+  - 后续由 T03/T04 虚拟路口聚合链路继续处理
 - 单节点语义路口命中多个 `RCSDIntersection`：
   - `is_anchor = yes`
   - `anchor_reason = NULL`
@@ -280,6 +290,7 @@ Step2 summary 至少记录：
 - `t_reason_count`
 - `relation_evidence_row_count`
 - `surface_candidate_count`
+- `rcsdintersection_no_rcsdnode_count`
 - `input_paths`
 - `output_paths`
 - `target_crs`

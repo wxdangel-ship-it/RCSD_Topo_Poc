@@ -6,6 +6,11 @@ from time import perf_counter
 from typing import Any, Callable
 
 from .phase2_io import write_csv, write_gpkg, write_json, write_relation_geojson_crs84
+from .phase2_graph_consumability import (
+    RELATION_GRAPH_CONSUMABILITY_FIELDS,
+    build_relation_graph_consumability_rows,
+    relation_graph_consumability_summary,
+)
 from .phase2_models import (
     BLOCKING_ERROR_FIELDS,
     JUNCTIONIZATION_AUDIT_FIELDS,
@@ -19,6 +24,7 @@ from .phase2_relation_cardinality import (
     RELATION_CARDINALITY_ERROR_FIELDS,
     build_relation_cardinality_errors,
     filter_cardinality_error_relations,
+    relation_cardinality_blocking_errors,
     relation_cardinality_summary,
 )
 
@@ -39,6 +45,8 @@ MODULE_RELATION_AUDIT_CSV = "module_relation_audit_summary.csv"
 MODULE_RELATION_AUDIT_JSON = "module_relation_audit_summary.json"
 RELATION_CARDINALITY_ERRORS_CSV = "relation_cardinality_errors.csv"
 RELATION_CARDINALITY_ERRORS_JSON = "relation_cardinality_errors.json"
+RELATION_GRAPH_CONSUMABILITY_AUDIT_CSV = "relation_graph_consumability_audit.csv"
+RELATION_GRAPH_CONSUMABILITY_AUDIT_JSON = "relation_graph_consumability_audit.json"
 SUMMARY_FILENAME = "summary.json"
 
 
@@ -80,6 +88,8 @@ def write_phase2_outputs(
     module_relation_audit_json_path = run_root / MODULE_RELATION_AUDIT_JSON
     relation_cardinality_errors_csv_path = run_root / RELATION_CARDINALITY_ERRORS_CSV
     relation_cardinality_errors_json_path = run_root / RELATION_CARDINALITY_ERRORS_JSON
+    relation_graph_consumability_audit_csv_path = run_root / RELATION_GRAPH_CONSUMABILITY_AUDIT_CSV
+    relation_graph_consumability_audit_json_path = run_root / RELATION_GRAPH_CONSUMABILITY_AUDIT_JSON
     summary_path = run_root / SUMMARY_FILENAME
 
     relation_output_features = [
@@ -105,6 +115,12 @@ def write_phase2_outputs(
             )
             if not relation_cardinality_removed_relation_count:
                 relation_cardinality_removed_relation_count = removed_count
+    relation_graph_consumability_rows = build_relation_graph_consumability_rows(
+        relation_features=relation_output_features,
+        audit_rows=audit_rows,
+        rcsdnode_out_features=rcsdnode_out_features,
+        rcsdroad_out_features=rcsdroad_out_features,
+    )
     performance_data = dict(performance or {})
     output_timings_sec: dict[str, float] = dict(performance_data.get("output_timings_sec") or {})
     output_sizes_bytes: dict[str, int] = dict(performance_data.get("output_sizes_bytes") or {})
@@ -263,6 +279,31 @@ def write_phase2_outputs(
         output_timings_sec=output_timings_sec,
         output_sizes_bytes=output_sizes_bytes,
     )
+    _write_with_timing(
+        "relation_graph_consumability_audit_csv",
+        relation_graph_consumability_audit_csv_path,
+        len(relation_graph_consumability_rows),
+        lambda: write_csv(
+            relation_graph_consumability_audit_csv_path,
+            relation_graph_consumability_rows,
+            RELATION_GRAPH_CONSUMABILITY_FIELDS,
+        ),
+        progress_logger=progress_logger,
+        output_timings_sec=output_timings_sec,
+        output_sizes_bytes=output_sizes_bytes,
+    )
+    _write_with_timing(
+        "relation_graph_consumability_audit_json",
+        relation_graph_consumability_audit_json_path,
+        len(relation_graph_consumability_rows),
+        lambda: write_json(
+            relation_graph_consumability_audit_json_path,
+            {"row_count": len(relation_graph_consumability_rows), "rows": relation_graph_consumability_rows},
+        ),
+        progress_logger=progress_logger,
+        output_timings_sec=output_timings_sec,
+        output_sizes_bytes=output_sizes_bytes,
+    )
     performance_data["output_timings_sec"] = output_timings_sec
     performance_data["output_sizes_bytes"] = output_sizes_bytes
 
@@ -282,6 +323,7 @@ def write_phase2_outputs(
         relation_cardinality_errors=relation_cardinality_errors,
         relation_cardinality_removed_target_ids=relation_cardinality_removed_target_ids,
         relation_cardinality_removed_relation_count=relation_cardinality_removed_relation_count,
+        relation_graph_consumability_rows=relation_graph_consumability_rows,
         original_split_road_ids=original_split_road_ids,
         performance=performance_data,
         output_paths={
@@ -301,6 +343,8 @@ def write_phase2_outputs(
             "module_relation_audit_summary_json": str(module_relation_audit_json_path),
             "relation_cardinality_errors_csv": str(relation_cardinality_errors_csv_path),
             "relation_cardinality_errors_json": str(relation_cardinality_errors_json_path),
+            "relation_graph_consumability_audit_csv": str(relation_graph_consumability_audit_csv_path),
+            "relation_graph_consumability_audit_json": str(relation_graph_consumability_audit_json_path),
             "summary": str(summary_path),
         },
     )
@@ -322,6 +366,8 @@ def write_phase2_outputs(
         "module_relation_audit_json_path": module_relation_audit_json_path,
         "relation_cardinality_errors_csv_path": relation_cardinality_errors_csv_path,
         "relation_cardinality_errors_json_path": relation_cardinality_errors_json_path,
+        "relation_graph_consumability_audit_csv_path": relation_graph_consumability_audit_csv_path,
+        "relation_graph_consumability_audit_json_path": relation_graph_consumability_audit_json_path,
         "summary_path": summary_path,
         "summary": summary,
     }
@@ -367,6 +413,7 @@ def _summary(
     relation_cardinality_errors: list[dict[str, str]],
     relation_cardinality_removed_target_ids: set[str],
     relation_cardinality_removed_relation_count: int,
+    relation_graph_consumability_rows: list[dict[str, Any]],
     original_split_road_ids: set[int],
     performance: dict[str, Any],
 ) -> dict[str, Any]:
@@ -385,6 +432,7 @@ def _summary(
         original_split_road_ids=original_split_road_ids,
     )
     cardinality_summary = relation_cardinality_summary(relation_cardinality_errors)
+    graph_consumability_summary = relation_graph_consumability_summary(relation_graph_consumability_rows)
     return {
         "run_id": run_id,
         "produced_at": produced_at,
@@ -401,6 +449,7 @@ def _summary(
         "audit_row_count": len(audit_rows),
         "blocking_error_count": len(blocking_errors),
         **cardinality_summary,
+        **graph_consumability_summary,
         "relation_cardinality_removed_target_count": len(relation_cardinality_removed_target_ids),
         "relation_cardinality_removed_relation_count": relation_cardinality_removed_relation_count,
         "module_relation_audit_summary": module_relation_audit_rows,
@@ -451,7 +500,7 @@ def _consistency(
         "copy_on_write_inputs_not_modified": True,
         "multiple_base_id_unmergeable_absent": not blocking_errors,
         "blocking_errors_force_summary_failure": not blocking_errors,
-        "relation_cardinality_passed": not relation_cardinality_errors,
+        "relation_cardinality_passed": not relation_cardinality_blocking_errors(relation_cardinality_errors),
     }
     checks["passed"] = all(value for key, value in checks.items() if key != "duplicate_target_ids")
     return checks

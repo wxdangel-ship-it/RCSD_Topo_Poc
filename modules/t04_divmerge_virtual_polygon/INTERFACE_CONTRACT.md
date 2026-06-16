@@ -495,6 +495,7 @@ T04 final closeout 必须基于 `t04_swsd_rcsd_relation_evidence.json` 中 `stat
 
 - T07 / T03 / T04 合并后的成功关系中，同一个 SWSD `target_id` 不得对应多个 RCSD `base_id`。
 - T07 / T03 / T04 合并后的成功关系中，同一个 RCSD `base_id` 不得对应多个 SWSD `target_id`。
+- T07 / T03 外部校验文件若路径已提供但内容为空、不是合法 JSON，或不是包含 `features` list 的 GeoJSON，T04 必须将该外部输入记录为不可消费，按 0 条外部成功关系继续执行，并在 `intersection_match_t04_summary.json` 中写入 `t07_validation_input / t03_validation_input / external_validation_unusable_input_count`；不得把不可消费输入解释为成功 relation。
 - 命中冲突时必须输出 `intersection_match_t04_cardinality_errors.csv/json` 与 `intersection_match_t04_summary.json`；`intersection_match_t04_summary.json.relation_cardinality_passed = false`。未提供 T07/T03 外部输入时，T04 自身 relation evidence 的 cardinality 结果只作为 final relation 审计，不提升为 Step7 consistency failure。
 - 任一 cardinality 冲突涉及的 T04 `target_id` 不进入 `intersection_match_t04.geojson`。
 - 启用 T07/T03 外部校验输入后，若冲突类型为 `one_target_to_many_base` 且该关系由 T04 建立，必须取消该 SWSD 语义路口已建立关系，并把 T04 输出 `nodes.gpkg` 中对应 representative node 的 `is_anchor` 回滚为 `no`；回滚必须追加到 `nodes_anchor_update_audit.csv/json`。
@@ -689,6 +690,7 @@ accepted surface 主层与 summary 至少应保留或可追溯：
   - `final_state`
   - `swsd_relation_type`
   - `required_rcsd_node_ids`
+  - `semantic_required_rcsd_node_ids`
   - `selected_rcsdnode_ids / selected_rcsdroad_ids`
   - `rcsd_profile`
   - `has_c_unit`
@@ -720,6 +722,7 @@ accepted surface 主层与 summary 至少应保留或可追溯：
 
 - 属于 T04 final closeout 对下游的最终 SWSD-RCSD 语义路口关系输出。
 - 输入依据是 T04 relation evidence 中的成功关系，并与 T07 / T03 已发布的 intersection match 做 1:1 cardinality 校验。
+- 若 T07 / T03 可选校验文件存在但不可解析，T04 必须在 summary 中审计该输入状态，并以 0 条外部关系继续，确保空间裁剪或上游空产物不阻断 T04 final closeout。
 - 若存在同一 SWSD 对多个 RCSD，或同一 RCSD 对多个 SWSD，冲突关系不得进入输出 GeoJSON，并必须在 `intersection_match_t04_cardinality_errors.*` 中可追溯。
 - 启用 T07/T03 外部校验输入后，T04 自身导致的同一 SWSD 对多个 RCSD 冲突必须把该 SWSD representative node 回滚为 `is_anchor = no`。
 
@@ -792,6 +795,7 @@ repo 级包装脚本：
 - `INTERSECTION_MATCH_T03_PATH`
 
 这两个输入只用于 `intersection_match_t04.geojson` 构建时的跨模块 relation cardinality 校验，不改变 Step1-7 构面算法。
+若文件存在但为空或不是合法 GeoJSON，脚本不得崩溃；T04 会在 summary 中标记不可消费输入，并继续使用 T04 自身 relation evidence 发布 `intersection_match_t04.geojson`。
 
 这些脚本已登记，但不构成新的 CLI 子命令；不得通过本模块文档暗示新增 repo 官方入口。
 
@@ -821,3 +825,19 @@ Anchor_2 official 39-case baseline 是当前唯一正式验收基线：
 - `legacy_23_20260426`：历史 23-case 子集，投影结果 `accepted = 20 / rejected = 3`，其中 `857993 = rejected`、`699870 = accepted`。
 - `legacy_30_20260501`：历史 30-case 子集，投影结果 `accepted = 26 / rejected = 4`，rejected set 为 `607602562 / 760598 / 760936 / 857993`。
 - 23/30 子集不再作为独立 batch 基线，不再维护独立 accepted/rejected 真相，也不再维护 PNG raw fingerprint hard gate。
+
+## 7. 2026-06-15 road_surface_fork partial relation handoff
+
+当 T04 Step4 已经将事件主证据判定为 `road_surface_fork`，且 Step7 发布面与 SWSD core 的关系为 `partial`，并且该 event-unit 同时具备：
+- `required_rcsd_node`：Step4 识别到的 RCSD 语义主点；
+- `local_rcsd_unit_id = *:node:<rcsdnode_id>`：Step4 在道路面分歧局部单元中识别到的 RCSD node；
+- `swsd_junction_present = false`；
+- `positive_rcsd_consistency_level = A`；
+
+则 `t04_swsd_rcsd_relation_evidence.*` 面向 T05 的关系交付基点必须采用 `local_rcsd_unit_id` 中的 RCSD node：
+- `required_rcsd_node_ids` 写入该局部 RCSD node，作为 T05/T06 消费的 relation handoff base；
+- `base_id_candidate` 与 `required_rcsd_node_ids` 保持一致；
+- `semantic_required_rcsd_node_ids` 保留原 `required_rcsd_node`，用于审计 T04 Step4 语义主点；
+- `rcsd_point_x / rcsd_point_y` 优先使用 `local_rcsd_unit_geometry`。
+
+该规则不改变 T04 accepted surface 本身，也不放宽 `intersection_match_t04.geojson` 的 1:1 cardinality 校验；它只修正道路面分歧局部场景下向 T05 发布的关系基点，避免 T06 用远端 RCSD 语义主点构建 Segment 时丢失局部有向走廊。

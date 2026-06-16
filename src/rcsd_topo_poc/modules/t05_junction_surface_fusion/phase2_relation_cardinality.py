@@ -19,6 +19,8 @@ RELATION_CARDINALITY_ERROR_FIELDS = [
     "reasons",
 ]
 
+BLOCKING_CARDINALITY_ERROR_TYPES = {"one_target_to_many_base", "duplicate_target_rows"}
+
 
 def build_relation_cardinality_errors(
     *,
@@ -80,18 +82,24 @@ def build_relation_cardinality_errors(
 
 def relation_cardinality_summary(error_rows: list[dict[str, str]]) -> dict[str, Any]:
     counts = Counter(row.get("error_type", "") for row in error_rows)
+    blocking_count = len(relation_cardinality_blocking_errors(error_rows))
     return {
         "relation_cardinality_error_count": len(error_rows),
+        "relation_cardinality_blocking_error_count": blocking_count,
         "one_target_to_many_base_count": int(counts["one_target_to_many_base"]),
         "many_target_to_one_base_count": int(counts["many_target_to_one_base"]),
         "duplicate_target_rows_count": int(counts["duplicate_target_rows"]),
-        "relation_cardinality_passed": not error_rows,
+        "relation_cardinality_passed": blocking_count == 0,
     }
+
+
+def relation_cardinality_blocking_errors(error_rows: list[dict[str, str]]) -> list[dict[str, str]]:
+    return [row for row in error_rows if row.get("error_type", "") in BLOCKING_CARDINALITY_ERROR_TYPES]
 
 
 def relation_cardinality_error_target_ids(error_rows: list[dict[str, str]]) -> set[str]:
     target_ids: set[str] = set()
-    for row in error_rows:
+    for row in relation_cardinality_blocking_errors(error_rows):
         target_ids.update(_normalized_parts(row.get("related_target_ids")))
         target_ids.update(_normalized_parts(row.get("target_id")))
     return target_ids

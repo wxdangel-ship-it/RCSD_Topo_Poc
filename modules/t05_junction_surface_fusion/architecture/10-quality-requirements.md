@@ -60,7 +60,7 @@
 - RCSDRoad / RCSDNode 输入只读，所有拓扑变化通过 copy-on-write 输出表达。
 - 被 split 的原始 RCSDRoad 不进入 active `rcsdroad_out.gpkg`。
 - 新增 RCSDRoad / RCSDNode id 必须全局唯一且稳定递增。
-- T03-A 多 RCSDNode 和 T04 complex 多 RCSDNode 必须先归组再建关系，不打断 road。
+- T03-A 多 RCSDNode、T04 complex 多 RCSDNode，以及 T04 `road_surface_fork` partial handoff 中 `base_id_candidate` 与 `semantic_required_rcsd_node_ids` 分离的场景，必须先归组再建关系，不打断 road。
 - T03 road-only 与 T04 fallback road-only 才能进入 RCSDRoad split。
 - T07 历史路口锚定 relation evidence 只作为已有 RCSD 语义路口 direct relation，不触发 RCSDRoad split 或 RCSDNode insert。
 - T07 历史锚定 relation-only target 没有 Phase 1 surface 时，仍必须进入 `intersection_match_all.geojson`。
@@ -69,8 +69,8 @@
 - `kind_2 = 64` 环岛场景只能归组已有 RCSDNode，不得 split RCSDRoad 或新增 RCSDNode。
 - Road-only 投影点靠近 RCSDRoad 端点时必须复用已有端点 RCSDNode 或审计失败，不得生成极短 road 段。
 - `target_id` 必须唯一，一个 SWSD 语义路口只输出一条 relation。
-- 成功关系必须通过 cardinality QC：不得存在 `1:N` 的 `target_id -> base_id` 挂接，不得存在 `N:1` 的 `base_id <- target_id` 挂接。
-- Cardinality QC 错误必须输出 `relation_cardinality_errors.csv/json`，并给出 `introduced_by_module / source_modules / source_case_ids / scenes / reasons` 归因信息；错误 relation 必须从 `intersection_match_all.geojson` 主表剔除。
+- 成功关系必须通过 cardinality QC：不得存在 `1:N` 的 `target_id -> base_id` 挂接或重复 success target；允许存在 `N:1` 的 `base_id <- target_id`，但必须输出审计。
+- Cardinality QC 错误必须输出 `relation_cardinality_errors.csv/json`，并给出 `introduced_by_module / source_modules / source_case_ids / scenes / reasons` 归因信息；`1:N` 与重复 target 属于阻断错误，相关 relation 必须从 `intersection_match_all.geojson` 主表剔除。`N:1` 属于非阻断审计，relation 保留给 T06 消费。
 - `level = grade - 1`，缺失、为空或非法时为 `-1`。
 - `is_highway = closed_con - 1`，缺失、为空或非法时为 `-1`。
 - Phase 2 不得改写 final SWSD nodes，不得输出 SWSD node copy-on-write 标记层；无 RCSD 场景通过失败 relation 和 audit 表达。
@@ -103,6 +103,6 @@
 - 输出 CRS 正确。
 - 输入文件未被原地修改。
 - 如果存在 `multiple_base_id_unmergeable`，`summary.passed` 必须为 `false`。
-- 如果存在 `relation_cardinality_errors`，`summary.passed` 必须为 `false`。
+- 如果存在阻断型 `relation_cardinality_errors`，`summary.passed` 必须为 `false`；仅存在 `many_target_to_one_base` 非阻断审计时，`summary.passed` 可为 `true`。
 - T03 handoff 补齐后的 evidence 能驱动 Phase 2 中 T03-A RCSDNode grouping 与 T03 road-only RCSDRoad split。
 - `kind_2 = 64` 环岛能基于覆盖面和 `roadtype = 8` 连通性归组多个 RCSD 语义路口，并拒绝非 `roadtype = 8` 的伪连通。

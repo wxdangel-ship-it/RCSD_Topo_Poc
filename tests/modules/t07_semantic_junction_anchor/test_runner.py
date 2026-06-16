@@ -229,6 +229,68 @@ def test_step2_outputs_anchor_states_reasons_and_conflicts(tmp_path: Path) -> No
     assert all(row["junction_id"] != "10" for row in error2["rows"])
 
 
+def test_step2_rcsdnode_gate_reopens_unconsumable_intersection_surface(tmp_path: Path) -> None:
+    nodes_path = tmp_path / "nodes.geojson"
+    intersections_path = tmp_path / "intersections.geojson"
+    rcsdnode_path = tmp_path / "rcsdnode.geojson"
+    _write_geojson(
+        nodes_path,
+        [
+            _feature({"id": 1, "mainnodeid": 1, "kind_2": 4, "has_evd": "yes"}, Point(0, 0)),
+            _feature({"id": 2, "mainnodeid": 2, "kind_2": 4, "has_evd": "yes"}, Point(100, 0)),
+        ],
+    )
+    _write_geojson(
+        intersections_path,
+        [
+            _feature({"id": "empty-surface"}, Polygon([(-5, -5), (5, -5), (5, 5), (-5, 5), (-5, -5)])),
+            _feature({"id": "semantic-surface"}, Polygon([(95, -5), (105, -5), (105, 5), (95, 5), (95, -5)])),
+        ],
+    )
+    _write_geojson(
+        rcsdnode_path,
+        [
+            _feature({"id": "900", "mainnodeid": "900"}, Point(100, 0)),
+        ],
+    )
+
+    artifacts = run_t07_step2_anchor_recognition(
+        nodes_path=nodes_path,
+        intersection_path=intersections_path,
+        rcsdnode_path=rcsdnode_path,
+        out_root=tmp_path / "out",
+        run_id="case",
+    )
+
+    props = _read_gpkg_properties_by_id(artifacts.nodes_path)
+    assert props["1"]["is_anchor"] == "no"
+    assert props["2"]["is_anchor"] == "yes"
+
+    summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
+    assert summary["anchor_yes_count"] == 1
+    assert summary["anchor_no_count"] == 1
+    assert summary["rcsdintersection_no_rcsdnode_count"] == 1
+    assert summary["input_paths"]["rcsdnode"] == str(rcsdnode_path)
+
+    assert artifacts.relation_evidence_json_path is not None
+    relation_payload = json.loads(artifacts.relation_evidence_json_path.read_text(encoding="utf-8"))
+    relation_rows = {str(row["target_id"]): row for row in relation_payload["rows"]}
+    assert relation_rows["1"]["relation_state"] == "rcsdintersection_no_rcsd_semantic_node"
+    assert relation_rows["1"]["status_suggested"] == 1
+    assert relation_rows["1"]["matched_rcsdintersection_ids"] == "empty-surface"
+    assert relation_rows["1"]["base_id_candidate"] == -1
+    assert relation_rows["2"]["relation_state"] == "existing_rcsdintersection_matched"
+    assert relation_rows["2"]["status_suggested"] == 0
+
+    assert artifacts.anchor_surface_path is not None
+    with fiona.open(str(artifacts.anchor_surface_path)) as src:
+        surface_rows = [dict(feature["properties"]) for feature in src]
+    assert {str(row["target_id"]) for row in surface_rows} == {"2"}
+
+    audit = json.loads(artifacts.audit_json_path.read_text(encoding="utf-8"))
+    assert any(row["reason"] == "rcsdintersection_no_rcsd_semantic_node" for row in audit["rows"])
+
+
 def test_step2_canonicalizes_string_float_semantic_ids_in_handoff_outputs(tmp_path: Path) -> None:
     nodes_path = tmp_path / "nodes.geojson"
     intersections_path = tmp_path / "intersections.geojson"

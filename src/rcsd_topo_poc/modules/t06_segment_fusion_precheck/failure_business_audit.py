@@ -117,6 +117,9 @@ def failure_business_audit_row(
     if segment_outcome == "replaceable" and adaptive_buffer_distance_m is not None:
         manual_review_required = False
         repair_recommendation = adaptive_buffer_recommendation
+    if segment_outcome == "rejected" and failure_business_category == "directionality_mismatch_fixable":
+        manual_review_required = True
+        repair_recommendation = "upstream_anchor_or_segment_grouping_required"
     auto_fix_candidate = segment_outcome == "replaceable" and (
         bool(junc_audit.get("dropped_junc_nodes"))
         or repair_recommendation
@@ -173,7 +176,12 @@ def failure_business_audit_row(
         "connectivity_score": probe_result.connectivity_score if probe_result is not None else 0.0,
         "shape_similarity_score": probe_result.shape_similarity_score if probe_result is not None else 0.0,
         "root_cause_category": root_cause_category,
-        "upstream_issue_owner": upstream_issue_owner(failure_business_category),
+        "upstream_issue_owner": upstream_issue_owner(
+            failure_business_category,
+            segment_outcome=segment_outcome,
+            reject_reason=reject_reason,
+            root_cause_category=root_cause_category,
+        ),
     }
 
 
@@ -185,7 +193,13 @@ def failure_business_category(
     junc_audit: dict[str, Any] | None,
     diagnostic: dict[str, Any] | None,
 ) -> str:
-    if reason in {"rcsd_not_bidirectional_for_swsd_dual", "rcsd_directed_path_missing"}:
+    if reason == "rcsd_not_bidirectional_for_swsd_dual":
+        return "directionality_mismatch_fixable"
+    if reason == "rcsd_directed_path_missing":
+        if probe_result.status == "ambiguous_corridor":
+            return "multi_anchor_ambiguous"
+        if probe_result.status == "corridor_found_with_anchor_mismatch":
+            return "pair_anchor_mismatch"
         return "directionality_mismatch_fixable"
     if junc_audit and junc_audit.get("dropped_junc_nodes"):
         return junc_failure_business_category(junc_audit)
@@ -226,9 +240,17 @@ def should_emit_repair_candidate(probe_result: BufferOnlyProbeResult) -> bool:
     return bool(probe_result.candidate_pair_sets) and probe_result.status != "no_corridor"
 
 
-def upstream_issue_owner(failure_business_category: str) -> str:
+def upstream_issue_owner(
+    failure_business_category: str,
+    *,
+    segment_outcome: str = "",
+    reject_reason: str = "",
+    root_cause_category: str | None = None,
+) -> str:
     if failure_business_category in {"pair_anchor_mismatch", "multi_anchor_ambiguous", "junc_required_blocked"}:
         return "T05"
+    if failure_business_category == "directionality_mismatch_fixable" and segment_outcome == "rejected":
+        return "T03/T04/T05_or_T06_group_replacement"
     if failure_business_category == "rcsd_graph_break_inside_buffer":
         return "T04/T05/RCSDRoad"
     if failure_business_category == "rcsd_data_absent_or_insufficient":

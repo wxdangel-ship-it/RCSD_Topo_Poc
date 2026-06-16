@@ -34,6 +34,11 @@ def main() -> int:
         t06_run_root / "step2_extract_rcsd_segments",
         "t06_special_junction_group_audit.json",
     )
+    group_replacement_audit = _resolve_optional_file(
+        args.step2_group_replacement_audit,
+        t06_run_root / "step2_extract_rcsd_segments",
+        "t06_segment_group_replacement_audit.gpkg",
+    )
     rcsdroad = _resolve_file(args.rcsdroad, t05_phase2_root, "rcsdroad_out.gpkg")
     rcsdnode = _resolve_file(args.rcsdnode, t05_phase2_root, "rcsdnode_out.gpkg")
     out_root = Path(args.out_root) if args.out_root else t06_run_root.parent
@@ -42,6 +47,7 @@ def main() -> int:
     inputs = {
         "step2_replaceable_path": step2_replaceable,
         "step2_special_junction_group_audit_path": special_group_audit,
+        "step2_group_replacement_audit_path": group_replacement_audit,
         "swsd_segment_path": _require_file(args.swsd_segment),
         "swsd_roads_path": _require_file(args.swsd_roads),
         "swsd_nodes_path": _require_file(args.swsd_nodes),
@@ -53,6 +59,7 @@ def main() -> int:
     artifacts = run_t06_step3_segment_replacement(
         step2_replaceable_path=inputs["step2_replaceable_path"],
         step2_special_junction_group_audit_path=inputs["step2_special_junction_group_audit_path"],
+        step2_group_replacement_audit_path=inputs["step2_group_replacement_audit_path"],
         swsd_segment_path=inputs["swsd_segment_path"],
         swsd_roads_path=inputs["swsd_roads_path"],
         swsd_nodes_path=inputs["swsd_nodes_path"],
@@ -103,6 +110,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--t06-run-root", default=DEFAULT_T06_RUN_ROOT, help="T06 run root containing step2_extract_rcsd_segments.")
     parser.add_argument("--step2-replaceable", default=None, help="Explicit t06_rcsd_segment_replaceable.gpkg path.")
     parser.add_argument("--step2-special-junction-group-audit", default=None, help="Explicit t06_special_junction_group_audit.json path. Defaults to the Step2 output beside replaceable when present.")
+    parser.add_argument("--step2-group-replacement-audit", default=None, help="Explicit t06_segment_group_replacement_audit.gpkg path. Defaults to the Step2 output beside replaceable when present.")
     parser.add_argument("--swsd-segment", default=DEFAULT_SWSD_SEGMENT, help="T01 segment.gpkg path.")
     parser.add_argument("--swsd-roads", default=DEFAULT_SWSD_ROADS, help="SWSD roads.gpkg path.")
     parser.add_argument("--swsd-nodes", default=DEFAULT_SWSD_NODES, help="Final SWSD nodes.gpkg path.")

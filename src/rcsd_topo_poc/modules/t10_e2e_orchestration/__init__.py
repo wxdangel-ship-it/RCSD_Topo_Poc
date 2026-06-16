@@ -24,6 +24,7 @@ from .text_bundle import (
     decode_t10_case_evidence_text_bundle,
     export_t10_case_evidence_text_bundle,
 )
+from .upstream_feedback import T10UpstreamFeedbackArtifacts, write_t10_upstream_feedback
 
 __all__ = [
     "T10CaseEvidencePackageArtifacts",
@@ -33,6 +34,7 @@ __all__ = [
     "T10MultiCaseEvidencePackageArtifacts",
     "T10PlanningArtifacts",
     "T10TextBundleDecodeArtifacts",
+    "T10UpstreamFeedbackArtifacts",
     "T10TextBundleExportArtifacts",
     "T10_MODULE_ID",
     "T10_MATERIALIZATION_COPY_FULL",
@@ -52,5 +54,6 @@ __all__ = [
     "suggest_t10_cases",
     "validate_t10_manifest",
     "write_t10_case_suggestions",
+    "write_t10_upstream_feedback",
     "write_t10_planning_outputs",
 ]

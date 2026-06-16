@@ -93,7 +93,7 @@ T06 采用三步链路：
 - 候选连通分量不能直接输出为 RCSDSegment，必须基于 pair required semantic nodes 构建最小 corridor 子图。
 - 对额外 T05 mapped semantic nodes 与 optional junc 做 seed pruning：required corridor 内部保留为 `inner_nodes`，旁支或孤立挂接归为 `out_nodes` 并裁剪。
 - 双向 Segment 需要保护 pair 两端正反向 directed corridor；单向 Segment 必须由 SWSDRoad directed graph 推导 source/target 后构建同向 RCSD corridor。
-- 高等级 Segment 的 50m 失败若属于裁剪窗口不足，且 T05 原始 pair relation 完整、全图拓扑证据支持，可在原始 pair 不变的前提下执行受限重审；single 采用 RCSD graph-first 纵向联通并要求经过 50m buffer core，dual 采用 adaptive buffer 并要求双向可达。
+- 高等级 Segment 的 50m 失败若属于裁剪窗口不足，且 T05 原始 pair relation 完整、全图拓扑证据支持，可在原始 pair 不变的前提下执行受限重审；single 采用 RCSD graph-first 纵向联通并要求经过 50m buffer core，dual 优先采用 adaptive buffer 并要求双向可达；当 buffer-only probe 给出非人工复核高置信候选 pair 集合时，可遍历候选 pair，但只有恰好一个候选通过正式双向硬审计才消费候选 pair，必要时可用 dual graph-first 双向联通，且不得跨越额外 mapped semantic nodes。
 
 ### 4.4 输出与审计
 
@@ -145,7 +145,7 @@ T06 采用三步链路：
 - Step2 失败后执行 buffer-only probe，不依赖 T05 relation 绑定，只基于 SWSD Segment buffer 与 RCSD 图结构输出诊断。
 - `t06_rcsd_repair_candidates.*` 可以记录原始 pair、候选 pair、错误 SWSD 端点、endpoint cluster、bridge road 和长度。
 - repair candidate 默认只用于人工质检和问题定位；仅当候选为非 ambiguous、非人工复核的 `high_confidence_pair_anchor_candidate`，且只补缺失 pair 端点、已有端点与候选端点存在短距离 endpoint cluster 证据，或已有端点中一端或两端被诊断为 `candidate_anchor_mismatch` 且候选 pair 通过正式 extractor 时，才可驱动当前 Segment 的一次自动重试。普通缺失端点补全必须保留 T05 已知端点所在 SWSD pair 侧，只补失败侧；buffer-only 候选不包含该已知端点时，不得作为侧保持补全自动通过。高等级 single 若已知端点本身也被 `candidate_anchor_mismatch` 判错，且诊断同时覆盖已知端错误与另一端缺失，可在高置信安全门槛和 Step2 硬审计通过后整体采用候选 pair。probe 低分但 `corridor_found`、连通/方向/shape 证据充分的缺端补全，只有在 Step2 原硬审计全部通过后才能作为 `side_preserving_missing_pair_anchor_completion` 自动进入 replaceable。单向 `multi_anchor_ambiguous` 只允许在高置信 `ambiguous_corridor` 下遍历全部候选 pair 的 as-is / reversed 正式试算，并要求 oriented RCSD pair 与 SWSD Segment 轴向端点侧位一致，且恰好一个 oriented candidate 通过时自动替换；多个候选通过或无候选通过均保持人工复核。
-- 高等级受限重审不是 repair candidate 路径，不读取候选 pair 替换已有端点；single 通过后以 `single_graph_first_longitudinal_retry` 写入 failure business audit，并在 candidates / replaceable / buffer segments 中以 `single_graph_first_longitudinal_retry:<原失败原因>` 记录来源；dual 仍以 `adaptive_high_grade_dual_buffer_retry` 记录，并保留实际重审距离与来源失败原因。
+- 高等级 single 受限重审不是 repair candidate 路径，不读取候选 pair 替换已有端点；single 通过后以 `single_graph_first_longitudinal_retry` 写入 failure business audit，并在 candidates / replaceable / buffer segments 中以 `single_graph_first_longitudinal_retry:<原失败原因>` 记录来源。高等级 dual 默认复用 T05 原始 pair 做 `adaptive_high_grade_dual_buffer_retry`；只有 buffer-only probe 已给出非人工复核高置信候选 pair，且候选 pair 重新经过正式双向 extractor / adaptive buffer / dual graph-first 硬审计时，dual 才可在当前 Segment 内消费该候选 pair；若 union path 穿过额外 mapped semantic nodes，必须保持 rejected 并交由上游分组/锚定处理。
 
 ### 6.3 输出与审计
 

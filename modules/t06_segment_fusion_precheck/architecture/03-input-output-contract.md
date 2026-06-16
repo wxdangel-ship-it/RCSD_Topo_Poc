@@ -32,7 +32,12 @@
 - `t06_rcsd_repair_candidates.gpkg/csv/json`
 - `t06_rcsd_segment_failure_business_audit.gpkg/csv/json`
 - `t06_special_junction_group_audit.gpkg/csv/json`
+- `t06_segment_group_replacement_audit.gpkg/csv/json`
+- `t06_segment_replacement_plan.gpkg/csv/json`
+- `t06_segment_replacement_problem_registry.gpkg/csv/json`
 - `t06_step2_summary.json`
+
+Rejected 的 `directionality_mismatch_fixable` 仅表示 probe 找到可能的双向/方向修复候选，不表示 T06 可以自动放行；若 formal retry / adaptive buffer / graph-first 硬审计仍失败，failure business audit 必须写出 `manual_review_required=True`、`repair_recommendation=upstream_anchor_or_segment_grouping_required`、`upstream_issue_owner=T03/T04/T05_or_T06_group_replacement`，用于区分上游锚定/虚拟路口归并或后续 multi-SWSD Segment group replacement 问题。
 
 `t06_rcsd_buffer_segments` 是 Step2 buffer 构建成果；`t06_rcsd_segment_candidates` 是 buffer 成功构建的 RCSDSegment 候选；`t06_rcsd_segment_replaceable` 是经过全部硬审计与特殊路口组门控后的最终可替换集合，不再表示 pair-to-pair BFS 路径候选。
 `t06_swsd_segment_rejected` 必须记录 `pair_nodes` 两端相同的 self-pair fallback，reason 为 `swsd_pair_nodes_not_distinct`；此类 Segment 不进入 `t06_swsd_segment_final_fusion_units`，也不进入 Step2 替换分母。
@@ -41,7 +46,10 @@
 `t06_rcsd_repair_candidates` 记录 pair 锚定疑似错误、1V多 / 多V1、高置信候选、错误 SWSD 端点与短联通 endpoint cluster 质检证据；不得静默覆盖或回写 T05 relation。满足受限高置信安全门槛的 pair anchor 候选可驱动 T06 当前 Segment 的一次 effective relation 重试；其它 repair candidate 不得驱动 Step2 自动替换。
 `t06_rcsd_segment_failure_business_audit` 记录场景 A / 场景 B 业务归因、B 类细分、人工复核、pair anchor 错误定位、adaptive buffer 距离、上游责任归因和 optional junc lost attach 审计。
 `t06_special_junction_group_audit` 记录 `kind_2=64/128` 特殊语义路口的关联 Segment、组门控状态、映射 RCSD 语义路口、组内 RCSDNode 与内部 RCSDRoad。
-`t06_step2_summary.json` 必须记录 RCSDRoad 覆盖统计：全量 RCSDRoad 去重数量 / 长度、最终可替换 Segment 引用的去重 RCSDRoad 数量 / 长度、按引用次数累计的 RCSDRoad 数量 / 长度，以及 replaceable 引用缺失数量；同时记录场景 A 数量、场景 B 已提升数量、场景 B 人工复核数量、pair 锚定疑似错误数量、pair 锚定错误位置已定位数量、高等级 single graph-first / dual adaptive 受限重审总数及 single / dual 分组数量、junc required 拖垮数量、RCSDRoad 质量问题数量、当前替换率、人工修复后理论提升上限，并给出发生次数、去重 Segment、唯一 SWSD semantic node 与唯一 RCSD semantic node 口径统计。
+`t06_segment_group_replacement_audit` 记录 rejected Segment 的 RCSD 图 path 是否跨越外部 accepted SWSD anchor、对应 mapped SWSD target、关联 SWSD Segment 闭包，以及闭包内 replaceable / rejected / outside Step1 carrier 状态；它同时输出 incident-closure 的 `audit_status` 与 path-corridor 口径的 `corridor_audit_status`，后者只统计与 RCSD path 几何走廊重叠的 blocker，用于区分主线 carrier 与旁支 incident carrier。该输出不改变 `t06_rcsd_segment_replaceable`；若 path-corridor group union 通过正式 extractor probe，则输出 `group_probe_status / group_probe_rcsd_road_ids / group_probe_buffer_distance_m / group_probe_repair_owner` 与 `repair_recommendation=t06_group_replacement_candidate`，由 `t06_segment_replacement_plan` 统一发布给 Step3 消费。若正式 group probe 失败且失败原因为 directed/bidirectional RCSD path 不成立，则 `repair_recommendation=upstream_anchor_or_rcsd_directionality_required`。
+`t06_segment_replacement_plan` 是 Step2 对 Step3 的统一执行计划。`execution_scope=standard_segment` 表示标准 replaceable；`execution_scope=path_corridor_group` 表示已通过正式 group probe 的成组替换；`execution_scope=special_junction_group_internal` 表示特殊路口组内部 RCSDRoad / RCSDNode 上下文。Step3 存在该文件时必须优先消费该 plan。
+`t06_segment_replacement_problem_registry` 是问题回流注册表，记录 `covered_by_replacement_plan / resolved_in_step2_plan / accepted_non_replaceable / requires_upstream_iteration` 等状态、根因分类、建议归属模块、回流动作与证据来源。该表不回写上游输入；其中 `accepted_non_replaceable` 只表达 T06 已审计为合理不可替换，不进入上游重跑队列，其余需迭代问题作为下一轮 T01/T03/T04/T05/T08/T06 的正式审计入口。
+`t06_step2_summary.json` 必须记录 RCSDRoad 覆盖统计：全量 RCSDRoad 去重数量 / 长度、最终可替换 Segment 引用的去重 RCSDRoad 数量 / 长度、按引用次数累计的 RCSDRoad 数量 / 长度，以及 replaceable 引用缺失数量；同时记录场景 A 数量、场景 B 已提升数量、场景 B 人工复核数量、pair 锚定疑似错误数量、pair 锚定错误位置已定位数量、高等级 single graph-first / dual adaptive 受限重审总数及 single / dual 分组数量、junc required 拖垮数量、RCSDRoad 质量问题数量、replacement plan 数量、problem registry 状态分布、当前替换率、人工修复后理论提升上限，并给出发生次数、去重 Segment、唯一 SWSD semantic node 与唯一 RCSD semantic node 口径统计。
 
 ## Step3 输出
 
@@ -68,7 +76,7 @@ Step3 输出目录：
 
 F-RCSD Road / Node 必须包含 `source` 字段：RCSD 来源为 `1`，SWSD 来源为 `2`。
 F-RCSD Road / Node 原始 `id` 冲突不作为拒绝条件，必须写入 `t06_step3_id_collision_audit.*`。
-Step3 默认从 Step2 replaceable 同目录读取 `t06_special_junction_group_audit.json`，并消费其中 `gate_status=passed` 的特殊路口组内部 RCSDRoad / RCSDNode；`t06_step3_unreplaced_rcsd_roads` 保留未进入 replaceable 或 passed 特殊组替换结果的原始 RCSDRoad 几何与属性，并增加未替换状态、审计原因、source 与长度字段，作为 RCSD 视角的遗漏审计结果。
+Step3 默认从 Step2 replaceable 同目录优先读取 `t06_segment_replacement_plan.json`，再兼容读取 `geojson/gpkg`。JSON 是完整执行计划主载体，必须保留无 geometry 的特殊路口组内部 plan 行。存在 replacement plan 时，标准替换、特殊路口组内部 RCSDRoad / RCSDNode、path-corridor group RCSDRoad 均从该 plan 消费；只有旧产物无 plan 时，才兼容回退读取 `t06_special_junction_group_audit.json` 与 `t06_segment_group_replacement_audit.gpkg`。`t06_step3_unreplaced_rcsd_roads` 保留未进入 replacement plan 替换结果的原始 RCSDRoad 几何与属性，并增加未替换状态、审计原因、source 与长度字段，作为 RCSD 视角的遗漏审计结果。
 
 `t06_step3_swsd_frcsd_segment_relation` 是面向下游 T09 的稳定关系证据，用于表达每个 SWSD Segment 在 F-RCSD 中的承载结果，而不是表达 Road 级限制结论。关系状态包括：
 
@@ -94,6 +102,9 @@ Step3 默认从 Step2 replaceable 同目录读取 `t06_special_junction_group_au
 - `rcsd_pair_nodes`
 - `rcsd_junc_nodes`
 - `junction_c_ids`
+- `group_replacement_plan_ids`
+- `group_replacement_source_segment_ids`
+- `group_replacement_segment_ids`
 - `swsd_to_frcsd_node_map`
 - `source_mix`
 - `risk_flags`
@@ -146,8 +157,8 @@ T06 模块内 `text_bundle.py` 提供非官方压缩 / 解压 helper，不新增
 - 拓扑一致性：候选抽取不 silent fix 输入拓扑，pair required semantic node 连通覆盖、最小 corridor 子图构建与裁剪结果都进入审计。
 - 语义节点裁剪可解释性：额外 T05 mapped semantic nodes 与 optional junc 必须按 seed-based pruning 输出 `inner_node_ids / out_node_ids`，并在剔除 out 分支后重新校验 pair required semantic node 连通性；处于 pair required corridor 内部的额外 mapped semantic node 可作为 `inner_nodes` 保留审计，非 inner 且仍进入 retained graph 时输出 `unexpected_mapped_semantic_node_ids` 并拒绝；retained graph 叶子端点必须限定为 pair 对应 RCSD semantic nodes，非 pair 叶子端点输出 `unexpected_endpoint_node_ids` 并拒绝。
 - 几何语义可解释性：SWSD 几何用于 buffer 窗口，RCSD 几何用于 `intersects + overlap threshold` 候选筛选与最终输出，不替代 relation / required semantic node 规则。
-- 审计可追溯性：summary 记录输入路径、参数、计数、失败原因、adaptive buffer 实际重审距离与输出路径。
-- Step3 审计可追溯性：summary 必须记录 replaceable Segment 数量、删除 SWSDRoad / SWSDNode 数量、加入 RCSDRoad / RCSDNode 数量、detached junc 局部保留 Segment / SWSDRoad 数量、特殊路口组消费数量与组级加入 RCSDRoad / RCSDNode 数量、未替换 RCSDRoad 数量 / 长度、重建 C 数量、main node 重选数量与失败原因。
+- 审计可追溯性：summary 记录输入路径、参数、计数、失败原因、adaptive buffer 实际重审距离、replacement plan、problem registry 与输出路径。
+- Step3 审计可追溯性：summary 必须记录 replacement plan source、replaceable Segment 数量、计划行数量、删除 SWSDRoad / SWSDNode 数量、加入 RCSDRoad / RCSDNode 数量、detached junc 局部保留 Segment / SWSDRoad 数量、特殊路口组消费数量与组级加入 RCSDRoad / RCSDNode 数量、未替换 RCSDRoad 数量 / 长度、重建 C 数量、main node 重选数量与失败原因。
 - 文本证据包审计可追溯性：bundle 内必须保留输入路径、解析结果、文件大小、SHA256、参数与复跑命令。
 - 性能可验证性：summary 记录输入规模、candidate 数、replaceable 数和 reject reason 统计。
 - 语义节点归一化可追溯性：Step2 summary 记录 `rcsd_semantic_node_alias_count`，并在 `retained_node_ids` 等输出中使用 canonical RCSD semantic node id。

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 from pathlib import Path
 
@@ -16,6 +17,7 @@ from rcsd_topo_poc.modules.t10_e2e_orchestration import (
     export_t10_case_evidence_text_bundle,
     suggest_t10_cases,
     validate_t10_manifest,
+    write_t10_upstream_feedback,
     write_t10_planning_outputs,
 )
 from rcsd_topo_poc.modules.t10_e2e_orchestration.contracts import EXTERNAL_INPUT_REQUIREMENTS, HANDOFF_REQUIREMENTS
@@ -523,6 +525,456 @@ def test_t10_t06_funnel_summary_reads_step_summaries(tmp_path: Path) -> None:
     assert summary["replacement_quality"]["node_id_collision_count"] == 1
 
 
+def test_t10_upstream_feedback_aggregates_problem_registry(tmp_path: Path) -> None:
+    run_root = tmp_path / "run"
+    registry = (
+        run_root
+        / "cases"
+        / "9001"
+        / "t06_step12"
+        / "t06"
+        / "step2_extract_rcsd_segments"
+        / "t06_segment_replacement_problem_registry.csv"
+    )
+    registry.parent.mkdir(parents=True)
+    registry_fields = [
+        "swsd_segment_id",
+        "problem_status",
+        "recommended_module",
+        "upstream_issue_owner",
+        "failure_business_category",
+        "reject_reason",
+        "root_cause_category",
+        "feedback_action",
+        "manual_review_required",
+        "rcsd_pair_nodes",
+        "candidate_rcsd_pair_node_sets",
+        "pair_anchor_error_swsd_nodes",
+        "pair_anchor_error_original_rcsd_nodes",
+        "pair_anchor_error_candidate_rcsd_nodes",
+        "pair_anchor_endpoint_cluster_nodes",
+        "pair_anchor_bridge_road_ids",
+        "pair_anchor_bridge_length_m",
+        "pair_anchor_diagnostic_source",
+        "pair_anchor_diagnostic_reason",
+        "evidence_artifacts",
+    ]
+    registry_rows = [
+        {
+            "swsd_segment_id": "n1_s1",
+            "problem_status": "requires_upstream_iteration",
+            "recommended_module": "T03/T04/T05",
+            "upstream_issue_owner": "T05",
+            "failure_business_category": "pair_anchor_mismatch",
+            "reject_reason": "missing_pair_relation",
+            "feedback_action": "rerun",
+            "manual_review_required": "true",
+            "rcsd_pair_nodes": "[1]",
+            "candidate_rcsd_pair_node_sets": "[2]",
+            "evidence_artifacts": "audit",
+        },
+        {
+            "swsd_segment_id": "s2",
+            "problem_status": "covered_by_replacement_plan",
+            "recommended_module": "T06",
+            "upstream_issue_owner": "T06",
+            "failure_business_category": "geometry_shape_mismatch",
+            "reject_reason": "ok",
+            "feedback_action": "none",
+            "manual_review_required": "false",
+            "rcsd_pair_nodes": "[]",
+            "candidate_rcsd_pair_node_sets": "[]",
+            "evidence_artifacts": "audit",
+        },
+        {
+            "swsd_segment_id": "s3",
+            "problem_status": "requires_upstream_iteration",
+            "recommended_module": "T03/T04/T05",
+            "upstream_issue_owner": "T05",
+            "failure_business_category": "pair_anchor_mismatch",
+            "reject_reason": "missing_pair_relation",
+            "feedback_action": "rerun",
+            "manual_review_required": "true",
+            "rcsd_pair_nodes": "[3]",
+            "candidate_rcsd_pair_node_sets": "[4]",
+            "evidence_artifacts": "audit",
+        },
+        {
+            "swsd_segment_id": "s4_s5",
+            "problem_status": "requires_upstream_side_group_or_rcsd_directionality_review",
+            "recommended_module": "T03/T04/T05_or_RCSD_source_review",
+            "upstream_issue_owner": "T03/T04/T05_or_RCSD_directionality_review",
+            "failure_business_category": "directionality_mismatch_fixable",
+            "reject_reason": "rcsd_not_bidirectional_for_swsd_dual",
+            "root_cause_category": "full_rcsd_graph_one_direction_only",
+            "feedback_action": "review",
+            "manual_review_required": "true",
+            "rcsd_pair_nodes": "['5','7']",
+            "candidate_rcsd_pair_node_sets": "[['6','8']]",
+            "pair_anchor_error_swsd_nodes": "['s5']",
+            "pair_anchor_error_original_rcsd_nodes": "['7']",
+            "pair_anchor_error_candidate_rcsd_nodes": "['8']",
+            "pair_anchor_endpoint_cluster_nodes": "[['5'],['7','8']]",
+            "pair_anchor_bridge_road_ids": "['rr_bridge']",
+            "pair_anchor_bridge_length_m": "6.5",
+            "pair_anchor_diagnostic_source": "buffer_only_endpoint_cluster",
+            "pair_anchor_diagnostic_reason": "short_connected_endpoint_cluster",
+            "evidence_artifacts": "audit",
+        },
+    ]
+    with registry.open("w", newline="", encoding="utf-8") as fp:
+        writer = csv.DictWriter(fp, fieldnames=registry_fields)
+        writer.writeheader()
+        for row in registry_rows:
+            writer.writerow({field: row.get(field, "") for field in registry_fields})
+    relation_audit = run_root / "cases" / "9001" / "t05" / "t05_phase2" / "relation_graph_consumability_audit.csv"
+    relation_audit.parent.mkdir(parents=True)
+    relation_audit.write_text(
+        "\n".join(
+            [
+                "target_id,base_id,relation_status,graph_consumable,graph_consumability_status,matched_rcsdnode_ids,incident_rcsdnode_ids,source_modules,source_case_ids,scenes,reasons,recommended_action",
+                "n1,900,0,0,base_id_not_found_in_rcsdnode_out,,,T07,n1,direct_existing_rcsd_junction,existing_rcsdintersection_matched,upstream_relation_or_junctionization_review",
+                "n2,901,0,1,base_node_graph_incident,901,901,T07,n2,direct_existing_rcsd_junction,existing_rcsdintersection_matched,consume_as_relation",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    artifacts = write_t10_upstream_feedback(
+        run_root=run_root,
+        case_results=[{"case_id": "9001", "case_run_dir": str(run_root / "cases" / "9001")}],
+    )
+
+    segments = json.loads(artifacts.segments_json.read_text(encoding="utf-8"))
+    summary = json.loads(artifacts.summary_json.read_text(encoding="utf-8"))
+    side_group_candidates = json.loads(artifacts.side_group_candidates_json.read_text(encoding="utf-8"))
+    side_group_endpoint_candidates = json.loads(artifacts.side_group_endpoint_candidates_json.read_text(encoding="utf-8"))
+    pair_anchor_endpoint_clusters = json.loads(
+        artifacts.pair_anchor_endpoint_clusters_json.read_text(encoding="utf-8")
+    )
+    relations = json.loads(artifacts.relations_json.read_text(encoding="utf-8"))
+    relation_summary = json.loads(artifacts.relation_summary_json.read_text(encoding="utf-8"))
+    assert artifacts.segment_count == 3
+    assert artifacts.side_group_candidate_count == 1
+    assert artifacts.side_group_endpoint_candidate_count == 2
+    assert artifacts.pair_anchor_endpoint_cluster_count == 2
+    assert segments["rows"][0]["swsd_segment_id"] == "n1_s1"
+    assert segments["rows"][0]["problem_registry_path"] == str(registry)
+    side_group_segment = [row for row in segments["rows"] if row["swsd_segment_id"] == "s4_s5"][0]
+    assert side_group_segment["pair_anchor_endpoint_cluster_nodes"] == "[['5'],['7','8']]"
+    assert side_group_segment["pair_anchor_diagnostic_source"] == "buffer_only_endpoint_cluster"
+    assert summary["rows"][0]["recommended_module"] == "T03/T04/T05"
+    assert summary["rows"][0]["count"] == 2
+    assert any(
+        row["problem_status"] == "requires_upstream_side_group_or_rcsd_directionality_review"
+        for row in segments["rows"]
+    )
+    assert side_group_candidates["rows"][0]["swsd_segment_id"] == "s4_s5"
+    assert side_group_candidates["rows"][0]["swsd_endpoint_node_ids"] == "s4|s5"
+    assert side_group_candidates["rows"][0]["rcsd_primary_pair_node_ids"] == "5|7"
+    assert side_group_candidates["rows"][0]["candidate_group_rcsdnode_ids"] == "5|7|6|8"
+    assert side_group_candidates["rows"][0]["side_group_action"] == (
+        "evaluate_virtual_junction_grouping_before_rcsd_directionality_review"
+    )
+    endpoint_rows = {row["target_id"]: row for row in side_group_endpoint_candidates["rows"]}
+    assert endpoint_rows["s4"]["candidate_rcsdnode_ids"] == "5|6"
+    assert endpoint_rows["s5"]["candidate_rcsdnode_ids"] == "7|8"
+    assert endpoint_rows["s4"]["side_group_action"] == "supplement_existing_relation_with_endpoint_rcsdnode_grouping"
+    cluster_rows = {row["target_id"]: row for row in pair_anchor_endpoint_clusters["rows"]}
+    assert cluster_rows["s4"]["endpoint_cluster_rcsdnode_ids"] == "5"
+    assert cluster_rows["s5"]["endpoint_cluster_rcsdnode_ids"] == "7|8"
+    assert cluster_rows["s5"]["candidate_rcsdnode_ids_from_pair_sets"] == "8"
+    assert cluster_rows["s5"]["pair_anchor_bridge_road_ids"] == "['rr_bridge']"
+    assert cluster_rows["s5"]["pair_anchor_diagnostic_source"] == "buffer_only_endpoint_cluster"
+    assert cluster_rows["s5"]["auto_consumable_by_t05"] == "false"
+    assert artifacts.relation_count == 1
+    assert relations["rows"][0]["target_id"] == "n1"
+    assert relations["rows"][0]["recommended_module"] == "T05|T07"
+    assert relations["rows"][0]["affected_problem_segment_count"] == "1"
+    assert relations["rows"][0]["affected_problem_segment_ids"] == "n1_s1"
+    assert relations["rows"][0]["relation_graph_consumability_audit_path"] == str(relation_audit)
+    assert relation_summary["rows"][0]["failure_business_category"] == "relation_graph_unconsumable"
+    assert relation_summary["rows"][0]["count"] == 1
+    assert summary["qa"]["topology_consistency"] == "No topology mutation or silent repair is performed."
+
+
+def test_t10_upstream_feedback_endpoint_candidates_exclude_unstable_required_node_failures(
+    tmp_path: Path,
+) -> None:
+    run_root = tmp_path / "run"
+    registry = (
+        run_root
+        / "cases"
+        / "9001"
+        / "t06_step12"
+        / "t06"
+        / "step2_extract_rcsd_segments"
+        / "t06_segment_replacement_problem_registry.csv"
+    )
+    registry.parent.mkdir(parents=True)
+    registry.write_text(
+        "\n".join(
+            [
+                "swsd_segment_id,problem_status,recommended_module,upstream_issue_owner,"
+                "failure_business_category,reject_reason,root_cause_category,feedback_action,"
+                "manual_review_required,swsd_pair_nodes,rcsd_pair_nodes,candidate_rcsd_pair_node_sets,"
+                "evidence_artifacts",
+                "s1_s2,requires_upstream_iteration,T03/T04/T05,T05,"
+                "multi_anchor_ambiguous,required_semantic_nodes_not_connected_in_buffer,"
+                "buffer_candidate_required_nodes_disconnected,rerun,true,"
+                "\"['s1','s2']\",\"['100','200']\",\"[['101','201'],['102','202']]\",audit",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    artifacts = write_t10_upstream_feedback(
+        run_root=run_root,
+        case_results=[{"case_id": "9001", "case_run_dir": str(run_root / "cases" / "9001")}],
+    )
+
+    endpoint_rows = json.loads(artifacts.side_group_endpoint_candidates_json.read_text(encoding="utf-8"))["rows"]
+    assert artifacts.side_group_endpoint_candidate_count == 0
+    assert endpoint_rows == []
+
+
+def test_t10_pair_anchor_endpoint_cluster_marks_safe_rows_consumable_by_t05(tmp_path: Path) -> None:
+    run_root = tmp_path / "run"
+    registry = (
+        run_root
+        / "cases"
+        / "9001"
+        / "t06_step12"
+        / "t06"
+        / "step2_extract_rcsd_segments"
+        / "t06_segment_replacement_problem_registry.csv"
+    )
+    registry.parent.mkdir(parents=True)
+    registry.write_text(
+        "\n".join(
+            [
+                "swsd_segment_id,problem_status,recommended_module,upstream_issue_owner,"
+                "failure_business_category,reject_reason,root_cause_category,feedback_action,"
+                "manual_review_required,swsd_pair_nodes,rcsd_pair_nodes,candidate_rcsd_pair_node_sets,"
+                "pair_anchor_endpoint_cluster_nodes,pair_anchor_bridge_road_ids,pair_anchor_bridge_length_m,"
+                "pair_anchor_diagnostic_source,pair_anchor_diagnostic_reason,evidence_artifacts",
+                "s6_s7,requires_upstream_iteration,T03/T04/T05,T05,"
+                "pair_anchor_mismatch,rcsd_pair_nodes_not_distinct,,rerun,true,"
+                "\"['s6','s7']\",\"['60','70']\",\"[['60','71']]\","
+                "\"[['60'],['70','71']]\",['rr_bridge'],12.5,"
+                "buffer_only_endpoint_cluster,short_connected_endpoint_cluster,audit",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    artifacts = write_t10_upstream_feedback(
+        run_root=run_root,
+        case_results=[{"case_id": "9001", "case_run_dir": str(run_root / "cases" / "9001")}],
+    )
+
+    cluster_rows = {
+        row["target_id"]: row
+        for row in json.loads(artifacts.pair_anchor_endpoint_clusters_json.read_text(encoding="utf-8"))["rows"]
+    }
+    assert cluster_rows["s6"]["auto_consumable_by_t05"] == "false"
+    assert cluster_rows["s7"]["auto_consumable_by_t05"] == "true"
+    assert cluster_rows["s7"]["pair_anchor_cluster_action"] == (
+        "supplement_existing_relation_with_pair_anchor_endpoint_cluster"
+    )
+
+
+def test_t10_side_group_endpoint_candidates_exclude_opposite_primary_anchor(tmp_path: Path) -> None:
+    run_root = tmp_path / "run"
+    registry = (
+        run_root
+        / "cases"
+        / "9001"
+        / "t06_step12"
+        / "t06"
+        / "step2_extract_rcsd_segments"
+        / "t06_segment_replacement_problem_registry.csv"
+    )
+    registry.parent.mkdir(parents=True)
+    registry.write_text(
+        "\n".join(
+            [
+                "swsd_segment_id,problem_status,recommended_module,upstream_issue_owner,"
+                "failure_business_category,reject_reason,root_cause_category,feedback_action,"
+                "manual_review_required,swsd_pair_nodes,rcsd_pair_nodes,candidate_rcsd_pair_node_sets,"
+                "evidence_artifacts",
+                "s1_s2,requires_upstream_side_group_or_rcsd_directionality_review,T03/T04/T05,T05,"
+                "directionality_mismatch_fixable,rcsd_not_bidirectional_for_swsd_dual,"
+                "full_rcsd_graph_one_direction_only,review,true,"
+                "\"['s1','s2']\",\"['p1','p2']\",\"[['x1','p1']]\",audit",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    artifacts = write_t10_upstream_feedback(
+        run_root=run_root,
+        case_results=[{"case_id": "9001", "case_run_dir": str(run_root / "cases" / "9001")}],
+    )
+
+    side_group_rows = json.loads(artifacts.side_group_candidates_json.read_text(encoding="utf-8"))["rows"]
+    endpoint_rows = json.loads(artifacts.side_group_endpoint_candidates_json.read_text(encoding="utf-8"))["rows"]
+
+    assert artifacts.side_group_candidate_count == 1
+    assert artifacts.side_group_endpoint_candidate_count == 1
+    assert side_group_rows[0]["candidate_group_rcsdnode_ids"] == "p1|p2|x1"
+    assert endpoint_rows[0]["target_id"] == "s1"
+    assert endpoint_rows[0]["candidate_rcsdnode_ids"] == "p1|x1"
+
+
+def test_t10_relation_graph_bridge_candidate_extends_existing_side_group(tmp_path: Path) -> None:
+    run_root = tmp_path / "run"
+    case_run_dir = run_root / "cases" / "9001"
+    registry = (
+        case_run_dir
+        / "t06_step12"
+        / "t06"
+        / "step2_extract_rcsd_segments"
+        / "t06_segment_replacement_problem_registry.csv"
+    )
+    registry.parent.mkdir(parents=True)
+    registry.write_text(
+        "\n".join(
+            [
+                "swsd_segment_id,problem_status,recommended_module,upstream_issue_owner,"
+                "failure_business_category,reject_reason,root_cause_category,feedback_action,"
+                "manual_review_required,swsd_pair_nodes,rcsd_pair_nodes,candidate_rcsd_pair_node_sets,"
+                "evidence_artifacts",
+                "s1_s2,requires_upstream_side_group_or_rcsd_directionality_review,T03/T04/T05,T05,"
+                "directionality_mismatch_fixable,rcsd_not_bidirectional_for_swsd_dual,"
+                "full_rcsd_graph_one_direction_only,review,true,"
+                "\"['s1','s2']\",\"['p1','p2']\",\"[['p1','p2']]\",audit",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    probe = registry.parent / "t06_rcsd_buffer_only_probe.csv"
+    probe.write_text(
+        "\n".join(
+            [
+                "swsd_segment_id,probe_status,buffer_only_candidate_status,failure_business_category,"
+                "original_rcsd_pair_nodes,candidate_rcsd_node_ids",
+                "s1_s2,completed,corridor_found,directionality_mismatch_fixable,"
+                "\"['p1','p2']\",\"['p1','p2','bridge','noise']\"",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    t05_dir = case_run_dir / "t05" / "t05_phase2"
+    t05_dir.mkdir(parents=True)
+    (t05_dir / "relation_graph_consumability_audit.csv").write_text(
+        "\n".join(
+            [
+                "target_id,base_id,relation_status,graph_consumable,graph_consumability_status,"
+                "matched_rcsdnode_ids,incident_rcsdnode_ids,source_modules,source_case_ids,scenes,reasons,"
+                "recommended_action",
+                "s1,p1,0,1,base_node_graph_incident,p1,p1,T07,s1,direct,matched,consume_as_relation",
+                "s2,p2,0,1,base_node_graph_incident,p2,p2,T07,s2,direct,matched,consume_as_relation",
+                "side,bridge,0,1,base_node_graph_incident,bridge,bridge,T07,side,direct,matched,consume_as_relation",
+                "mid,mid_base,0,1,base_node_group_graph_incident,"
+                "mid_group|mid_context|mid_base,mid_group|mid_context,T07|T10_SIDE_GROUP,"
+                "mid|9001,direct,multiple_base_id_merged,consume_as_relation",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    (t05_dir / "rcsd_junctionization_audit.csv").write_text(
+        "\n".join(
+            [
+                "target_id,surface_id,source_module,source_case_id,scene,action,status,base_id,reason,"
+                "original_rcsdroad_ids,new_rcsdroad_ids,original_rcsdnode_ids,new_rcsdnode_ids,"
+                "grouped_rcsdnode_ids,selected_main_rcsdnode_id,projection_point_count,split_point_count,"
+                "skipped_reason,geometry_mode,multi_base_relation,blocking_error",
+                "mid,JAS:mid,T07|T10_SIDE_GROUP,mid|9001,direct,group_existing_rcsd_nodes,0,"
+                "mid_base,multiple_base_id_merged,,,mid_group|mid_base,,mid_group|mid_base,"
+                "mid_base,0,0,,success_line,1,0",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    write_gpkg(
+        t05_dir / "rcsdroad_out.gpkg",
+        [
+            {"properties": {"id": "r1", "snodeid": "p2", "enodeid": "bridge"}, "geometry": LineString([(0, 0), (1, 0)])},
+            {"properties": {"id": "r2", "snodeid": "bridge", "enodeid": "x1"}, "geometry": LineString([(1, 0), (2, 0)])},
+            {"properties": {"id": "r3", "snodeid": "x1", "enodeid": "x2"}, "geometry": LineString([(2, 0), (3, 0)])},
+            {"properties": {"id": "r4", "snodeid": "x2", "enodeid": "mid_context"}, "geometry": LineString([(3, 0), (4, 0)])},
+            {"properties": {"id": "r5", "snodeid": "p2", "enodeid": "noise"}, "geometry": LineString([(0, 1), (1, 1)])},
+        ],
+        crs_text="EPSG:3857",
+        layer_name="rcsdroad_out",
+    )
+
+    artifacts = write_t10_upstream_feedback(
+        run_root=run_root,
+        case_results=[{"case_id": "9001", "case_run_dir": str(case_run_dir)}],
+    )
+
+    endpoint_rows = json.loads(artifacts.side_group_endpoint_candidates_json.read_text(encoding="utf-8"))["rows"]
+    assert artifacts.side_group_endpoint_candidate_count == 1
+    assert endpoint_rows[0]["swsd_segment_id"] == "s1_s2"
+    assert endpoint_rows[0]["target_id"] == "mid"
+    assert endpoint_rows[0]["endpoint_index"] == "1"
+    assert endpoint_rows[0]["rcsd_primary_node_id"] == "mid_base"
+    assert endpoint_rows[0]["candidate_rcsdnode_ids"] == "mid_base|bridge"
+    assert endpoint_rows[0]["side_group_action"] == "supplement_existing_relation_with_relation_graph_bridge"
+
+
+def test_t10_upstream_feedback_excludes_side_group_without_new_rcsd_nodes(tmp_path: Path) -> None:
+    run_root = tmp_path / "run"
+    registry = (
+        run_root
+        / "cases"
+        / "9001"
+        / "t06_step12"
+        / "t06"
+        / "step2_extract_rcsd_segments"
+        / "t06_segment_replacement_problem_registry.csv"
+    )
+    registry.parent.mkdir(parents=True)
+    registry.write_text(
+        "\n".join(
+            [
+                "swsd_segment_id,problem_status,recommended_module,upstream_issue_owner,"
+                "failure_business_category,reject_reason,root_cause_category,feedback_action,"
+                "manual_review_required,swsd_pair_nodes,rcsd_pair_nodes,candidate_rcsd_pair_node_sets,"
+                "evidence_artifacts",
+                "s1_s2,requires_upstream_side_group_or_rcsd_directionality_review,T03/T04/T05,T05,"
+                "directionality_mismatch_fixable,rcsd_not_bidirectional_for_swsd_dual,"
+                "full_rcsd_graph_one_direction_only,review,true,"
+                "\"['s1','s2']\",\"['100','200']\",\"[['100','200']]\",audit",
+                "s3_s4,requires_upstream_side_group_or_rcsd_directionality_review,T03/T04/T05,T05,"
+                "directionality_mismatch_fixable,rcsd_not_bidirectional_for_swsd_dual,"
+                "full_rcsd_graph_one_direction_only,review,true,"
+                "\"['s3','s4']\",\"['300','400']\",\"[['300','401']]\",audit",
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    artifacts = write_t10_upstream_feedback(
+        run_root=run_root,
+        case_results=[{"case_id": "9001", "case_run_dir": str(run_root / "cases" / "9001")}],
+    )
+
+    segments = json.loads(artifacts.segments_json.read_text(encoding="utf-8"))["rows"]
+    side_group_rows = json.loads(artifacts.side_group_candidates_json.read_text(encoding="utf-8"))["rows"]
+    endpoint_rows = json.loads(artifacts.side_group_endpoint_candidates_json.read_text(encoding="utf-8"))["rows"]
+
+    assert {row["swsd_segment_id"] for row in segments} == {"s1_s2", "s3_s4"}
+    assert artifacts.side_group_candidate_count == 1
+    assert artifacts.side_group_endpoint_candidate_count == 1
+    assert side_group_rows[0]["swsd_segment_id"] == "s3_s4"
+    assert {row["target_id"] for row in endpoint_rows} == {"s4"}
+    assert {row["swsd_segment_id"] for row in endpoint_rows} == {"s3_s4"}
+
+
 def test_t10_case_runner_blocks_downstream_after_failed_stage(tmp_path: Path, monkeypatch) -> None:
     package_dir = tmp_path / "package"
     case_dir = package_dir / "cases" / "9001"
@@ -586,3 +1038,339 @@ def test_t10_case_runner_discovers_flat_multi_case_package(tmp_path: Path) -> No
 
     assert [path.name for path in case_dirs] == ["2001", "9001"]
     assert [path.name for path in selected_case_dirs] == ["9001"]
+
+
+def test_t10_feedback_iteration_passes_endpoint_candidates_and_keeps_no_regression_guard(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    package_dir = tmp_path / "package"
+    case_dir = package_dir / "cases" / "9001"
+    case_dir.mkdir(parents=True)
+    (case_dir / "t10_case_evidence_manifest.json").write_text(
+        json.dumps({"scope": {"case_id": "9001"}, "included_external_inputs": []}),
+        encoding="utf-8",
+    )
+    calls: list[Path | None] = []
+
+    def fake_run_one_case(**kwargs):
+        run_root = kwargs["run_root"]
+        side_group_endpoint_candidate_path = kwargs.get("side_group_endpoint_candidate_path")
+        calls.append(side_group_endpoint_candidate_path)
+        case_run_dir = run_root / "cases" / "9001"
+        _write_feedback_iteration_case_outputs(
+            case_run_dir,
+            replaced_segments=["old_segment", "new_segment"] if side_group_endpoint_candidate_path else ["old_segment"],
+            emit_side_group_problem=side_group_endpoint_candidate_path is None,
+        )
+        return {
+            "case_id": "9001",
+            "case_dir": str(case_dir),
+            "case_run_dir": str(case_run_dir),
+            "case_run_manifest_path": str(case_run_dir / "t10_e2e_case_run_manifest.json"),
+            "case_run_summary_path": str(case_run_dir / "t10_e2e_case_run_summary.json"),
+            "overall_status": "passed",
+            "stage_statuses": {},
+            "t06_funnel_json": str(case_run_dir / "t10_t06_funnel.json"),
+        }
+
+    monkeypatch.setattr(t10_case_runner, "_run_one_case", fake_run_one_case)
+
+    artifacts = t10_case_runner.run_t10_e2e_cases_from_package(
+        package_dir=package_dir,
+        out_root=tmp_path / "runs",
+        run_id="feedback_run",
+        feedback_iterations=1,
+        continue_on_error=False,
+        exit_on_incomplete=True,
+    )
+
+    summary = json.loads(artifacts.summary_json.read_text(encoding="utf-8"))
+    comparison = summary["feedback_comparison"]
+    assert calls[0] is None
+    assert calls[1] is not None
+    assert calls[1].name == "t10_upstream_side_group_endpoint_candidates.csv"
+    assert summary["passed"] is True
+    assert summary["feedback_regression_guard_passed"] is True
+    assert comparison["removed_replaced_segment_ids"] == []
+    assert comparison["added_replaced_segment_ids"] == ["new_segment"]
+    assert summary["feedback_iteration_completed_count"] == 1
+
+
+def test_t10_feedback_iteration_stops_when_endpoint_candidates_converge(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    package_dir = tmp_path / "package"
+    case_dir = package_dir / "cases" / "9001"
+    case_dir.mkdir(parents=True)
+    (case_dir / "t10_case_evidence_manifest.json").write_text(
+        json.dumps({"scope": {"case_id": "9001"}, "included_external_inputs": []}),
+        encoding="utf-8",
+    )
+    calls: list[Path | None] = []
+
+    def fake_run_one_case(**kwargs):
+        run_root = kwargs["run_root"]
+        side_group_endpoint_candidate_path = kwargs.get("side_group_endpoint_candidate_path")
+        calls.append(side_group_endpoint_candidate_path)
+        case_run_dir = run_root / "cases" / "9001"
+        _write_feedback_iteration_case_outputs(
+            case_run_dir,
+            replaced_segments=["kept_segment"],
+            emit_side_group_problem=True,
+        )
+        return {
+            "case_id": "9001",
+            "case_dir": str(case_dir),
+            "case_run_dir": str(case_run_dir),
+            "case_run_manifest_path": str(case_run_dir / "t10_e2e_case_run_manifest.json"),
+            "case_run_summary_path": str(case_run_dir / "t10_e2e_case_run_summary.json"),
+            "overall_status": "passed",
+            "stage_statuses": {},
+            "t06_funnel_json": str(case_run_dir / "t10_t06_funnel.json"),
+        }
+
+    monkeypatch.setattr(t10_case_runner, "_run_one_case", fake_run_one_case)
+
+    artifacts = t10_case_runner.run_t10_e2e_cases_from_package(
+        package_dir=package_dir,
+        out_root=tmp_path / "runs",
+        run_id="feedback_run",
+        feedback_iterations=2,
+        continue_on_error=False,
+        exit_on_incomplete=True,
+    )
+
+    manifest = json.loads(artifacts.manifest_json.read_text(encoding="utf-8"))
+    summary = json.loads(artifacts.summary_json.read_text(encoding="utf-8"))
+
+    assert len(calls) == 2
+    assert calls[0] is None
+    assert calls[1] is not None
+    assert summary["feedback_iteration_pass_count"] == 2
+    assert summary["feedback_iteration_completed_count"] == 1
+    assert manifest["final_iteration"]["feedback_stop_reason"] == "feedback_candidates_converged"
+
+
+def test_t10_feedback_iteration_accumulates_endpoint_candidates_across_passes(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    package_dir = tmp_path / "package"
+    case_dir = package_dir / "cases" / "9001"
+    case_dir.mkdir(parents=True)
+    (case_dir / "t10_case_evidence_manifest.json").write_text(
+        json.dumps({"scope": {"case_id": "9001"}, "included_external_inputs": []}),
+        encoding="utf-8",
+    )
+    calls: list[Path | None] = []
+
+    def fake_run_one_case(**kwargs):
+        run_root = kwargs["run_root"]
+        side_group_endpoint_candidate_path = kwargs.get("side_group_endpoint_candidate_path")
+        calls.append(side_group_endpoint_candidate_path)
+        case_run_dir = run_root / "cases" / "9001"
+        if len(calls) == 1:
+            _write_feedback_iteration_case_outputs(
+                case_run_dir,
+                replaced_segments=["kept_segment"],
+                emit_side_group_problem=True,
+                side_group_segment_id="a1_a2",
+                side_group_candidate_pair="101|201",
+            )
+        elif len(calls) == 2:
+            _write_feedback_iteration_case_outputs(
+                case_run_dir,
+                replaced_segments=["kept_segment", "first_feedback_segment"],
+                emit_side_group_problem=True,
+                side_group_segment_id="b1_b2",
+                side_group_candidate_pair="301|401",
+            )
+        else:
+            _write_feedback_iteration_case_outputs(
+                case_run_dir,
+                replaced_segments=["kept_segment", "first_feedback_segment", "second_feedback_segment"],
+                emit_side_group_problem=False,
+            )
+        return {
+            "case_id": "9001",
+            "case_dir": str(case_dir),
+            "case_run_dir": str(case_run_dir),
+            "case_run_manifest_path": str(case_run_dir / "t10_e2e_case_run_manifest.json"),
+            "case_run_summary_path": str(case_run_dir / "t10_e2e_case_run_summary.json"),
+            "overall_status": "passed",
+            "stage_statuses": {},
+            "t06_funnel_json": str(case_run_dir / "t10_t06_funnel.json"),
+        }
+
+    monkeypatch.setattr(t10_case_runner, "_run_one_case", fake_run_one_case)
+
+    artifacts = t10_case_runner.run_t10_e2e_cases_from_package(
+        package_dir=package_dir,
+        out_root=tmp_path / "runs",
+        run_id="feedback_run",
+        feedback_iterations=2,
+        continue_on_error=False,
+        exit_on_incomplete=True,
+    )
+
+    summary = json.loads(artifacts.summary_json.read_text(encoding="utf-8"))
+    assert len(calls) == 3
+    assert calls[0] is None
+    assert calls[1] is not None
+    assert calls[2] is not None
+    cumulative_rows = list(csv.DictReader(calls[2].open(newline="", encoding="utf-8")))
+    assert {row["swsd_segment_id"] for row in cumulative_rows} == {"a1_a2", "b1_b2"}
+    assert summary["feedback_comparison"]["added_replaced_segment_ids"] == [
+        "first_feedback_segment",
+        "second_feedback_segment",
+    ]
+    assert summary["feedback_regression_guard_passed"] is True
+
+
+def test_t10_feedback_iteration_passes_pair_anchor_endpoint_clusters(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    package_dir = tmp_path / "package"
+    case_dir = package_dir / "cases" / "9001"
+    case_dir.mkdir(parents=True)
+    (case_dir / "t10_case_evidence_manifest.json").write_text(
+        json.dumps({"scope": {"case_id": "9001"}, "included_external_inputs": []}),
+        encoding="utf-8",
+    )
+    calls: list[Path | None] = []
+
+    def fake_run_one_case(**kwargs):
+        run_root = kwargs["run_root"]
+        pair_anchor_endpoint_cluster_path = kwargs.get("pair_anchor_endpoint_cluster_path")
+        calls.append(pair_anchor_endpoint_cluster_path)
+        case_run_dir = run_root / "cases" / "9001"
+        _write_feedback_iteration_case_outputs(
+            case_run_dir,
+            replaced_segments=["old_segment", "pair_anchor_feedback_segment"]
+            if pair_anchor_endpoint_cluster_path
+            else ["old_segment"],
+            emit_side_group_problem=False,
+            emit_pair_anchor_problem=pair_anchor_endpoint_cluster_path is None,
+        )
+        return {
+            "case_id": "9001",
+            "case_dir": str(case_dir),
+            "case_run_dir": str(case_run_dir),
+            "case_run_manifest_path": str(case_run_dir / "t10_e2e_case_run_manifest.json"),
+            "case_run_summary_path": str(case_run_dir / "t10_e2e_case_run_summary.json"),
+            "overall_status": "passed",
+            "stage_statuses": {},
+            "t06_funnel_json": str(case_run_dir / "t10_t06_funnel.json"),
+        }
+
+    monkeypatch.setattr(t10_case_runner, "_run_one_case", fake_run_one_case)
+
+    artifacts = t10_case_runner.run_t10_e2e_cases_from_package(
+        package_dir=package_dir,
+        out_root=tmp_path / "runs",
+        run_id="feedback_run",
+        feedback_iterations=1,
+        continue_on_error=False,
+        exit_on_incomplete=True,
+    )
+
+    summary = json.loads(artifacts.summary_json.read_text(encoding="utf-8"))
+    assert calls[0] is None
+    assert calls[1] is not None
+    assert calls[1].name == "iteration_00_auto_pair_anchor_endpoint_clusters.csv"
+    assert summary["feedback_comparison"]["added_replaced_segment_ids"] == ["pair_anchor_feedback_segment"]
+    assert summary["feedback_regression_guard_passed"] is True
+
+
+def test_t10_feedback_regression_guard_detects_removed_replaced_segment(tmp_path: Path) -> None:
+    baseline = tmp_path / "baseline"
+    final = tmp_path / "final"
+    _write_feedback_iteration_case_outputs(
+        baseline / "cases" / "9001",
+        replaced_segments=["kept_segment", "removed_segment"],
+        emit_side_group_problem=False,
+    )
+    _write_feedback_iteration_case_outputs(
+        final / "cases" / "9001",
+        replaced_segments=["kept_segment"],
+        emit_side_group_problem=False,
+    )
+
+    comparison = t10_case_runner._compare_feedback_iteration_outputs(
+        baseline_run_root=baseline,
+        final_run_root=final,
+    )
+
+    assert comparison["removed_replaced_segment_ids"] == ["removed_segment"]
+    assert comparison["added_replaced_segment_ids"] == []
+
+
+def _write_feedback_iteration_case_outputs(
+    case_run_dir: Path,
+    *,
+    replaced_segments: list[str],
+    emit_side_group_problem: bool,
+    side_group_segment_id: str = "n1_n2",
+    side_group_candidate_pair: str = "101|201",
+    emit_pair_anchor_problem: bool = False,
+) -> None:
+    step2 = case_run_dir / "t06_step12" / "t06" / "step2_extract_rcsd_segments"
+    step3 = case_run_dir / "t06_step12" / "t06" / "step3_segment_replacement"
+    step2.mkdir(parents=True, exist_ok=True)
+    step3.mkdir(parents=True, exist_ok=True)
+    plan_lines = ["swsd_segment_id,plan_status"]
+    relation_lines = ["swsd_segment_id,relation_status"]
+    for segment_id in replaced_segments:
+        plan_lines.append(f"{segment_id},ready")
+        relation_lines.append(f"{segment_id},replaced")
+    (step2 / "t06_segment_replacement_plan.csv").write_text("\n".join(plan_lines) + "\n", encoding="utf-8")
+    (step3 / "t06_step3_swsd_frcsd_segment_relation.csv").write_text(
+        "\n".join(relation_lines) + "\n",
+        encoding="utf-8",
+    )
+    registry_lines = [
+        "swsd_segment_id,problem_status,recommended_module,upstream_issue_owner,"
+        "failure_business_category,reject_reason,root_cause_category,feedback_action,"
+        "manual_review_required,swsd_pair_nodes,rcsd_pair_nodes,candidate_rcsd_pair_node_sets,"
+        "pair_anchor_endpoint_cluster_nodes,pair_anchor_bridge_road_ids,pair_anchor_bridge_length_m,"
+        "pair_anchor_diagnostic_source,pair_anchor_diagnostic_reason,evidence_artifacts"
+    ]
+    if emit_side_group_problem:
+        left, right = side_group_segment_id.split("_", 1)
+        candidate_left, candidate_right = side_group_candidate_pair.split("|", 1)
+        primary_left, primary_right = ("100", "200")
+        registry_lines.append(
+            f"{side_group_segment_id},requires_upstream_side_group_or_rcsd_directionality_review,"
+            "T03/T04/T05_or_RCSD_source_review,T03/T04/T05_or_RCSD_directionality_review,"
+            "directionality_mismatch_fixable,rcsd_not_bidirectional_for_swsd_dual,"
+            "full_rcsd_graph_one_direction_only,review,true,"
+            f"\"['{left}','{right}']\",\"['{primary_left}','{primary_right}']\","
+            f"\"[['{candidate_left}','{candidate_right}']]\",,,,,,audit"
+        )
+    if emit_pair_anchor_problem:
+        registry_lines.append(
+            "p1_p2,requires_upstream_iteration,T03/T04/T05,T05,"
+            "pair_anchor_mismatch,rcsd_pair_nodes_not_distinct,,rerun,true,"
+            "\"['p1','p2']\",\"['501','601']\",\"[['501','602']]\","
+            "\"[['501'],['601','602']]\",['rr_bridge'],10.0,"
+            "buffer_only_endpoint_cluster,short_connected_endpoint_cluster,audit"
+        )
+    (step2 / "t06_segment_replacement_problem_registry.csv").write_text(
+        "\n".join(registry_lines) + "\n",
+        encoding="utf-8",
+    )
+    (case_run_dir / "t10_t06_funnel.json").write_text(
+        json.dumps({"case_id": "9001", "status": "completed", "metrics": []}),
+        encoding="utf-8",
+    )
+    (case_run_dir / "t10_e2e_case_run_manifest.json").write_text(
+        json.dumps({"case_id": "9001", "overall_status": "passed"}),
+        encoding="utf-8",
+    )
+    (case_run_dir / "t10_e2e_case_run_summary.json").write_text(
+        json.dumps({"case_id": "9001", "overall_status": "passed", "passed": True}),
+        encoding="utf-8",
+    )

@@ -149,6 +149,7 @@ RELATION_EVIDENCE_FIELDNAMES = [
     "final_state",
     "swsd_relation_type",
     "required_rcsd_node_ids",
+    "semantic_required_rcsd_node_ids",
     "selected_rcsdnode_ids",
     "selected_rcsdroad_ids",
     "rcsd_profile",
@@ -223,6 +224,62 @@ def _first_required_rcsd_point(case_result: T04CaseResult) -> tuple[float | str,
         if x != "" and y != "":
             return x, y
     return "", ""
+
+
+def _local_rcsd_node_id(event_unit: Any) -> str | None:
+    unit_id = str(getattr(event_unit, "local_rcsd_unit_id", "") or "").strip()
+    if not unit_id:
+        return None
+    parts = unit_id.split(":")
+    if len(parts) >= 2 and parts[-2] == "node":
+        node_id = parts[-1].strip()
+        return node_id or None
+    return None
+
+
+def _relation_handoff_node_id(event_unit: Any, *, swsd_relation_type: str) -> str | None:
+    required_node = str(getattr(event_unit, "required_rcsd_node", "") or "").strip()
+    if (
+        required_node
+        and swsd_relation_type == "partial"
+        and str(getattr(event_unit, "main_evidence_type", "") or "") == "road_surface_fork"
+        and not bool(getattr(event_unit, "swsd_junction_present", False))
+        and str(getattr(event_unit, "positive_rcsd_consistency_level", "") or "").strip().upper() == "A"
+    ):
+        local_node_id = _local_rcsd_node_id(event_unit)
+        if local_node_id:
+            return local_node_id
+    return required_node or None
+
+
+def _relation_handoff_rcsd_node_ids(
+    case_result: T04CaseResult,
+    *,
+    swsd_relation_type: str,
+) -> list[str]:
+    return _dedupe_sorted_text(
+        _relation_handoff_node_id(event_unit, swsd_relation_type=swsd_relation_type)
+        for event_unit in case_result.event_units
+    )
+
+
+def _first_relation_handoff_rcsd_point(
+    case_result: T04CaseResult,
+    *,
+    swsd_relation_type: str,
+) -> tuple[float | str, float | str]:
+    for event_unit in case_result.event_units:
+        handoff_node_id = _relation_handoff_node_id(event_unit, swsd_relation_type=swsd_relation_type)
+        required_node = str(getattr(event_unit, "required_rcsd_node", "") or "").strip()
+        geometry_field = (
+            "local_rcsd_unit_geometry"
+            if handoff_node_id and required_node and handoff_node_id != required_node
+            else "required_rcsd_node_geometry"
+        )
+        x, y = _point_xy(getattr(event_unit, geometry_field, None))
+        if x != "" and y != "":
+            return x, y
+    return _first_required_rcsd_point(case_result)
 
 
 def _has_ambiguous_rcsd_alignment(case_result: T04CaseResult) -> bool:
@@ -723,6 +780,11 @@ def build_step7_case_artifact(
         case_result=case_result,
         final_state=final_state,
     )
+    relation_handoff_rcsd_node_ids = _relation_handoff_rcsd_node_ids(
+        case_result,
+        swsd_relation_type=swsd_relation_type,
+    )
+    relation_handoff_rcsd_node_ids_text = "|".join(relation_handoff_rcsd_node_ids)
     anchor_id = case_result.case_spec.case_id
     mainnodeid = case_result.case_spec.mainnodeid
     related_mainnodeids_text = _related_mainnodeids_text(case_result)
@@ -941,11 +1003,14 @@ def build_step7_case_artifact(
     }
     representative_properties = dict(case_result.case_bundle.representative_node.properties)
     swsd_point_x, swsd_point_y = _point_xy(case_result.case_bundle.representative_node.geometry)
-    rcsd_point_x, rcsd_point_y = _first_required_rcsd_point(case_result)
+    rcsd_point_x, rcsd_point_y = _first_relation_handoff_rcsd_point(
+        case_result,
+        swsd_relation_type=swsd_relation_type,
+    )
     relation_state, status_suggested, base_id_candidate = _t04_relation_state(
         final_state=final_state,
         swsd_relation_type=swsd_relation_type,
-        required_rcsd_node_ids=required_rcsd_node_ids,
+        required_rcsd_node_ids=relation_handoff_rcsd_node_ids,
         selected_rcsdnode_ids=selected_rcsdnode_ids,
         selected_rcsdroad_ids=selected_rcsdroad_ids,
         ambiguous_rcsd_alignment=_has_ambiguous_rcsd_alignment(case_result),
@@ -957,7 +1022,8 @@ def build_step7_case_artifact(
         "scene_type": scene_type,
         "final_state": final_state,
         "swsd_relation_type": swsd_relation_type,
-        "required_rcsd_node_ids": required_rcsd_node_ids_text,
+        "required_rcsd_node_ids": relation_handoff_rcsd_node_ids_text,
+        "semantic_required_rcsd_node_ids": required_rcsd_node_ids_text,
         "selected_rcsdnode_ids": "|".join(selected_rcsdnode_ids),
         "selected_rcsdroad_ids": "|".join(selected_rcsdroad_ids),
         "rcsd_profile": rcsd_profile,

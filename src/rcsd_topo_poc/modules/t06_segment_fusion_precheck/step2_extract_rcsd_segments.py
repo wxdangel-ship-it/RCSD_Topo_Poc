@@ -26,6 +26,10 @@ from .failure_business_audit import (
     should_emit_repair_candidate as _should_emit_repair_candidate,
 )
 from .graph_builders import NodeCanonicalizer
+from .group_replacement_audit import (
+    build_group_replacement_audit_rows as _build_group_replacement_audit_rows,
+    path_corridor_group_covered_segment_ids as _path_corridor_group_covered_segment_ids,
+)
 from .io import prepare_run_roots, read_features, write_feature_triplet, write_json
 from .pair_anchor_auto_retry import high_confidence_pair_anchor_relation as _high_confidence_pair_anchor_relation
 from .parsing import ParseError, directionality_from_sgrade, normalize_id, parse_id_list, unique_preserve_order
@@ -36,7 +40,22 @@ from .pair_anchor_relation_retry import (
 )
 from .rejected_context import annotate_rejected_swsd_context as _annotate_rejected_swsd_context
 from .relation_mapping import RelationCheck, RelationRecord, accepted_base_ids, build_relation_map, check_segment_relations
+from .replacement_plan import (
+    build_problem_registry_rows as _build_problem_registry_rows,
+    build_replacement_plan_rows as _build_replacement_plan_rows,
+)
 from .single_graph_connectivity_retry import SingleGraphConnectivityRetry as _SGR
+from .step2_special_junctions import (
+    annotate_special_junction_gate as _annotate_special_junction_gate,
+    rcsd_graph_edges as _rcsd_graph_edges,
+    rcsd_internal_road_ids as _rcsd_internal_road_ids,
+    rcsd_road_coverage_stats as _rcsd_road_coverage_stats,
+    rcsd_semantic_node_ids as _rcsd_semantic_node_ids,
+    segment_special_junction_ids as _segment_special_junction_ids,
+    special_gate_applies_to_segment as _special_gate_applies_to_segment,
+    special_junction_gate as _special_junction_gate,
+    special_swsd_junction_types as _special_swsd_junction_types,
+)
 from .step2_output_rows import (
     buffer_candidate_row as _buffer_candidate_row,
     buffer_replaceable_row as _buffer_replaceable_row,
@@ -54,20 +73,24 @@ from .schemas import (
     STEP2_DIR,
     STEP2_FAILURE_BUSINESS_AUDIT_FIELDS,
     STEP2_FAILURE_BUSINESS_AUDIT_STEM,
+    STEP2_GROUP_REPLACEMENT_AUDIT_FIELDS,
+    STEP2_GROUP_REPLACEMENT_AUDIT_STEM,
     STEP2_REPAIR_CANDIDATE_FIELDS,
     STEP2_REPAIR_CANDIDATES_STEM,
     STEP2_REJECTED_FIELDS,
     STEP2_REJECTED_STEM,
+    STEP2_PROBLEM_REGISTRY_FIELDS,
+    STEP2_PROBLEM_REGISTRY_STEM,
     STEP2_REPLACEABLE_FIELDS,
     STEP2_REPLACEABLE_STEM,
+    STEP2_REPLACEMENT_PLAN_FIELDS,
+    STEP2_REPLACEMENT_PLAN_STEM,
     STEP2_SPECIAL_JUNCTION_GROUP_FIELDS,
     STEP2_SPECIAL_JUNCTION_GROUPS_STEM,
     STEP2_SUMMARY,
     T06Step2Artifacts,
     feature,
 )
-
-SPECIAL_JUNCTION_KIND_TYPES = {64: "roundabout", 128: "complex"}
 
 
 def run_t06_step2_extract_rcsd_segments(
@@ -1148,10 +1171,24 @@ def run_t06_step2_extract_rcsd_segments(
                 )
             )
 
+    pre_gate_group_replacement_audit_rows = _build_group_replacement_audit_rows(
+        fusion_units=fusion_units,
+        segments=list(segments.values()),
+        relation_map=relation_map,
+        rcsd_roads=rcsd_roads,
+        rcsd_nodes=rcsd_node_features,
+        rcsd_node_canonicalizer=rcsd_node_canonicalizer,
+        replaceable_rows=replaceable_rows,
+        rejected_rows=rejected_rows,
+        failure_business_audit_rows=failure_business_audit_rows,
+        buffer_config=buffer_config,
+    )
+    path_corridor_covered_segment_ids = _path_corridor_group_covered_segment_ids(pre_gate_group_replacement_audit_rows)
     special_group_rows, blocked_segment_ids, removed_replaceable_segment_ids, blocking_groups_by_segment = _special_junction_gate(
         special_junction_segments=special_junction_segments,
         special_swsd_junction_types=special_swsd_junction_types,
         replaceable_rows=replaceable_rows,
+        additional_replaceable_segment_ids=path_corridor_covered_segment_ids,
         relation_map=relation_map,
         rcsd_junction_node_ids=rcsd_junction_node_ids,
         rcsd_junction_road_ids=rcsd_junction_road_ids,
@@ -1237,6 +1274,33 @@ def run_t06_step2_extract_rcsd_segments(
     )
     _annotate_rejected_swsd_context(rejected_rows, fusion_units=fusion_units, segments=segments)
     _normalize_repair_candidate_rows_from_business_audit(repair_candidate_rows, failure_business_audit_rows)
+    if removed_replaceable_segment_ids:
+        group_replacement_audit_rows = _build_group_replacement_audit_rows(
+            fusion_units=fusion_units,
+            segments=list(segments.values()),
+            relation_map=relation_map,
+            rcsd_roads=rcsd_roads,
+            rcsd_nodes=rcsd_node_features,
+            rcsd_node_canonicalizer=rcsd_node_canonicalizer,
+            replaceable_rows=replaceable_rows,
+            rejected_rows=rejected_rows,
+            failure_business_audit_rows=failure_business_audit_rows,
+            buffer_config=buffer_config,
+        )
+    else:
+        group_replacement_audit_rows = pre_gate_group_replacement_audit_rows
+    replacement_plan_rows = _build_replacement_plan_rows(
+        replaceable_rows=replaceable_rows,
+        special_group_rows=special_group_rows,
+        group_replacement_audit_rows=group_replacement_audit_rows,
+        rcsd_roads=rcsd_roads,
+        rcsd_node_canonicalizer=rcsd_node_canonicalizer,
+    )
+    problem_registry_rows = _build_problem_registry_rows(
+        rejected_rows=rejected_rows,
+        failure_business_audit_rows=failure_business_audit_rows,
+        replacement_plan_rows=replacement_plan_rows,
+    )
     candidate_paths = write_feature_triplet(step_root=step_root, stem=STEP2_CANDIDATES_STEM, features=candidate_rows, fieldnames=STEP2_CANDIDATE_FIELDS)
     replaceable_paths = write_feature_triplet(step_root=step_root, stem=STEP2_REPLACEABLE_STEM, features=replaceable_rows, fieldnames=STEP2_REPLACEABLE_FIELDS)
     rejected_paths = write_feature_triplet(step_root=step_root, stem=STEP2_REJECTED_STEM, features=rejected_rows, fieldnames=STEP2_REJECTED_FIELDS)
@@ -1265,6 +1329,24 @@ def run_t06_step2_extract_rcsd_segments(
         stem=STEP2_SPECIAL_JUNCTION_GROUPS_STEM,
         features=special_group_rows,
         fieldnames=STEP2_SPECIAL_JUNCTION_GROUP_FIELDS,
+    )
+    group_replacement_audit_paths = write_feature_triplet(
+        step_root=step_root,
+        stem=STEP2_GROUP_REPLACEMENT_AUDIT_STEM,
+        features=group_replacement_audit_rows,
+        fieldnames=STEP2_GROUP_REPLACEMENT_AUDIT_FIELDS,
+    )
+    replacement_plan_paths = write_feature_triplet(
+        step_root=step_root,
+        stem=STEP2_REPLACEMENT_PLAN_STEM,
+        features=replacement_plan_rows,
+        fieldnames=STEP2_REPLACEMENT_PLAN_FIELDS,
+    )
+    problem_registry_paths = write_feature_triplet(
+        step_root=step_root,
+        stem=STEP2_PROBLEM_REGISTRY_STEM,
+        features=problem_registry_rows,
+        fieldnames=STEP2_PROBLEM_REGISTRY_FIELDS,
     )
     rcsd_road_stats = _rcsd_road_coverage_stats(rcsd_roads=rcsd_roads, replaceable_rows=replaceable_rows)
     business_stats = _business_audit_stats(failure_business_audit_rows, replaceable_rows, input_count=len(fusion_units))
@@ -1325,6 +1407,18 @@ def run_t06_step2_extract_rcsd_segments(
             "buffer_only_probe_count": len(buffer_only_probe_rows),
             "repair_candidate_count": len(repair_candidate_rows),
             "failure_business_audit_count": len(failure_business_audit_rows),
+            "group_replacement_audit_count": len(group_replacement_audit_rows),
+            "group_replacement_candidate_ready_count": sum(
+                1 for item in group_replacement_audit_rows if item["properties"].get("audit_status") == "candidate_group_closure_ready"
+            ),
+            "group_replacement_closure_blocked_count": sum(
+                1 for item in group_replacement_audit_rows if item["properties"].get("audit_status") == "blocked_group_closure_incomplete"
+            ),
+            "replacement_plan_count": len(replacement_plan_rows),
+            "replacement_plan_ready_count": sum(1 for item in replacement_plan_rows if item["properties"].get("plan_status") == "ready"),
+            "replacement_plan_scope_counts": dict(Counter(item["properties"].get("execution_scope") for item in replacement_plan_rows)),
+            "problem_registry_count": len(problem_registry_rows),
+            "problem_registry_status_counts": dict(Counter(item["properties"].get("problem_status") for item in problem_registry_rows)),
             "adaptive_high_grade_buffer_retry_count": adaptive_high_grade_buffer_retry_count,
             "adaptive_high_grade_single_buffer_retry_count": adaptive_high_grade_single_buffer_retry_count,
             "adaptive_high_grade_dual_buffer_retry_count": adaptive_high_grade_dual_buffer_retry_count,
@@ -1343,17 +1437,30 @@ def run_t06_step2_extract_rcsd_segments(
                 **{f"repair_candidates_{k}": str(v) for k, v in repair_candidate_paths.items()},
                 **{f"failure_business_audit_{k}": str(v) for k, v in failure_business_audit_paths.items()},
                 **{f"special_junction_group_audit_{k}": str(v) for k, v in special_group_paths.items()},
+                **{f"group_replacement_audit_{k}": str(v) for k, v in group_replacement_audit_paths.items()},
+                **{f"replacement_plan_{k}": str(v) for k, v in replacement_plan_paths.items()},
+                **{f"problem_registry_{k}": str(v) for k, v in problem_registry_paths.items()},
             },
             "gis_topology_checks": {
                 "crs_normalized_to": "EPSG:3857",
                 "topology_consistency": "buffer-based RCSD Segment graph uses canonicalized RCSD semantic nodes, explicit component coverage checks and special junction group gating",
-                "geometry_semantics": "SWSD geometry defines the buffer window; RCSD geometry is used for intersects/overlap candidate selection and retained output geometry",
-                "audit_traceability": "input paths, params, counts, reasons, adaptive buffer retry distance and outputs recorded",
+                "geometry_semantics": "SWSD geometry defines the buffer window; RCSD geometry is used for intersects/overlap candidate selection and retained output geometry; Step2 replacement plan is the formal Step3 execution scope",
+                "audit_traceability": "input paths, params, counts, reasons, adaptive buffer retry distance, replacement plan and problem registry outputs recorded",
                 "performance_verifiable": "input counts, candidate counts and output sizes are reproducible from summary",
             },
         },
     )
-    return T06Step2Artifacts(resolved_run_id, run_root, step_root, candidate_paths["gpkg"], replaceable_paths["gpkg"], rejected_paths["gpkg"], summary_path)
+    return T06Step2Artifacts(
+        resolved_run_id,
+        run_root,
+        step_root,
+        candidate_paths["gpkg"],
+        replaceable_paths["gpkg"],
+        rejected_paths["gpkg"],
+        summary_path,
+        replacement_plan_paths["gpkg"],
+        problem_registry_paths["gpkg"],
+    )
 
 
 def _segment_index(features: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -1423,221 +1530,6 @@ def _adaptive_buffer_recommendation(directionality: str) -> str:
     if directionality == "dual":
         return "adaptive_high_grade_dual_buffer_retry"
     return "single_graph_first_longitudinal_retry"
-
-
-def _special_swsd_junction_types(features: list[dict[str, Any]], canonicalizer: NodeCanonicalizer) -> dict[str, str]:
-    by_node: dict[str, set[str]] = defaultdict(set)
-    for feature in features:
-        props = dict(feature.get("properties") or {})
-        try:
-            semantic_id = canonicalizer.canonicalize(props.get("id"))
-        except ParseError:
-            continue
-        kind_2 = _coerce_int(props.get("kind_2"))
-        special_type = SPECIAL_JUNCTION_KIND_TYPES.get(kind_2)
-        if special_type is not None:
-            by_node[semantic_id].add(special_type)
-    return {
-        node_id: next(iter(types)) if len(types) == 1 else "mixed"
-        for node_id, types in by_node.items()
-    }
-
-
-def _segment_special_junction_ids(
-    semantic_node_ids: list[str],
-    special_swsd_junction_types: dict[str, str],
-    canonicalizer: NodeCanonicalizer,
-) -> list[str]:
-    result: list[str] = []
-    seen: set[str] = set()
-    for node_id in semantic_node_ids:
-        try:
-            semantic_id = canonicalizer.canonicalize(node_id)
-        except ParseError:
-            continue
-        if semantic_id not in special_swsd_junction_types or semantic_id in seen:
-            continue
-        seen.add(semantic_id)
-        result.append(semantic_id)
-    return result
-
-
-def _special_gate_applies_to_segment(pair_nodes: list[str]) -> bool:
-    return len(set(pair_nodes)) >= 2
-
-
-def _rcsd_semantic_node_ids(features: list[dict[str, Any]], canonicalizer: NodeCanonicalizer) -> dict[str, list[str]]:
-    result: dict[str, list[str]] = defaultdict(list)
-    for feature in features:
-        props = dict(feature.get("properties") or {})
-        try:
-            node_id = normalize_id(props.get("id"))
-            semantic_id = canonicalizer.canonicalize(node_id)
-        except ParseError:
-            continue
-        if node_id not in result[semantic_id]:
-            result[semantic_id].append(node_id)
-    return dict(result)
-
-
-def _rcsd_internal_road_ids(features: list[dict[str, Any]], canonicalizer: NodeCanonicalizer) -> dict[str, list[str]]:
-    result: dict[str, list[str]] = defaultdict(list)
-    for feature in features:
-        props = dict(feature.get("properties") or {})
-        try:
-            road_id = normalize_id(_first_present(props, ["id", "road_id", "roadid"]))
-            source = canonicalizer.canonicalize(_first_present(props, ["snodeid", "snode_id", "source", "from_node"]))
-            target = canonicalizer.canonicalize(_first_present(props, ["enodeid", "enode_id", "target", "to_node"]))
-        except (KeyError, ParseError):
-            continue
-        if source != target or road_id in result[source]:
-            continue
-        result[source].append(road_id)
-    return dict(result)
-
-
-def _rcsd_graph_edges(features: list[dict[str, Any]], canonicalizer: NodeCanonicalizer) -> list[tuple[str, str, str, int | None]]:
-    edges: list[tuple[str, str, str, int | None]] = []
-    for feature in features:
-        props = dict(feature.get("properties") or {})
-        try:
-            road_id = normalize_id(_first_present(props, ["id", "road_id", "roadid"]))
-            source = canonicalizer.canonicalize(_first_present(props, ["snodeid", "snode_id", "source", "from_node"]))
-            target = canonicalizer.canonicalize(_first_present(props, ["enodeid", "enode_id", "target", "to_node"]))
-        except (KeyError, ParseError):
-            continue
-        if source == target:
-            continue
-        edges.append((road_id, source, target, _coerce_int(props.get("direction"))))
-    return edges
-
-
-def _special_junction_gate(
-    *,
-    special_junction_segments: dict[str, list[str]],
-    special_swsd_junction_types: dict[str, str],
-    replaceable_rows: list[dict[str, Any]],
-    relation_map: dict[str, RelationRecord],
-    rcsd_junction_node_ids: dict[str, list[str]],
-    rcsd_junction_road_ids: dict[str, list[str]],
-) -> tuple[list[dict[str, Any]], set[str], set[str], dict[str, list[str]]]:
-    replaceable_segment_ids = {
-        str((row.get("properties") or {}).get("swsd_segment_id"))
-        for row in replaceable_rows
-        if (row.get("properties") or {}).get("swsd_segment_id") is not None
-    }
-    rows: list[dict[str, Any]] = []
-    blocked_segment_ids: set[str] = set()
-    removed_replaceable_segment_ids: set[str] = set()
-    blocking_groups_by_segment: dict[str, list[str]] = defaultdict(list)
-
-    for special_junction_id, associated_segment_ids in sorted(special_junction_segments.items()):
-        associated = unique_preserve_order(associated_segment_ids)
-        replaceable = [segment_id for segment_id in associated if segment_id in replaceable_segment_ids]
-        missing = [segment_id for segment_id in associated if segment_id not in replaceable_segment_ids]
-        gate_status = "passed" if not missing else "blocked"
-        if missing:
-            blocked_segment_ids.update(associated)
-            for segment_id in associated:
-                if special_junction_id not in blocking_groups_by_segment[segment_id]:
-                    blocking_groups_by_segment[segment_id].append(special_junction_id)
-            removed_replaceable_segment_ids.update(segment_id for segment_id in associated if segment_id in replaceable_segment_ids)
-
-        relation = relation_map.get(special_junction_id)
-        rcsd_junction_id = ""
-        relation_status = "missing_relation"
-        if relation is not None:
-            if relation.status == 0 and relation.base_id > 0:
-                rcsd_junction_id = str(relation.base_id)
-                relation_status = "accepted"
-            else:
-                relation_status = "invalid_relation_status"
-        rows.append(
-            feature(
-                {
-                    "special_junction_id": special_junction_id,
-                    "special_junction_type": special_swsd_junction_types.get(special_junction_id, "unknown"),
-                    "gate_status": gate_status,
-                    "relation_status": relation_status,
-                    "rcsd_junction_id": rcsd_junction_id,
-                    "associated_segment_ids": associated,
-                    "associated_segment_count": len(associated),
-                    "replaceable_segment_ids": replaceable,
-                    "replaceable_segment_count": len(replaceable),
-                    "missing_replaceable_segment_ids": missing,
-                    "removed_replaceable_segment_ids": [segment_id for segment_id in associated if segment_id in removed_replaceable_segment_ids],
-                    "rcsd_junction_node_ids": rcsd_junction_node_ids.get(rcsd_junction_id, []),
-                    "rcsd_junction_road_ids": rcsd_junction_road_ids.get(rcsd_junction_id, []),
-                    "notes": "all associated Segments are replaceable" if gate_status == "passed" else "at least one associated Segment is not replaceable",
-                },
-                None,
-            )
-        )
-    return rows, blocked_segment_ids, removed_replaceable_segment_ids, dict(blocking_groups_by_segment)
-
-
-def _annotate_special_junction_gate(
-    rows: list[dict[str, Any]],
-    *,
-    segment_special_junctions: dict[str, list[str]],
-    special_swsd_junction_types: dict[str, str],
-    blocked_segment_ids: set[str],
-    blocking_groups_by_segment: dict[str, list[str]],
-) -> None:
-    for row in rows:
-        props = row.get("properties") or {}
-        segment_id = str(props.get("swsd_segment_id") or "")
-        group_ids = segment_special_junctions.get(segment_id, [])
-        if not group_ids:
-            gate_status = "not_applicable"
-        elif segment_id in blocked_segment_ids:
-            gate_status = "blocked"
-        else:
-            gate_status = "passed"
-        props["special_junction_group_ids"] = group_ids
-        props["special_junction_group_types"] = [special_swsd_junction_types.get(group_id, "unknown") for group_id in group_ids]
-        props["special_junction_gate_status"] = gate_status
-        props["special_junction_blocking_group_ids"] = blocking_groups_by_segment.get(segment_id, [])
-        row["properties"] = props
-
-
-def _rcsd_road_coverage_stats(*, rcsd_roads: list[dict[str, Any]], replaceable_rows: list[dict[str, Any]]) -> dict[str, Any]:
-    rcsd_road_by_id = _segment_index(rcsd_roads)
-    replaceable_reference_ids: list[str] = []
-    for row in replaceable_rows:
-        props = dict(row.get("properties") or {})
-        try:
-            replaceable_reference_ids.extend(parse_id_list(props.get("rcsd_road_ids"), allow_empty=True))
-        except ParseError:
-            continue
-    replaceable_unique_ids = unique_preserve_order(
-        road_id for road_id in replaceable_reference_ids if road_id in rcsd_road_by_id
-    )
-    return {
-        "rcsd_road_total_count": len(rcsd_road_by_id),
-        "rcsd_road_total_length_m": _round_length(sum(_feature_length(feature) for feature in rcsd_road_by_id.values())),
-        "replaceable_rcsd_road_unique_count": len(replaceable_unique_ids),
-        "replaceable_rcsd_road_unique_length_m": _round_length(
-            sum(_feature_length(rcsd_road_by_id[road_id]) for road_id in replaceable_unique_ids)
-        ),
-        "replaceable_rcsd_road_reference_count": len(replaceable_reference_ids),
-        "replaceable_rcsd_road_reference_length_m": _round_length(
-            sum(_feature_length(rcsd_road_by_id[road_id]) for road_id in replaceable_reference_ids if road_id in rcsd_road_by_id)
-        ),
-        "replaceable_rcsd_road_missing_count": sum(1 for road_id in replaceable_reference_ids if road_id not in rcsd_road_by_id),
-        "rcsd_road_coverage_stats_basis": "unique_count_and_length_from_final_replaceable_rcsd_road_ids",
-    }
-
-
-def _feature_length(feature: dict[str, Any]) -> float:
-    geometry = feature.get("geometry")
-    if geometry is None or getattr(geometry, "is_empty", False):
-        return 0.0
-    return float(getattr(geometry, "length", 0.0) or 0.0)
-
-
-def _round_length(value: float) -> float:
-    return round(float(value), 3)
 
 
 def _parse_unit_lists(props: dict[str, Any], segment_props: dict[str, Any]) -> tuple[list[str], list[str], list[str], list[str], str | None]:

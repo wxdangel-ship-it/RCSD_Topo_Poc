@@ -20,6 +20,8 @@ bash scripts/t10_run_innernet_full_pipeline.sh
 
 `scripts/t10_run_e2e_cases.sh` 从已生成或已解包的 T10 Case package 启动 Case 级全链路执行。它按 `T01 -> T07 -> T03 -> T04 -> T05 -> T06 -> T09` 调用既有脚本或模块 callable，输出每阶段日志、handoff 审计和 `t10_t06_funnel.json/csv/md`。T08 仍是独立前置预处理和质量修复模块，不由该 runner 调用。
 
+当需要验证 T06 上游反馈闭环时，可设置 `T10_FEEDBACK_ITERATIONS=1`。runner 会先执行 baseline pass，发布 `t10_upstream_side_group_endpoint_candidates.csv/json`，再把该 endpoint 级候选作为 T05 Phase2 可选输入执行下一 pass。顶层 summary 会比较 baseline 与最终 pass 的 replacement plan 和 Step3 replaced Segment；若已有 replaced Segment 被移除，`feedback_regression_guard_passed = false` 且本次 run 不通过。
+
 `scripts/t10_run_innernet_full_pipeline.sh` 是内网全量数据总控入口，不消费 Case package。它以 `/mnt/d/TestData/POC_Data` 为默认数据根目录，按 `T08 -> T01 -> T07 Step1/2 -> T03 -> T04 -> T05 -> T07 Step3 -> T06 Step1/2 -> T06 Step3 -> T09` 串联已有模块脚本或 callable，并把所有阶段输出写入 `outputs/_work/t10_innernet_full_pipeline/<RUN_ID>/`。该脚本只负责全量 handoff 编排和审计 manifest，不改变 T01-T09 模块算法。
 
 同一 Case 内任一阶段未通过时，runner 不把该阶段部分输出提升为正式 handoff；后续阶段标记为 `blocked`。`CONTINUE_ON_ERROR=1` 只表示批处理继续下一个 Case。
@@ -59,6 +61,15 @@ from rcsd_topo_poc.modules.t10_e2e_orchestration import (
 - `t10_multi_case_evidence_summary.json`
 - `t10_e2e_run_manifest.json`
 - `t10_e2e_run_summary.json`
+- `t10_upstream_feedback_segments.csv/json`
+- `t10_upstream_feedback_summary.csv/json`
+- `t10_upstream_side_group_candidates.csv/json`
+- `t10_upstream_side_group_endpoint_candidates.csv/json`
+- `t10_upstream_pair_anchor_endpoint_clusters.csv/json`
+- `t10_upstream_feedback_relations.csv/json`
+- `t10_upstream_feedback_relation_summary.csv/json`
+- `iterations/iteration_<NN>_<role>/t10_e2e_run_manifest.json`
+- `iterations/iteration_<NN>_<role>/t10_e2e_run_summary.json`
 - `t10_innernet_full_pipeline_manifest.json`
 - `cases/<case_id>/t10_e2e_case_run_manifest.json`
 - `cases/<case_id>/t10_t06_funnel.json/csv/md`
@@ -70,3 +81,7 @@ from rcsd_topo_poc.modules.t10_e2e_orchestration import (
 3. `architecture/03-context-and-scope.md`
 4. `architecture/04-solution-strategy.md`
 5. `architecture/10-quality-requirements.md`
+
+## 6. Innernet Manifest
+
+`t10_innernet_full_pipeline_manifest.json` 同时保留 flat `inputs / outputs` 和阶段级 `stage_order / stages`。审计与下游消费应优先使用 `stages.<stage_id>.inputs / outputs / execution_context` 判断模块 handoff，避免根据目录名猜测产物角色。

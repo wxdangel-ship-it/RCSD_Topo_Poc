@@ -10,6 +10,8 @@ from .graph_builders import NodeCanonicalizer
 from .io import prepare_run_roots, read_features, write_feature_triplet, write_json
 from .parsing import ParseError, normalize_id, parse_id_list, parse_positive_int, unique_preserve_order
 from .schemas import (
+    STEP2_GROUP_REPLACEMENT_AUDIT_STEM,
+    STEP2_REPLACEMENT_PLAN_STEM,
     STEP2_SPECIAL_JUNCTION_GROUPS_STEM,
     STEP3_ADDED_RCSD_NODES_STEM,
     STEP3_ADDED_RCSD_ROADS_STEM,
@@ -32,6 +34,11 @@ from .schemas import (
     STEP3_UNREPLACED_RCSD_ROADS_STEM,
     T06Step3Artifacts,
     feature,
+)
+from .step3_group_replacement import (
+    GroupReplacementAssignment,
+    read_group_replacement_assignments,
+    read_group_replacement_assignments_from_plan_rows,
 )
 
 
@@ -59,6 +66,10 @@ class ReplacementUnit:
     reason: str = "replaceable"
     removed_swsd_node_ids: list[str] = field(default_factory=list)
     added_rcsd_node_ids: list[str] = field(default_factory=list)
+    group_replacement_plan_ids: list[str] = field(default_factory=list)
+    group_replacement_source_segment_ids: list[str] = field(default_factory=list)
+    group_replacement_segment_ids: list[str] = field(default_factory=list)
+    group_replacement_buffer_distances_m: list[float] = field(default_factory=list)
 
 
 @dataclass
@@ -85,6 +96,8 @@ def run_t06_step3_segment_replacement(
     *,
     step2_replaceable_path: str | Path,
     step2_special_junction_group_audit_path: str | Path | None = None,
+    step2_group_replacement_audit_path: str | Path | None = None,
+    step2_replacement_plan_path: str | Path | None = None,
     swsd_segment_path: str | Path,
     swsd_roads_path: str | Path,
     swsd_nodes_path: str | Path,
@@ -112,15 +125,50 @@ def run_t06_step3_segment_replacement(
     rcsd_node_by_id = _index_by_id(rcsd_nodes)
     canonicalizer = NodeCanonicalizer.from_node_features(rcsd_nodes)
 
-    units = _build_replacement_units(replaceable, segment_by_id, progress=progress)
+    replacement_plan_path = _resolve_replacement_plan_path(
+        step2_replaceable_path=step2_replaceable_path,
+        explicit_path=step2_replacement_plan_path,
+    )
+    replacement_plan_rows = _read_replacement_plan_rows(replacement_plan_path)
+    standard_plan_rows = _replacement_plan_standard_rows(replacement_plan_rows)
+    replacement_unit_input = standard_plan_rows if replacement_plan_rows else replaceable
+    units = _build_replacement_units(replacement_unit_input, segment_by_id, progress=progress)
+    group_replacement_audit_path = None
+    if replacement_plan_rows:
+        group_replacement_assignments, group_replacement_stats = read_group_replacement_assignments_from_plan_rows(
+            replacement_plan_rows,
+            segment_by_id=segment_by_id,
+            rcsd_road_by_id=rcsd_road_by_id,
+            canonicalizer=canonicalizer,
+        )
+    else:
+        group_replacement_audit_path = _resolve_group_replacement_audit_path(
+            step2_replaceable_path=step2_replaceable_path,
+            explicit_path=step2_group_replacement_audit_path,
+        )
+        group_replacement_assignments, group_replacement_stats = read_group_replacement_assignments(
+            group_replacement_audit_path,
+            segment_by_id=segment_by_id,
+            rcsd_road_by_id=rcsd_road_by_id,
+            canonicalizer=canonicalizer,
+        )
+    group_replacement_created_unit_count = _apply_group_replacement_assignments(
+        units,
+        group_replacement_assignments,
+        segment_by_id=segment_by_id,
+    )
     passed_units = [unit for unit in units if unit.status == "passed"]
     _retain_detached_junc_swsd_roads(passed_units, swsd_road_by_id)
     passed_unit_ids = {unit.segment_id for unit in passed_units}
-    special_group_audit_path = _resolve_special_junction_group_audit_path(
-        step2_replaceable_path=step2_replaceable_path,
-        explicit_path=step2_special_junction_group_audit_path,
-    )
-    special_groups = _read_passed_special_junction_groups(special_group_audit_path)
+    special_group_audit_path = None
+    if replacement_plan_rows:
+        special_groups = _read_passed_special_junction_groups_from_plan_rows(replacement_plan_rows)
+    else:
+        special_group_audit_path = _resolve_special_junction_group_audit_path(
+            step2_replaceable_path=step2_replaceable_path,
+            explicit_path=step2_special_junction_group_audit_path,
+        )
+        special_groups = _read_passed_special_junction_groups(special_group_audit_path)
     special_added_road_to_segments = _special_group_entity_segments(
         groups=special_groups,
         entity_attr="rcsd_junction_road_ids",
@@ -312,6 +360,8 @@ def run_t06_step3_segment_replacement(
             "input_paths": {
                 "step2_replaceable_path": str(step2_replaceable_path),
                 "step2_special_junction_group_audit_path": str(special_group_audit_path) if special_group_audit_path is not None else None,
+                "step2_group_replacement_audit_path": str(group_replacement_audit_path) if group_replacement_audit_path is not None else None,
+                "step2_replacement_plan_path": str(replacement_plan_path) if replacement_plan_path is not None else None,
                 "swsd_segment_path": str(swsd_segment_path),
                 "swsd_roads_path": str(swsd_roads_path),
                 "swsd_nodes_path": str(swsd_nodes_path),
@@ -326,9 +376,18 @@ def run_t06_step3_segment_replacement(
                 "new_mainnode_selection_priority": ["original_mainnode_if_retained", "remaining_swsd_node_min_id", "added_rcsd_node_min_id"],
             },
             "input_replaceable_count": len(replaceable),
+            "input_replacement_plan_count": len(replacement_plan_rows),
+            "input_standard_replacement_plan_count": len(standard_plan_rows),
+            "replacement_plan_source": "step2_replacement_plan" if replacement_plan_rows else "legacy_step2_artifacts",
             "replacement_unit_count": len(units),
             "replacement_unit_success_count": len(passed_units),
             "replacement_unit_failure_count": len(units) - len(passed_units),
+            "group_replacement_audit_input_row_count": group_replacement_stats.input_row_count,
+            "group_replacement_passed_row_count": group_replacement_stats.passed_row_count,
+            "group_replacement_plan_count": group_replacement_stats.plan_count,
+            "group_replacement_assignment_segment_count": group_replacement_stats.assignment_segment_count,
+            "group_replacement_created_unit_count": group_replacement_created_unit_count,
+            "group_replacement_skipped_row_count": group_replacement_stats.skipped_row_count,
             "detached_junc_retained_segment_count": sum(1 for unit in passed_units if unit.retained_detached_swsd_road_ids),
             "detached_junc_retained_swsd_road_count": sum(len(unit.retained_detached_swsd_road_ids) for unit in passed_units),
             "removed_swsd_node_preserved_by_retained_road_count": len(preserved_removed_node_ids),
@@ -371,9 +430,9 @@ def run_t06_step3_segment_replacement(
             },
             "gis_topology_checks": {
                 "crs_normalized_to": "EPSG:3857",
-                "topology_consistency": "SWSD removals and RCSD additions are explicit copy-on-write sets; passed special junction groups add RCSD internal entities as group-level replacements; junction C rebuild is audited",
-                "geometry_semantics": "Step3 does not infer geometry; it consumes Step2 retained RCSDSegment features and passed special junction group audit entities",
-                "audit_traceability": "replacement units, special junction group consumption, removed/added entities, id collisions and junction rebuild records are written",
+                "topology_consistency": "SWSD removals and RCSD additions are explicit copy-on-write sets; replacement plan scopes group-level additions; junction C rebuild is audited",
+                "geometry_semantics": "Step3 does not infer geometry; it consumes Step2 replacement plan when present and falls back to legacy Step2 artifacts only for compatibility",
+                "audit_traceability": "replacement plan source, replacement units, special junction group consumption, group replacement consumption, removed/added entities, id collisions and junction rebuild records are written",
                 "segment_relation_traceability": "each SWSD Segment relation records F-RCSD carrier road ids, source values and node mapping evidence",
                 "performance_verifiable": "input, replacement, output and audit counts are recorded in summary",
             },
@@ -404,11 +463,71 @@ def _resolve_special_junction_group_audit_path(
             raise FileNotFoundError(f"special junction group audit file does not exist: {path}")
         return path
     step2_dir = Path(step2_replaceable_path).parent
-    for suffix in (".json", ".geojson", ".gpkg"):
+    for suffix in (".gpkg", ".json", ".geojson"):
         path = step2_dir / f"{STEP2_SPECIAL_JUNCTION_GROUPS_STEM}{suffix}"
         if path.is_file():
             return path
     return None
+
+
+def _resolve_group_replacement_audit_path(
+    *,
+    step2_replaceable_path: str | Path,
+    explicit_path: str | Path | None,
+) -> Path | None:
+    if explicit_path is not None:
+        path = Path(explicit_path)
+        if not path.is_file():
+            raise FileNotFoundError(f"group replacement audit file does not exist: {path}")
+        return path
+    step2_dir = Path(step2_replaceable_path).parent
+    for suffix in (".json", ".geojson", ".gpkg"):
+        path = step2_dir / f"{STEP2_GROUP_REPLACEMENT_AUDIT_STEM}{suffix}"
+        if path.is_file():
+            return path
+    return None
+
+
+def _resolve_replacement_plan_path(
+    *,
+    step2_replaceable_path: str | Path,
+    explicit_path: str | Path | None,
+) -> Path | None:
+    if explicit_path is not None:
+        path = Path(explicit_path)
+        if not path.is_file():
+            raise FileNotFoundError(f"replacement plan file does not exist: {path}")
+        return path
+    step2_dir = Path(step2_replaceable_path).parent
+    for suffix in (".json", ".geojson", ".gpkg"):
+        path = step2_dir / f"{STEP2_REPLACEMENT_PLAN_STEM}{suffix}"
+        if path.is_file():
+            return path
+    return None
+
+
+def _read_replacement_plan_rows(path: Path | None) -> list[dict[str, Any]]:
+    if path is None:
+        return []
+    if path.suffix.lower() == ".json":
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        features = payload.get("features", []) if isinstance(payload, dict) else []
+        return [{"properties": dict(item.get("properties") or {}), "geometry": item.get("geometry")} for item in features]
+    return read_features(path)
+
+
+def _replacement_plan_standard_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        props = dict(row.get("properties") or {})
+        if props.get("plan_status") != "ready":
+            continue
+        if props.get("execution_action") != "replace":
+            continue
+        if props.get("execution_scope") != "standard_segment":
+            continue
+        result.append(row)
+    return result
 
 
 def _read_passed_special_junction_groups(path: Path | None) -> list[SpecialJunctionGroup]:
@@ -434,6 +553,30 @@ def _read_passed_special_junction_groups(path: Path | None) -> list[SpecialJunct
                 associated_segment_ids=associated_segment_ids,
                 rcsd_junction_node_ids=_parse_list(props.get("rcsd_junction_node_ids")),
                 rcsd_junction_road_ids=_parse_list(props.get("rcsd_junction_road_ids")),
+            )
+        )
+    return groups
+
+
+def _read_passed_special_junction_groups_from_plan_rows(rows: list[dict[str, Any]]) -> list[SpecialJunctionGroup]:
+    groups: list[SpecialJunctionGroup] = []
+    for row in rows:
+        props = dict(row.get("properties") or {})
+        if props.get("plan_status") != "ready":
+            continue
+        if props.get("execution_action") != "include_context":
+            continue
+        if props.get("execution_scope") != "special_junction_group_internal":
+            continue
+        associated_segment_ids = _parse_list(props.get("group_segment_ids"))
+        if not associated_segment_ids:
+            continue
+        groups.append(
+            SpecialJunctionGroup(
+                special_junction_id=_safe_normalize(props.get("special_junction_id") or ""),
+                associated_segment_ids=associated_segment_ids,
+                rcsd_junction_node_ids=_parse_list(props.get("retained_node_ids")),
+                rcsd_junction_road_ids=_parse_list(props.get("rcsd_road_ids")),
             )
         )
     return groups
@@ -505,6 +648,76 @@ def _build_replacement_units(replaceable: list[dict[str, Any]], segment_by_id: d
             unit.reason = "missing_rcsd_road_ids"
         units.append(unit)
     return units
+
+
+def _apply_group_replacement_assignments(
+    units: list[ReplacementUnit],
+    assignments: dict[str, GroupReplacementAssignment],
+    *,
+    segment_by_id: dict[str, dict[str, Any]],
+) -> int:
+    unit_by_segment_id = {unit.segment_id: unit for unit in units}
+    created_count = 0
+    for segment_id in sorted(assignments, key=_id_sort_key):
+        assignment = assignments[segment_id]
+        unit = unit_by_segment_id.get(segment_id)
+        if unit is None:
+            segment = segment_by_id.get(segment_id)
+            if segment is None:
+                continue
+            unit = _replacement_unit_from_segment(segment)
+            units.append(unit)
+            unit_by_segment_id[segment_id] = unit
+            created_count += 1
+
+        unit.rcsd_road_ids = unique_preserve_order([*unit.rcsd_road_ids, *assignment.rcsd_road_ids])
+        unit.retained_node_ids = unique_preserve_order([*unit.retained_node_ids, *assignment.retained_node_ids])
+        if not unit.rcsd_pair_nodes and assignment.rcsd_pair_nodes:
+            unit.rcsd_pair_nodes = assignment.rcsd_pair_nodes
+        unit.group_replacement_plan_ids = unique_preserve_order([*unit.group_replacement_plan_ids, *assignment.plan_ids])
+        unit.group_replacement_source_segment_ids = unique_preserve_order(
+            [*unit.group_replacement_source_segment_ids, *assignment.source_segment_ids]
+        )
+        unit.group_replacement_segment_ids = unique_preserve_order(
+            [*unit.group_replacement_segment_ids, *assignment.group_segment_ids]
+        )
+        unit.group_replacement_buffer_distances_m = sorted(
+            {*unit.group_replacement_buffer_distances_m, *assignment.buffer_distances_m}
+        )
+        if unit.status == "failed" and unit.reason == "missing_rcsd_road_ids":
+            unit.status = "passed"
+        if unit.status == "passed":
+            unit.reason = "group_path_corridor_replacement"
+    return created_count
+
+
+def _replacement_unit_from_segment(segment: dict[str, Any]) -> ReplacementUnit:
+    props = dict(segment.get("properties") or {})
+    segment_id = _feature_id(segment)
+    pair_nodes = _parse_list(props.get("pair_nodes"))
+    junc_nodes = _parse_list(props.get("junc_nodes"))
+    swsd_road_ids = _parse_list(props.get("roads"))
+    unit = ReplacementUnit(
+        segment_id=segment_id,
+        pair_nodes=pair_nodes,
+        junc_nodes=junc_nodes,
+        junc_kind2_exempt_nodes=_parse_list(props.get("junc_kind2_exempt_nodes")),
+        original_junc_nodes=junc_nodes,
+        original_swsd_road_ids=swsd_road_ids,
+        swsd_road_ids=swsd_road_ids,
+        retained_detached_swsd_road_ids=[],
+        detached_junc_nodes=[],
+        rcsd_road_ids=[],
+        retained_node_ids=[],
+        rcsd_pair_nodes=[],
+        rcsd_junc_nodes=[],
+        optional_allowed_rcsd_nodes=[],
+        geometry=segment.get("geometry"),
+    )
+    if not swsd_road_ids:
+        unit.status = "failed"
+        unit.reason = "missing_swsd_segment_roads"
+    return unit
 
 
 def _retain_detached_junc_swsd_roads(units: list[ReplacementUnit], swsd_road_by_id: dict[str, dict[str, Any]]) -> None:
@@ -757,6 +970,9 @@ def _build_swsd_frcsd_segment_relation_rows(
                 relation_reason = "replacement_unit_passed" if present_rcsd_road_ids else "replacement_roads_missing_in_frcsd"
             if missing_rcsd_road_ids:
                 risk_flags.append("missing_replacement_frcsd_roads")
+            if unit.group_replacement_plan_ids:
+                relation_reason = "group_path_corridor_replacement"
+                risk_flags.append("group_path_corridor_replacement")
             node_map = _segment_node_map(
                 swsd_pair_nodes=unit.pair_nodes,
                 swsd_junc_nodes=unit.junc_nodes,
@@ -816,6 +1032,9 @@ def _build_swsd_frcsd_segment_relation_rows(
                     "rcsd_pair_nodes": rcsd_pair_nodes,
                     "rcsd_junc_nodes": rcsd_junc_nodes,
                     "junction_c_ids": unique_preserve_order([*pair_nodes, *junc_nodes]),
+                    "group_replacement_plan_ids": (unit.group_replacement_plan_ids if unit is not None else []),
+                    "group_replacement_source_segment_ids": (unit.group_replacement_source_segment_ids if unit is not None else []),
+                    "group_replacement_segment_ids": (unit.group_replacement_segment_ids if unit is not None else []),
                     "swsd_to_frcsd_node_map": node_map,
                     "source_mix": "+".join(f"source_{value}" for value in source_values),
                     "risk_flags": risk_flags,
@@ -1044,6 +1263,10 @@ def _replacement_unit_row(unit: ReplacementUnit) -> dict[str, Any]:
         "rcsd_pair_nodes": unit.rcsd_pair_nodes,
         "rcsd_junc_nodes": unit.rcsd_junc_nodes,
         "junction_c_ids": unique_preserve_order([*unit.pair_nodes, *unit.junc_nodes]),
+        "group_replacement_plan_ids": unit.group_replacement_plan_ids,
+        "group_replacement_source_segment_ids": unit.group_replacement_source_segment_ids,
+        "group_replacement_segment_ids": unit.group_replacement_segment_ids,
+        "group_replacement_buffer_distances_m": unit.group_replacement_buffer_distances_m,
     }
 
 

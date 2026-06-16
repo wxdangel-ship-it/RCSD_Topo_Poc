@@ -14,6 +14,9 @@ DRIVEZONE_CRS="${DRIVEZONE_CRS:-}"
 INTERSECTION_PATH="${INTERSECTION_PATH:-/mnt/d/TestData/POC_Data/patch_all/RCSDIntersection.gpkg}"
 INTERSECTION_LAYER="${INTERSECTION_LAYER:-}"
 INTERSECTION_CRS="${INTERSECTION_CRS:-}"
+RCSDNODE_PATH="${RCSDNODE_PATH:-}"
+RCSDNODE_LAYER="${RCSDNODE_LAYER:-}"
+RCSDNODE_CRS="${RCSDNODE_CRS:-}"
 
 OUT_ROOT="${OUT_ROOT:-$REPO_DIR/outputs/_work/t07_semantic_junction_anchor_innernet}"
 RUN_ID="${RUN_ID:-t07_semantic_junction_anchor_innernet_$(date +%Y%m%d_%H%M%S)}"
@@ -47,10 +50,15 @@ for path_var in NODES_PATH DRIVEZONE_PATH INTERSECTION_PATH; do
     exit 2
   fi
 done
+if [[ -n "$RCSDNODE_PATH" && ! -f "$RCSDNODE_PATH" ]]; then
+  echo "[BLOCK] RCSDNODE_PATH does not exist: $RCSDNODE_PATH" >&2
+  exit 2
+fi
 
 export NODES_PATH NODES_LAYER NODES_CRS
 export DRIVEZONE_PATH DRIVEZONE_LAYER DRIVEZONE_CRS
 export INTERSECTION_PATH INTERSECTION_LAYER INTERSECTION_CRS
+export RCSDNODE_PATH RCSDNODE_LAYER RCSDNODE_CRS
 export OUT_ROOT RUN_ID
 
 mkdir -p "$OUT_ROOT"
@@ -62,6 +70,7 @@ echo "[RUN] PYTHON_BIN=$PYTHON_BIN"
 echo "[RUN] NODES_PATH=$NODES_PATH"
 echo "[RUN] DRIVEZONE_PATH=$DRIVEZONE_PATH"
 echo "[RUN] INTERSECTION_PATH=$INTERSECTION_PATH"
+echo "[RUN] RCSDNODE_PATH=${RCSDNODE_PATH:-<disabled>}"
 echo "[RUN] OUT_ROOT=$OUT_ROOT"
 echo "[RUN] RUN_ID=$RUN_ID"
 echo "[RUN] Segment input is intentionally unsupported."
@@ -90,13 +99,16 @@ artifacts = run_t07_semantic_junction_anchor(
     drivezone_path=os.environ["DRIVEZONE_PATH"],
     intersection_path=os.environ["INTERSECTION_PATH"],
     out_root=os.environ["OUT_ROOT"],
+    rcsdnode_path=optional_env("RCSDNODE_PATH"),
     run_id=os.environ["RUN_ID"],
     nodes_layer=optional_env("NODES_LAYER"),
     drivezone_layer=optional_env("DRIVEZONE_LAYER"),
     intersection_layer=optional_env("INTERSECTION_LAYER"),
+    rcsdnode_layer=optional_env("RCSDNODE_LAYER"),
     nodes_crs=optional_env("NODES_CRS"),
     drivezone_crs=optional_env("DRIVEZONE_CRS"),
     intersection_crs=optional_env("INTERSECTION_CRS"),
+    rcsdnode_crs=optional_env("RCSDNODE_CRS"),
 )
 
 step1_summary = read_json(artifacts.step1.summary_path)
@@ -110,6 +122,7 @@ print(
                 "nodes": os.environ["NODES_PATH"],
                 "drivezone": os.environ["DRIVEZONE_PATH"],
                 "intersection": os.environ["INTERSECTION_PATH"],
+                "rcsdnode": optional_env("RCSDNODE_PATH"),
             },
             "step1": {
                 "stage_root": str(artifacts.step1.stage_root),
@@ -131,6 +144,7 @@ print(
                 "anchor_fail1_count": step2_summary.get("anchor_fail1_count"),
                 "anchor_fail2_count": step2_summary.get("anchor_fail2_count"),
                 "anchor_null_count": step2_summary.get("anchor_null_count"),
+                "rcsdintersection_no_rcsdnode_count": step2_summary.get("rcsdintersection_no_rcsdnode_count"),
             },
         },
         ensure_ascii=False,

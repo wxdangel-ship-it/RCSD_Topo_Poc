@@ -103,9 +103,10 @@ def append_pair_anchor_formal_retry_rows(
             distance_m=retry_outcome.adaptive_distance_m,
             source_reason=retry_outcome.adaptive_source_reason,
         )
+        single_count = 1 if directionality == "single" else 0
         stats = FormalRetryAppendStats(
             adaptive_high_grade_buffer_retry_count=1,
-            adaptive_high_grade_single_buffer_retry_count=1,
+            adaptive_high_grade_single_buffer_retry_count=single_count,
         )
     buffer_segment_rows.append(buffer_feature)
     candidate_rows.append(candidate_feature)

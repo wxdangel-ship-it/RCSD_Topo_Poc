@@ -8,6 +8,7 @@ from rcsd_topo_poc.modules.t06_segment_fusion_precheck.buffer_segment_extraction
 )
 from rcsd_topo_poc.modules.t06_segment_fusion_precheck.relation_mapping import RelationCheck
 from rcsd_topo_poc.modules.t06_segment_fusion_precheck.single_graph_connectivity_retry import (
+    DUAL_GRAPH_FIRST_RETRY_RECOMMENDATION,
     LONGITUDINAL_RETRY_RECOMMENDATION,
     SingleGraphConnectivityRetry,
 )
@@ -88,6 +89,60 @@ def test_single_graph_retry_rejects_long_detour_even_when_path_touches_50m_buffe
         "single",
         _failed_result("required_semantic_nodes_not_connected_in_buffer"),
         {"full_graph_status": "required_nodes_connected", "directional_status": "full=directed_path_present;candidate=directed_path_missing"},
+        BufferExtractionConfig(),
+        2.5,
+    )
+
+    assert outcome is None
+
+
+def test_dual_graph_retry_keeps_two_directed_corridors_that_cross_50m_core() -> None:
+    retry = SingleGraphConnectivityRetry(
+        rcsd_road_features=[
+            {"properties": {"id": "f1", "snodeid": 10, "enodeid": 11, "direction": 2}, "geometry": LineString([(0, 0), (50, 0)])},
+            {"properties": {"id": "f2", "snodeid": 11, "enodeid": 20, "direction": 2}, "geometry": LineString([(50, 0), (100, 0)])},
+            {"properties": {"id": "r1", "snodeid": 20, "enodeid": 12, "direction": 2}, "geometry": LineString([(100, 40), (50, 40)])},
+            {"properties": {"id": "r2", "snodeid": 12, "enodeid": 10, "direction": 2}, "geometry": LineString([(50, 40), (0, 40)])},
+        ],
+        rcsd_node_features=_nodes([10, 11, 12, 20]),
+    )
+
+    outcome = retry.retry_dual_bidirectional(
+        LineString([(0, 0), (100, 0)]),
+        RelationCheck(True, ["10", "20"], []),
+        [],
+        set(),
+        "0-0双",
+        _failed_result("rcsd_not_bidirectional_for_swsd_dual"),
+        {"full_graph_status": "required_nodes_connected", "directional_status": "full=bidirectional;candidate=forward_only"},
+        BufferExtractionConfig(),
+        2.5,
+    )
+
+    assert outcome is not None
+    assert set(outcome.buffer_result.retained_road_ids) == {"f1", "f2", "r1", "r2"}
+    assert outcome.buffer_result.directed_rcsd_pair_nodes == []
+    assert outcome.source_reason == f"{DUAL_GRAPH_FIRST_RETRY_RECOMMENDATION}:rcsd_not_bidirectional_for_swsd_dual"
+
+
+def test_dual_graph_retry_rejects_reverse_detour_over_length_ratio() -> None:
+    retry = SingleGraphConnectivityRetry(
+        rcsd_road_features=[
+            {"properties": {"id": "f1", "snodeid": 10, "enodeid": 20, "direction": 2}, "geometry": LineString([(0, 0), (100, 0)])},
+            {"properties": {"id": "r1", "snodeid": 20, "enodeid": 30, "direction": 2}, "geometry": LineString([(100, 0), (1000, 0)])},
+            {"properties": {"id": "r2", "snodeid": 30, "enodeid": 10, "direction": 2}, "geometry": LineString([(1000, 0), (0, 0)])},
+        ],
+        rcsd_node_features=_nodes([10, 20, 30]),
+    )
+
+    outcome = retry.retry_dual_bidirectional(
+        LineString([(0, 0), (100, 0)]),
+        RelationCheck(True, ["10", "20"], []),
+        [],
+        set(),
+        "0-0双",
+        _failed_result("rcsd_not_bidirectional_for_swsd_dual"),
+        {"full_graph_status": "required_nodes_connected", "directional_status": "full=bidirectional;candidate=forward_only"},
         BufferExtractionConfig(),
         2.5,
     )

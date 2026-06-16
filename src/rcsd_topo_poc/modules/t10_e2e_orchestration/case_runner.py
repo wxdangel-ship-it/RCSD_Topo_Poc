@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import csv
 import json
 import os
@@ -13,6 +14,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from .contracts import T10_MODULE_ID, T10_T08_POLICY, T10_V1_CHAIN
+from .upstream_feedback import write_t10_upstream_feedback
 
 
 T10_E2E_STAGE_ORDER = (
@@ -49,6 +51,13 @@ class T10E2ECaseRunArtifacts:
     summary_json: Path
     case_manifest_paths: tuple[Path, ...]
     t06_funnel_paths: tuple[Path, ...]
+    upstream_feedback_summary_json: Path
+    upstream_feedback_segments_csv: Path
+    upstream_feedback_relation_summary_json: Path
+    upstream_feedback_relations_csv: Path
+    upstream_side_group_candidates_csv: Path
+    upstream_side_group_endpoint_candidates_csv: Path
+    upstream_pair_anchor_endpoint_clusters_csv: Path
 
 
 def run_t10_e2e_cases_from_package(
@@ -60,7 +69,27 @@ def run_t10_e2e_cases_from_package(
     stop_after: str | None = None,
     continue_on_error: bool = True,
     exit_on_incomplete: bool = False,
+    feedback_iterations: int = 0,
+    t10_side_group_endpoint_candidates: str | Path | None = None,
+    t10_pair_anchor_endpoint_clusters: str | Path | None = None,
 ) -> T10E2ECaseRunArtifacts:
+    if feedback_iterations < 0:
+        raise ValueError("feedback_iterations must be >= 0.")
+    if feedback_iterations and stop_after:
+        raise ValueError("feedback_iterations requires the full T10 stage order; do not use stop_after.")
+    if feedback_iterations:
+        return _run_t10_e2e_feedback_iterations_from_package(
+            package_dir=package_dir,
+            out_root=out_root,
+            run_id=run_id,
+            case_ids=case_ids,
+            continue_on_error=continue_on_error,
+            exit_on_incomplete=exit_on_incomplete,
+            feedback_iterations=feedback_iterations,
+            t10_side_group_endpoint_candidates=t10_side_group_endpoint_candidates,
+            t10_pair_anchor_endpoint_clusters=t10_pair_anchor_endpoint_clusters,
+        )
+
     package_root = Path(package_dir).expanduser().resolve()
     if not package_root.is_dir():
         raise FileNotFoundError(f"T10 package_dir is not a directory: {package_root}")
@@ -88,6 +117,8 @@ def run_t10_e2e_cases_from_package(
             python_bin=python_bin,
             stage_limit=stage_limit,
             continue_on_error=continue_on_error,
+            side_group_endpoint_candidate_path=_path_from(t10_side_group_endpoint_candidates),
+            pair_anchor_endpoint_cluster_path=_path_from(t10_pair_anchor_endpoint_clusters),
         )
         case_manifests.append(Path(case_result["case_run_manifest_path"]))
         if case_result.get("t06_funnel_json"):
@@ -96,6 +127,7 @@ def run_t10_e2e_cases_from_package(
         if not continue_on_error and case_result["overall_status"] != "passed":
             break
 
+    upstream_feedback = write_t10_upstream_feedback(run_root=run_root, case_results=case_results)
     manifest = {
         "module_id": T10_MODULE_ID,
         "runner": "run_t10_e2e_cases_from_package",
@@ -110,6 +142,29 @@ def run_t10_e2e_cases_from_package(
         "t08_policy": T10_T08_POLICY,
         "case_count": len(case_results),
         "cases": case_results,
+        "upstream_feedback": {
+            "segments_csv": str(upstream_feedback.segments_csv),
+            "segments_json": str(upstream_feedback.segments_json),
+            "summary_csv": str(upstream_feedback.summary_csv),
+            "summary_json": str(upstream_feedback.summary_json),
+            "relations_csv": str(upstream_feedback.relations_csv),
+            "relations_json": str(upstream_feedback.relations_json),
+            "relation_summary_csv": str(upstream_feedback.relation_summary_csv),
+            "relation_summary_json": str(upstream_feedback.relation_summary_json),
+            "side_group_candidates_csv": str(upstream_feedback.side_group_candidates_csv),
+            "side_group_candidates_json": str(upstream_feedback.side_group_candidates_json),
+            "side_group_endpoint_candidates_csv": str(upstream_feedback.side_group_endpoint_candidates_csv),
+            "side_group_endpoint_candidates_json": str(upstream_feedback.side_group_endpoint_candidates_json),
+            "pair_anchor_endpoint_clusters_csv": str(upstream_feedback.pair_anchor_endpoint_clusters_csv),
+            "pair_anchor_endpoint_clusters_json": str(upstream_feedback.pair_anchor_endpoint_clusters_json),
+            "segment_count": upstream_feedback.segment_count,
+            "summary_count": upstream_feedback.summary_count,
+            "relation_count": upstream_feedback.relation_count,
+            "relation_summary_count": upstream_feedback.relation_summary_count,
+            "side_group_candidate_count": upstream_feedback.side_group_candidate_count,
+            "side_group_endpoint_candidate_count": upstream_feedback.side_group_endpoint_candidate_count,
+            "pair_anchor_endpoint_cluster_count": upstream_feedback.pair_anchor_endpoint_cluster_count,
+        },
         "qa": _runner_qa(case_results),
     }
     summary = {
@@ -124,6 +179,18 @@ def run_t10_e2e_cases_from_package(
         "skipped_case_count": sum(1 for item in case_results if item["overall_status"] == "skipped"),
         "passed": bool(case_results) and all(item["overall_status"] == "passed" for item in case_results),
         "exit_on_incomplete": exit_on_incomplete,
+        "upstream_feedback_segment_count": upstream_feedback.segment_count,
+        "upstream_feedback_relation_count": upstream_feedback.relation_count,
+        "upstream_feedback_summary_json": str(upstream_feedback.summary_json),
+        "upstream_feedback_segments_csv": str(upstream_feedback.segments_csv),
+        "upstream_feedback_relation_summary_json": str(upstream_feedback.relation_summary_json),
+        "upstream_feedback_relations_csv": str(upstream_feedback.relations_csv),
+        "upstream_side_group_candidate_count": upstream_feedback.side_group_candidate_count,
+        "upstream_side_group_candidates_csv": str(upstream_feedback.side_group_candidates_csv),
+        "upstream_side_group_endpoint_candidate_count": upstream_feedback.side_group_endpoint_candidate_count,
+        "upstream_side_group_endpoint_candidates_csv": str(upstream_feedback.side_group_endpoint_candidates_csv),
+        "upstream_pair_anchor_endpoint_cluster_count": upstream_feedback.pair_anchor_endpoint_cluster_count,
+        "upstream_pair_anchor_endpoint_clusters_csv": str(upstream_feedback.pair_anchor_endpoint_clusters_csv),
     }
     manifest_path = run_root / "t10_e2e_run_manifest.json"
     summary_path = run_root / "t10_e2e_run_summary.json"
@@ -135,6 +202,222 @@ def run_t10_e2e_cases_from_package(
         summary_json=summary_path,
         case_manifest_paths=tuple(case_manifests),
         t06_funnel_paths=tuple(funnel_paths),
+        upstream_feedback_summary_json=upstream_feedback.summary_json,
+        upstream_feedback_segments_csv=upstream_feedback.segments_csv,
+        upstream_feedback_relation_summary_json=upstream_feedback.relation_summary_json,
+        upstream_feedback_relations_csv=upstream_feedback.relations_csv,
+        upstream_side_group_candidates_csv=upstream_feedback.side_group_candidates_csv,
+        upstream_side_group_endpoint_candidates_csv=upstream_feedback.side_group_endpoint_candidates_csv,
+        upstream_pair_anchor_endpoint_clusters_csv=upstream_feedback.pair_anchor_endpoint_clusters_csv,
+    )
+
+
+def _run_t10_e2e_feedback_iterations_from_package(
+    *,
+    package_dir: str | Path,
+    out_root: str | Path,
+    run_id: str | None,
+    case_ids: Sequence[str] | None,
+    continue_on_error: bool,
+    exit_on_incomplete: bool,
+    feedback_iterations: int,
+    t10_side_group_endpoint_candidates: str | Path | None,
+    t10_pair_anchor_endpoint_clusters: str | Path | None,
+) -> T10E2ECaseRunArtifacts:
+    effective_run_id = run_id or _default_run_id()
+    run_root = Path(out_root).expanduser().resolve() / effective_run_id
+    iterations_root = run_root / "iterations"
+    run_root.mkdir(parents=True, exist_ok=True)
+    current_side_group_candidates = _path_from(t10_side_group_endpoint_candidates)
+    current_pair_anchor_clusters = _path_from(t10_pair_anchor_endpoint_clusters)
+    iteration_records: list[dict[str, Any]] = []
+    iteration_artifacts: list[T10E2ECaseRunArtifacts] = []
+
+    for index in range(feedback_iterations + 1):
+        role = "baseline" if index == 0 else f"feedback_{index}"
+        iteration_run_id = f"iteration_{index:02d}_{role}"
+        artifacts = run_t10_e2e_cases_from_package(
+            package_dir=package_dir,
+            out_root=iterations_root,
+            run_id=iteration_run_id,
+            case_ids=case_ids,
+            stop_after=None,
+            continue_on_error=continue_on_error,
+            exit_on_incomplete=exit_on_incomplete,
+            feedback_iterations=0,
+            t10_side_group_endpoint_candidates=current_side_group_candidates,
+            t10_pair_anchor_endpoint_clusters=current_pair_anchor_clusters,
+        )
+        summary = _read_json(artifacts.summary_json)
+        record = {
+            "iteration_index": index,
+            "iteration_role": role,
+            "run_id": iteration_run_id,
+            "run_root": str(artifacts.run_root),
+            "manifest_json": str(artifacts.manifest_json),
+            "summary_json": str(artifacts.summary_json),
+            "input_side_group_endpoint_candidates": (
+                str(current_side_group_candidates) if current_side_group_candidates else ""
+            ),
+            "input_pair_anchor_endpoint_clusters": str(current_pair_anchor_clusters) if current_pair_anchor_clusters else "",
+            "passed": bool(summary.get("passed")),
+            "upstream_feedback_segment_count": summary.get("upstream_feedback_segment_count", 0),
+            "upstream_side_group_endpoint_candidate_count": summary.get(
+                "upstream_side_group_endpoint_candidate_count", 0
+            ),
+            "upstream_side_group_endpoint_candidates_csv": summary.get(
+                "upstream_side_group_endpoint_candidates_csv", ""
+            ),
+            "upstream_pair_anchor_endpoint_cluster_count": summary.get(
+                "upstream_pair_anchor_endpoint_cluster_count", 0
+            ),
+            "upstream_pair_anchor_endpoint_clusters_csv": summary.get(
+                "upstream_pair_anchor_endpoint_clusters_csv", ""
+            ),
+        }
+        iteration_records.append(record)
+        iteration_artifacts.append(artifacts)
+        if index >= feedback_iterations or not summary.get("passed"):
+            break
+        has_side_group_output = int(summary.get("upstream_side_group_endpoint_candidate_count") or 0) > 0
+        next_side_group_candidates = _path_from(summary.get("upstream_side_group_endpoint_candidates_csv"))
+        next_pair_anchor_clusters_raw = _path_from(summary.get("upstream_pair_anchor_endpoint_clusters_csv"))
+        if has_side_group_output and (not next_side_group_candidates or not next_side_group_candidates.is_file()):
+            break
+        next_pair_anchor_clusters: Path | None = None
+        auto_pair_anchor_count = 0
+        if next_pair_anchor_clusters_raw and next_pair_anchor_clusters_raw.is_file():
+            next_pair_anchor_clusters, auto_pair_anchor_count = _write_auto_consumable_pair_anchor_clusters(
+                next_pair_anchor_clusters_raw,
+                run_root
+                / "feedback_candidates"
+                / f"iteration_{index:02d}_auto_pair_anchor_endpoint_clusters.csv",
+            )
+            record["auto_pair_anchor_endpoint_cluster_count"] = auto_pair_anchor_count
+            record["auto_pair_anchor_endpoint_clusters_csv"] = str(next_pair_anchor_clusters) if next_pair_anchor_clusters else ""
+        if not has_side_group_output and auto_pair_anchor_count <= 0:
+            break
+        changed_any = False
+        if next_side_group_candidates and next_side_group_candidates.is_file():
+            current_side_group_candidates, side_group_changed = _next_cumulative_feedback_file(
+                current=current_side_group_candidates,
+                new=next_side_group_candidates,
+                out_path=run_root
+                / "feedback_candidates"
+                / f"iteration_{index:02d}_cumulative_side_group_endpoint_candidates.csv",
+            )
+            changed_any = changed_any or side_group_changed
+            record["cumulative_side_group_endpoint_candidates_csv"] = (
+                str(current_side_group_candidates) if current_side_group_candidates else ""
+            )
+        if next_pair_anchor_clusters and next_pair_anchor_clusters.is_file():
+            current_pair_anchor_clusters, pair_anchor_changed = _next_cumulative_feedback_file(
+                current=current_pair_anchor_clusters,
+                new=next_pair_anchor_clusters,
+                out_path=run_root
+                / "feedback_candidates"
+                / f"iteration_{index:02d}_cumulative_pair_anchor_endpoint_clusters.csv",
+            )
+            changed_any = changed_any or pair_anchor_changed
+            record["cumulative_pair_anchor_endpoint_clusters_csv"] = (
+                str(current_pair_anchor_clusters) if current_pair_anchor_clusters else ""
+            )
+        if not changed_any:
+            record["feedback_stop_reason"] = "feedback_candidates_converged"
+            break
+
+    baseline_artifacts = iteration_artifacts[0]
+    final_artifacts = iteration_artifacts[-1]
+    final_summary = _read_json(final_artifacts.summary_json)
+    comparison = _compare_feedback_iteration_outputs(
+        baseline_run_root=baseline_artifacts.run_root,
+        final_run_root=final_artifacts.run_root,
+    )
+    regression_guard_passed = (
+        not comparison["removed_replaced_segment_ids"]
+        and not comparison["removed_replacement_plan_segment_ids"]
+    )
+    manifest = {
+        "module_id": T10_MODULE_ID,
+        "runner": "run_t10_e2e_cases_from_package",
+        "run_id": effective_run_id,
+        "produced_at_utc": _now_text(),
+        "package_dir": str(Path(package_dir).expanduser().resolve()),
+        "run_root": str(run_root),
+        "feedback_iteration_mode": True,
+        "feedback_iteration_requested_count": feedback_iterations,
+        "feedback_iteration_pass_count": len(iteration_records),
+        "feedback_iteration_completed_count": max(0, len(iteration_records) - 1),
+        "iterations": iteration_records,
+        "final_iteration": iteration_records[-1],
+        "feedback_comparison": comparison,
+        "feedback_regression_guard_passed": regression_guard_passed,
+        "qa": {
+            "crs_and_transform": "Feedback iteration reuses T10 package inputs and does not transform geometry in T10.",
+            "topology_silent_fix": False,
+            "geometry_semantics": "Only endpoint-level side-group candidates and auto-consumable pair-anchor endpoint clusters are forwarded; segment endpoints are not merged into one junction.",
+            "audit_traceability": "Each iteration keeps its own full T10 run manifest and stage outputs under iterations/.",
+            "performance_verifiability": "Each iteration keeps stage timings; top-level manifest records iteration count and comparison.",
+        },
+    }
+    summary = {
+        "module_id": T10_MODULE_ID,
+        "run_id": effective_run_id,
+        "package_dir": str(Path(package_dir).expanduser().resolve()),
+        "run_root": str(run_root),
+        "feedback_iteration_mode": True,
+        "feedback_iteration_requested_count": feedback_iterations,
+        "feedback_iteration_pass_count": len(iteration_records),
+        "feedback_iteration_completed_count": max(0, len(iteration_records) - 1),
+        "feedback_regression_guard_passed": regression_guard_passed,
+        "feedback_comparison": comparison,
+        "case_count": final_summary.get("case_count", 0),
+        "passed_case_count": final_summary.get("passed_case_count", 0),
+        "failed_case_count": final_summary.get("failed_case_count", 0),
+        "blocked_case_count": final_summary.get("blocked_case_count", 0),
+        "skipped_case_count": final_summary.get("skipped_case_count", 0),
+        "passed": bool(final_summary.get("passed")) and regression_guard_passed,
+        "exit_on_incomplete": exit_on_incomplete,
+        "upstream_feedback_segment_count": final_summary.get("upstream_feedback_segment_count", 0),
+        "upstream_feedback_relation_count": final_summary.get("upstream_feedback_relation_count", 0),
+        "upstream_feedback_summary_json": final_summary.get("upstream_feedback_summary_json", ""),
+        "upstream_feedback_segments_csv": final_summary.get("upstream_feedback_segments_csv", ""),
+        "upstream_feedback_relation_summary_json": final_summary.get(
+            "upstream_feedback_relation_summary_json", ""
+        ),
+        "upstream_feedback_relations_csv": final_summary.get("upstream_feedback_relations_csv", ""),
+        "upstream_side_group_candidate_count": final_summary.get("upstream_side_group_candidate_count", 0),
+        "upstream_side_group_candidates_csv": final_summary.get("upstream_side_group_candidates_csv", ""),
+        "upstream_side_group_endpoint_candidate_count": final_summary.get(
+            "upstream_side_group_endpoint_candidate_count", 0
+        ),
+        "upstream_side_group_endpoint_candidates_csv": final_summary.get(
+            "upstream_side_group_endpoint_candidates_csv", ""
+        ),
+        "upstream_pair_anchor_endpoint_cluster_count": final_summary.get(
+            "upstream_pair_anchor_endpoint_cluster_count", 0
+        ),
+        "upstream_pair_anchor_endpoint_clusters_csv": final_summary.get(
+            "upstream_pair_anchor_endpoint_clusters_csv", ""
+        ),
+    }
+    manifest_path = run_root / "t10_e2e_run_manifest.json"
+    summary_path = run_root / "t10_e2e_run_summary.json"
+    _write_json(manifest_path, manifest)
+    _write_json(summary_path, summary)
+    return T10E2ECaseRunArtifacts(
+        run_root=run_root,
+        manifest_json=manifest_path,
+        summary_json=summary_path,
+        case_manifest_paths=final_artifacts.case_manifest_paths,
+        t06_funnel_paths=final_artifacts.t06_funnel_paths,
+        upstream_feedback_summary_json=final_artifacts.upstream_feedback_summary_json,
+        upstream_feedback_segments_csv=final_artifacts.upstream_feedback_segments_csv,
+        upstream_feedback_relation_summary_json=final_artifacts.upstream_feedback_relation_summary_json,
+        upstream_feedback_relations_csv=final_artifacts.upstream_feedback_relations_csv,
+        upstream_side_group_candidates_csv=final_artifacts.upstream_side_group_candidates_csv,
+        upstream_side_group_endpoint_candidates_csv=final_artifacts.upstream_side_group_endpoint_candidates_csv,
+        upstream_pair_anchor_endpoint_clusters_csv=final_artifacts.upstream_pair_anchor_endpoint_clusters_csv,
     )
 
 
@@ -148,6 +431,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         stop_after=args.stop_after,
         continue_on_error=args.continue_on_error,
         exit_on_incomplete=not args.exit_zero,
+        feedback_iterations=args.feedback_iterations,
+        t10_pair_anchor_endpoint_clusters=args.t10_pair_anchor_endpoint_clusters,
     )
     summary = _read_json(artifacts.summary_json)
     print(json.dumps(summary, ensure_ascii=False, indent=2), flush=True)
@@ -165,6 +450,8 @@ def _run_one_case(
     python_bin: Path | str,
     stage_limit: int,
     continue_on_error: bool,
+    side_group_endpoint_candidate_path: Path | None = None,
+    pair_anchor_endpoint_cluster_path: Path | None = None,
 ) -> dict[str, Any]:
     case_manifest_path = case_dir / "t10_case_evidence_manifest.json"
     case_manifest = _read_json(case_manifest_path)
@@ -191,6 +478,8 @@ def _run_one_case(
                     python_bin=python_bin,
                     external_inputs=external_inputs,
                     handoffs=handoffs,
+                    side_group_endpoint_candidate_path=side_group_endpoint_candidate_path,
+                    pair_anchor_endpoint_cluster_path=pair_anchor_endpoint_cluster_path,
                 )
             except Exception as exc:  # noqa: BLE001 - runner must audit unexpected module failures.
                 record = _exception_record(stage_id, stage_dir, exc)
@@ -260,6 +549,8 @@ def _run_stage(
     python_bin: Path | str,
     external_inputs: Mapping[str, Path],
     handoffs: Mapping[str, str],
+    side_group_endpoint_candidate_path: Path | None = None,
+    pair_anchor_endpoint_cluster_path: Path | None = None,
 ) -> tuple[dict[str, Any], dict[str, str]]:
     if stage_id == "t01":
         return _run_t01(case_id, stage_dir, repo_root, external_inputs)
@@ -270,7 +561,16 @@ def _run_stage(
     if stage_id == "t04":
         return _run_t04(case_id, stage_dir, repo_root, external_inputs, handoffs)
     if stage_id == "t05":
-        return _run_t05(case_id, stage_dir, repo_root, python_bin, external_inputs, handoffs)
+        return _run_t05(
+            case_id,
+            stage_dir,
+            repo_root,
+            python_bin,
+            external_inputs,
+            handoffs,
+            side_group_endpoint_candidate_path=side_group_endpoint_candidate_path,
+            pair_anchor_endpoint_cluster_path=pair_anchor_endpoint_cluster_path,
+        )
     if stage_id == "t07_step3":
         return _run_t07_step3(case_id, stage_dir, repo_root, python_bin, handoffs)
     if stage_id == "t06_step12":
@@ -327,6 +627,7 @@ def _run_t07(
         "t01_nodes": _path_from(handoffs.get("t01_nodes")),
         "drivezone": external_inputs.get("drivezone"),
         "rcsd_intersection": external_inputs.get("rcsd_intersection"),
+        "rcsdnode": external_inputs.get("rcsdnode"),
     }
     missing = _missing_files(inputs)
     if missing:
@@ -335,6 +636,7 @@ def _run_t07(
         "NODES_PATH": str(inputs["t01_nodes"]),
         "DRIVEZONE_PATH": str(inputs["drivezone"]),
         "INTERSECTION_PATH": str(inputs["rcsd_intersection"]),
+        "RCSDNODE_PATH": str(inputs["rcsdnode"]),
         "OUT_ROOT": str(stage_dir),
         "RUN_ID": "t07",
     }
@@ -452,6 +754,9 @@ def _run_t05(
     python_bin: Path | str,
     external_inputs: Mapping[str, Path],
     handoffs: Mapping[str, str],
+    *,
+    side_group_endpoint_candidate_path: Path | None = None,
+    pair_anchor_endpoint_cluster_path: Path | None = None,
 ) -> tuple[dict[str, Any], dict[str, str]]:
     inputs = {
         "t07_nodes": _path_from(handoffs.get("t07_nodes")),
@@ -463,10 +768,24 @@ def _run_t05(
         "t04_relation_evidence": _path_from(handoffs.get("t04_relation_evidence")),
         "t04_summary": _path_from(handoffs.get("t04_summary")),
         "t04_audit": _path_from(handoffs.get("t04_audit")),
+        "t10_side_group_endpoint_candidates": side_group_endpoint_candidate_path
+        or _path_from(os.environ.get("T10_SIDE_GROUP_ENDPOINT_CANDIDATES")),
+        "t10_pair_anchor_endpoint_clusters": pair_anchor_endpoint_cluster_path
+        or _path_from(os.environ.get("T10_PAIR_ANCHOR_ENDPOINT_CLUSTERS")),
         "rcsdroad": external_inputs.get("rcsdroad"),
         "rcsdnode": external_inputs.get("rcsdnode"),
     }
-    required_inputs = {key: value for key, value in inputs.items() if key not in {"t04_summary", "t04_audit"}}
+    required_inputs = {
+        key: value
+        for key, value in inputs.items()
+        if key
+        not in {
+            "t04_summary",
+            "t04_audit",
+            "t10_side_group_endpoint_candidates",
+            "t10_pair_anchor_endpoint_clusters",
+        }
+    }
     missing = _missing_files(required_inputs)
     if missing:
         return _blocked_record("t05", stage_dir, "Missing T05 explicit file inputs.", inputs=inputs, missing=missing), {}
@@ -509,6 +828,10 @@ def _run_t05(
         command.extend(["--t04-audit", str(inputs["t04_audit"])])
     if t04_case_root and t04_case_root.is_dir():
         command.extend(["--t04-case-root", str(t04_case_root)])
+    if inputs["t10_side_group_endpoint_candidates"] and inputs["t10_side_group_endpoint_candidates"].is_file():
+        command.extend(["--t10-side-group-endpoint-candidates", str(inputs["t10_side_group_endpoint_candidates"])])
+    if inputs["t10_pair_anchor_endpoint_clusters"] and inputs["t10_pair_anchor_endpoint_clusters"].is_file():
+        command.extend(["--t10-pair-anchor-endpoint-clusters", str(inputs["t10_pair_anchor_endpoint_clusters"])])
     record = _execute_command("t05", stage_dir, repo_root, command, {}, inputs)
     if t04_case_root:
         record["execution_context"] = _paths_payload({"t04_case_root": t04_case_root})
@@ -560,7 +883,7 @@ def _run_t07_step3(
     )
     step3_root = stage_dir / "t07_step3" / "step3_intersection_match"
     produced = {
-        "t07_step2_nodes": _path_text(inputs["t07_nodes"]),
+        "t07_step2_nodes": str(inputs["t07_nodes"]),
         "t07_step3_root": _path_text(step3_root),
         "t07_nodes": _path_text(step3_root / "nodes.gpkg"),
         "t07_step3_nodes": _path_text(step3_root / "nodes.gpkg"),
@@ -848,10 +1171,15 @@ def build_t10_t06_funnel_summary(
         _metric("T06 Step2", "input_fusion_unit_count", step2.get("input_fusion_unit_count")),
         _metric("T06 Step2", "rcsd_candidate_count", step2.get("rcsd_candidate_count")),
         _metric("T06 Step2", "replaceable_count", step2.get("replaceable_count")),
+        _metric("T06 Step2", "replacement_plan_count", step2.get("replacement_plan_count")),
+        _metric("T06 Step2", "replacement_plan_ready_count", step2.get("replacement_plan_ready_count")),
+        _metric("T06 Step2", "problem_registry_count", step2.get("problem_registry_count")),
         _metric("T06 Step2", "rejected_count", step2.get("rejected_count")),
         _metric("T06 Step2", "buffer_segment_count", step2.get("buffer_segment_count")),
         _metric("T06 Step2", "buffer_rejected_count", step2.get("buffer_rejected_count")),
         _metric("T06 Step3", "input_replaceable_count", step3.get("input_replaceable_count")),
+        _metric("T06 Step3", "input_replacement_plan_count", step3.get("input_replacement_plan_count")),
+        _metric("T06 Step3", "input_standard_replacement_plan_count", step3.get("input_standard_replacement_plan_count")),
         _metric("T06 Step3", "replacement_unit_success_count", step3.get("replacement_unit_success_count")),
         _metric("T06 Step3", "replacement_unit_failure_count", step3.get("replacement_unit_failure_count")),
         _metric("T06 Step3", "removed_swsd_road_count", step3.get("removed_swsd_road_count")),
@@ -878,6 +1206,9 @@ def build_t10_t06_funnel_summary(
             "step2_buffer": step2.get("buffer_reject_reason_counts", {}),
         },
         "replacement_quality": {
+            "replacement_plan_source": step3.get("replacement_plan_source"),
+            "replacement_plan_scope_counts": step2.get("replacement_plan_scope_counts", {}),
+            "problem_registry_status_counts": step2.get("problem_registry_status_counts", {}),
             "road_id_collision_count": step3.get("road_id_collision_count"),
             "node_id_collision_count": step3.get("node_id_collision_count"),
             "junction_c_count": step3.get("junction_c_count"),
@@ -944,6 +1275,179 @@ def _stage_limit(stop_after: str | None) -> int:
     if normalized not in T10_E2E_STAGE_ORDER:
         raise ValueError(f"stop_after must be one of {', '.join(T10_E2E_STAGE_ORDER)}.")
     return T10_E2E_STAGE_ORDER.index(normalized) + 1
+
+
+def _compare_feedback_iteration_outputs(
+    *,
+    baseline_run_root: Path,
+    final_run_root: Path,
+) -> dict[str, Any]:
+    baseline_replaced = _replaced_segment_ids(baseline_run_root)
+    final_replaced = _replaced_segment_ids(final_run_root)
+    baseline_plan = _replacement_plan_segment_ids(baseline_run_root)
+    final_plan = _replacement_plan_segment_ids(final_run_root)
+    return {
+        "baseline_run_root": str(baseline_run_root),
+        "final_run_root": str(final_run_root),
+        "baseline_replaced_segment_count": len(baseline_replaced),
+        "final_replaced_segment_count": len(final_replaced),
+        "added_replaced_segment_ids": sorted(final_replaced - baseline_replaced),
+        "removed_replaced_segment_ids": sorted(baseline_replaced - final_replaced),
+        "baseline_replacement_plan_segment_count": len(baseline_plan),
+        "final_replacement_plan_segment_count": len(final_plan),
+        "added_replacement_plan_segment_ids": sorted(final_plan - baseline_plan),
+        "removed_replacement_plan_segment_ids": sorted(baseline_plan - final_plan),
+    }
+
+
+def _same_side_group_endpoint_candidates(left: Path, right: Path) -> bool:
+    _left_rows, left_keys, _left_fields = _candidate_rows_with_keys(left)
+    _right_rows, right_keys, _right_fields = _candidate_rows_with_keys(right)
+    return left_keys == right_keys
+
+
+def _next_cumulative_feedback_file(*, current: Path | None, new: Path, out_path: Path) -> tuple[Path | None, bool]:
+    if current is None:
+        return new, True
+    return _write_merged_side_group_endpoint_candidates(current, new, out_path)
+
+
+def _write_auto_consumable_pair_anchor_clusters(source: Path, out_path: Path) -> tuple[Path | None, int]:
+    rows = _read_csv_rows(source)
+    fieldnames = _csv_fieldnames(source)
+    auto_rows = [
+        row
+        for row in rows
+        if str(row.get("auto_consumable_by_t05") or "").strip().lower() in {"1", "true", "yes", "y"}
+    ]
+    if not auto_rows:
+        return None, 0
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with out_path.open("w", newline="", encoding="utf-8") as fp:
+        writer = csv.DictWriter(fp, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in auto_rows:
+            writer.writerow({field: row.get(field, "") for field in fieldnames})
+    return out_path, len(auto_rows)
+
+
+def _write_merged_side_group_endpoint_candidates(existing: Path, new: Path, out_path: Path) -> tuple[Path, bool]:
+    existing_rows, existing_keys, existing_fields = _candidate_rows_with_keys(existing)
+    new_rows, new_keys, new_fields = _candidate_rows_with_keys(new)
+    merged_by_key = dict(existing_rows)
+    for key, row in new_rows.items():
+        merged_by_key.setdefault(key, row)
+    merged_keys = set(merged_by_key)
+    if merged_keys == existing_keys:
+        return existing, False
+    fieldnames = _merged_fieldnames(existing_fields, new_fields)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with out_path.open("w", newline="", encoding="utf-8") as fp:
+        writer = csv.DictWriter(fp, fieldnames=fieldnames)
+        writer.writeheader()
+        for key in sorted(merged_by_key):
+            row = merged_by_key[key]
+            writer.writerow({field: row.get(field, "") for field in fieldnames})
+    return out_path, True
+
+
+def _candidate_rows_for_convergence(path: Path) -> list[dict[str, str]]:
+    rows, _keys, _fields = _candidate_rows_with_keys(path)
+    return [rows[key] for key in sorted(rows)]
+
+
+def _candidate_rows_with_keys(path: Path) -> tuple[dict[str, dict[str, str]], set[str], list[str]]:
+    if not path.is_file():
+        return {}, set(), []
+    rows: dict[str, dict[str, str]] = {}
+    fieldnames: list[str] = []
+    with path.open(newline="", encoding="utf-8-sig") as fp:
+        reader = csv.DictReader(fp)
+        fieldnames = [field for field in (reader.fieldnames or []) if field]
+        for raw in reader:
+            row = {str(key): str(value or "") for key, value in raw.items() if key}
+            key = _candidate_business_key(row)
+            rows.setdefault(key, row)
+    return rows, set(rows), fieldnames
+
+
+def _csv_fieldnames(path: Path) -> list[str]:
+    with path.open(newline="", encoding="utf-8-sig") as fp:
+        reader = csv.DictReader(fp)
+        return [field for field in (reader.fieldnames or []) if field]
+
+
+def _candidate_business_key(row: Mapping[str, Any]) -> str:
+    comparable = {
+        str(key): str(value or "")
+        for key, value in row.items()
+        if key and key != "problem_registry_path"
+    }
+    return json.dumps(comparable, ensure_ascii=False, sort_keys=True)
+
+
+def _merged_fieldnames(left: Sequence[str], right: Sequence[str]) -> list[str]:
+    fields: list[str] = []
+    for field in [*left, *right]:
+        if field and field not in fields:
+            fields.append(field)
+    return fields
+
+
+def _replaced_segment_ids(run_root: Path) -> set[str]:
+    result: set[str] = set()
+    for path in run_root.glob("cases/*/t06_step12/t06/step3_segment_replacement/t06_step3_swsd_frcsd_segment_relation.csv"):
+        for row in _read_csv_rows(path):
+            status = str(row.get("relation_status") or "").strip().lower()
+            if "replaced" not in status:
+                continue
+            segment_id = str(row.get("swsd_segment_id") or "").strip()
+            if segment_id:
+                result.add(segment_id)
+    return result
+
+
+def _replacement_plan_segment_ids(run_root: Path) -> set[str]:
+    result: set[str] = set()
+    for path in run_root.glob("cases/*/t06_step12/t06/step2_extract_rcsd_segments/t06_segment_replacement_plan.csv"):
+        for row in _read_csv_rows(path):
+            for segment_id in _replacement_plan_row_segment_ids(row):
+                result.add(segment_id)
+    return result
+
+
+def _replacement_plan_row_segment_ids(row: Mapping[str, Any]) -> list[str]:
+    result: list[str] = []
+    segment_id = str(row.get("swsd_segment_id") or "").strip()
+    if segment_id:
+        result.append(segment_id)
+    for group_segment_id in _serialized_id_list(row.get("group_segment_ids")):
+        if group_segment_id and group_segment_id not in result:
+            result.append(group_segment_id)
+    return result
+
+
+def _serialized_id_list(value: Any) -> list[str]:
+    text = str(value or "").strip()
+    if not text:
+        return []
+    try:
+        parsed = ast.literal_eval(text)
+    except (ValueError, SyntaxError):
+        parsed = None
+    if isinstance(parsed, (list, tuple, set)):
+        return [item for item in (str(item).strip() for item in parsed) if item]
+    if text.lower() in {"none", "null", "nan", "[]"}:
+        return []
+    cleaned = text.strip("[](){}")
+    return [item for item in (part.strip().strip("'\"") for part in cleaned.replace("|", ",").split(",")) if item]
+
+
+def _read_csv_rows(path: Path) -> list[dict[str, str]]:
+    if not path.is_file():
+        return []
+    with path.open("r", encoding="utf-8", newline="") as fp:
+        return list(csv.DictReader(fp))
 
 
 def _blocked_record(
@@ -1107,7 +1611,7 @@ def _path_from(value: str | Path | None) -> Path | None:
 def _path_text(path: Path | None) -> str:
     if path is None:
         return ""
-    return str(path) if path.exists() else ""
+    return path.as_posix() if path.exists() else ""
 
 
 def _paths_payload(inputs: Mapping[str, Path | None]) -> dict[str, str]:
@@ -1157,7 +1661,7 @@ def _command_env(repo_root: Path, overrides: Mapping[str, str]) -> dict[str, str
     src_root = str(repo_root / "src")
     env["PYTHONPATH"] = src_root + (":" + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
     repo_python = repo_root / ".venv" / "bin" / "python"
-    if repo_python.is_file():
+    if _is_accessible_file(repo_python):
         env.setdefault("PYTHON_BIN", str(repo_python))
     env.update({key: str(value) for key, value in overrides.items()})
     return env
@@ -1180,7 +1684,14 @@ def _repo_root() -> Path:
 
 def _python_bin(repo_root: Path) -> Path | str:
     candidate = repo_root / ".venv" / "bin" / "python"
-    return candidate if candidate.is_file() else "python3"
+    return candidate if _is_accessible_file(candidate) else "python3"
+
+
+def _is_accessible_file(path: Path) -> bool:
+    try:
+        return path.is_file()
+    except OSError:
+        return False
 
 
 def _default_run_id() -> str:
@@ -1204,6 +1715,17 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument("--stop-after", choices=T10_E2E_STAGE_ORDER, default=None)
     parser.add_argument("--continue-on-error", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--exit-zero", action="store_true", help="Return 0 even when some cases are blocked or failed.")
+    parser.add_argument(
+        "--feedback-iterations",
+        type=int,
+        default=0,
+        help="Optional T10 upstream-feedback iteration count. 0 keeps the default single-pass behavior.",
+    )
+    parser.add_argument(
+        "--t10-pair-anchor-endpoint-clusters",
+        default=None,
+        help="Optional T10 pair-anchor endpoint cluster CSV to feed into T05 Phase2.",
+    )
     return parser.parse_args(argv)
 
 

@@ -28,6 +28,9 @@ STEP2_SPECIAL_JUNCTION_GROUPS_STEM = "t06_special_junction_group_audit"
 STEP2_BUFFER_ONLY_PROBE_STEM = "t06_rcsd_buffer_only_probe"
 STEP2_REPAIR_CANDIDATES_STEM = "t06_rcsd_repair_candidates"
 STEP2_FAILURE_BUSINESS_AUDIT_STEM = "t06_rcsd_segment_failure_business_audit"
+STEP2_GROUP_REPLACEMENT_AUDIT_STEM = "t06_segment_group_replacement_audit"
+STEP2_REPLACEMENT_PLAN_STEM = "t06_segment_replacement_plan"
+STEP2_PROBLEM_REGISTRY_STEM = "t06_segment_replacement_problem_registry"
 STEP2_SUMMARY = "t06_step2_summary.json"
 
 STEP3_FRCSD_ROAD_STEM = "t06_frcsd_road"
@@ -267,6 +270,47 @@ STEP2_SPECIAL_JUNCTION_GROUP_FIELDS = [
     "notes",
 ]
 
+STEP2_GROUP_REPLACEMENT_AUDIT_FIELDS = [
+    "swsd_segment_id",
+    "audit_status",
+    "corridor_audit_status",
+    "source_reject_reason",
+    "failure_business_category",
+    "swsd_sgrade",
+    "swsd_directionality",
+    "swsd_pair_nodes",
+    "swsd_junc_nodes",
+    "rcsd_pair_nodes",
+    "path_direction_count",
+    "path_rcsd_road_ids",
+    "path_rcsd_node_ids",
+    "unexpected_mapped_rcsd_node_ids",
+    "unexpected_mapped_swsd_target_ids",
+    "unexpected_mapped_swsd_target_count",
+    "group_segment_ids",
+    "group_segment_count",
+    "replaceable_group_segment_ids",
+    "rejected_group_segment_ids",
+    "outside_step1_group_segment_ids",
+    "blocked_group_segment_ids",
+    "blocker_reasons",
+    "path_corridor_group_segment_ids",
+    "path_corridor_group_segment_count",
+    "path_corridor_blocked_segment_ids",
+    "path_corridor_blocker_reasons",
+    "side_incident_group_segment_ids",
+    "group_probe_status",
+    "group_probe_reason",
+    "group_probe_buffer_distance_m",
+    "group_probe_rcsd_road_ids",
+    "group_probe_rcsd_road_count",
+    "group_probe_swsd_uncovered_ratio",
+    "group_probe_rcsd_outside_ratio",
+    "group_probe_repair_owner",
+    "repair_recommendation",
+    "notes",
+]
+
 STEP2_BUFFER_ONLY_PROBE_FIELDS = [
     "swsd_segment_id",
     "probe_status",
@@ -364,6 +408,64 @@ STEP2_FAILURE_BUSINESS_AUDIT_FIELDS = [
     "upstream_issue_owner",
 ]
 
+STEP2_REPLACEMENT_PLAN_FIELDS = [
+    "replacement_plan_id",
+    "swsd_segment_id",
+    "plan_status",
+    "execution_action",
+    "execution_scope",
+    "plan_owner",
+    "upstream_owner",
+    "source_artifact",
+    "source_reason",
+    "replacement_strategy",
+    "special_junction_id",
+    "special_junction_type",
+    "swsd_sgrade",
+    "swsd_directionality",
+    "swsd_pair_nodes",
+    "swsd_junc_nodes",
+    "junc_kind2_exempt_nodes",
+    "detached_junc_nodes",
+    "rcsd_pair_nodes",
+    "rcsd_junc_nodes",
+    "rcsd_road_ids",
+    "retained_node_ids",
+    "group_segment_ids",
+    "source_segment_ids",
+    "buffer_distances_m",
+    "risk_flags",
+    "notes",
+]
+
+STEP2_PROBLEM_REGISTRY_FIELDS = [
+    "problem_id",
+    "swsd_segment_id",
+    "problem_status",
+    "root_cause_category",
+    "failure_business_category",
+    "reject_reason",
+    "upstream_issue_owner",
+    "recommended_module",
+    "feedback_action",
+    "replan_trigger",
+    "swsd_pair_nodes",
+    "swsd_junc_nodes",
+    "rcsd_pair_nodes",
+    "candidate_rcsd_pair_node_sets",
+    "pair_anchor_error_swsd_nodes",
+    "pair_anchor_error_original_rcsd_nodes",
+    "pair_anchor_error_candidate_rcsd_nodes",
+    "pair_anchor_endpoint_cluster_nodes",
+    "pair_anchor_bridge_road_ids",
+    "pair_anchor_bridge_length_m",
+    "pair_anchor_diagnostic_source",
+    "pair_anchor_diagnostic_reason",
+    "evidence_artifacts",
+    "manual_review_required",
+    "notes",
+]
+
 STEP3_REPLACEMENT_UNIT_FIELDS = [
     "swsd_segment_id",
     "unit_status",
@@ -381,6 +483,10 @@ STEP3_REPLACEMENT_UNIT_FIELDS = [
     "rcsd_pair_nodes",
     "rcsd_junc_nodes",
     "junction_c_ids",
+    "group_replacement_plan_ids",
+    "group_replacement_source_segment_ids",
+    "group_replacement_segment_ids",
+    "group_replacement_buffer_distances_m",
 ]
 
 STEP3_SWSD_FRCSD_SEGMENT_RELATION_FIELDS = [
@@ -399,6 +505,9 @@ STEP3_SWSD_FRCSD_SEGMENT_RELATION_FIELDS = [
     "rcsd_pair_nodes",
     "rcsd_junc_nodes",
     "junction_c_ids",
+    "group_replacement_plan_ids",
+    "group_replacement_source_segment_ids",
+    "group_replacement_segment_ids",
     "swsd_to_frcsd_node_map",
     "source_mix",
     "risk_flags",
@@ -475,6 +584,8 @@ class T06Step2Artifacts:
     replaceable_gpkg_path: Path
     rejected_gpkg_path: Path
     summary_path: Path
+    replacement_plan_gpkg_path: Path | None = None
+    problem_registry_gpkg_path: Path | None = None
 
 
 @dataclass(frozen=True)

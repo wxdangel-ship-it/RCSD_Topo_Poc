@@ -263,6 +263,13 @@ t10_case_bundle.part_0002_of_000N.txt
 
 - `t10_e2e_run_manifest.json`
 - `t10_e2e_run_summary.json`
+- `t10_upstream_feedback_segments.csv/json`
+- `t10_upstream_feedback_summary.csv/json`
+- `t10_upstream_side_group_candidates.csv/json`
+- `t10_upstream_side_group_endpoint_candidates.csv/json`
+- `t10_upstream_pair_anchor_endpoint_clusters.csv/json`
+- `t10_upstream_feedback_relations.csv/json`
+- `t10_upstream_feedback_relation_summary.csv/json`
 - `cases/<case_id>/t10_e2e_case_run_manifest.json`
 - `cases/<case_id>/t10_e2e_case_run_summary.json`
 - `cases/<case_id>/t10_t06_funnel.json`
@@ -270,6 +277,13 @@ t10_case_bundle.part_0002_of_000N.txt
 - `cases/<case_id>/t10_t06_funnel.md`
 - `cases/<case_id>/<stage>/stdout.log`
 - `cases/<case_id>/<stage>/<stage>_stage.json`
+
+当 `feedback_iterations > 0` 或脚本环境变量 `T10_FEEDBACK_ITERATIONS > 0` 时，顶层 `<out_root>/<run_id>/` 作为反馈迭代汇总目录；每个 pass 写入：
+
+- `iterations/iteration_00_baseline/`
+- `iterations/iteration_<NN>_feedback_<NN>/`
+
+顶层 `t10_e2e_run_manifest.json` 与 `t10_e2e_run_summary.json` 记录 `feedback_iteration_mode / iterations / final_iteration / feedback_comparison / feedback_regression_guard_passed`。`feedback_comparison` 必须至少包含 baseline 与最终 pass 的 `added_replaced_segment_ids / removed_replaced_segment_ids / added_replacement_plan_segment_ids / removed_replacement_plan_segment_ids`。replacement plan 对比必须使用 plan 覆盖 Segment 集合：普通 plan 行读取 `swsd_segment_id`，组级 plan 行还必须展开 `group_segment_ids`，以允许已成功单段从 `standard_segment` 升级为 `path_corridor_group` 成员而不被误判为回退。若任一已有 replaced Segment 或 replacement plan 覆盖 Segment 在最终 pass 被移除，`feedback_regression_guard_passed = false`，本次 run 不通过。多轮 feedback pass 必须把 side-group endpoint candidate 与 `auto_consumable_by_t05=true` 的 pair-anchor endpoint cluster 按业务字段去重累积，并分别在 `<run_root>/feedback_candidates/iteration_<NN>_cumulative_side_group_endpoint_candidates.csv`、`<run_root>/feedback_candidates/iteration_<NN>_cumulative_pair_anchor_endpoint_clusters.csv` 发布累积候选供下一 pass 消费，不允许用后一轮新产物覆盖前一轮已生效候选。当本轮产出的 feedback candidate 与本轮输入候选在业务字段上完全一致时，`final_iteration.feedback_stop_reason = feedback_candidates_converged`，runner 不再继续后续 feedback pass；收敛判断忽略 `problem_registry_path` 等来源路径字段。
 
 阶段状态：
 
@@ -283,9 +297,27 @@ t10_case_bundle.part_0002_of_000N.txt
 T06 数据漏斗至少记录：
 
 - Step1：`input_segment_count / evd_candidate_count / swsd_candidate_count / final_fusion_unit_count / swsd_final_fusion_unit_count`。
-- Step2：`input_fusion_unit_count / rcsd_candidate_count / replaceable_count / rejected_count / buffer_segment_count / buffer_rejected_count`。
-- Step3：`input_replaceable_count / replacement_unit_success_count / replacement_unit_failure_count / removed_swsd_road_count / removed_swsd_node_count / added_rcsd_road_count / added_rcsd_node_count / frcsd_road_count / frcsd_node_count / segment_relation_count`。
-- 质量：Step1/Step2 reject reason、Step2 buffer reject reason、Step3 collision 与 segment relation 状态计数。
+- Step2：`input_fusion_unit_count / rcsd_candidate_count / replaceable_count / replacement_plan_count / replacement_plan_ready_count / problem_registry_count / rejected_count / buffer_segment_count / buffer_rejected_count`。
+- Step3：`input_replaceable_count / input_replacement_plan_count / input_standard_replacement_plan_count / replacement_unit_success_count / replacement_unit_failure_count / removed_swsd_road_count / removed_swsd_node_count / added_rcsd_road_count / added_rcsd_node_count / frcsd_road_count / frcsd_node_count / segment_relation_count`。
+- 质量：Step1/Step2 reject reason、Step2 buffer reject reason、replacement plan scope、problem registry status、Step3 collision 与 segment relation 状态计数。
+
+T10 Case runner 在 run root 额外发布 T06 上游反馈包：
+
+- `t10_upstream_feedback_segments.csv/json`：逐条收集各 Case `t06_segment_replacement_problem_registry.csv` 中 `problem_status` 以 `requires_upstream` 开头的 Segment，保留 `problem_status / recommended_module / upstream_issue_owner / failure_business_category / reject_reason / root_cause_category / feedback_action / evidence_artifacts`、pair-anchor endpoint 诊断字段与来源 registry 路径；其中 `requires_upstream_side_group_or_rcsd_directionality_review` 表示应先评估 T03/T04/T05 双幅端点侧聚合，聚合不成立时再进入 RCSD 方向性或源资料复核。
+- `t10_upstream_feedback_summary.csv/json`：按 `recommended_module + upstream_issue_owner + failure_business_category + reject_reason + root_cause_category` 聚合计数，并保留样例 Case 与 Segment。
+- `t10_upstream_side_group_candidates.csv/json`：从 `requires_upstream_side_group_or_rcsd_directionality_review` Segment 中提取 `swsd_endpoint_node_ids / rcsd_primary_pair_node_ids / candidate_rcsd_pair_node_sets / candidate_group_rcsdnode_ids`，形成 T03/T04/T05 二次迭代可消费的候选聚合单元；该产物只表达“需要评估虚拟路口聚合”的候选范围，不宣布聚合成立，也不修正 RCSD 道路方向性。候选集合必须引入 `rcsd_primary_pair_node_ids` 之外的新 RCSDNode；无新增节点的 no-op 候选只保留在 segment feedback 中。
+- `t10_upstream_side_group_endpoint_candidates.csv/json`：将满足新增 RCSDNode 条件的 `requires_upstream_side_group_or_rcsd_directionality_review` segment 级候选按 `swsd_endpoint_node_ids` 拆成 endpoint 级候选，每行包含一个 SWSD endpoint `target_id`、该端点对应的 `rcsd_primary_node_id` 与 `candidate_rcsdnode_ids`。该产物是 T05 Phase2 的可选补充输入，只能补充同 target 已存在的 T07/T03/T04/T02 成功 relation 以执行 RCSDNode grouping，不得单独创建 SWSD-RCSD relation。拆分 endpoint candidate 时，若某个候选 RCSDNode 等于同一 SWSD Segment 另一端的 primary pair node，必须从当前 endpoint 候选中剔除；剔除后无新增 RCSDNode 的 endpoint 行不得发布给 T05，避免把双端锚点压入同一虚拟聚合关系。对于 `directionality_mismatch_fixable + rcsd_not_bidirectional_for_swsd_dual` 且 T06 `t06_rcsd_buffer_only_probe.csv` 已找到单连通候选走廊的 Segment，T10 允许基于 T05 `relation_graph_consumability_audit.csv`、`rcsd_junctionization_audit.csv` 与 `rcsdroad_out.gpkg` 生成 `side_group_action=supplement_existing_relation_with_relation_graph_bridge` 的 endpoint candidate；该候选只能补充已由 `T10_SIDE_GROUP` 形成的多基准 relation，新增 RCSDNode 必须同时是 T05 已消费 relation 的 `base_id`、不属于当前 Segment 两端 primary pair node、在 RCSD road graph 中 1 hop 内连接当前 Segment primary pair node，且 3 hop 内连接该 `T10_SIDE_GROUP` relation graph 上下文。其它 `requires_upstream_iteration` 即使携带 `candidate_rcsd_pair_node_sets`，在没有明确端点下标语义前也不得转成 endpoint candidate。
+- `t10_upstream_pair_anchor_endpoint_clusters.csv/json`：将 T06 problem registry 中稳定的 `pair_anchor_endpoint_cluster_nodes` 按 endpoint 拆成审计行，保留 `pair_anchor_bridge_road_ids / pair_anchor_bridge_length_m / pair_anchor_diagnostic_source / pair_anchor_diagnostic_reason` 与来源 registry 路径。该产物默认 `auto_consumable_by_t05=false`；只有 `problem_status` 以 `requires_upstream` 开头、`failure_business_category=pair_anchor_mismatch`、`reject_reason=rcsd_pair_nodes_not_distinct`、`pair_anchor_diagnostic_source=buffer_only_endpoint_cluster`、`pair_anchor_diagnostic_reason=short_connected_endpoint_cluster`，且该 endpoint cluster 至少包含 `rcsd_primary_node_id` 之外的新增 RCSDNode 时，才允许标记 `auto_consumable_by_t05=true`。即使标记为 true，也只能作为 T05 Phase2 的可选补充输入，不得单独创建 SWSD-RCSD relation，不作为 T06 Step3 替换白名单。
+- `t10_upstream_feedback_relations.csv/json`：逐条收集各 Case T05 `relation_graph_consumability_audit.csv` 中 `status = 0` 但 `graph_consumable != 1` 的 SWSD-RCSD relation，保留 `target_id / base_id / graph_consumability_status / source_modules / scenes / reasons / affected_problem_segment_ids` 与来源审计路径。
+- `t10_upstream_feedback_relation_summary.csv/json`：按 `recommended_module + upstream_issue_owner + failure_business_category + graph_consumability_status + source_modules + reasons` 聚合计数，并保留样例 Case 与 SWSD 语义路口。
+
+Relation 级反馈只用于把 T05/T07/T03/T04 的 relation handoff 或 junctionization 消费问题前置暴露，不改写 `intersection_match_all.geojson`，不影响 T06 当前已成功替换的 Segment。
+- side-group candidate 级反馈只用于把 T06 识别出的双向 Segment 侧聚合需求结构化交付给下一轮 T03/T04/T05，不作为 T06 Step3 替换计划，不参与 T09 restriction 生成。
+- side-group endpoint candidate 级反馈只在端点层面补充候选 RCSDNode 集合，避免把同一 Segment 两端错误聚合成同一个 RCSD 语义路口。
+- pair-anchor endpoint cluster 级反馈默认只发布 T06 已诊断出的端点簇证据；满足 `auto_consumable_by_t05=true` 的行只能补充同 target 已有成功 relation 或 road-only split 的 RCSDNode grouping，不能创建 relation 或虚拟路口面。
+- feedback iteration 只把前序 pass 累积后的 endpoint 级候选和可消费 endpoint cluster 回灌到 T05 Phase2；它不把 T06 problem registry 直接转成 Step3 替换白名单，也不绕过 T03/T04/T05 的 relation/junctionization 审计。
+- 该反馈包只用于驱动 T01/T03/T04/T05/T08/T06 的后续根因迭代，不是 Step3 替换白名单，不改变 T06/T09 产出。
+- 该反馈包为 attribute-only 审计产物，不进行几何变换、拓扑修复或字段语义反推。
 
 ### 3.5 Innernet full pipeline outputs
 
@@ -310,6 +342,8 @@ T06 数据漏斗至少记录：
 - `t07_step3_intersection_match/`
 - `t06_segment_fusion_precheck/`
 - `t09_swsd_field_rule_restoration/`
+
+`t10_innernet_full_pipeline_manifest.json` 保留兼容的 flat `inputs / outputs`，同时必须提供阶段级 `stage_order / stages`。每个 `stages.<stage_id>` 至少包含 `stage_id / module_id / status / stdout_log / inputs / outputs / params / execution_context`，用于统一表达 T08、T01、T07 Step1/2、T03、T04、T05、T07 Step3、T06 Step1/2、T06 Step3、T09 的显式 handoff。下游审计应优先消费 `stages`，仅在兼容旧产物时读取 flat `outputs`。
 
 manifest 至少记录：
 
@@ -355,6 +389,8 @@ bash scripts/t10_run_innernet_full_pipeline.sh
 - `CONTINUE_ON_ERROR`：默认 `1`；仅控制当前 Case 失败后是否继续下一个 Case，不允许同一 Case 下游消费失败阶段的部分输出。
 - `EXIT_ZERO`：默认 `0`；置 `1` 时即使存在 blocked/failed Case 也返回 0，便于诊断批处理继续。
 - `T10_T03_WORKERS`、`T10_T04_WORKERS`、`T10_T05_READONLY_WORKERS`：默认均为 `1`，用于 Case 级局部 replay。
+- `T10_FEEDBACK_ITERATIONS`：默认 `0`；大于 0 时执行 T06 upstream feedback 回灌迭代，并启用 baseline 到 final 的 replaced / replacement plan 不回退检查。
+- `T10_PAIR_ANCHOR_ENDPOINT_CLUSTERS`：可选 pair-anchor endpoint cluster CSV；仅在已按 T10 契约标记 `auto_consumable_by_t05=true` 且 T05 存在基础 relation / road-only split 时作为补充输入。
 
 `scripts/t10_run_innernet_full_pipeline.sh` 支持的环境变量：
 

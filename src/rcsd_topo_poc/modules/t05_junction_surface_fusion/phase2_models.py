@@ -142,6 +142,8 @@ class T05Phase2Artifacts:
     module_relation_audit_json_path: Path
     relation_cardinality_errors_csv_path: Path
     relation_cardinality_errors_json_path: Path
+    relation_graph_consumability_audit_csv_path: Path
+    relation_graph_consumability_audit_json_path: Path
     summary_path: Path
     relation_count: int
     success_count: int

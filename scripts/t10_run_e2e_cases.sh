@@ -15,6 +15,8 @@ Environment variables:
   T10_T03_WORKERS          Default: 1
   T10_T04_WORKERS          Default: 1
   T10_T05_READONLY_WORKERS Default: 1
+  T10_FEEDBACK_ITERATIONS  Default: 0. When >0, rerun T10 with prior pass endpoint feedback.
+  T10_PAIR_ANCHOR_ENDPOINT_CLUSTERS Optional CSV to feed pair-anchor endpoint clusters into T05.
 USAGE
 }
 
@@ -76,6 +78,8 @@ RUN_ID="${RUN_ID:-}"
 STOP_AFTER="${STOP_AFTER:-}"
 CONTINUE_ON_ERROR="${CONTINUE_ON_ERROR:-1}"
 EXIT_ZERO="${EXIT_ZERO:-0}"
+T10_FEEDBACK_ITERATIONS="${T10_FEEDBACK_ITERATIONS:-0}"
+T10_PAIR_ANCHOR_ENDPOINT_CLUSTERS="${T10_PAIR_ANCHOR_ENDPOINT_CLUSTERS:-}"
 
 if [[ "$CONTINUE_ON_ERROR" != "0" && "$CONTINUE_ON_ERROR" != "1" ]]; then
   echo "[BLOCK] CONTINUE_ON_ERROR must be 0 or 1: $CONTINUE_ON_ERROR" >&2
@@ -83,6 +87,10 @@ if [[ "$CONTINUE_ON_ERROR" != "0" && "$CONTINUE_ON_ERROR" != "1" ]]; then
 fi
 if [[ "$EXIT_ZERO" != "0" && "$EXIT_ZERO" != "1" ]]; then
   echo "[BLOCK] EXIT_ZERO must be 0 or 1: $EXIT_ZERO" >&2
+  exit 2
+fi
+if ! [[ "$T10_FEEDBACK_ITERATIONS" =~ ^[0-9]+$ ]]; then
+  echo "[BLOCK] T10_FEEDBACK_ITERATIONS must be a non-negative integer: $T10_FEEDBACK_ITERATIONS" >&2
   exit 2
 fi
 
@@ -105,6 +113,12 @@ fi
 if [[ "$EXIT_ZERO" == "1" ]]; then
   ARGS+=(--exit-zero)
 fi
+if [[ "$T10_FEEDBACK_ITERATIONS" != "0" ]]; then
+  ARGS+=(--feedback-iterations "$T10_FEEDBACK_ITERATIONS")
+fi
+if [[ -n "$T10_PAIR_ANCHOR_ENDPOINT_CLUSTERS" ]]; then
+  ARGS+=(--t10-pair-anchor-endpoint-clusters "$T10_PAIR_ANCHOR_ENDPOINT_CLUSTERS")
+fi
 for case_id in "${CASE_IDS[@]}"; do
   ARGS+=(--case-id "$case_id")
 done
@@ -117,6 +131,8 @@ echo "[RUN] OUT_ROOT=$OUT_ROOT"
 echo "[RUN] RUN_ID=${RUN_ID:-<auto>}"
 echo "[RUN] STOP_AFTER=${STOP_AFTER:-<full>}"
 echo "[RUN] CONTINUE_ON_ERROR=$CONTINUE_ON_ERROR EXIT_ZERO=$EXIT_ZERO"
+echo "[RUN] T10_FEEDBACK_ITERATIONS=$T10_FEEDBACK_ITERATIONS"
+echo "[RUN] T10_PAIR_ANCHOR_ENDPOINT_CLUSTERS=${T10_PAIR_ANCHOR_ENDPOINT_CLUSTERS:-<none>}"
 if ((${#CASE_IDS[@]})); then
   echo "[RUN] CASE_IDS=${CASE_IDS[*]}"
 else

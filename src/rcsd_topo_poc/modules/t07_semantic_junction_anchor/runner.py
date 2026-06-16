@@ -130,6 +130,13 @@ class IntersectionRecord:
 
 
 @dataclass(frozen=True)
+class RCSDSemanticNodeRecord:
+    node_id: str
+    semantic_id: str
+    geometry: BaseGeometry
+
+
+@dataclass(frozen=True)
 class T07StageArtifacts:
     run_root: Path
     stage_root: Path
@@ -1089,6 +1096,43 @@ def _read_intersections(layer: LoadedLayer) -> list[IntersectionRecord]:
     return records
 
 
+def _rcsd_semantic_id(properties: dict[str, Any]) -> str | None:
+    mainnodeid = _normalize_id(properties.get("mainnodeid"))
+    if mainnodeid is not None:
+        return mainnodeid
+    return _normalize_id(properties.get("id"))
+
+
+def _read_rcsd_semantic_node_records(layer: LoadedLayer) -> list[RCSDSemanticNodeRecord]:
+    records: list[RCSDSemanticNodeRecord] = []
+    for feature in layer.features:
+        if feature.geometry is None or feature.geometry.is_empty:
+            continue
+        node_id = _normalize_id(feature.properties.get("id"))
+        semantic_id = _rcsd_semantic_id(feature.properties)
+        if node_id is None or semantic_id is None:
+            continue
+        records.append(RCSDSemanticNodeRecord(node_id=node_id, semantic_id=semantic_id, geometry=feature.geometry))
+    if not records:
+        raise T07RunError("missing_required_field", "RCSDNode layer has no usable id/mainnodeid geometry records.")
+    return records
+
+
+def _intersection_contains_rcsd_semantic_node(
+    *,
+    intersection: IntersectionRecord,
+    rcsdnode_tree: STRtree | None,
+    rcsdnode_records: list[RCSDSemanticNodeRecord],
+) -> bool:
+    if rcsdnode_tree is None:
+        return True
+    for index in rcsdnode_tree.query(intersection.geometry, predicate="intersects"):
+        record = rcsdnode_records[int(index)]
+        if intersection.geometry.covers(record.geometry):
+            return True
+    return False
+
+
 def _write_error_outputs(
     *,
     vector_path: Path,
@@ -1124,11 +1168,14 @@ def run_t07_step2_anchor_recognition(
     nodes_path: str | Path,
     intersection_path: str | Path,
     out_root: str | Path,
+    rcsdnode_path: str | Path | None = None,
     run_id: str | None = None,
     nodes_layer: str | None = None,
     intersection_layer: str | None = None,
+    rcsdnode_layer: str | None = None,
     nodes_crs: str | None = None,
     intersection_crs: str | None = None,
+    rcsdnode_crs: str | None = None,
 ) -> T07StageArtifacts:
     started_at = time.perf_counter()
     stage_timings: dict[str, float] = {}
@@ -1144,12 +1191,24 @@ def run_t07_step2_anchor_recognition(
         crs_override=intersection_crs,
         allow_null_geometry=False,
     )
+    rcsdnode_layer_data = (
+        _read_vector_layer(
+            rcsdnode_path,
+            layer_name=rcsdnode_layer,
+            crs_override=rcsdnode_crs,
+            allow_null_geometry=True,
+        )
+        if rcsdnode_path is not None
+        else None
+    )
     stage_timings["read_inputs_seconds"] = _elapsed_since(stage_started)
 
     stage_started = time.perf_counter()
     intersections = _read_intersections(intersection_layer_data)
     intersection_by_id = {record.intersection_id: record for record in intersections}
     intersection_tree = STRtree([record.geometry for record in intersections])
+    rcsdnode_records = _read_rcsd_semantic_node_records(rcsdnode_layer_data) if rcsdnode_layer_data is not None else []
+    rcsdnode_tree = STRtree([record.geometry for record in rcsdnode_records]) if rcsdnode_records else None
     stage_timings["build_intersection_index_seconds"] = _elapsed_since(stage_started)
 
     stage_started = time.perf_counter()
@@ -1166,6 +1225,7 @@ def run_t07_step2_anchor_recognition(
         "anchor_null_count": 0,
         "roundabout_reason_count": 0,
         "t_reason_count": 0,
+        "rcsdintersection_no_rcsdnode_count": 0,
     }
     group_results: dict[str, dict[str, Any]] = {}
     intersection_to_junctions: dict[str, set[str]] = {}
@@ -1234,7 +1294,38 @@ def run_t07_step2_anchor_recognition(
             for intersection_id in cached:
                 hit_intersection_ids.add(intersection_id)
 
-        sorted_hits = sorted(hit_intersection_ids)
+        sorted_raw_hits = sorted(hit_intersection_ids)
+        unconsumable_intersection_ids: list[str] = []
+        if rcsdnode_tree is None:
+            sorted_hits = sorted_raw_hits
+        else:
+            consumable_hits: list[str] = []
+            for intersection_id in sorted_raw_hits:
+                intersection_record = intersection_by_id.get(intersection_id)
+                if intersection_record is None:
+                    continue
+                if _intersection_contains_rcsd_semantic_node(
+                    intersection=intersection_record,
+                    rcsdnode_tree=rcsdnode_tree,
+                    rcsdnode_records=rcsdnode_records,
+                ):
+                    consumable_hits.append(intersection_id)
+                else:
+                    unconsumable_intersection_ids.append(intersection_id)
+            sorted_hits = consumable_hits
+        if unconsumable_intersection_ids and not sorted_hits:
+            counts["rcsdintersection_no_rcsdnode_count"] += 1
+            audit_rows.append(
+                _audit_row(
+                    scope="semantic_junction",
+                    status="skipped",
+                    reason="rcsdintersection_no_rcsd_semantic_node",
+                    detail="Matched RCSDIntersection surface contains no usable RCSDNode id/mainnodeid geometry; T07 Step2 leaves this SWSD junction for T03/T04 virtual anchoring.",
+                    junction_id=junction_id,
+                    node_id=group.representative.node_id,
+                    intersection_ids=unconsumable_intersection_ids,
+                )
+            )
         for intersection_id in sorted_hits:
             intersection_to_junctions.setdefault(intersection_id, set()).add(junction_id)
 
@@ -1256,12 +1347,18 @@ def run_t07_step2_anchor_recognition(
 
         if not sorted_hits:
             provisional_state = "no"
+            provisional_relation_state = (
+                "rcsdintersection_no_rcsd_semantic_node" if unconsumable_intersection_ids else None
+            )
         elif len(sorted_hits) == 1:
             provisional_state = "yes"
+            provisional_relation_state = None
         elif len(group.group_nodes) == 1 or provisional_reason is not None:
             provisional_state = "yes"
+            provisional_relation_state = None
         else:
             provisional_state = "fail1"
+            provisional_relation_state = None
             involved_node_ids = [record.node_id for record in group.group_nodes]
             error1_rows.append(
                 _audit_row(
@@ -1291,7 +1388,8 @@ def run_t07_step2_anchor_recognition(
             "kind_2": kind_2,
             "provisional_state": provisional_state,
             "provisional_reason": provisional_reason if provisional_state == "yes" else None,
-            "intersection_ids": sorted_hits,
+            "intersection_ids": sorted_hits if sorted_hits else unconsumable_intersection_ids,
+            "relation_state": provisional_relation_state,
         }
     stage_timings["process_anchor_candidates_seconds"] = _elapsed_since(stage_started)
 
@@ -1441,7 +1539,11 @@ def run_t07_step2_anchor_recognition(
     summary = {
         "run_id": resolved_run_id,
         **counts,
-        "input_paths": {"nodes": str(nodes_path), "intersection": str(intersection_path)},
+        "input_paths": {
+            "nodes": str(nodes_path),
+            "intersection": str(intersection_path),
+            "rcsdnode": str(rcsdnode_path) if rcsdnode_path is not None else None,
+        },
         "output_paths": {
             "nodes": str(nodes_output_path),
             "node_error_1": str(node_error_1_path),
@@ -1493,13 +1595,16 @@ def run_t07_semantic_junction_anchor(
     drivezone_path: str | Path,
     intersection_path: str | Path,
     out_root: str | Path,
+    rcsdnode_path: str | Path | None = None,
     run_id: str | None = None,
     nodes_layer: str | None = None,
     drivezone_layer: str | None = None,
     intersection_layer: str | None = None,
+    rcsdnode_layer: str | None = None,
     nodes_crs: str | None = None,
     drivezone_crs: str | None = None,
     intersection_crs: str | None = None,
+    rcsdnode_crs: str | None = None,
 ) -> T07Artifacts:
     resolved_run_id = run_id or build_run_id("t07_semantic_junction_anchor")
     step1 = run_t07_step1_has_evd(
@@ -1519,8 +1624,11 @@ def run_t07_semantic_junction_anchor(
         nodes_path=step1.nodes_path,
         intersection_path=intersection_path,
         out_root=out_root,
+        rcsdnode_path=rcsdnode_path,
         run_id=resolved_run_id,
         intersection_layer=intersection_layer,
+        rcsdnode_layer=rcsdnode_layer,
         intersection_crs=intersection_crs,
+        rcsdnode_crs=rcsdnode_crs,
     )
     return T07Artifacts(run_root=step1.run_root, step1=step1, step2=step2)

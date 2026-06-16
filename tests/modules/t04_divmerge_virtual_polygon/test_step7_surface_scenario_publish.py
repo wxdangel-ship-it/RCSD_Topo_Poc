@@ -86,6 +86,10 @@ def _case_result(
     localized_evidence_core_geometry: object | None = None,
     required_rcsd_node: str | None = None,
     required_rcsd_node_geometry: Point | None = None,
+    local_rcsd_unit_id: str | None = None,
+    local_rcsd_unit_geometry: Point | None = None,
+    main_evidence_type: str = "none",
+    swsd_junction_present: bool = False,
     selected_rcsdnode_ids: tuple[str, ...] = (),
     selected_rcsdroad_ids: tuple[str, ...] = (),
     positive_rcsd_consistency_level: str = "B",
@@ -121,6 +125,10 @@ def _case_result(
                 fact_reference_point=Point(1, 0),
                 required_rcsd_node=required_rcsd_node,
                 required_rcsd_node_geometry=required_rcsd_node_geometry,
+                local_rcsd_unit_id=local_rcsd_unit_id,
+                local_rcsd_unit_geometry=local_rcsd_unit_geometry,
+                main_evidence_type=main_evidence_type,
+                swsd_junction_present=swsd_junction_present,
                 selected_rcsdnode_ids=selected_rcsdnode_ids,
                 selected_rcsdroad_ids=selected_rcsdroad_ids,
                 positive_rcsd_consistency_level=positive_rcsd_consistency_level,
@@ -188,6 +196,38 @@ def test_step7_accepted_surface_candidate_keeps_t05_mapping_fields(tmp_path) -> 
     assert artifact.summary_row["patch_id"] == "p1"
     assert artifact.relation_evidence_row["surface_candidate_present"] == 1
     assert artifact.relation_evidence_row["patch_id"] == "p1"
+
+
+def test_step7_partial_road_surface_fork_hands_off_local_rcsd_node(tmp_path) -> None:
+    artifact = build_step7_case_artifact(
+        run_root=tmp_path,
+        case_dir=tmp_path / "cases" / "surface_fork",
+        case_result=_case_result(
+            case_id="surface_fork",
+            localized_evidence_core_geometry=Point(19.5, 0).buffer(2.0),
+            required_rcsd_node="rc_main",
+            required_rcsd_node_geometry=Point(30, 0),
+            local_rcsd_unit_id="event_unit_01:node:rc_local",
+            local_rcsd_unit_geometry=Point(19, 0),
+            main_evidence_type="road_surface_fork",
+            swsd_junction_present=False,
+            selected_rcsdnode_ids=("rc_main",),
+            selected_rcsdroad_ids=("rc_road_1",),
+            positive_rcsd_consistency_level="A",
+        ),
+        step5_result=SimpleNamespace(case_allowed_growth_domain=None),
+        step6_result=_step6(),
+    )
+
+    row = artifact.relation_evidence_row
+
+    assert row["swsd_relation_type"] == "partial"
+    assert row["required_rcsd_node_ids"] == "rc_local"
+    assert row["semantic_required_rcsd_node_ids"] == "rc_main"
+    assert row["base_id_candidate"] == "rc_local"
+    assert row["relation_state"] == "success_required_rcsd_junction"
+    assert row["rcsd_point_x"] == 19.0
+    assert artifact.audit_feature["properties"]["required_rcsd_node_ids"] == "rc_main"
 
 
 def test_step7_writes_swsd_rcsd_relation_evidence_for_t05_handoff(tmp_path) -> None:

@@ -41,6 +41,8 @@ from .phase2_scene_classifier import (
     SOURCE_T02_INPUT,
     SOURCE_T03,
     SOURCE_T04,
+    SOURCE_T10_PAIR_ANCHOR_CLUSTER,
+    SOURCE_T10_SIDE_GROUP,
     SOURCE_T07,
     build_evidence_rows,
     choose_actionable_decisions,
@@ -80,6 +82,8 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
     progress_interval: int = 1000,
     readonly_workers: int = 1,
     t07_relation_evidence_path: str | Path | None = None,
+    t10_side_group_endpoint_candidate_path: str | Path | None = None,
+    t10_pair_anchor_endpoint_cluster_path: str | Path | None = None,
     next_road_id_start: int | None = None,
     next_node_id_start: int | None = None,
 ) -> T05Phase2Artifacts:
@@ -129,6 +133,16 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
     t07_rows = read_table(_required_path(t07_relation_evidence_path, "t07_relation_evidence_path")) if t07_relation_evidence_path is not None else []
     t03_rows = read_table(_required_path(t03_relation_evidence_path, "t03_relation_evidence_path"))
     t04_base_rows = read_table(_required_path(t04_relation_evidence_path, "t04_relation_evidence_path"))
+    t10_side_group_rows = (
+        read_table(_required_path(t10_side_group_endpoint_candidate_path, "t10_side_group_endpoint_candidate_path"))
+        if t10_side_group_endpoint_candidate_path is not None
+        else []
+    )
+    t10_pair_anchor_cluster_rows = (
+        read_table(_required_path(t10_pair_anchor_endpoint_cluster_path, "t10_pair_anchor_endpoint_cluster_path"))
+        if t10_pair_anchor_endpoint_cluster_path is not None
+        else []
+    )
     t04_target_case_ids = _target_case_ids(t04_base_rows)
     t04_supplements = _load_t04_supplements(
         t04_base_rows=t04_base_rows,
@@ -148,6 +162,8 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
         t07_rows=t07_rows,
         t03_rows=t03_rows,
         t04_rows=t04_rows,
+        t10_side_group_rows=t10_side_group_rows,
+        t10_pair_anchor_cluster_rows=t10_pair_anchor_cluster_rows,
     )
     evidence_by_target: dict[str, list[Any]] = defaultdict(list)
     for evidence in evidence_rows:
@@ -291,7 +307,7 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
             len(actionable) > 1
             or len(multi_candidate_ids) > 1
             or raw_candidate_ids != multi_candidate_ids
-        ) and not (len(actionable) == 1 and actionable[0].scene == SCENE_GROUP_EXISTING):
+        ) and not (len(actionable) == 1 and actionable[0].scene == SCENE_GROUP_EXISTING) and not _has_road_split(actionable):
             if len(multi_candidate_ids) == 1:
                 decision = actionable[0]
                 base_id = multi_candidate_ids[0]
@@ -316,7 +332,7 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
                 audit_rows.append(
                     _audit_row(
                         context=context,
-                        decision=actionable[0],
+                        decision=_merged_audit_decision(actionable),
                         relation=relation,
                         reason="multiple_base_id_merged",
                         original_node_ids=raw_candidate_ids,
@@ -440,7 +456,12 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
                     )
                     if endpoint_node_ids and not missing_endpoint_node_ids:
                         canonical_endpoint_node_ids = canonical_mainnode_ids(endpoint_node_ids, node_out_by_id)
-                        group_node_ids = _group_node_ids(endpoint_node_ids, canonical_endpoint_node_ids)
+                        supplement_node_ids = _t10_supplement_node_ids(actionable, node_out_by_id)
+                        supplement_extra_node_ids = [node_id for node_id in supplement_node_ids if node_id not in endpoint_node_ids]
+                        group_node_ids = _group_node_ids(
+                            [*endpoint_node_ids, *supplement_node_ids],
+                            canonical_mainnode_ids([*endpoint_node_ids, *supplement_node_ids], node_out_by_id),
+                        )
                         primary = choose_primary_node_id(
                             canonical_endpoint_node_ids,
                             nodes_by_id=node_out_by_id,
@@ -461,7 +482,7 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
                                 relation=relation,
                                 reason="road_only_projection_near_endpoint_reuse_rcsdnode",
                                 original_road_ids=list(decision.rcsdroad_ids),
-                                original_node_ids=endpoint_node_ids,
+                                original_node_ids=[*endpoint_node_ids, *supplement_extra_node_ids],
                                 grouped_node_ids=group_node_ids if len(group_node_ids) > 1 else [],
                                 selected_main_node_id=primary,
                                 projection_point_count=sum(len(items) for items in projected.values()),
@@ -531,8 +552,14 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
                         active_ids.update(replacement_road_ids)
                     for new_road_id in replacement_road_ids:
                         source_road_ids_by_active_id.setdefault(new_road_id, set()).update(source_ids)
+                supplement_node_ids = _t10_supplement_node_ids(actionable, node_out_by_id)
+                supplement_extra_node_ids = [node_id for node_id in supplement_node_ids if node_id not in new_node_ids]
+                group_node_ids = _group_node_ids(
+                    [*new_node_ids, *supplement_node_ids],
+                    canonical_mainnode_ids([*new_node_ids, *supplement_node_ids], node_out_by_id),
+                )
                 grouped = apply_mainnodeid_grouping(
-                    node_ids=new_node_ids,
+                    node_ids=group_node_ids,
                     primary_node_id=primary,
                     node_features_by_id=node_out_by_id,
                 )
@@ -547,8 +574,9 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
                         relation=relation,
                         original_road_ids=list(decision.rcsdroad_ids),
                         new_road_ids=new_road_ids,
+                        original_node_ids=supplement_extra_node_ids,
                         new_node_ids=new_node_ids,
-                        grouped_node_ids=new_node_ids if len(new_node_ids) > 1 else [],
+                        grouped_node_ids=group_node_ids if len(group_node_ids) > 1 else [],
                         selected_main_node_id=primary,
                         projection_point_count=sum(len(items) for items in projected.values()),
                         split_point_count=len(new_node_ids),
@@ -619,6 +647,8 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
             "t07_relation_evidence_path": str(t07_relation_evidence_path) if t07_relation_evidence_path else None,
             "t03_relation_evidence_path": str(t03_relation_evidence_path) if t03_relation_evidence_path else None,
             "t04_relation_evidence_path": str(t04_relation_evidence_path) if t04_relation_evidence_path else None,
+            "t10_side_group_endpoint_candidate_path": str(t10_side_group_endpoint_candidate_path) if t10_side_group_endpoint_candidate_path else None,
+            "t10_pair_anchor_endpoint_cluster_path": str(t10_pair_anchor_endpoint_cluster_path) if t10_pair_anchor_endpoint_cluster_path else None,
             "t04_surface_path": str(t04_surface_path) if t04_surface_path else None,
             "t04_summary_path": str(t04_summary_path) if t04_summary_path else None,
             "t04_audit_path": str(t04_audit_path) if t04_audit_path else None,
@@ -670,6 +700,8 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
         module_relation_audit_json_path=outputs["module_relation_audit_json_path"],
         relation_cardinality_errors_csv_path=outputs["relation_cardinality_errors_csv_path"],
         relation_cardinality_errors_json_path=outputs["relation_cardinality_errors_json_path"],
+        relation_graph_consumability_audit_csv_path=outputs["relation_graph_consumability_audit_csv_path"],
+        relation_graph_consumability_audit_json_path=outputs["relation_graph_consumability_audit_json_path"],
         summary_path=outputs["summary_path"],
         relation_count=summary["intersection_match_all_feature_count"],
         success_count=summary["status_0_count"],
@@ -952,6 +984,7 @@ def _build_decision_plan(
     source_counts: Counter[str] = Counter()
     split_road_ids: set[int] = set()
     grouped_node_ids: set[int] = set()
+    rcsdnode_semantic_ids = _rcsdnode_semantic_id_set(rcsdnode_features_by_id)
     multi_actionable_count = 0
     readonly_target_count = 0
     for context in contexts:
@@ -980,6 +1013,7 @@ def _build_decision_plan(
                 context=context,
                 actionable=actionable,
                 rcsdnode_features_by_id=rcsdnode_features_by_id,
+                rcsdnode_semantic_ids=rcsdnode_semantic_ids,
                 nearby_nonbase_node_ids=(direct_nearby_node_ids_by_target or {}).get(context.target_id, []),
             )
         plan[context.target_id] = (decisions, actionable)
@@ -1029,6 +1063,7 @@ def _upgrade_direct_rcsdintersection_multi_nodes(
     context: SwsdTargetContext,
     actionable: list[Any],
     rcsdnode_features_by_id: dict[int, dict[str, Any]],
+    rcsdnode_semantic_ids: set[int],
     nearby_nonbase_node_ids: list[int],
 ) -> list[Any]:
     if len(actionable) != 1:
@@ -1044,6 +1079,45 @@ def _upgrade_direct_rcsdintersection_multi_nodes(
         context.surface_geometry,
         rcsdnode_features_by_id=rcsdnode_features_by_id,
     )
+    if decision.source_module == SOURCE_T07 and not _all_candidate_bases_resolvable(
+        decision.base_id_candidates,
+        rcsdnode_semantic_ids,
+    ):
+        if len(semantic_ids) == 1:
+            semantic_id = semantic_ids[0]
+            return [
+                SceneDecision(
+                    scene=SCENE_DIRECT,
+                    action="direct_relation",
+                    reason="existing_rcsdintersection_surface_1v1_rcsdnode_rebased",
+                    source_module=decision.source_module,
+                    source_case_id=decision.source_case_id,
+                    base_id_candidates=(semantic_id,),
+                )
+            ]
+        if len(semantic_ids) > 1:
+            return [
+                SceneDecision(
+                    scene=SCENE_GROUP_EXISTING,
+                    action="group_existing_rcsd_nodes",
+                    reason="existing_rcsdintersection_multi_rcsdnode_surface",
+                    source_module=decision.source_module,
+                    source_case_id=decision.source_case_id,
+                    base_id_candidates=tuple(decision.base_id_candidates),
+                    rcsdnode_ids=tuple(semantic_ids),
+                    multi_base_relation=True,
+                )
+            ]
+        return [
+            SceneDecision(
+                scene=SCENE_FAILURE,
+                action="failure_relation",
+                reason="t07_rcsdintersection_base_not_in_rcsdnode_out",
+                source_module=decision.source_module,
+                source_case_id=decision.source_case_id,
+                base_id_candidates=tuple(decision.base_id_candidates),
+            )
+        ]
     if len(semantic_ids) <= 1:
         nearby_ids = _direct_nearby_group_node_ids(decision, nearby_nonbase_node_ids)
         if not nearby_ids:
@@ -1072,6 +1146,20 @@ def _upgrade_direct_rcsdintersection_multi_nodes(
             multi_base_relation=True,
         )
     ]
+
+
+def _all_candidate_bases_resolvable(candidate_ids: tuple[int, ...], rcsdnode_semantic_ids: set[int]) -> bool:
+    return bool(candidate_ids) and all(candidate_id in rcsdnode_semantic_ids for candidate_id in candidate_ids)
+
+
+def _rcsdnode_semantic_id_set(rcsdnode_features_by_id: dict[int, dict[str, Any]]) -> set[int]:
+    semantic_ids = set(rcsdnode_features_by_id)
+    for feature in rcsdnode_features_by_id.values():
+        props = feature.get("properties") or {}
+        mainnodeid = _positive_int_value(_field_value(props, "mainnodeid"))
+        if mainnodeid is not None:
+            semantic_ids.add(mainnodeid)
+    return semantic_ids
 
 
 def _direct_nearby_group_node_ids(decision: Any, nearby_nonbase_node_ids: list[int]) -> list[int]:
@@ -1471,6 +1559,42 @@ def _candidate_ids(decisions: list[Any]) -> list[int]:
         ids.update(int(item) for item in getattr(decision, "base_id_candidates", ()) or ())
         ids.update(int(item) for item in getattr(decision, "rcsdnode_ids", ()) or ())
     return sorted(ids)
+
+
+def _has_road_split(decisions: list[Any]) -> bool:
+    return any(getattr(decision, "scene", "") == SCENE_ROAD_SPLIT for decision in decisions)
+
+
+def _t10_supplement_node_ids(
+    decisions: list[Any],
+    node_features_by_id: dict[int, dict[str, Any]],
+) -> list[int]:
+    ids: set[int] = set()
+    for decision in decisions:
+        if getattr(decision, "source_module", "") not in {SOURCE_T10_SIDE_GROUP, SOURCE_T10_PAIR_ANCHOR_CLUSTER}:
+            continue
+        for node_id in getattr(decision, "rcsdnode_ids", ()) or ():
+            node_id = int(node_id)
+            if node_id in node_features_by_id:
+                ids.add(node_id)
+    return sorted(ids)
+
+
+def _merged_audit_decision(decisions: list[Any]) -> Any:
+    if not decisions:
+        return None
+    first = decisions[0]
+    source_modules = sorted({_text(getattr(decision, "source_module", "")) for decision in decisions if getattr(decision, "source_module", "")})
+    source_case_ids = sorted({_text(getattr(decision, "source_case_id", "")) for decision in decisions if getattr(decision, "source_case_id", "")})
+    return SceneDecision(
+        scene=getattr(first, "scene", SCENE_GROUP_EXISTING),
+        action=getattr(first, "action", "group_existing_rcsd_nodes"),
+        reason=getattr(first, "reason", "multiple_base_id_merged"),
+        source_module="|".join(source_modules),
+        source_case_id="|".join(source_case_ids),
+        base_id_candidates=tuple(_candidate_ids(decisions)),
+        multi_base_relation=True,
+    )
 
 
 def _group_node_ids(raw_node_ids: list[int], canonical_node_ids: list[int]) -> list[int]:

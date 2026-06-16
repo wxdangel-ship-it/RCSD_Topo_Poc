@@ -167,6 +167,92 @@ def test_directionality_mismatch_formal_retry_uses_single_graph_first_path() -> 
     assert outcome.adaptive_source_reason == "single_graph_first_longitudinal_retry:rcsd_directed_path_missing"
 
 
+def test_dual_directionality_mismatch_formal_retry_uses_candidate_pair_adaptive_buffer() -> None:
+    outcome = pair_anchor_formal_retry(
+        probe_result=_corridor_probe([["A", "B"]], directionality_score=0.5),
+        relation=RelationCheck(True, ["X", "Y"], [], reject_reason=""),
+        failure_business_category="directionality_mismatch_fixable",
+        source_reject_reason="rcsd_not_bidirectional_for_swsd_dual",
+        pair_nodes=["s1", "s2"],
+        relation_junc_nodes=[],
+        junc_kind2_exempt_nodes=[],
+        relation_map={},
+        segment_geometry=LineString([(0, 0), (100, 0)]),
+        sgrade="0-0 dual",
+        directionality="dual",
+        directed_swsd_pair_nodes=[],
+        buffer_extractor=_FakeDualAdaptiveExtractor({("A", "B")}, passing_distance_m=75.0),
+        graph_retry=_NoGraphRetry(),
+        buffer_config=BufferExtractionConfig(buffer_distance_m=50.0),
+        all_base_ids_for_segment=set(),
+        unexpected_base_ids_for_segment=set(),
+        rcsd_graph_edges=[("r1", "A", "B", 1)],
+        rcsd_node_canonicalizer=NodeCanonicalizer({}, frozenset()),
+        max_path_to_swsd_length_ratio=2.5,
+    )
+
+    assert outcome is not None
+    assert outcome.relation.rcsd_pair_nodes == ["A", "B"]
+    assert outcome.buffer_result.directed_rcsd_pair_nodes == []
+    assert outcome.adaptive_distance_m == 75.0
+    assert outcome.adaptive_source_reason == "rcsd_not_bidirectional_for_swsd_dual"
+
+
+def test_dual_directionality_mismatch_formal_retry_scans_later_candidate_pair() -> None:
+    outcome = pair_anchor_formal_retry(
+        probe_result=_corridor_probe([["X", "Y"], ["A", "B"]], directionality_score=0.5),
+        relation=RelationCheck(True, ["X", "Y"], [], reject_reason=""),
+        failure_business_category="directionality_mismatch_fixable",
+        source_reject_reason="rcsd_not_bidirectional_for_swsd_dual",
+        pair_nodes=["s1", "s2"],
+        relation_junc_nodes=[],
+        junc_kind2_exempt_nodes=[],
+        relation_map={},
+        segment_geometry=LineString([(0, 0), (100, 0)]),
+        sgrade="0-0 dual",
+        directionality="dual",
+        directed_swsd_pair_nodes=[],
+        buffer_extractor=_FakeDualAdaptiveExtractor({("A", "B")}, passing_distance_m=75.0),
+        graph_retry=_NoGraphRetry(),
+        buffer_config=BufferExtractionConfig(buffer_distance_m=50.0),
+        all_base_ids_for_segment=set(),
+        unexpected_base_ids_for_segment=set(),
+        rcsd_graph_edges=[("r1", "A", "B", 1)],
+        rcsd_node_canonicalizer=NodeCanonicalizer({}, frozenset()),
+        max_path_to_swsd_length_ratio=2.5,
+    )
+
+    assert outcome is not None
+    assert outcome.relation.rcsd_pair_nodes == ["A", "B"]
+
+
+def test_dual_directionality_mismatch_formal_retry_rejects_multiple_valid_candidates() -> None:
+    outcome = pair_anchor_formal_retry(
+        probe_result=_corridor_probe([["X", "Y"], ["A", "B"], ["C", "D"]], directionality_score=0.5),
+        relation=RelationCheck(True, ["X", "Y"], [], reject_reason=""),
+        failure_business_category="directionality_mismatch_fixable",
+        source_reject_reason="rcsd_not_bidirectional_for_swsd_dual",
+        pair_nodes=["s1", "s2"],
+        relation_junc_nodes=[],
+        junc_kind2_exempt_nodes=[],
+        relation_map={},
+        segment_geometry=LineString([(0, 0), (100, 0)]),
+        sgrade="0-0 dual",
+        directionality="dual",
+        directed_swsd_pair_nodes=[],
+        buffer_extractor=_FakeDualAdaptiveExtractor({("A", "B"), ("C", "D")}, passing_distance_m=75.0),
+        graph_retry=_NoGraphRetry(),
+        buffer_config=BufferExtractionConfig(buffer_distance_m=50.0),
+        all_base_ids_for_segment=set(),
+        unexpected_base_ids_for_segment=set(),
+        rcsd_graph_edges=[("r1", "A", "B", 1), ("r2", "C", "D", 1)],
+        rcsd_node_canonicalizer=NodeCanonicalizer({}, frozenset()),
+        max_path_to_swsd_length_ratio=2.5,
+    )
+
+    assert outcome is None
+
+
 class _FakeExtractor:
     def __init__(self, passing_pairs: set[tuple[str, str]]) -> None:
         self.passing_pairs = passing_pairs
@@ -178,6 +264,29 @@ class _FakeExtractor:
         return _buffer_result(
             ok=ok,
             reason="ok" if ok else "rcsd_directed_path_missing",
+            pair=list(pair),
+            directed_pair=list(kwargs.get("directed_pair_nodes") or []),
+        )
+
+
+class _FakeDualAdaptiveExtractor:
+    def __init__(self, passing_pairs: set[tuple[str, str]], *, passing_distance_m: float) -> None:
+        self.passing_pairs = passing_pairs
+        self.passing_distance_m = passing_distance_m
+
+    def extract(self, **kwargs: object) -> BufferSegmentResult:
+        relation = kwargs["relation"]
+        pair = tuple(relation.rcsd_pair_nodes)
+        config = kwargs["config"]
+        ok = (
+            pair in self.passing_pairs
+            and bool(kwargs.get("require_bidirectional"))
+            and not bool(kwargs.get("require_directed_pair"))
+            and getattr(config, "buffer_distance_m") == self.passing_distance_m
+        )
+        return _buffer_result(
+            ok=ok,
+            reason="passed" if ok else "rcsd_not_bidirectional_for_swsd_dual",
             pair=list(pair),
             directed_pair=list(kwargs.get("directed_pair_nodes") or []),
         )
@@ -246,13 +355,13 @@ def _probe(candidate_pairs: list[list[str]]) -> BufferOnlyProbeResult:
     )
 
 
-def _corridor_probe(candidate_pairs: list[list[str]]) -> BufferOnlyProbeResult:
+def _corridor_probe(candidate_pairs: list[list[str]], *, directionality_score: float = 1.0) -> BufferOnlyProbeResult:
     return BufferOnlyProbeResult(
         status="corridor_found",
         candidate_pair_sets=candidate_pairs,
         candidate_score=0.90,
         geometry_overlap_ratio=0.74,
-        directionality_score=1.0,
+        directionality_score=directionality_score,
         connectivity_score=1.0,
         shape_similarity_score=0.95,
         candidate_road_ids=[],

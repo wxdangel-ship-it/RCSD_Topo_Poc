@@ -10,7 +10,7 @@ T05 汇总 T07 / T03 / T04 的锚定与构面成果，生产 SWSD-RCSD 语义路
 - 基于 relation evidence、final nodes 与原始 RCSDRoad/RCSDNode，生产 `intersection_match_all.geojson`。
 - 对 road-only、multi-RCSDNode、复杂路口和环岛场景执行可审计 junctionization。
 - 输出 copy-on-write `rcsdroad_out.gpkg / rcsdnode_out.gpkg`，不原地修改输入。
-- 用 cardinality audit 阻断同一 SWSD 多 RCSD 或同一 RCSD 多 SWSD 的错误成功关系。
+- 用 cardinality audit 阻断同一 SWSD 多 RCSD 或重复 success target 的错误成功关系；同一 RCSD 可对应多个 SWSD 语义路口时保留关系并审计 `many_target_to_one_base`。
 
 ## 3. 当前范围
 
@@ -47,6 +47,8 @@ T05 汇总 T07 / T03 / T04 的锚定与构面成果，生产 SWSD-RCSD 语义路
 |---|---|
 | T03/T04 surface | Phase 1 主图层候选。 |
 | T07/T03/T04 relation evidence | Phase 2 relation 与 junctionization 场景分流。 |
+| T10 side-group endpoint candidates | Phase 2 可选补充输入；仅在同 target 已有成功 relation 或 T03/T04 road-only split 决策时补充 RCSDNode grouping，不独立创建 relation，不覆盖 road-only split。 |
+| T10 pair-anchor endpoint clusters | Phase 2 可选补充输入；仅消费 `auto_consumable_by_t05=true` 的短连接 endpoint cluster，并且只能依附已有成功 relation 或 road-only split 补充 RCSDNode grouping。 |
 | `nodes.gpkg` | 反查 `mainnodeid / kind_2 / patch_id / grade / closed_con`。 |
 | `RCSDRoad.gpkg / RCSDNode.gpkg` | Phase 2 copy-on-write junctionization 输入。 |
 | optional T02_INPUT | 旧批次兼容输入，不作为新主链来源。 |
@@ -74,7 +76,7 @@ T05 汇总 T07 / T03 / T04 的锚定与构面成果，生产 SWSD-RCSD 语义路
 | 只读 relation | 对已有单一 RCSD 语义路口、无 RCSD 普通失败等分支并行处理。 |
 | RCSDNode grouping | 对多 RCSDNode 的 T03/T04 complex 或环岛场景归组。 |
 | RCSDRoad split | 对 road-only 场景新增 RCSDNode 并打断 RCSDRoad。 |
-| relation 发布 | 输出唯一 `target_id -> base_id` relation，并做 cardinality 审计。 |
+| relation 发布 | 输出唯一 `target_id -> base_id` relation，并做 cardinality 审计；`many_target_to_one_base` 为非阻断审计。 |
 
 ## 8. 什么是对
 

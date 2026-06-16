@@ -92,7 +92,14 @@ run_logged() {
   echo
   echo "[STAGE] $stage"
   echo "[CMD] $*"
+  set +e
   "$@" 2>&1 | tee "$LOG_ROOT/${stage}.log"
+  local status=${PIPESTATUS[0]}
+  set -e
+  if [[ "$status" -ne 0 ]]; then
+    manifest_stage_record "$stage" "" "failed" "$LOG_ROOT/${stage}.log"
+    return "$status"
+  fi
 }
 
 optional_mode_should_run() {
@@ -149,6 +156,8 @@ payload = {
     ],
     "inputs": {},
     "outputs": {},
+    "stage_order": [],
+    "stages": {},
 }
 path.parent.mkdir(parents=True, exist_ok=True)
 path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -172,6 +181,63 @@ key = sys.argv[3]
 value = sys.argv[4]
 payload = json.loads(path.read_text(encoding="utf-8"))
 payload.setdefault(section, {})[key] = value
+path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+PY
+}
+
+manifest_stage_record() {
+  local stage_id="$1"
+  local module_id="$2"
+  local status="$3"
+  local log_path="$4"
+  shift 4
+  "$PYTHON_BIN" - "$MANIFEST_PATH" "$stage_id" "$module_id" "$status" "$log_path" "$@" <<'PY'
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+stage_id = sys.argv[2]
+module_id = sys.argv[3]
+status = sys.argv[4]
+log_path = sys.argv[5]
+payload = json.loads(path.read_text(encoding="utf-8"))
+record = {
+    "stage_id": stage_id,
+    "module_id": module_id,
+    "status": status,
+    "stdout_log": log_path,
+    "inputs": {},
+    "outputs": {},
+    "params": {},
+    "execution_context": {},
+}
+for item in sys.argv[6:]:
+    if "=" not in item or "." not in item.split("=", 1)[0]:
+        continue
+    section_key, value = item.split("=", 1)
+    section, key = section_key.split(".", 1)
+    if section not in {"inputs", "outputs", "params", "execution_context"}:
+        continue
+    record.setdefault(section, {})[key] = value
+stages = payload.setdefault("stages", {})
+existing = stages.get(stage_id)
+if isinstance(existing, dict):
+    merged = dict(existing)
+    for key, value in record.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            child = dict(merged[key])
+            child.update(value)
+            merged[key] = child
+        elif value not in ("", {}, []):
+            merged[key] = value
+    record = merged
+stages[stage_id] = record
+order = payload.setdefault("stage_order", [])
+if stage_id not in order:
+    order.append(stage_id)
 path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 PY
 }
@@ -399,6 +465,24 @@ manifest_set outputs rcsdroad_after_t08 "$RCSDROAD_FOR_DOWNSTREAM"
 manifest_set outputs rcsdnode_after_t08 "$RCSDNODE_FOR_DOWNSTREAM"
 manifest_set outputs sw_restriction_tool7 "$SW_RESTRICTION_TOOL7"
 manifest_set outputs sw_arrow_tool8 "$SW_ARROW_TOOL8"
+T08_STAGE_STATUS="skipped"
+T08_STAGE_LOG=""
+if [[ "$RUN_T08" == "1" ]]; then
+  T08_STAGE_STATUS="passed"
+  T08_STAGE_LOG="$LOG_ROOT/t08_tool6_final.log"
+fi
+manifest_stage_record t08_preprocess T08 "$T08_STAGE_STATUS" "$T08_STAGE_LOG" \
+  "inputs.swsd_nodes=$SWSD_INPUT_NODES" \
+  "inputs.swsd_roads=$SWSD_INPUT_ROADS" \
+  "inputs.rcsdroad=$RCSDROAD_PATH" \
+  "inputs.rcsdnode=$RCSDNODE_PATH" \
+  "outputs.swsd_nodes_for_t01=$SWSD_NODES_FOR_T01" \
+  "outputs.swsd_roads_for_t01=$SWSD_ROADS_FOR_T01" \
+  "outputs.rcsdroad_for_downstream=$RCSDROAD_FOR_DOWNSTREAM" \
+  "outputs.rcsdnode_for_downstream=$RCSDNODE_FOR_DOWNSTREAM" \
+  "outputs.sw_restriction_tool7=$SW_RESTRICTION_TOOL7" \
+  "outputs.sw_arrow_tool8=$SW_ARROW_TOOL8" \
+  "execution_context.run_t08=$RUN_T08"
 
 T01_ROOT="$RUN_ROOT/t01_full_data"
 run_logged t01 \
@@ -412,11 +496,18 @@ require_file T01_SEGMENT "$T01_SEGMENT"
 manifest_set outputs t01_nodes "$T01_NODES"
 manifest_set outputs t01_roads "$T01_ROADS"
 manifest_set outputs t01_segment "$T01_SEGMENT"
+manifest_stage_record t01 T01 passed "$LOG_ROOT/t01.log" \
+  "inputs.roads=$SWSD_ROADS_FOR_T01" \
+  "inputs.nodes=$SWSD_NODES_FOR_T01" \
+  "outputs.nodes=$T01_NODES" \
+  "outputs.roads=$T01_ROADS" \
+  "outputs.segment=$T01_SEGMENT" \
+  "execution_context.run_root=$T01_ROOT"
 
 T07_OUT_ROOT="$RUN_ROOT/t07_semantic_junction_anchor"
 T07_RUN_ID="t07_step12"
 run_logged t07_step12 \
-  env NODES_PATH="$T01_NODES" DRIVEZONE_PATH="$DRIVEZONE_PATH" INTERSECTION_PATH="$RCSD_INTERSECTION_PATH" OUT_ROOT="$T07_OUT_ROOT" RUN_ID="$T07_RUN_ID" \
+  env NODES_PATH="$T01_NODES" DRIVEZONE_PATH="$DRIVEZONE_PATH" INTERSECTION_PATH="$RCSD_INTERSECTION_PATH" RCSDNODE_PATH="$RCSDNODE_FOR_DOWNSTREAM" OUT_ROOT="$T07_OUT_ROOT" RUN_ID="$T07_RUN_ID" \
   bash scripts/t07_run_semantic_junction_anchor_innernet.sh
 T07_RUN_ROOT="$T07_OUT_ROOT/$T07_RUN_ID"
 T07_STEP2_NODES="$T07_RUN_ROOT/step2_anchor_recognition/nodes.gpkg"
@@ -428,6 +519,14 @@ require_file T07_STEP2_EVIDENCE "$T07_STEP2_EVIDENCE"
 manifest_set outputs t07_step2_nodes "$T07_STEP2_NODES"
 manifest_set outputs t07_step2_surface "$T07_STEP2_SURFACE"
 manifest_set outputs t07_step2_relation_evidence "$T07_STEP2_EVIDENCE"
+manifest_stage_record t07_step12 T07 passed "$LOG_ROOT/t07_step12.log" \
+  "inputs.nodes=$T01_NODES" \
+  "inputs.drivezone=$DRIVEZONE_PATH" \
+  "inputs.rcsd_intersection=$RCSD_INTERSECTION_PATH" \
+  "outputs.nodes=$T07_STEP2_NODES" \
+  "outputs.anchor_surface=$T07_STEP2_SURFACE" \
+  "outputs.relation_evidence=$T07_STEP2_EVIDENCE" \
+  "execution_context.run_root=$T07_RUN_ROOT"
 
 T03_OUT_ROOT="$RUN_ROOT/t03_internal_full_input"
 T03_RUN_ID="t03_full"
@@ -449,6 +548,18 @@ manifest_set outputs t03_nodes "$T03_NODES"
 manifest_set outputs t03_surface "$T03_SURFACE"
 manifest_set outputs t03_relation_evidence "$T03_EVIDENCE"
 manifest_set outputs t03_intersection_match "$T03_INTERSECTION_MATCH"
+manifest_stage_record t03 T03 passed "$LOG_ROOT/t03.log" \
+  "inputs.nodes=$T07_STEP2_NODES" \
+  "inputs.roads=$T01_ROADS" \
+  "inputs.drivezone=$DRIVEZONE_PATH" \
+  "inputs.rcsdroad=$RCSDROAD_FOR_DOWNSTREAM" \
+  "inputs.rcsdnode=$RCSDNODE_FOR_DOWNSTREAM" \
+  "outputs.nodes=$T03_NODES" \
+  "outputs.surface=$T03_SURFACE" \
+  "outputs.relation_evidence=$T03_EVIDENCE" \
+  "outputs.intersection_match=$T03_INTERSECTION_MATCH" \
+  "params.workers=${T03_WORKERS:-8}" \
+  "execution_context.run_root=$T03_RUN_ROOT"
 
 T04_OUT_ROOT="$RUN_ROOT/t04_internal_full_input"
 T04_RUN_ID="t04_full"
@@ -474,6 +585,22 @@ manifest_set outputs t04_surface "$T04_SURFACE"
 manifest_set outputs t04_relation_evidence "$T04_EVIDENCE"
 manifest_set outputs t04_summary "$T04_SUMMARY"
 manifest_set outputs t04_audit "$T04_AUDIT"
+manifest_stage_record t04 T04 passed "$LOG_ROOT/t04.log" \
+  "inputs.nodes=$T03_NODES" \
+  "inputs.roads=$T01_ROADS" \
+  "inputs.drivezone=$DRIVEZONE_PATH" \
+  "inputs.divstripzone=$DIVSTRIPZONE_PATH" \
+  "inputs.rcsdroad=$RCSDROAD_FOR_DOWNSTREAM" \
+  "inputs.rcsdnode=$RCSDNODE_FOR_DOWNSTREAM" \
+  "inputs.t07_relation_evidence=$T07_STEP2_EVIDENCE" \
+  "inputs.t03_intersection_match=$T03_INTERSECTION_MATCH" \
+  "outputs.nodes=$T04_NODES" \
+  "outputs.surface=$T04_SURFACE" \
+  "outputs.relation_evidence=$T04_EVIDENCE" \
+  "outputs.summary=$T04_SUMMARY" \
+  "outputs.audit=$T04_AUDIT" \
+  "params.workers=${T04_WORKERS:-8}" \
+  "execution_context.run_root=$T04_RUN_ROOT"
 
 T05_OUT_ROOT="$RUN_ROOT/t05_innernet_experiment"
 run_logged t05 \
@@ -506,6 +633,26 @@ require_file T05_RCSDNODE_OUT "$T05_RCSDNODE_OUT"
 manifest_set outputs t05_intersection_match_all "$T05_INTERSECTION_MATCH_ALL"
 manifest_set outputs t05_rcsdroad_out "$T05_RCSDROAD_OUT"
 manifest_set outputs t05_rcsdnode_out "$T05_RCSDNODE_OUT"
+manifest_stage_record t05 T05 passed "$LOG_ROOT/t05.log" \
+  "inputs.t07_run_root=$T07_RUN_ROOT" \
+  "inputs.t03_run_root=$T03_RUN_ROOT" \
+  "inputs.t04_run_root=$T04_RUN_ROOT" \
+  "inputs.nodes=$T04_NODES" \
+  "inputs.rcsdroad=$RCSDROAD_FOR_DOWNSTREAM" \
+  "inputs.rcsdnode=$RCSDNODE_FOR_DOWNSTREAM" \
+  "inputs.t07_surface=$T07_STEP2_SURFACE" \
+  "inputs.t07_evidence=$T07_STEP2_EVIDENCE" \
+  "inputs.t03_surface=$T03_SURFACE" \
+  "inputs.t03_evidence=$T03_EVIDENCE" \
+  "inputs.t04_surface=$T04_SURFACE" \
+  "inputs.t04_evidence=$T04_EVIDENCE" \
+  "inputs.t04_summary=$T04_SUMMARY" \
+  "inputs.t04_audit=$T04_AUDIT" \
+  "outputs.intersection_match_all=$T05_INTERSECTION_MATCH_ALL" \
+  "outputs.rcsdroad_out=$T05_RCSDROAD_OUT" \
+  "outputs.rcsdnode_out=$T05_RCSDNODE_OUT" \
+  "params.readonly_workers=${T05_READONLY_WORKERS:-4}" \
+  "execution_context.run_root=$T05_PHASE2_ROOT"
 
 T07_STEP3_OUT_ROOT="$RUN_ROOT/t07_step3_intersection_match"
 T07_STEP3_RUN_ID="t07_step3"
@@ -522,6 +669,14 @@ require_file T07_FINAL_NODES "$T07_FINAL_NODES"
 require_file T07_INTERSECTION_MATCH "$T07_INTERSECTION_MATCH"
 manifest_set outputs t07_final_nodes "$T07_FINAL_NODES"
 manifest_set outputs t07_intersection_match "$T07_INTERSECTION_MATCH"
+manifest_stage_record t07_step3 T07 passed "$LOG_ROOT/t07_step3.log" \
+  "inputs.nodes=$T07_STEP2_NODES" \
+  "inputs.t05_phase2_root=$T05_PHASE2_ROOT" \
+  "inputs.intersection_match_all=$T05_INTERSECTION_MATCH_ALL" \
+  "inputs.rcsdnode=$T05_RCSDNODE_OUT" \
+  "outputs.nodes=$T07_FINAL_NODES" \
+  "outputs.intersection_match=$T07_INTERSECTION_MATCH" \
+  "execution_context.run_root=$T07_STEP3_ROOT"
 
 T06_OUT_ROOT="$RUN_ROOT/t06_segment_fusion_precheck"
 T06_RUN_ID="t06_innernet_precheck"
@@ -540,6 +695,20 @@ T06_RUN_ROOT="$T06_OUT_ROOT/$T06_RUN_ID"
 T06_REPLACEABLE="$T06_RUN_ROOT/step2_extract_rcsd_segments/t06_rcsd_segment_replaceable.gpkg"
 require_file T06_REPLACEABLE "$T06_REPLACEABLE"
 manifest_set outputs t06_step2_replaceable "$T06_REPLACEABLE"
+manifest_stage_record t06_step12 T06 passed "$LOG_ROOT/t06_step12.log" \
+  "inputs.swsd_segment=$T01_SEGMENT" \
+  "inputs.swsd_roads=$T01_ROADS" \
+  "inputs.swsd_nodes=$T07_FINAL_NODES" \
+  "inputs.t05_phase2_root=$T05_PHASE2_ROOT" \
+  "inputs.intersection_match=$T05_INTERSECTION_MATCH_ALL" \
+  "inputs.rcsdroad=$T05_RCSDROAD_OUT" \
+  "inputs.rcsdnode=$T05_RCSDNODE_OUT" \
+  "outputs.final_fusion_units=$T06_RUN_ROOT/step1_identify_fusion_units/t06_swsd_segment_final_fusion_units.gpkg" \
+  "outputs.replaceable=$T06_REPLACEABLE" \
+  "outputs.rejected=$T06_RUN_ROOT/step2_extract_rcsd_segments/t06_rcsd_segment_rejected.gpkg" \
+  "outputs.failure_business_audit=$T06_RUN_ROOT/step2_extract_rcsd_segments/t06_rcsd_segment_failure_business_audit.gpkg" \
+  "outputs.summary=$T06_RUN_ROOT/step2_extract_rcsd_segments/t06_step2_summary.json" \
+  "execution_context.run_root=$T06_RUN_ROOT"
 
 run_logged t06_step3 \
   "$PYTHON_BIN" scripts/t06_run_step3_segment_replacement.py \
@@ -562,6 +731,19 @@ require_file T06_SEGMENT_RELATION "$T06_SEGMENT_RELATION"
 manifest_set outputs t06_frcsd_road "$T06_FRCSD_ROAD"
 manifest_set outputs t06_frcsd_node "$T06_FRCSD_NODE"
 manifest_set outputs t06_segment_relation "$T06_SEGMENT_RELATION"
+manifest_stage_record t06_step3 T06 passed "$LOG_ROOT/t06_step3.log" \
+  "inputs.t06_run_root=$T06_RUN_ROOT" \
+  "inputs.swsd_segment=$T01_SEGMENT" \
+  "inputs.swsd_roads=$T01_ROADS" \
+  "inputs.swsd_nodes=$T07_FINAL_NODES" \
+  "inputs.t05_phase2_root=$T05_PHASE2_ROOT" \
+  "inputs.rcsdroad=$T05_RCSDROAD_OUT" \
+  "inputs.rcsdnode=$T05_RCSDNODE_OUT" \
+  "outputs.frcsd_road=$T06_FRCSD_ROAD" \
+  "outputs.frcsd_node=$T06_FRCSD_NODE" \
+  "outputs.segment_relation=$T06_SEGMENT_RELATION" \
+  "outputs.summary=$T06_STEP3_ROOT/t06_step3_summary.json" \
+  "execution_context.run_root=$T06_STEP3_ROOT"
 
 T09_OUT_ROOT="$RUN_ROOT/t09_swsd_field_rule_restoration"
 run_logged t09 \
@@ -643,6 +825,19 @@ T09_RESTRICTION="$T09_STEP3_ROOT/frcsd_restriction.gpkg"
 require_file T09_RESTRICTION "$T09_RESTRICTION"
 manifest_set outputs t09_step12_root "$T09_STEP12_ROOT"
 manifest_set outputs t09_frcsd_restriction "$T09_RESTRICTION"
+manifest_stage_record t09 T09 passed "$LOG_ROOT/t09.log" \
+  "inputs.swnode=$T07_FINAL_NODES" \
+  "inputs.swroad=$T01_ROADS" \
+  "inputs.segment=$T01_SEGMENT" \
+  "inputs.sw_restriction_tool7=$SW_RESTRICTION_TOOL7" \
+  "inputs.sw_arrow_tool8=$SW_ARROW_TOOL8" \
+  "inputs.frcsd_road=$T06_FRCSD_ROAD" \
+  "inputs.frcsd_node=$T06_FRCSD_NODE" \
+  "inputs.segment_relation=$T06_SEGMENT_RELATION" \
+  "outputs.step12_root=$T09_STEP12_ROOT" \
+  "outputs.frcsd_restriction=$T09_RESTRICTION" \
+  "outputs.summary=$T09_STEP3_ROOT/t09_step3_frcsd_restriction_summary.json" \
+  "execution_context.run_root=$T09_OUT_ROOT"
 
 echo
 echo "[DONE] Innernet full pipeline completed."

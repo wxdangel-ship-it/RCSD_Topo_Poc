@@ -9,6 +9,7 @@ import pytest
 from shapely.geometry import LineString, Point, mapping
 
 from rcsd_topo_poc.modules.t00_utility_toolbox.common import write_vector
+from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.intersection_match import write_intersection_match_t04
 from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.nodes_publish import write_t04_nodes_outputs
 
 
@@ -172,3 +173,72 @@ def test_intersection_match_t04_validates_t07_t03_and_rolls_back_one_to_many(tmp
     assert node_state_by_id["1001"] == "no"
     assert node_state_by_id["2002"] == "yes"
     assert node_state_by_id["3003"] == "yes"
+
+
+def test_intersection_match_t04_audits_empty_or_invalid_optional_external_match(tmp_path: Path) -> None:
+    run_root = tmp_path / "run"
+    run_root.mkdir()
+    _write_t04_relation_evidence(run_root / "t04_swsd_rcsd_relation_evidence.json")
+    t07_path = tmp_path / "intersection_match_t07.geojson"
+    t03_path = tmp_path / "intersection_match_t03.geojson"
+    t07_path.write_text("", encoding="utf-8")
+    t03_path.write_text("{not-json", encoding="utf-8")
+
+    outputs = write_intersection_match_t04(
+        run_root=run_root,
+        intersection_match_t07_path=t07_path,
+        intersection_match_t03_path=t03_path,
+    )
+
+    summary = json.loads(Path(outputs["intersection_match_t04_summary_path"]).read_text(encoding="utf-8"))
+    match_payload = json.loads(Path(outputs["intersection_match_t04_path"]).read_text(encoding="utf-8"))
+
+    assert summary["t07_validation_enabled"] is True
+    assert summary["t03_validation_enabled"] is True
+    assert summary["t07_validation_relation_count"] == 0
+    assert summary["t03_validation_relation_count"] == 0
+    assert summary["t07_validation_input"]["status"] == "empty_file"
+    assert summary["t03_validation_input"]["status"] == "invalid_json"
+    assert summary["external_validation_unusable_input_count"] == 2
+    assert summary["relation_cardinality_passed"] is True
+    assert len(match_payload["features"]) == 3
+
+
+def test_t04_nodes_outputs_audits_empty_optional_external_match(tmp_path: Path) -> None:
+    pytest.importorskip("fiona")
+    run_root = tmp_path / "run"
+    run_root.mkdir()
+    _write_t04_relation_evidence(run_root / "t04_swsd_rcsd_relation_evidence.json")
+    t07_path = tmp_path / "intersection_match_t07.geojson"
+    t03_path = tmp_path / "intersection_match_t03.geojson"
+    t07_path.write_text("", encoding="utf-8")
+    t03_path.write_text("", encoding="utf-8")
+    source_features = [
+        {"properties": {"id": "1001", "mainnodeid": "1001", "is_anchor": "no"}, "geometry": Point(0, 0)},
+        {"properties": {"id": "2002", "mainnodeid": "2002", "is_anchor": "no"}, "geometry": Point(20, 0)},
+        {"properties": {"id": "3003", "mainnodeid": "3003", "is_anchor": "no"}, "geometry": Point(40, 0)},
+    ]
+
+    outputs = write_t04_nodes_outputs(
+        run_root=run_root,
+        source_node_features=source_features,
+        selected_cases=[
+            {"case_id": "1001", "mainnodeid": "1001"},
+            {"case_id": "2002", "mainnodeid": "2002"},
+            {"case_id": "3003", "mainnodeid": "3003"},
+        ],
+        artifacts=[
+            SimpleNamespace(case_id="1001", final_state="accepted", reject_reasons=()),
+            SimpleNamespace(case_id="2002", final_state="accepted", reject_reasons=()),
+            SimpleNamespace(case_id="3003", final_state="accepted", reject_reasons=()),
+        ],
+        intersection_match_t07_path=t07_path,
+        intersection_match_t03_path=t03_path,
+    )
+
+    summary = json.loads(Path(outputs["intersection_match_t04_summary_path"]).read_text(encoding="utf-8"))
+
+    assert summary["t07_validation_input"]["status"] == "empty_file"
+    assert summary["t03_validation_input"]["status"] == "empty_file"
+    assert summary["external_validation_unusable_input_count"] == 2
+    assert summary["published_relation_count"] == 3

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 from shapely.geometry.base import BaseGeometry
 
+from .adaptive_buffer_retry import high_grade_adaptive_buffer_retry_plan
 from .buffer_failure_diagnostics import buffer_failure_diagnostic
 from .buffer_only_probe import BufferOnlyProbeResult
 from .buffer_segment_extraction import BufferExtractionConfig, BufferSegmentExtractor, BufferSegmentResult
@@ -52,12 +53,18 @@ def pair_anchor_formal_retry(
         failure_business_category=failure_business_category,
         source_reject_reason=source_reject_reason,
         directionality=directionality,
+        sgrade=sgrade,
         allow_multi_anchor_ambiguous=allow_multi_anchor_ambiguous,
     ):
         return None
     candidate_pairs = _candidate_pairs_for_retry(
         probe_result,
-        include_all=allow_multi_anchor_ambiguous and failure_business_category == "multi_anchor_ambiguous",
+        include_all=_should_try_all_candidate_pairs(
+            directionality=directionality,
+            failure_business_category=failure_business_category,
+            source_reject_reason=source_reject_reason,
+            allow_multi_anchor_ambiguous=allow_multi_anchor_ambiguous,
+        ),
     )
     if not candidate_pairs:
         return None
@@ -66,7 +73,8 @@ def pair_anchor_formal_retry(
     outcomes: dict[tuple[str, str], PairAnchorFormalRetryOutcome] = {}
     attempted: set[tuple[str, str]] = set()
     for candidate_pair in candidate_pairs:
-        for oriented_pair in (candidate_pair, list(reversed(candidate_pair))):
+        oriented_pairs = (candidate_pair,) if directionality == "dual" else (candidate_pair, list(reversed(candidate_pair)))
+        for oriented_pair in oriented_pairs:
             key = (oriented_pair[0], oriented_pair[1])
             if key in attempted:
                 continue
@@ -105,8 +113,16 @@ def _eligible(
     failure_business_category: str,
     source_reject_reason: str,
     directionality: str,
+    sgrade: Any,
     allow_multi_anchor_ambiguous: bool,
 ) -> bool:
+    if directionality == "dual":
+        return _dual_directionality_mismatch_eligible(
+            probe_result=probe_result,
+            failure_business_category=failure_business_category,
+            source_reject_reason=source_reject_reason,
+            sgrade=sgrade,
+        )
     if directionality != "single":
         return False
     if failure_business_category == "pair_anchor_mismatch":
@@ -138,6 +154,32 @@ def _eligible(
     return probe_result.shape_similarity_score >= 0.95
 
 
+def _dual_directionality_mismatch_eligible(
+    *,
+    probe_result: BufferOnlyProbeResult,
+    failure_business_category: str,
+    source_reject_reason: str,
+    sgrade: Any,
+) -> bool:
+    if failure_business_category != "directionality_mismatch_fixable":
+        return False
+    if source_reject_reason != "rcsd_not_bidirectional_for_swsd_dual":
+        return False
+    if not _is_high_grade_sgrade(sgrade):
+        return False
+    if probe_result.status not in {"corridor_found", "corridor_found_with_anchor_mismatch"}:
+        return False
+    if probe_result.manual_review_required:
+        return False
+    if probe_result.repair_recommendation != "high_confidence_pair_anchor_candidate":
+        return False
+    if probe_result.candidate_score < 0.85 or probe_result.geometry_overlap_ratio < 0.7:
+        return False
+    if probe_result.connectivity_score < 1.0 or probe_result.directionality_score < 0.5:
+        return False
+    return probe_result.shape_similarity_score >= 0.95
+
+
 def _candidate_pairs_for_retry(probe_result: BufferOnlyProbeResult, *, include_all: bool) -> list[list[str]]:
     values = probe_result.candidate_pair_sets if include_all else probe_result.candidate_pair_sets[:1]
     result: list[list[str]] = []
@@ -152,6 +194,22 @@ def _candidate_pairs_for_retry(probe_result: BufferOnlyProbeResult, *, include_a
         seen.add(key)
         result.append(pair)
     return result
+
+
+def _should_try_all_candidate_pairs(
+    *,
+    directionality: str,
+    failure_business_category: str,
+    source_reject_reason: str,
+    allow_multi_anchor_ambiguous: bool,
+) -> bool:
+    if allow_multi_anchor_ambiguous and failure_business_category == "multi_anchor_ambiguous":
+        return True
+    return (
+        directionality == "dual"
+        and failure_business_category == "directionality_mismatch_fixable"
+        and source_reject_reason == "rcsd_not_bidirectional_for_swsd_dual"
+    )
 
 
 def _try_oriented_pair(
@@ -175,18 +233,21 @@ def _try_oriented_pair(
     max_path_to_swsd_length_ratio: float,
     require_segment_axis_alignment: bool = False,
 ) -> PairAnchorFormalRetryOutcome | None:
+    is_dual = directionality == "dual"
     candidate_relation = _candidate_relation(
         candidate_pair=candidate_pair,
         relation_junc_nodes=relation_junc_nodes,
         relation_map=relation_map,
     )
-    directed_rcsd_pair_nodes = _map_directed_swsd_pair_to_rcsd(
-        pair_nodes=pair_nodes,
-        rcsd_pair_nodes=candidate_relation.rcsd_pair_nodes,
-        directed_swsd_pair_nodes=directed_swsd_pair_nodes,
-    )
-    if len(directed_rcsd_pair_nodes) != 2:
-        return None
+    directed_rcsd_pair_nodes: list[str] = []
+    if not is_dual:
+        directed_rcsd_pair_nodes = _map_directed_swsd_pair_to_rcsd(
+            pair_nodes=pair_nodes,
+            rcsd_pair_nodes=candidate_relation.rcsd_pair_nodes,
+            directed_swsd_pair_nodes=directed_swsd_pair_nodes,
+        )
+        if len(directed_rcsd_pair_nodes) != 2:
+            return None
     if require_segment_axis_alignment and not _oriented_pair_matches_segment_axis(
         candidate_pair=candidate_relation.rcsd_pair_nodes,
         pair_nodes=pair_nodes,
@@ -210,8 +271,8 @@ def _try_oriented_pair(
         all_relation_base_ids=all_base_ids_for_segment,
         unexpected_relation_base_ids=unexpected_base_ids_for_segment,
         directed_pair_nodes=directed_rcsd_pair_nodes,
-        require_directed_pair=True,
-        require_bidirectional=False,
+        require_directed_pair=not is_dual,
+        require_bidirectional=is_dual,
         config=buffer_config,
     )
     diagnostic = buffer_failure_diagnostic(
@@ -223,6 +284,21 @@ def _try_oriented_pair(
     )
     if result.ok:
         return PairAnchorFormalRetryOutcome(candidate_relation, result, diagnostic)
+    if is_dual:
+        return _dual_adaptive_outcome(
+            candidate_relation=candidate_relation,
+            result=result,
+            diagnostic=diagnostic,
+            optional_allowed=optional_allowed,
+            segment_geometry=segment_geometry,
+            sgrade=sgrade,
+            buffer_extractor=buffer_extractor,
+            buffer_config=buffer_config,
+            all_base_ids_for_segment=all_base_ids_for_segment,
+            unexpected_base_ids_for_segment=unexpected_base_ids_for_segment,
+            graph_retry=graph_retry,
+            max_path_to_swsd_length_ratio=max_path_to_swsd_length_ratio,
+        )
 
     graph_outcome = graph_retry.retry(
         segment_geometry=segment_geometry,
@@ -236,6 +312,67 @@ def _try_oriented_pair(
         diagnostic=diagnostic,
         config=buffer_config,
         max_path_to_swsd_length_ratio=max_path_to_swsd_length_ratio,
+    )
+    if graph_outcome is None:
+        return None
+    return _graph_outcome(candidate_relation, diagnostic, graph_outcome)
+
+
+def _dual_adaptive_outcome(
+    *,
+    candidate_relation: RelationCheck,
+    result: BufferSegmentResult,
+    diagnostic: dict[str, Any],
+    optional_allowed: list[str],
+    segment_geometry: BaseGeometry | None,
+    sgrade: Any,
+    buffer_extractor: BufferSegmentExtractor,
+    buffer_config: BufferExtractionConfig,
+    all_base_ids_for_segment: set[str],
+    unexpected_base_ids_for_segment: set[str],
+    graph_retry: SingleGraphConnectivityRetry,
+    max_path_to_swsd_length_ratio: float,
+) -> PairAnchorFormalRetryOutcome | None:
+    plan = high_grade_adaptive_buffer_retry_plan(
+        sgrade=sgrade,
+        directionality="dual",
+        buffer_result=result,
+        diagnostic=diagnostic,
+        base_buffer_distance_m=buffer_config.buffer_distance_m,
+    )
+    if plan is None:
+        return None
+    for distance_m in plan.distances_m:
+        retry_result = buffer_extractor.extract(
+            segment_geometry=segment_geometry,
+            relation=candidate_relation,
+            optional_allowed_rcsd_nodes=optional_allowed,
+            all_relation_base_ids=all_base_ids_for_segment,
+            unexpected_relation_base_ids=unexpected_base_ids_for_segment,
+            directed_pair_nodes=[],
+            require_directed_pair=False,
+            require_bidirectional=True,
+            config=replace(buffer_config, buffer_distance_m=distance_m),
+        )
+        if not retry_result.ok:
+            continue
+        return PairAnchorFormalRetryOutcome(
+            candidate_relation,
+            retry_result,
+            diagnostic,
+            adaptive_distance_m=distance_m,
+            adaptive_source_reason=result.reason,
+        )
+    graph_outcome = graph_retry.retry_dual_bidirectional(
+        segment_geometry,
+        candidate_relation,
+        optional_allowed,
+        unexpected_base_ids_for_segment,
+        sgrade,
+        result,
+        diagnostic,
+        buffer_config,
+        max_path_to_swsd_length_ratio,
     )
     if graph_outcome is None:
         return None
@@ -394,3 +531,8 @@ def _failed_relation_nodes(
             failed.append(node_id)
             reasons[node_id] = "invalid_junc_base_id"
     return failed, reasons
+
+
+def _is_high_grade_sgrade(value: Any) -> bool:
+    text = str(value or "").strip()
+    return text.startswith("0-0") or text.startswith("0-1")

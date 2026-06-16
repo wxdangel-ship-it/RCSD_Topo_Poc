@@ -162,6 +162,13 @@ def _build_bundle_text(*, meta: dict[str, Any], payload_bytes: bytes) -> tuple[s
     return text, len(text.encode("utf-8"))
 
 
+def _write_bundle_text(path: Path, text: str) -> int:
+    payload = text.encode("utf-8")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(payload)
+    return len(payload)
+
+
 def _part_txt_paths(out_txt: Path, part_count: int) -> tuple[Path, ...]:
     if part_count <= 1:
         return (out_txt,)
@@ -1305,9 +1312,9 @@ def _write_bundle_outputs(
     size_report["within_limit"] = bundle_size_bytes <= max_text_size_bytes
     size_report["limit_bytes"] = max_text_size_bytes
     if bundle_size_bytes <= max_text_size_bytes:
-        out_txt_path.write_text(bundle_text, encoding="utf-8")
+        actual_size_bytes = _write_bundle_text(out_txt_path, bundle_text)
         size_report["split_bundle"] = {"enabled": False, "part_count": 1, "part_files": [str(out_txt_path)]}
-        return (out_txt_path,), bundle_size_bytes
+        return (out_txt_path,), actual_size_bytes
 
     meta, payload_bytes = _parse_text_bundle(bundle_text)
     parts = _split_payload_bundle_texts(
@@ -1316,14 +1323,15 @@ def _write_bundle_outputs(
         payload_bytes=payload_bytes,
         max_text_size_bytes=max_text_size_bytes,
     )
+    actual_part_sizes: dict[str, int] = {}
     for path, text, _size in parts:
-        path.write_text(text, encoding="utf-8")
+        actual_part_sizes[path.name] = _write_bundle_text(path, text)
     split_report = {
         "enabled": True,
         "part_count": len(parts),
         "part_files": [str(path) for path, _text, _size in parts],
-        "part_size_bytes": {path.name: size for path, _text, size in parts},
-        "max_part_size_bytes": max(size for _path, _text, size in parts),
+        "part_size_bytes": actual_part_sizes,
+        "max_part_size_bytes": max(actual_part_sizes.values()),
     }
     size_report["split_bundle"] = split_report
     return tuple(path for path, _text, _size in parts), int(split_report["max_part_size_bytes"])

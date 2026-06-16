@@ -18,7 +18,17 @@ SOURCE_T07 = "T07"
 SOURCE_T02_INPUT = "T02_INPUT"
 SOURCE_T03 = "T03"
 SOURCE_T04 = "T04"
-SOURCE_PRIORITY = {SOURCE_T07: 0, SOURCE_T02_INPUT: 1, SOURCE_T03: 2, SOURCE_T04: 3}
+SOURCE_T10_SIDE_GROUP = "T10_SIDE_GROUP"
+SOURCE_T10_PAIR_ANCHOR_CLUSTER = "T10_PAIR_ANCHOR_CLUSTER"
+SUPPLEMENTAL_SOURCES = {SOURCE_T10_SIDE_GROUP, SOURCE_T10_PAIR_ANCHOR_CLUSTER}
+SOURCE_PRIORITY = {
+    SOURCE_T07: 0,
+    SOURCE_T02_INPUT: 1,
+    SOURCE_T03: 2,
+    SOURCE_T04: 3,
+    SOURCE_T10_SIDE_GROUP: 4,
+    SOURCE_T10_PAIR_ANCHOR_CLUSTER: 5,
+}
 T04_FALLBACK_SCENES = {
     "main_evidence_with_rcsdroad_fallback",
     "no_main_evidence_with_rcsdroad_fallback_and_swsd",
@@ -31,6 +41,8 @@ def build_evidence_rows(
     t07_rows: Iterable[dict[str, Any]] = (),
     t03_rows: Iterable[dict[str, Any]],
     t04_rows: Iterable[dict[str, Any]],
+    t10_side_group_rows: Iterable[dict[str, Any]] = (),
+    t10_pair_anchor_cluster_rows: Iterable[dict[str, Any]] = (),
 ) -> list[Phase2Evidence]:
     records: list[Phase2Evidence] = []
     for source_module, rows in (
@@ -38,6 +50,8 @@ def build_evidence_rows(
         (SOURCE_T02_INPUT, t02_rows),
         (SOURCE_T03, t03_rows),
         (SOURCE_T04, t04_rows),
+        (SOURCE_T10_SIDE_GROUP, t10_side_group_rows),
+        (SOURCE_T10_PAIR_ANCHOR_CLUSTER, t10_pair_anchor_cluster_rows),
     ):
         for row in rows:
             target_id = normalize_target_id(row.get("target_id"))
@@ -52,14 +66,17 @@ def classify_evidence(evidence: Phase2Evidence, *, junction_type: str) -> SceneD
     row = evidence.row
     relation_state = _text(row.get("relation_state"))
     status_suggested = _text(row.get("status_suggested"))
-    base_ids = tuple(_int_ids(_split_values(row.get("base_id_candidate"))))
+    base_ids = tuple(_int_ids(_split_values(row.get("base_id_candidate")) + _split_values(row.get("rcsd_primary_node_id"))))
     required_nodes = tuple(
         _int_ids(
             _split_values(row.get("required_rcsdnode_ids"))
             + _split_values(row.get("required_rcsd_node_ids"))
         )
     )
+    semantic_required_nodes = tuple(_int_ids(_split_values(row.get("semantic_required_rcsd_node_ids"))))
     selected_nodes = tuple(_int_ids(_split_values(row.get("selected_rcsdnode_ids"))))
+    side_group_nodes = tuple(_int_ids(_split_values(row.get("candidate_rcsdnode_ids"))))
+    pair_anchor_cluster_nodes = tuple(_int_ids(_split_values(row.get("endpoint_cluster_rcsdnode_ids"))))
     road_ids = tuple(
         _int_ids(
             _split_values(row.get("fallback_rcsdroad_ids"))
@@ -70,6 +87,36 @@ def classify_evidence(evidence: Phase2Evidence, *, junction_type: str) -> SceneD
     )
     case_id = evidence.case_id
     source = evidence.source_module
+
+    if source == SOURCE_T10_SIDE_GROUP:
+        if len(side_group_nodes) > 1:
+            return SceneDecision(
+                scene=SCENE_GROUP_EXISTING,
+                action="group_existing_rcsd_nodes",
+                reason=_text(row.get("side_group_action")) or "t10_side_group_endpoint_candidate",
+                source_module=source,
+                source_case_id=case_id,
+                base_id_candidates=base_ids,
+                rcsdnode_ids=side_group_nodes,
+                multi_base_relation=True,
+            )
+        return _failure_or_no_rcsd(evidence, "t10_side_group_endpoint_candidate_singleton")
+
+    if source == SOURCE_T10_PAIR_ANCHOR_CLUSTER:
+        if not _truthy(row.get("auto_consumable_by_t05")):
+            return _failure_or_no_rcsd(evidence, "t10_pair_anchor_cluster_not_auto_consumable")
+        if len(pair_anchor_cluster_nodes) > 1:
+            return SceneDecision(
+                scene=SCENE_GROUP_EXISTING,
+                action="group_existing_rcsd_nodes",
+                reason=_text(row.get("pair_anchor_cluster_action")) or "t10_pair_anchor_endpoint_cluster",
+                source_module=source,
+                source_case_id=case_id,
+                base_id_candidates=base_ids,
+                rcsdnode_ids=pair_anchor_cluster_nodes,
+                multi_base_relation=True,
+            )
+        return _failure_or_no_rcsd(evidence, "t10_pair_anchor_endpoint_cluster_singleton")
 
     if source == SOURCE_T02_INPUT:
         if relation_state == "existing_rcsdintersection_matched" and base_ids:
@@ -83,6 +130,20 @@ def classify_evidence(evidence: Phase2Evidence, *, junction_type: str) -> SceneD
                 multi_base_relation=len(base_ids) > 1,
             )
         return _failure_or_no_rcsd(evidence, relation_state or "t02_no_existing_rcsdintersection")
+
+    if source == SOURCE_T04 and base_ids and status_suggested == "0":
+        handoff_group_nodes = _t04_partial_handoff_group_nodes(row, base_ids, semantic_required_nodes)
+        if handoff_group_nodes:
+            return SceneDecision(
+                scene=SCENE_GROUP_EXISTING,
+                action="group_existing_rcsd_nodes",
+                reason="t04_road_surface_fork_partial_handoff_group",
+                source_module=source,
+                source_case_id=case_id,
+                base_id_candidates=base_ids,
+                rcsdnode_ids=handoff_group_nodes,
+                multi_base_relation=True,
+            )
 
     if source == SOURCE_T04 and base_ids and status_suggested == "0" and _t04_relation_only_success(row):
         return SceneDecision(
@@ -191,13 +252,51 @@ def classify_evidence(evidence: Phase2Evidence, *, junction_type: str) -> SceneD
 def choose_actionable_decisions(decisions: list[SceneDecision]) -> list[SceneDecision]:
     successes = [item for item in decisions if item.scene in {SCENE_DIRECT, SCENE_GROUP_EXISTING}]
     if successes:
-        return successes
+        base_successes = [item for item in successes if item.source_module not in SUPPLEMENTAL_SOURCES]
+        supplement_successes = [item for item in successes if item.source_module in SUPPLEMENTAL_SOURCES]
+        if base_successes and supplement_successes:
+            return [*base_successes, *supplement_successes]
+        if base_successes:
+            return base_successes
     split_decisions = [item for item in decisions if item.scene == SCENE_ROAD_SPLIT]
+    supplement_successes = [item for item in successes if item.source_module in SUPPLEMENTAL_SOURCES]
+    if split_decisions and supplement_successes:
+        return [split_decisions[0], *supplement_successes]
     if split_decisions:
         return split_decisions[:1]
-    if decisions:
-        return [decisions[0]]
+    fallback_decisions = [item for item in decisions if item.source_module not in SUPPLEMENTAL_SOURCES]
+    if fallback_decisions:
+        return [fallback_decisions[0]]
     return []
+
+
+def _t04_partial_handoff_group_nodes(
+    row: dict[str, Any],
+    base_ids: tuple[int, ...],
+    semantic_required_nodes: tuple[int, ...],
+) -> tuple[int, ...]:
+    if _text(row.get("swsd_relation_type")) != "partial":
+        return ()
+    if not base_ids or not semantic_required_nodes:
+        return ()
+    if set(base_ids) == set(semantic_required_nodes):
+        return ()
+    return _unique_ints([*base_ids, *semantic_required_nodes])
+
+
+def _unique_ints(values: Iterable[int]) -> tuple[int, ...]:
+    result: list[int] = []
+    seen: set[int] = set()
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        result.append(value)
+    return tuple(result)
+
+
+def _truthy(value: Any) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "y"}
 
 
 def _group_reason(source: str, junction_type: str) -> str:

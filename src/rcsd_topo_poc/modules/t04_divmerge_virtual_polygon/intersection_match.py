@@ -133,14 +133,40 @@ def _t04_relation_records_from_evidence_rows(rows: list[dict[str, Any]]) -> list
 
 
 def _read_intersection_match_records(path: Path | None, *, source_module: str) -> list[dict[str, Any]]:
+    records, _audit = _read_intersection_match_source(path, source_module=source_module)
+    return records
+
+
+def _read_intersection_match_source(path: Path | None, *, source_module: str) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    audit = {
+        "source_module": source_module,
+        "path": str(path) if path is not None else "",
+        "provided": path is not None,
+        "status": "not_provided",
+        "usable": False,
+        "record_count": 0,
+        "error": "",
+    }
     if path is None:
-        return []
+        return [], audit
     if not path.is_file():
         raise FileNotFoundError(f"{source_module} intersection match does not exist: {path}")
-    payload = json.loads(path.read_text(encoding="utf-8"))
+    text = path.read_text(encoding="utf-8")
+    if not text.strip():
+        audit["status"] = "empty_file"
+        audit["error"] = "intersection match file is empty"
+        return [], audit
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError as exc:
+        audit["status"] = "invalid_json"
+        audit["error"] = f"{exc.msg}: line {exc.lineno} column {exc.colno}"
+        return [], audit
     features = payload.get("features") if isinstance(payload, dict) else None
     if not isinstance(features, list):
-        return []
+        audit["status"] = "missing_features"
+        audit["error"] = "GeoJSON payload does not contain a features list"
+        return [], audit
     records: list[dict[str, Any]] = []
     for index, feature in enumerate(features):
         if not isinstance(feature, dict):
@@ -167,7 +193,10 @@ def _read_intersection_match_records(path: Path | None, *, source_module: str) -
                 "geometry": feature.get("geometry"),
             }
         )
-    return records
+    audit["status"] = "ok"
+    audit["usable"] = True
+    audit["record_count"] = len(records)
+    return records, audit
 
 
 def _relation_error_row(
@@ -299,8 +328,8 @@ def write_intersection_match_t04(
     t07_path = Path(intersection_match_t07_path) if intersection_match_t07_path is not None else None
     t03_path = Path(intersection_match_t03_path) if intersection_match_t03_path is not None else None
     t04_records = _t04_relation_records_from_evidence_rows(_read_relation_evidence_rows(relation_path))
-    t07_records = _read_intersection_match_records(t07_path, source_module="T07")
-    t03_records = _read_intersection_match_records(t03_path, source_module="T03")
+    t07_records, t07_validation_input = _read_intersection_match_source(t07_path, source_module="T07")
+    t03_records, t03_validation_input = _read_intersection_match_source(t03_path, source_module="T03")
     external_validation_enabled = t07_path is not None or t03_path is not None
     error_rows = _build_cardinality_errors(t07_records + t03_records + t04_records)
     error_counts = _error_counts(error_rows)
@@ -357,6 +386,13 @@ def write_intersection_match_t04(
         "t04_candidate_relation_count": len(t04_records),
         "t07_validation_relation_count": len(t07_records),
         "t03_validation_relation_count": len(t03_records),
+        "t07_validation_input": t07_validation_input,
+        "t03_validation_input": t03_validation_input,
+        "external_validation_unusable_input_count": sum(
+            1
+            for item in (t07_validation_input, t03_validation_input)
+            if item["provided"] and not item["usable"]
+        ),
         "published_relation_count": len(output_records),
         "suppressed_target_ids": sorted(suppressed_target_ids, key=sort_patch_key),
         "rollback_target_ids": sorted({str(row["target_id"]) for row in deduped_rollback_rows}, key=sort_patch_key),

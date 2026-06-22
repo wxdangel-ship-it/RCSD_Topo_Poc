@@ -1,41 +1,42 @@
 # T07 Semantic Junction Anchor
 
-本文件是 T07 的模块阅读入口和文档索引。凝练版业务需求见 `SPEC.md`，详细业务落地见 `architecture/04-solution-strategy.md`，稳定接口见 `INTERFACE_CONTRACT.md`。
+本文件是 T07 的模块阅读入口。模块需求见 `SPEC.md`，稳定接口见 `INTERFACE_CONTRACT.md`，架构设计见 `architecture/01-introduction-and-goals.md` 至 `architecture/06-risks-and-technical-debt.md`。
 
 ## 1. 当前状态
 
 - 生命周期：Active。
-- 当前主职责：执行已有路口面 1:1 锚定与 T05 relation 补锚。
-- 上游：T08、DriveZone、RCSDIntersection、T05。
+- 当前主职责：执行已有路口面 1:1 锚定，并通过独立 Step3 消费 T05 relation 做补锚。
+- 上游：T08、DriveZone、RCSDIntersection、RCSDNode、T05。
 - 下游：T03、T04、T05。
 
 ## 2. 文档职责
 
 | 文档 | 承载内容 |
 |---|---|
-| `SPEC.md` | 凝练版模块业务需求。 |
-| `architecture/04-solution-strategy.md` | Step1-Step3 详细需求 / 落地策略。 |
-| `INTERFACE_CONTRACT.md` | 输入输出、业务规则、入口和验收契约。 |
-| `architecture/05-building-block-view.md` | 实现构件职责映射。 |
-| `architecture/10-quality-requirements.md` | 质量、审计和性能要求。 |
-| `architecture/11-risks-and-technical-debt.md` | 当前风险与技术债。 |
-| `architecture/12-glossary.md` | 模块术语。 |
+| `SPEC.md` | 模块需求：业务目标、范围、上下游、输入输出、关键步骤、对错边界。 |
+| `INTERFACE_CONTRACT.md` | 稳定接口：Step1/2/3 输入输出、业务规则、入口和验收契约。 |
+| `architecture/01-introduction-and-goals.md` | 架构背景、目标和非目标。 |
+| `architecture/02-data-and-domain-model.md` | 语义路口、representative node、RCSDIntersection、T05 relation 与 handoff evidence 关系。 |
+| `architecture/03-solution-strategy.md` | Step1/2 existing surface anchor 与 Step3 relation backfill 的实现策略。 |
+| `architecture/04-evidence-and-audit.md` | nodes 状态、surface handoff、relation evidence、Step3 audit 和 cardinality 审计。 |
+| `architecture/05-quality-requirements.md` | 质量要求、GIS / 拓扑 / 性能检查和回归要求。 |
+| `architecture/06-risks-and-technical-debt.md` | 当前风险、生命周期判断和治理缺口。 |
+| `history/` | 历史阶段材料，只用于追溯。 |
 
 ## 3. 当前入口位置
 
-T07 当前提供模块内 callable runner，并通过已登记内网脚本包装 Step1/Step2 和独立 Step3。详细调用方式以 `INTERFACE_CONTRACT.md` 为准。
+T07 提供模块内 callable runner，并通过已登记内网脚本包装 Step1/Step2 和独立 Step3。详细调用方式以 `INTERFACE_CONTRACT.md` 与 `docs/repository-metadata/entrypoint-registry.md` 为准。
 
 ## 4. 阅读顺序
 
 1. `SPEC.md`
-2. `architecture/04-solution-strategy.md`
-3. `INTERFACE_CONTRACT.md`
-4. `architecture/05-building-block-view.md`
-5. `architecture/10-quality-requirements.md`
-6. `architecture/11-risks-and-technical-debt.md`
-7. `architecture/12-glossary.md`
-8. `AGENTS.md`
+2. `INTERFACE_CONTRACT.md`
+3. `architecture/03-solution-strategy.md`
+4. `architecture/02-data-and-domain-model.md`
+5. `architecture/04-evidence-and-audit.md`
+6. `architecture/05-quality-requirements.md`
+7. `architecture/06-risks-and-technical-debt.md`
 
 ## 5. 范围提示
 
-T07 不读取、生成或统计 Segment，也不生成虚拟路口面。
+T07 不读取、生成或统计 Segment，也不生成虚拟路口面。它只处理代表 node 的 `has_evd / is_anchor / anchor_reason` 与 T07 relation evidence。

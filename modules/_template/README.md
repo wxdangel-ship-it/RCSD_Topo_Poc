@@ -1,72 +1,49 @@
 # <module_id>
 
-本文件是 `<module_id>` 的凝练版需求说明，面向人快速理解模块业务目标、上下游、输入输出、关键步骤和对错边界。详细业务落地见 `architecture/04-solution-strategy.md`，稳定接口见 `INTERFACE_CONTRACT.md`。
+本文件是 `<module_id>` 的模块阅读入口和文档索引。模块需求见 `SPEC.md`，架构设计见 `architecture/01~06`，稳定接口契约见 `INTERFACE_CONTRACT.md`。
 
-## 1. 模块定位
+## 1. 当前状态
 
-`<用 1-3 句话说明模块解决什么业务问题、处在主链哪个位置、服务哪个下游。>`
+- 生命周期：`<Active | Support Retained | Retired | Active POC / 成果模块>`。
+- 当前主职责：`<用一句话说明模块当前承担的业务职责>`。
+- 上游：`<模块或数据>`。
+- 下游：`<模块或数据>`。
 
-## 2. 业务目标
+## 2. 文档职责
 
-- `<目标 1：业务上要完成什么>`
-- `<目标 2：要把什么输入转成什么输出>`
-- `<目标 3：对下游提供什么稳定能力>`
-
-## 3. 上下游关系
-
-| 方向 | 模块 / 数据 | 关系 |
-|---|---|---|
-| 上游 | `<upstream>` | `<本模块消费什么成果>` |
-| 下游 | `<downstream>` | `<本模块输出给谁使用>` |
-| 旁路 / 支撑 | `<optional>` | `<可选证据或支撑输入>` |
-
-## 4. 输入
-
-| 输入 | 用途 |
+| 文档 | 承载内容 |
 |---|---|
-| `<input>` | `<用业务语言说明为什么需要它>` |
+| `SPEC.md` | 模块需求，用业务语言说明模块为什么存在、解决什么问题、什么算对。 |
+| `architecture/01-introduction-and-goals.md` | 模块架构目标、上下文、当前范围和非目标。 |
+| `architecture/02-data-and-domain-model.md` | 关键输入对象、业务对象、领域分层和数据约束。 |
+| `architecture/03-solution-strategy.md` | 架构设计 / 需求具体实现策略，说明模块需求如何落地。 |
+| `architecture/04-evidence-and-audit.md` | formal、review-only、internal 和 handoff 证据与审计分层。 |
+| `architecture/05-quality-requirements.md` | 质量要求和验收关注点。 |
+| `architecture/06-risks-and-technical-debt.md` | 历史命名、数据质量、入口治理、性能和跨模块 handoff 风险。 |
+| `INTERFACE_CONTRACT.md` | 输入、输出、状态、入口和最小审计字段契约，主要供实现、运行、联调和 Agent 维护时查阅。 |
+| `history/` | 历史阶段 closeout 材料，仅用于追溯历史交付背景。 |
 
-## 5. 输出
+## 3. 当前入口位置
 
-| 输出 | 用途 |
-|---|---|
-| `<output>` | `<说明它表达什么业务结果、供谁消费>` |
+入口命令、脚本和 callable 以 `INTERFACE_CONTRACT.md` 为准。
 
-## 6. 关键业务步骤
+入口类别：
 
-| 步骤 | 业务说明 |
-|---|---|
-| `<Step1>` | `<用中文说明该步骤做什么、为什么这样做>` |
-| `<Step2>` | `<说明判定、转换、锚定、融合或恢复逻辑>` |
-| `<Step3>` | `<说明输出和审计如何形成>` |
+- `<repo CLI 子命令；无则写“无 repo 官方 CLI”>`
+- `<root scripts；无则写“无 root script 入口”>`
+- `<模块内 callable；说明主要函数或 runner>`
 
-## 7. 什么是对
+## 4. 阅读顺序
 
-- `<正确判定 1>`
-- `<正确判定 2>`
-- `<正确输出 / 审计要求>`
+1. `SPEC.md`
+2. `architecture/01-introduction-and-goals.md`
+3. `architecture/02-data-and-domain-model.md`
+4. `architecture/03-solution-strategy.md`
+5. `architecture/04-evidence-and-audit.md`
+6. `architecture/05-quality-requirements.md`
+7. `architecture/06-risks-and-technical-debt.md`
+8. `INTERFACE_CONTRACT.md`（仅在需要查入口、字段、状态和值域时）
 
-## 8. 什么是错
+## 5. 入口治理提示
 
-- `<错误推断 1>`
-- `<错误输入使用方式>`
-- `<错误输出或 silent fix>`
-
-## 9. 当前入口
-
-当前入口以实际模块为准。若没有 repo 官方 CLI 或 root 脚本，应明确写“当前只提供模块内 callable”。
-
-```python
-from rcsd_topo_poc.modules.<module_id> import <callable>
-```
-
-若需要新增 repo CLI、root `scripts/`、Makefile 目标、模块 `run.py` 或模块 `__main__.py`，必须先获得任务授权并同步入口登记。
-
-## 10. 文档阅读顺序
-
-1. `README.md`
-2. `architecture/04-solution-strategy.md`
-3. `INTERFACE_CONTRACT.md`
-4. `architecture/05-building-block-view.md`
-5. `architecture/10-quality-requirements.md`
-6. `architecture/11-risks-and-technical-debt.md`
+若模块没有 repo 官方 CLI、root `scripts/` 或长期 shell wrapper，应明确写“当前只提供模块内 callable”。新增、删除、重命名或改变官方调用方式前，必须先获得任务授权并同步入口登记。

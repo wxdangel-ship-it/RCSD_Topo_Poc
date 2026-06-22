@@ -1,18 +1,20 @@
 # 12 术语表
 
-- `segment`：来自 T01 的双向 Segment 聚合结果，当前 stage1 消费其中的 `id / pair_nodes / junc_nodes / s_grade|sgrade`。
+> 当前项目级生命周期中，T02 已 Retired。本文档术语保留历史实现语义；其中“当前 / 正式 / 唯一”等词按 T02 退役前历史基线理解。
+
+- `segment`：来自 T01 的双向 Segment 聚合结果，历史 stage1 消费其中的 `id / pair_nodes / junc_nodes / s_grade|sgrade`。
 - `junction_id`：从 `pair_nodes / junc_nodes` 解析得到的目标路口标识。
-- `mainnode`：业务概念名；在 stage1 正式输入中对应字段是 `mainnodeid`。
+- `mainnode`：业务概念名；在 stage1 历史正式输入中对应字段是 `mainnodeid`。
 - `representative node`：某个 junction group 中唯一承担 `has_evd` 写值的 node。
 - `DriveZone gate`：判断某个 junction group 是否拥有有效资料区域的 stage1 规则。
-- `has_evd`：当前阶段的资料存在性业务结果，值域为 `yes / no / null`。
+- `has_evd`：历史阶段的资料存在性业务结果，值域为 `yes / no / null`。
 - `anchor recognition / anchor existence`：stage2 基于 `RCSDIntersection` 判定代表 node 是否命中稳定锚点的最小闭环。
 - `virtual intersection anchoring`：T02 stage3，对“有资料但未锚定”的路口构造虚拟路口面，并将其锚定到 own-group nodes、RCSDNode 与 RCSDRoad 局部组件。
-- `case-package`：stage3 的唯一正式验收基线输入模式，每个 case 自带完整局部输入。
+- `case-package`：T02 历史 stage3 的唯一验收基线输入模式，每个 case 自带完整局部输入。
 - `full-input`：stage3 的完整数据 `fixture / dev-only / regression` 输入模式，统一承接指定 `mainnodeid` 与自动识别候选两类业务诉求。
 - `polygon-support`：用于支撑虚拟路口面几何的局部 RC 组件集合；允许比最终 association 更完整。
 - `association`：最终写入 `associated_rcsdroad.gpkg / associated_rcsdnode.gpkg` 的保守 RC 关联结果。
-- `must-cover own-group nodes`：当前 `mainnodeid` 组内 node 必须被虚拟路口面覆盖的硬约束。
+- `must-cover own-group nodes`：当前 case 的 `mainnodeid` 组内 node 必须被虚拟路口面覆盖的历史硬约束。
 - `review_mode`：仅用于分析和人工复核的模式，可绕过 anchor gate，并将部分 RC outside DriveZone 从硬失败降为风险记录。
 - `anchor_support_conflict`：虚拟路口面无法同时满足 own-group nodes 与局部 RC support 覆盖要求时的明确失败原因。
 - `node_component_conflict`：虚拟路口面覆盖了超出 own-group 与 compound auxiliary 的额外 local nodes 时的风险状态。

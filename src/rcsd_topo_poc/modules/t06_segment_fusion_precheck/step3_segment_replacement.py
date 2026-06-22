@@ -6,9 +6,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from shapely.geometry import LineString, MultiLineString, Point
+from shapely.ops import linemerge, unary_union
+
 from .graph_builders import NodeCanonicalizer
 from .io import prepare_run_roots, read_features, write_feature_triplet, write_json
 from .parsing import ParseError, normalize_id, parse_id_list, parse_positive_int, unique_preserve_order
+from .road_attributes import is_advance_right_turn_road, is_near_advance_right_turn_duplicate as _is_adv_dup
 from .schemas import (
     STEP2_GROUP_REPLACEMENT_AUDIT_STEM,
     STEP2_REPLACEMENT_PLAN_STEM,
@@ -35,14 +39,41 @@ from .schemas import (
     T06Step3Artifacts,
     feature,
 )
+from .step3_advance_right_contract import (
+    RIGHT_ATTACH_AUDIT_FIELDS,
+    RIGHT_ATTACH_AUDIT_STEM,
+    _apply_post_advance_right_attachments,
+    _retain_post_advance_right_swsd_carriers,
+    apply_junction_advance_right_contract,
+    apply_retained_swsd_segment_attachment_contract,
+)
+from .step3_endpoint_nodes import ensure_added_rcsd_road_endpoint_nodes, ensure_retained_swsd_road_endpoint_nodes
+from .step3_detached_carriers import retain_detached_junc_swsd_roads
 from .step3_group_replacement import (
     GroupReplacementAssignment,
     read_group_replacement_assignments,
     read_group_replacement_assignments_from_plan_rows,
 )
+from .step3_relation_node_map import backfill_relation_node_maps_from_attachment_audit, sync_retained_swsd_carrier_mainnodes
+from .step3_topology_connectivity_audit import (
+    STEP3_TOPOLOGY_CONNECTIVITY_AUDIT_FIELDS,
+    STEP3_TOPOLOGY_CONNECTIVITY_AUDIT_STEM,
+    build_topology_connectivity_audit_rows,
+    summarize_topology_connectivity_audit,
+)
+from .step3_topology_supplement import (
+    FORMAL_REPLACEMENT_CORRIDOR_UNAVAILABLE_REASON,
+    MIXED_REPLACEMENT_REQUIRES_SWSD_CARRIER_REASON,
+    exclude_retained_swsd_carriers_from_formal_replacements,
+    materialize_topology_supplement_rcsd_roads,
+)
 
 
 INHERITED_NODE_FIELDS = ["kind", "grade", "kind_2", "grade_2", "closed_con"]
+ADVANCE_RIGHT_FORMWAY_BIT = 128
+TOPOLOGY_SUPPLEMENT_CORRIDOR_BUFFER_M = 2.0
+TOPOLOGY_SUPPLEMENT_MAX_UNCOVERED_RATIO = 0.05
+TOPOLOGY_SUPPLEMENT_MIN_UNCOVERED_LENGTH_M = 20.0
 
 
 @dataclass
@@ -84,11 +115,13 @@ class SpecialJunctionGroup:
 class JunctionState:
     c_id: str
     replacement_segment_ids: list[str] = field(default_factory=list)
+    retained_segment_ids: list[str] = field(default_factory=list)
     mapped_rcsd_semantic_ids: list[str] = field(default_factory=list)
     original_member_node_ids: list[str] = field(default_factory=list)
     removed_swsd_node_ids: list[str] = field(default_factory=list)
     remaining_swsd_node_ids: list[str] = field(default_factory=list)
     added_rcsd_node_ids: list[str] = field(default_factory=list)
+    advance_attachment_rcsd_node_ids: list[str] = field(default_factory=list)
     original_main_props: dict[str, Any] = field(default_factory=dict)
 
 
@@ -158,7 +191,7 @@ def run_t06_step3_segment_replacement(
         segment_by_id=segment_by_id,
     )
     passed_units = [unit for unit in units if unit.status == "passed"]
-    _retain_detached_junc_swsd_roads(passed_units, swsd_road_by_id)
+    retain_detached_junc_swsd_roads(passed_units, swsd_road_by_id)
     passed_unit_ids = {unit.segment_id for unit in passed_units}
     special_group_audit_path = None
     if replacement_plan_rows:
@@ -179,40 +212,30 @@ def run_t06_step3_segment_replacement(
         entity_attr="rcsd_junction_node_ids",
         passed_unit_ids=passed_unit_ids,
     )
-
-    removed_road_to_segments: dict[str, list[str]] = defaultdict(list)
-    for unit in passed_units:
-        for road_id in unit.swsd_road_ids:
-            if road_id in swsd_road_by_id:
-                removed_road_to_segments[road_id].append(unit.segment_id)
-
-    removed_node_to_segments: dict[str, list[str]] = defaultdict(list)
-    for road_id, segment_ids in removed_road_to_segments.items():
-        for node_id in _road_endpoint_node_ids(swsd_road_by_id[road_id]):
-            for segment_id in segment_ids:
-                if segment_id not in removed_node_to_segments[node_id]:
-                    removed_node_to_segments[node_id].append(segment_id)
-    retained_swsd_endpoint_node_ids = _retained_swsd_endpoint_node_ids(
+    post_advance_right_swsd_carrier_stats = _retain_post_advance_right_swsd_carriers(
+        passed_units,
         swsd_roads=swsd_roads,
-        removed_road_ids=set(removed_road_to_segments),
+        rcsd_roads=rcsd_roads,
     )
-    preserved_removed_node_ids = sorted(
-        set(removed_node_to_segments).intersection(retained_swsd_endpoint_node_ids),
-        key=_id_sort_key,
+    topology_supplement_stats = _retain_topology_supplement_swsd_roads(
+        passed_units,
+        swsd_road_by_id=swsd_road_by_id,
+        rcsd_road_by_id=rcsd_road_by_id,
+        rcsd_nodes=rcsd_nodes,
+        global_rcsd_road_ids=unique_preserve_order(
+            road_id
+            for unit in passed_units
+            for road_id in unit.rcsd_road_ids
+            if road_id in rcsd_road_by_id
+        ),
+        attachment_audit_rows=[],
     )
-    for node_id in preserved_removed_node_ids:
-        removed_node_to_segments.pop(node_id, None)
 
-    for unit in passed_units:
-        unit.removed_swsd_node_ids = unique_preserve_order(
-            [
-                node_id
-                for road_id in unit.swsd_road_ids
-                if road_id in swsd_road_by_id
-                for node_id in _road_endpoint_node_ids(swsd_road_by_id[road_id])
-                if node_id in removed_node_to_segments
-            ]
-        )
+    removed_road_to_segments, removed_node_to_segments, preserved_removed_node_count = _compute_removed_swsd_maps(
+        passed_units,
+        swsd_roads=swsd_roads,
+        swsd_road_by_id=swsd_road_by_id,
+    )
 
     added_road_to_segments: dict[str, list[str]] = defaultdict(list)
     for unit in passed_units:
@@ -222,6 +245,95 @@ def run_t06_step3_segment_replacement(
     for road_id, segment_ids in special_added_road_to_segments.items():
         if road_id in rcsd_road_by_id:
             _append_unique_segments(added_road_to_segments[road_id], segment_ids)
+
+    retained_swsd_roads = [road for road in swsd_roads if _feature_id(road) not in removed_road_to_segments]
+    retained_swsd_endpoint_node_stats = ensure_retained_swsd_road_endpoint_nodes(
+        swsd_roads=retained_swsd_roads,
+        swsd_nodes=swsd_nodes,
+        swsd_node_by_id=swsd_node_by_id,
+    )
+    post_advance_right_attachment_stats = _apply_post_advance_right_attachments(
+        passed_units,
+        rcsd_roads=rcsd_roads,
+        rcsd_nodes=rcsd_nodes,
+        rcsd_road_by_id=rcsd_road_by_id,
+        rcsd_node_by_id=rcsd_node_by_id,
+        swsd_node_by_id=swsd_node_by_id,
+        retained_swsd_roads=retained_swsd_roads,
+        added_road_to_segments=added_road_to_segments,
+        canonicalizer=canonicalizer,
+    )
+    right_attach_contract_stats = apply_junction_advance_right_contract(
+        passed_units,
+        swsd_segments=swsd_segments,
+        swsd_roads=swsd_roads,
+        swsd_node_by_id=swsd_node_by_id,
+        rcsd_roads=rcsd_roads,
+        rcsd_nodes=rcsd_nodes,
+        rcsd_road_by_id=rcsd_road_by_id,
+        rcsd_node_by_id=rcsd_node_by_id,
+        retained_swsd_roads=retained_swsd_roads,
+        added_road_to_segments=added_road_to_segments,
+    )
+    retained_swsd_attach_contract_stats = apply_retained_swsd_segment_attachment_contract(
+        passed_units,
+        swsd_segments=swsd_segments,
+        swsd_roads=swsd_roads,
+        swsd_node_by_id=swsd_node_by_id,
+        rcsd_roads=rcsd_roads,
+        rcsd_nodes=rcsd_nodes,
+        rcsd_road_by_id=rcsd_road_by_id,
+        rcsd_node_by_id=rcsd_node_by_id,
+        retained_swsd_roads=retained_swsd_roads,
+        added_road_to_segments=added_road_to_segments,
+    )
+    right_attach_audit_rows = [
+        *right_attach_contract_stats["audit_rows"],
+        *retained_swsd_attach_contract_stats["audit_rows"],
+    ]
+    topology_supplement_materialized_stats = materialize_topology_supplement_rcsd_roads(
+        passed_units,
+        swsd_road_by_id=swsd_road_by_id,
+        swsd_node_by_id=swsd_node_by_id,
+        rcsd_roads=rcsd_roads,
+        rcsd_nodes=rcsd_nodes,
+        rcsd_road_by_id=rcsd_road_by_id,
+        rcsd_node_by_id=rcsd_node_by_id,
+        attachment_audit_rows=right_attach_audit_rows,
+        added_road_to_segments=added_road_to_segments,
+        source_field_name=source_field_name,
+        rcsd_source_value=rcsd_source_value,
+        retained_swsd_roads=retained_swsd_roads,
+    )
+    retained_swsd_excluded_stats = exclude_retained_swsd_carriers_from_formal_replacements(
+        passed_units,
+        added_road_to_segments=added_road_to_segments,
+        removed_road_to_segments=removed_road_to_segments,
+        swsd_road_by_id=swsd_road_by_id,
+        rcsd_road_by_id=rcsd_road_by_id,
+    )
+    if retained_swsd_excluded_stats["deactivated_segment_count"]:
+        passed_units = [unit for unit in passed_units if unit.status == "passed"]
+    if (
+        topology_supplement_materialized_stats["materialized_road_count"]
+        or topology_supplement_materialized_stats.get("reused_existing_rcsd_advance_count")
+        or retained_swsd_excluded_stats["deactivated_segment_count"]
+    ):
+        removed_road_to_segments, removed_node_to_segments, preserved_removed_node_count = _compute_removed_swsd_maps(
+            passed_units,
+            swsd_roads=swsd_roads,
+            swsd_road_by_id=swsd_road_by_id,
+        )
+        removed_road_to_segments.update(retained_swsd_excluded_stats.get("extra_removed_road_to_segments", {}))
+    _flatten_node_mainnode_chains(rcsd_nodes, source_field_name=source_field_name)
+    generated_endpoint_node_stats = ensure_added_rcsd_road_endpoint_nodes(
+        units=passed_units,
+        rcsd_roads=rcsd_roads,
+        rcsd_nodes=rcsd_nodes,
+        rcsd_road_by_id=rcsd_road_by_id,
+        rcsd_node_by_id=rcsd_node_by_id,
+        added_road_to_segments=added_road_to_segments,
+    )
 
     selected_rcsd_semantic_ids = _selected_rcsd_semantic_ids(passed_units)
     selected_rcsd_raw_node_ids = _selected_rcsd_raw_node_ids(added_road_to_segments, rcsd_road_by_id)
@@ -252,9 +364,12 @@ def run_t06_step3_segment_replacement(
 
     junctions = _build_junction_states(
         units=passed_units,
+        swsd_segments=swsd_segments,
         swsd_nodes=swsd_nodes,
         removed_node_ids=set(removed_node_to_segments),
         added_node_to_segments=added_node_to_segments,
+        added_road_to_segments=added_road_to_segments,
+        rcsd_roads=rcsd_roads,
         rcsd_nodes=rcsd_nodes,
         canonicalizer=canonicalizer,
     )
@@ -284,6 +399,21 @@ def run_t06_step3_segment_replacement(
         swsd_source_value=swsd_source_value,
         rcsd_source_value=rcsd_source_value,
     )
+    _flatten_node_mainnode_chains(frcsd_nodes, source_field_name=source_field_name)
+    attachment_mainnode_sync_stats = _sync_attachment_swsd_mainnodes(
+        frcsd_nodes,
+        attachment_audit_rows=right_attach_audit_rows,
+        source_field_name=source_field_name,
+        swsd_source_value=swsd_source_value,
+        rcsd_source_value=rcsd_source_value,
+    )
+    generated_endpoint_geometry_sync_stats = _sync_generated_rcsd_endpoint_node_geometries(
+        frcsd_roads=frcsd_roads,
+        frcsd_nodes=frcsd_nodes,
+        source_field_name=source_field_name,
+        rcsd_source_value=rcsd_source_value,
+    )
+    _stringify_final_road_id_fields(frcsd_roads)
 
     replacement_unit_rows = [feature(_replacement_unit_row(unit), unit.geometry) for unit in units]
     removed_road_rows = _change_rows(removed_road_to_segments, "road", swsd_source_value, "replaced_swsd_segment")
@@ -305,6 +435,27 @@ def run_t06_step3_segment_replacement(
         swsd_segments=swsd_segments,
         units=units,
         frcsd_roads=frcsd_roads,
+        source_field_name=source_field_name,
+        swsd_source_value=swsd_source_value,
+        rcsd_source_value=rcsd_source_value,
+    )
+    _backfill_missing_relation_node_maps_from_peer_segments(
+        segment_relation_rows,
+        frcsd_roads=frcsd_roads,
+        source_field_name=source_field_name,
+        rcsd_source_value=rcsd_source_value,
+    )
+    relation_node_map_backfill_stats = backfill_relation_node_maps_from_attachment_audit(
+        segment_relation_rows,
+        right_attach_audit_rows,
+        frcsd_roads=frcsd_roads,
+        source_field_name=source_field_name,
+        swsd_source_value=swsd_source_value,
+    )
+    retained_carrier_mainnode_sync_stats = sync_retained_swsd_carrier_mainnodes(
+        segment_relation_rows,
+        frcsd_roads,
+        frcsd_nodes,
         source_field_name=source_field_name,
         swsd_source_value=swsd_source_value,
         rcsd_source_value=rcsd_source_value,
@@ -351,6 +502,30 @@ def run_t06_step3_segment_replacement(
         fieldnames=STEP3_UNREPLACED_RCSD_ROAD_FIELDS,
     )
     collision_paths = write_feature_triplet(step_root=step_root, stem=STEP3_ID_COLLISION_AUDIT_STEM, features=collision_rows, fieldnames=STEP3_ID_COLLISION_AUDIT_FIELDS)
+    right_attach_paths = write_feature_triplet(
+        step_root=step_root,
+        stem=RIGHT_ATTACH_AUDIT_STEM,
+        features=right_attach_audit_rows,
+        fieldnames=RIGHT_ATTACH_AUDIT_FIELDS,
+    )
+    topology_connectivity_audit_rows = build_topology_connectivity_audit_rows(
+        swsd_segments=swsd_segments,
+        swsd_roads=swsd_roads,
+        frcsd_roads=frcsd_roads,
+        frcsd_nodes=frcsd_nodes,
+        segment_relation_rows=segment_relation_rows,
+        advance_right_audit_rows=right_attach_audit_rows,
+        source_field_name=source_field_name,
+        swsd_source_value=swsd_source_value,
+        rcsd_source_value=rcsd_source_value,
+    )
+    topology_connectivity_paths = write_feature_triplet(
+        step_root=step_root,
+        stem=STEP3_TOPOLOGY_CONNECTIVITY_AUDIT_STEM,
+        features=topology_connectivity_audit_rows,
+        fieldnames=STEP3_TOPOLOGY_CONNECTIVITY_AUDIT_FIELDS,
+    )
+    topology_connectivity_summary = summarize_topology_connectivity_audit(topology_connectivity_audit_rows)
 
     summary_path = step_root / STEP3_SUMMARY
     write_json(
@@ -390,11 +565,110 @@ def run_t06_step3_segment_replacement(
             "group_replacement_skipped_row_count": group_replacement_stats.skipped_row_count,
             "detached_junc_retained_segment_count": sum(1 for unit in passed_units if unit.retained_detached_swsd_road_ids),
             "detached_junc_retained_swsd_road_count": sum(len(unit.retained_detached_swsd_road_ids) for unit in passed_units),
-            "removed_swsd_node_preserved_by_retained_road_count": len(preserved_removed_node_ids),
+            "topology_supplement_retained_segment_count": topology_supplement_stats["affected_segment_count"],
+            "topology_supplement_retained_swsd_road_count": topology_supplement_stats["retained_swsd_road_count"],
+            "topology_supplement_materialized_candidate_road_count": topology_supplement_materialized_stats[
+                "candidate_road_count"
+            ],
+            "topology_supplement_materialized_rcsd_road_count": topology_supplement_materialized_stats[
+                "materialized_road_count"
+            ],
+            "topology_supplement_materialized_missing_attachment_node_count": topology_supplement_materialized_stats[
+                "missing_attachment_node_count"
+            ],
+            "removed_swsd_node_preserved_by_retained_road_count": preserved_removed_node_count,
             "removed_swsd_road_count": len(removed_road_to_segments),
             "removed_swsd_node_count": len(removed_node_to_segments),
+            "retained_swsd_missing_endpoint_node_generated_count": retained_swsd_endpoint_node_stats[
+                "generated_node_count"
+            ],
             "added_rcsd_road_count": len(added_road_to_segments),
             "added_rcsd_node_count": len(added_node_to_segments),
+            "post_advance_right_attachment_added_road_count": post_advance_right_attachment_stats[
+                "added_road_count"
+            ],
+            "post_advance_right_attachment_component_count": post_advance_right_attachment_stats[
+                "component_count"
+            ],
+            "post_advance_right_attachment_attached_road_count": post_advance_right_attachment_stats[
+                "attached_road_count"
+            ],
+            "post_advance_right_swsd_carrier_retained_road_count": post_advance_right_swsd_carrier_stats[
+                "retained_road_count"
+            ],
+            "post_advance_right_mixed_boundary_component_count": post_advance_right_attachment_stats[
+                "mixed_boundary_component_count"
+            ],
+            "post_advance_right_paired_advance_road_count": post_advance_right_attachment_stats[
+                "paired_advance_road_count"
+            ],
+            "post_advance_right_midroad_split_original_road_count": post_advance_right_attachment_stats[
+                "midroad_split_original_road_count"
+            ],
+            "post_advance_right_midroad_split_road_count": post_advance_right_attachment_stats[
+                "midroad_split_road_count"
+            ],
+            "post_advance_right_midroad_attached_road_count": post_advance_right_attachment_stats[
+                "midroad_attached_road_count"
+            ],
+            "post_advance_right_swsd_carrier_rcsd_split_original_road_count": post_advance_right_attachment_stats[
+                "swsd_carrier_split_original_road_count"
+            ],
+            "post_advance_right_swsd_carrier_rcsd_split_road_count": post_advance_right_attachment_stats[
+                "swsd_carrier_split_road_count"
+            ],
+            "post_advance_right_swsd_carrier_rcsd_generated_node_count": post_advance_right_attachment_stats[
+                "swsd_carrier_generated_node_count"
+            ],
+            "post_advance_right_swsd_carrier_snapped_node_count": post_advance_right_attachment_stats[
+                "swsd_carrier_snapped_node_count"
+            ],
+            "generated_missing_rcsd_endpoint_node_count": generated_endpoint_node_stats["generated_node_count"],
+            "generated_rcsd_endpoint_node_geometry_synced_count": generated_endpoint_geometry_sync_stats[
+                "synced_node_count"
+            ],
+            "generated_rcsd_endpoint_node_geometry_conflict_count": generated_endpoint_geometry_sync_stats[
+                "conflict_node_count"
+            ],
+            "generated_rcsd_endpoint_road_geometry_snapped_count": generated_endpoint_geometry_sync_stats[
+                "snapped_road_endpoint_count"
+            ],
+            "advance_right_contract_candidate_road_count": right_attach_contract_stats["candidate_road_count"],
+            "advance_right_contract_retained_candidate_road_count": right_attach_contract_stats[
+                "retained_candidate_road_count"
+            ],
+            "advance_right_contract_swsd_mainnode_normalized_node_count": right_attach_contract_stats[
+                "swsd_mainnode_normalized_node_count"
+            ],
+            "advance_right_contract_swsd_node_snapped_count": right_attach_contract_stats["swsd_node_snapped_count"],
+            "advance_right_contract_rcsd_node_generated_count": right_attach_contract_stats["rcsd_node_generated_count"],
+            "advance_right_contract_rcsd_split_original_road_count": right_attach_contract_stats[
+                "rcsd_split_original_road_count"
+            ],
+            "advance_right_contract_rcsd_split_road_count": right_attach_contract_stats["rcsd_split_road_count"],
+            "advance_right_contract_audit_row_count": len(right_attach_contract_stats["audit_rows"]),
+            "advance_right_attachment_swsd_mainnode_synced_count": attachment_mainnode_sync_stats[
+                "synced_node_count"
+            ],
+            "retained_swsd_attachment_candidate_road_count": retained_swsd_attach_contract_stats[
+                "candidate_road_count"
+            ],
+            "retained_swsd_attachment_candidate_endpoint_count": retained_swsd_attach_contract_stats[
+                "candidate_endpoint_count"
+            ],
+            "retained_swsd_attachment_swsd_node_snapped_count": retained_swsd_attach_contract_stats[
+                "swsd_node_snapped_count"
+            ],
+            "retained_swsd_attachment_rcsd_node_generated_count": retained_swsd_attach_contract_stats[
+                "rcsd_node_generated_count"
+            ],
+            "retained_swsd_attachment_rcsd_split_original_road_count": retained_swsd_attach_contract_stats[
+                "rcsd_split_original_road_count"
+            ],
+            "retained_swsd_attachment_rcsd_split_road_count": retained_swsd_attach_contract_stats[
+                "rcsd_split_road_count"
+            ],
+            "retained_swsd_attachment_audit_row_count": len(retained_swsd_attach_contract_stats["audit_rows"]),
             "special_junction_group_consumed_count": len(special_groups),
             "special_junction_added_rcsd_road_count": len(
                 {road_id for road_id in special_added_road_to_segments if road_id in rcsd_road_by_id}
@@ -415,6 +689,9 @@ def run_t06_step3_segment_replacement(
             "segment_relation_replaced_count": sum(1 for row in segment_relation_rows if row["properties"].get("relation_status") == "replaced"),
             "segment_relation_retained_swsd_count": sum(1 for row in segment_relation_rows if row["properties"].get("relation_status") == "retained_swsd"),
             "segment_relation_failed_count": sum(1 for row in segment_relation_rows if row["properties"].get("relation_status") == "failed"),
+            **relation_node_map_backfill_stats,
+            **retained_carrier_mainnode_sync_stats,
+            **topology_connectivity_summary,
             "outputs": {
                 **{f"frcsd_road_{key}": str(value) for key, value in road_paths.items()},
                 **{f"frcsd_node_{key}": str(value) for key, value in node_paths.items()},
@@ -427,14 +704,16 @@ def run_t06_step3_segment_replacement(
                 **{f"added_rcsd_nodes_{key}": str(value) for key, value in added_node_paths.items()},
                 **{f"unreplaced_rcsd_roads_{key}": str(value) for key, value in unreplaced_rcsd_road_paths.items()},
                 **{f"id_collision_audit_{key}": str(value) for key, value in collision_paths.items()},
+                **{f"advance_right_attachment_audit_{key}": str(value) for key, value in right_attach_paths.items()},
+                **{f"topology_connectivity_audit_{key}": str(value) for key, value in topology_connectivity_paths.items()},
             },
             "gis_topology_checks": {
                 "crs_normalized_to": "EPSG:3857",
-                "topology_consistency": "SWSD removals and RCSD additions are explicit copy-on-write sets; replacement plan scopes group-level additions; junction C rebuild is audited",
-                "geometry_semantics": "Step3 does not infer geometry; it consumes Step2 replacement plan when present and falls back to legacy Step2 artifacts only for compatibility",
-                "audit_traceability": "replacement plan source, replacement units, special junction group consumption, group replacement consumption, removed/added entities, id collisions and junction rebuild records are written",
-                "segment_relation_traceability": "each SWSD Segment relation records F-RCSD carrier road ids, source values and node mapping evidence",
-                "performance_verifiable": "input, replacement, output and audit counts are recorded in summary",
+                "topology_consistency": "copy-on-write; plan groups; junction audit; post-replacement connectivity audit",
+                "geometry_semantics": "Step3 consumes Step2 plan",
+                "audit_traceability": "plan, units, groups, changes, collisions, junction audit and topology connectivity audit are written",
+                "segment_relation_traceability": "relations record road ids, sources and node maps",
+                "performance_verifiable": "summary records counts",
             },
         },
     )
@@ -720,29 +999,264 @@ def _replacement_unit_from_segment(segment: dict[str, Any]) -> ReplacementUnit:
     return unit
 
 
-def _retain_detached_junc_swsd_roads(units: list[ReplacementUnit], swsd_road_by_id: dict[str, dict[str, Any]]) -> None:
+def _compute_removed_swsd_maps(
+    units: list[ReplacementUnit],
+    *,
+    swsd_roads: list[dict[str, Any]],
+    swsd_road_by_id: dict[str, dict[str, Any]],
+) -> tuple[dict[str, list[str]], dict[str, list[str]], int]:
+    removed_road_to_segments: dict[str, list[str]] = defaultdict(list)
     for unit in units:
-        if not unit.detached_junc_nodes:
+        for road_id in unit.swsd_road_ids:
+            if road_id in swsd_road_by_id:
+                removed_road_to_segments[road_id].append(unit.segment_id)
+
+    removed_node_to_segments: dict[str, list[str]] = defaultdict(list)
+    for road_id, segment_ids in removed_road_to_segments.items():
+        for node_id in _road_endpoint_node_ids(swsd_road_by_id[road_id]):
+            for segment_id in segment_ids:
+                if segment_id not in removed_node_to_segments[node_id]:
+                    removed_node_to_segments[node_id].append(segment_id)
+    retained_swsd_endpoint_node_ids = _retained_swsd_endpoint_node_ids(
+        swsd_roads=swsd_roads,
+        removed_road_ids=set(removed_road_to_segments),
+    )
+    preserved_removed_node_ids = sorted(
+        set(removed_node_to_segments).intersection(retained_swsd_endpoint_node_ids),
+        key=_id_sort_key,
+    )
+    for node_id in preserved_removed_node_ids:
+        removed_node_to_segments.pop(node_id, None)
+
+    for unit in units:
+        unit.removed_swsd_node_ids = unique_preserve_order(
+            [
+                node_id
+                for road_id in unit.swsd_road_ids
+                if road_id in swsd_road_by_id
+                for node_id in _road_endpoint_node_ids(swsd_road_by_id[road_id])
+                if node_id in removed_node_to_segments
+            ]
+        )
+    return dict(removed_road_to_segments), dict(removed_node_to_segments), len(preserved_removed_node_ids)
+
+
+def _retain_topology_supplement_swsd_roads(
+    units: list[ReplacementUnit],
+    *,
+    swsd_road_by_id: dict[str, dict[str, Any]],
+    rcsd_road_by_id: dict[str, dict[str, Any]],
+    rcsd_nodes: list[dict[str, Any]],
+    global_rcsd_road_ids: list[str],
+    attachment_audit_rows: list[dict[str, Any]],
+) -> dict[str, int]:
+    canonicalizer = NodeCanonicalizer.from_node_features(rcsd_nodes)
+    attachment_node_by_swsd = _attachment_rcsd_nodes_by_swsd_node(attachment_audit_rows)
+    peer_node_by_swsd = _peer_mapped_rcsd_nodes_by_swsd_node(units)
+    global_rcsd_roads = [
+        rcsd_road_by_id[road_id]
+        for road_id in global_rcsd_road_ids
+        if road_id in rcsd_road_by_id
+    ]
+    global_graph = _UnitRoadGraph(global_rcsd_roads, canonicalizer=canonicalizer)
+    retained_count = 0
+    affected_unit_count = 0
+    for unit in units:
+        semantic_nodes = set(unique_preserve_order([*unit.pair_nodes, *unit.junc_nodes]))
+        if not semantic_nodes:
             continue
-        detached = set(unit.detached_junc_nodes)
+        unit_corridor = _road_union_corridor(
+            [rcsd_road_by_id[road_id] for road_id in unit.rcsd_road_ids if road_id in rcsd_road_by_id]
+        )
         retained: list[str] = []
-        removed: list[str] = []
         for road_id in unit.swsd_road_ids:
             road = swsd_road_by_id.get(road_id)
-            if road is not None and detached.intersection(_road_endpoint_node_ids(road)):
+            endpoints = _road_endpoint_node_ids(road) if road is not None else []
+            if len(endpoints) < 2 or not all(endpoint in semantic_nodes for endpoint in endpoints[:2]):
+                continue
+            start_nodes = [
+                canonicalizer.canonicalize(node_id)
+                for node_id in _mapped_unit_rcsd_nodes(unit, endpoints[0], attachment_node_by_swsd, peer_node_by_swsd)
+            ]
+            end_nodes = [
+                canonicalizer.canonicalize(node_id)
+                for node_id in _mapped_unit_rcsd_nodes(unit, endpoints[1], attachment_node_by_swsd, peer_node_by_swsd)
+            ]
+            path_forward = global_graph.reachable_any(start_nodes, end_nodes)
+            path_reverse = global_graph.reachable_any(end_nodes, start_nodes)
+            undirected_connected = global_graph.undirected_reachable_any(start_nodes, end_nodes)
+            direction = _coerce_int((road.get("properties") or {}).get("direction")) if road is not None else None
+            if _directed_path_missing(direction, path_forward, path_reverse, undirected_connected) or _road_corridor_coverage_failed(road, unit_corridor):
                 retained.append(road_id)
-            else:
-                removed.append(road_id)
-        unit.retained_detached_swsd_road_ids = unique_preserve_order(retained)
-        unit.swsd_road_ids = unique_preserve_order(removed)
+        if retained:
+            unit.retained_detached_swsd_road_ids = unique_preserve_order([*unit.retained_detached_swsd_road_ids, *retained])
+            retained_count += len(retained)
+            affected_unit_count += 1
+    return {
+        "retained_swsd_road_count": retained_count,
+        "affected_segment_count": affected_unit_count,
+    }
+
+
+class _UnitRoadGraph:
+    def __init__(self, roads: list[dict[str, Any]], *, canonicalizer: NodeCanonicalizer) -> None:
+        self.forward: dict[str, set[str]] = defaultdict(set)
+        self.undirected: dict[str, set[str]] = defaultdict(set)
+        for road in roads:
+            endpoints = _road_endpoint_node_ids(road)
+            if len(endpoints) < 2:
+                continue
+            source = canonicalizer.canonicalize(endpoints[0])
+            target = canonicalizer.canonicalize(endpoints[-1])
+            direction = _coerce_int((road.get("properties") or {}).get("direction"))
+            if direction in {0, 1, 2}:
+                self.forward[source].add(target)
+            if direction in {0, 1, 3}:
+                self.forward[target].add(source)
+            self.undirected[source].add(target)
+            self.undirected[target].add(source)
+
+    def reachable_any(self, starts: list[str], targets: list[str]) -> bool:
+        return _reachable_any(self.forward, starts, targets)
+
+    def undirected_reachable_any(self, starts: list[str], targets: list[str]) -> bool:
+        return _reachable_any(self.undirected, starts, targets)
+
+
+def _reachable_any(graph: dict[str, set[str]], starts: list[str], targets: list[str]) -> bool:
+    if not starts or not targets:
+        return False
+    target_set = set(targets)
+    queue = list(dict.fromkeys(starts))
+    seen = set(queue)
+    while queue:
+        node_id = queue.pop(0)
+        if node_id in target_set:
+            return True
+        for next_id in graph.get(node_id, set()):
+            if next_id in seen:
+                continue
+            seen.add(next_id)
+            queue.append(next_id)
+    return False
+
+
+def _attachment_rcsd_nodes_by_swsd_node(rows: list[dict[str, Any]]) -> dict[str, list[str]]:
+    result: dict[str, list[str]] = defaultdict(list)
+    for row in rows:
+        props = dict(row.get("properties") or {})
+        action = str(props.get("action") or "")
+        if not action.startswith(("split_", "reuse_")):
+            continue
+        swsd_node_id = _safe_normalize(props.get("swsd_node_id") or "")
+        rcsd_node_id = _safe_normalize(props.get("rcsd_node_id") or props.get("generated_rcsd_node_id") or "")
+        if not swsd_node_id or not rcsd_node_id:
+            continue
+        if rcsd_node_id not in result[swsd_node_id]:
+            result[swsd_node_id].append(rcsd_node_id)
+    return dict(result)
+
+
+def _peer_mapped_rcsd_nodes_by_swsd_node(units: list[ReplacementUnit]) -> dict[str, list[str]]:
+    result: dict[str, list[str]] = defaultdict(list)
+    for unit in units:
+        if unit.status != "passed":
+            continue
+        for swsd_node_id, rcsd_node_ids in _mapped_rcsd_semantic_by_c(unit).items():
+            result[swsd_node_id] = unique_preserve_order([*result[swsd_node_id], *rcsd_node_ids])
+    return dict(result)
+
+
+def _mapped_unit_rcsd_nodes(
+    unit: ReplacementUnit,
+    swsd_node_id: str,
+    attachment_node_by_swsd: dict[str, list[str]],
+    peer_node_by_swsd: dict[str, list[str]],
+) -> list[str]:
+    if swsd_node_id in attachment_node_by_swsd:
+        return attachment_node_by_swsd[swsd_node_id]
+    result: list[str] = []
+    for source_node_id, rcsd_node_id in zip(unit.pair_nodes, unit.rcsd_pair_nodes):
+        if source_node_id == swsd_node_id:
+            result.append(rcsd_node_id)
+    exempt_nodes = set(unit.junc_kind2_exempt_nodes)
+    relation_junc_nodes = [node_id for node_id in unit.junc_nodes if node_id not in exempt_nodes]
+    for source_node_id, rcsd_node_id in zip(relation_junc_nodes, unit.rcsd_junc_nodes):
+        if source_node_id == swsd_node_id:
+            result.append(rcsd_node_id)
+    optional_nodes = unit.optional_allowed_rcsd_nodes
+    exempt_junc_nodes = [node_id for node_id in unit.junc_nodes if node_id in exempt_nodes]
+    if len(exempt_junc_nodes) == len(optional_nodes):
+        for source_node_id, rcsd_node_id in zip(exempt_junc_nodes, optional_nodes):
+            if source_node_id == swsd_node_id:
+                result.append(rcsd_node_id)
+    for rcsd_node_id in peer_node_by_swsd.get(swsd_node_id, []):
+        if rcsd_node_id not in result:
+            result.append(rcsd_node_id)
+    return unique_preserve_order(result)
+
+
+def _road_union_corridor(roads: list[dict[str, Any]]) -> Any:
+    geometries = [
+        road.get("geometry")
+        for road in roads
+        if road.get("geometry") is not None and not road.get("geometry").is_empty
+    ]
+    if not geometries:
+        return None
+    return unary_union(geometries).buffer(TOPOLOGY_SUPPLEMENT_CORRIDOR_BUFFER_M)
+
+
+def _road_corridor_coverage_failed(swsd_road: dict[str, Any] | None, selected_corridor: Any) -> bool:
+    if swsd_road is None or selected_corridor is None:
+        return False
+    geometry = swsd_road.get("geometry")
+    if geometry is None or geometry.is_empty or geometry.length <= 0:
+        return False
+    uncovered_length = float(geometry.difference(selected_corridor).length)
+    uncovered_ratio = uncovered_length / float(geometry.length)
+    return (
+        uncovered_ratio > TOPOLOGY_SUPPLEMENT_MAX_UNCOVERED_RATIO
+        and uncovered_length > TOPOLOGY_SUPPLEMENT_MIN_UNCOVERED_LENGTH_M
+    )
+
+
+def _directed_path_missing(
+    direction: int | None,
+    path_forward: bool,
+    path_reverse: bool,
+    undirected_connected: bool,
+) -> bool:
+    if direction in {0, 1}:
+        return not (path_forward and path_reverse)
+    if direction == 2:
+        return not path_forward
+    if direction == 3:
+        return not path_reverse
+    return not undirected_connected
+
+
+def _coerce_int(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _is_advance_right_rcsd_road(road: dict[str, Any]) -> bool:
+    return is_advance_right_turn_road(dict(road.get("properties") or {}), formway_bit=ADVANCE_RIGHT_FORMWAY_BIT)
+
 
 
 def _build_junction_states(
     *,
     units: list[ReplacementUnit],
+    swsd_segments: list[dict[str, Any]],
     swsd_nodes: list[dict[str, Any]],
     removed_node_ids: set[str],
     added_node_to_segments: dict[str, list[str]],
+    added_road_to_segments: dict[str, list[str]],
+    rcsd_roads: list[dict[str, Any]],
     rcsd_nodes: list[dict[str, Any]],
     canonicalizer: NodeCanonicalizer,
 ) -> dict[str, JunctionState]:
@@ -760,6 +1274,17 @@ def _build_junction_states(
                     *[canonicalizer.canonicalize(node_id) for node_id in mapped_by_c.get(c_id, [])],
                 ]
             )
+
+    replaced_segment_ids = {unit.segment_id for unit in units}
+    for segment in swsd_segments:
+        segment_id = _feature_id(segment)
+        if segment_id in replaced_segment_ids:
+            continue
+        props = dict(segment.get("properties") or {})
+        for c_id in unique_preserve_order([*_parse_list(props.get("pair_nodes")), *_parse_list(props.get("junc_nodes"))]):
+            state = junctions.get(c_id)
+            if state is not None and segment_id not in state.retained_segment_ids:
+                state.retained_segment_ids.append(segment_id)
 
     swsd_group_members = _swsd_group_members(swsd_nodes, set(junctions))
     for c_id, state in junctions.items():
@@ -781,7 +1306,46 @@ def _build_junction_states(
                 state.added_rcsd_node_ids.append(node_id)
     for state in junctions.values():
         state.added_rcsd_node_ids = unique_preserve_order(state.added_rcsd_node_ids)
+    _append_advance_attachment_rcsd_nodes(
+        junctions=junctions,
+        rcsd_roads=rcsd_roads,
+        added_road_to_segments=added_road_to_segments,
+        added_node_ids=added_node_ids,
+    )
     return junctions
+
+
+def _append_advance_attachment_rcsd_nodes(
+    *,
+    junctions: dict[str, JunctionState],
+    rcsd_roads: list[dict[str, Any]],
+    added_road_to_segments: dict[str, list[str]],
+    added_node_ids: set[str],
+) -> None:
+    for road in rcsd_roads:
+        road_id = _feature_id(road)
+        segment_ids = set(added_road_to_segments.get(road_id, []))
+        if not segment_ids or not _is_advance_right_rcsd_road(road):
+            continue
+        endpoint_ids = _road_endpoint_node_ids(road)
+        if len(endpoint_ids) < 2:
+            continue
+        endpoint_set = set(endpoint_ids)
+        for state in junctions.values():
+            if not segment_ids.intersection(state.replacement_segment_ids):
+                continue
+            junction_node_ids = set(state.added_rcsd_node_ids)
+            if not endpoint_set.intersection(junction_node_ids):
+                continue
+            attachments = [
+                node_id
+                for node_id in endpoint_ids
+                if node_id not in junction_node_ids and node_id in added_node_ids
+            ]
+            if attachments:
+                state.advance_attachment_rcsd_node_ids = unique_preserve_order(
+                    [*state.advance_attachment_rcsd_node_ids, *attachments]
+                )
 
 
 def _apply_junction_rebuild(
@@ -795,25 +1359,37 @@ def _apply_junction_rebuild(
     node_by_key = {(_source_key(item, source_field_name), _feature_id(item)): item for item in frcsd_nodes}
     rows: list[dict[str, Any]] = []
     for state in junctions.values():
-        member_keys = [
+        swsd_member_keys = [
             (str(swsd_source_value), node_id)
             for node_id in state.remaining_swsd_node_ids
             if (str(swsd_source_value), node_id) in node_by_key
-        ] + [
+        ]
+        rcsd_member_keys = [
             (str(rcsd_source_value), node_id)
             for node_id in state.added_rcsd_node_ids
             if (str(rcsd_source_value), node_id) in node_by_key
         ]
+        advance_attachment_keys = [
+            (str(rcsd_source_value), node_id)
+            for node_id in state.advance_attachment_rcsd_node_ids
+            if (str(rcsd_source_value), node_id) in node_by_key
+        ]
+        member_keys = [*swsd_member_keys, *rcsd_member_keys, *advance_attachment_keys]
         original_main_key = (str(swsd_source_value), state.c_id)
-        original_main_removed = state.c_id in state.removed_swsd_node_ids or original_main_key not in member_keys
-        new_main_id, reason = _choose_new_mainnode_id(state, member_keys, original_main_key)
+        original_main_removed = state.c_id in state.removed_swsd_node_ids or original_main_key not in swsd_member_keys
+        source_boundary_split = bool(swsd_member_keys and rcsd_member_keys)
+        rebuild_keys = swsd_member_keys if source_boundary_split else member_keys
+        new_main_id, reason = _choose_new_mainnode_id(state, rebuild_keys, original_main_key)
+        if source_boundary_split:
+            reason = f"{reason}+source_boundary_split"
         inherited = {field: state.original_main_props.get(field) for field in INHERITED_NODE_FIELDS}
         if new_main_id is not None:
-            for key in member_keys:
+            for key in rebuild_keys:
                 props = node_by_key[key]["properties"]
                 props["mainnodeid"] = new_main_id
-                for field, value in inherited.items():
-                    props[field] = value
+                if key not in advance_attachment_keys:
+                    for field, value in inherited.items():
+                        props[field] = value
         rows.append(
             feature(
                 {
@@ -827,6 +1403,7 @@ def _apply_junction_rebuild(
                     "removed_swsd_node_ids": state.removed_swsd_node_ids,
                     "remaining_swsd_node_ids": state.remaining_swsd_node_ids,
                     "added_rcsd_node_ids": state.added_rcsd_node_ids,
+                    "advance_attachment_rcsd_node_ids": state.advance_attachment_rcsd_node_ids,
                     "rebuilt_node_ids": [key[1] for key in member_keys],
                     "inherited_kind": inherited.get("kind"),
                     "inherited_grade": inherited.get("grade"),
@@ -838,6 +1415,213 @@ def _apply_junction_rebuild(
             )
         )
     return rows
+
+
+def _flatten_node_mainnode_chains(nodes: list[dict[str, Any]], *, source_field_name: str) -> None:
+    node_by_key, node_by_id = _node_indexes(nodes, source_field_name=source_field_name)
+    for node in nodes:
+        props = node.get("properties") or {}
+        source = _source_key(node, source_field_name)
+        node_id = _safe_normalize(props.get("id"))
+        mainnode_id = _safe_normalize(props.get("mainnodeid"))
+        if not node_id or not mainnode_id or mainnode_id in {"0", node_id}:
+            continue
+        root_id = _mainnode_root_id(
+            mainnode_id,
+            source=source,
+            node_by_key=node_by_key,
+            node_by_id=node_by_id,
+            source_field_name=source_field_name,
+        )
+        if root_id and root_id != mainnode_id:
+            props["mainnodeid"] = _coerce_id_value(root_id)
+
+
+def _sync_attachment_swsd_mainnodes(
+    nodes: list[dict[str, Any]],
+    *,
+    attachment_audit_rows: list[dict[str, Any]],
+    source_field_name: str,
+    swsd_source_value: int,
+    rcsd_source_value: int,
+) -> dict[str, int]:
+    node_by_key, node_by_id = _node_indexes(nodes, source_field_name=source_field_name)
+    swsd_source = str(swsd_source_value)
+    rcsd_source = str(rcsd_source_value)
+    synced = 0
+    for row in attachment_audit_rows:
+        props = dict(row.get("properties") or {})
+        action = str(props.get("action") or "")
+        if not action.startswith(("split_", "reuse_")):
+            continue
+        swsd_node_id = _safe_normalize(props.get("swsd_node_id"))
+        rcsd_node_id = _safe_normalize(props.get("rcsd_node_id") or props.get("generated_rcsd_node_id"))
+        if not swsd_node_id or not rcsd_node_id:
+            continue
+        swsd_node = node_by_key.get((swsd_source, swsd_node_id))
+        rcsd_node = node_by_key.get((rcsd_source, rcsd_node_id))
+        if swsd_node is None or rcsd_node is None:
+            continue
+        swsd_point = swsd_node.get("geometry")
+        rcsd_point = rcsd_node.get("geometry")
+        if swsd_point is None or rcsd_point is None or swsd_point.distance(rcsd_point) > 1.0:
+            continue
+        root_id = _mainnode_root_id(
+            rcsd_node_id,
+            source=rcsd_source,
+            node_by_key=node_by_key,
+            node_by_id=node_by_id,
+            source_field_name=source_field_name,
+        )
+        if not root_id:
+            continue
+        swsd_props = swsd_node.get("properties") or {}
+        if _safe_normalize(swsd_props.get("mainnodeid")) == root_id:
+            continue
+        swsd_props["mainnodeid"] = _coerce_id_value(root_id)
+        synced += 1
+    if synced:
+        _flatten_node_mainnode_chains(nodes, source_field_name=source_field_name)
+    return {"synced_node_count": synced}
+
+
+def _sync_generated_rcsd_endpoint_node_geometries(
+    *,
+    frcsd_roads: list[dict[str, Any]],
+    frcsd_nodes: list[dict[str, Any]],
+    source_field_name: str,
+    rcsd_source_value: int,
+) -> dict[str, int]:
+    endpoint_refs_by_node: dict[str, list[tuple[dict[str, Any], Point]]] = defaultdict(list)
+    rcsd_source = str(rcsd_source_value)
+    for road in frcsd_roads:
+        if _source_key(road, source_field_name) != rcsd_source:
+            continue
+        for node_id, point in zip(_road_endpoint_node_id_pair(road), _road_endpoint_points(road)):
+            endpoint_refs_by_node[node_id].append((road, point))
+    synced = 0
+    conflicts = 0
+    snapped = 0
+    for node in frcsd_nodes:
+        if _source_key(node, source_field_name) != rcsd_source:
+            continue
+        props = node.get("properties") or {}
+        if props.get("t06_generated_reason") != "selected_rcsd_road_missing_endpoint_node":
+            continue
+        node_id = _feature_id(node)
+        refs = endpoint_refs_by_node.get(node_id, [])
+        points = [point for _road, point in refs]
+        if not points:
+            continue
+        current = node.get("geometry")
+        if _max_point_distance(points) > 1.0 and isinstance(current, Point):
+            for road, point in refs:
+                if point.distance(current) > 1.0 and _snap_final_road_endpoint(road, node_id, current):
+                    snapped += 1
+            continue
+        if _max_point_distance(points) > 1.0:
+            conflicts += 1
+            continue
+        point = points[0]
+        if not isinstance(current, Point) or current.distance(point) > 1.0:
+            node["geometry"] = point
+            synced += 1
+    return {
+        "synced_node_count": synced,
+        "conflict_node_count": conflicts,
+        "snapped_road_endpoint_count": snapped,
+    }
+
+
+def _stringify_final_road_id_fields(frcsd_roads: list[dict[str, Any]]) -> None:
+    for road in frcsd_roads:
+        props = road.get("properties") or {}
+        for field_name in ("id", "snodeid", "enodeid", "t06_split_original_road_id"):
+            value = props.get(field_name)
+            if value not in (None, ""):
+                props[field_name] = _safe_normalize(value)
+
+
+def _max_point_distance(points: list[Point]) -> float:
+    if len(points) < 2:
+        return 0.0
+    first = points[0]
+    return max(float(first.distance(point)) for point in points[1:])
+
+
+def _snap_final_road_endpoint(road: dict[str, Any], node_id: str, point: Point) -> bool:
+    geometry = road.get("geometry")
+    if geometry is None or geometry.is_empty:
+        return False
+    if isinstance(geometry, MultiLineString):
+        merged = linemerge(geometry)
+        if not isinstance(merged, LineString):
+            return False
+        geometry = merged
+    if not isinstance(geometry, LineString):
+        return False
+    endpoints = _road_endpoint_node_id_pair(road)
+    coords = list(geometry.coords)
+    changed = False
+    if endpoints and endpoints[0] == node_id:
+        coords[0] = _coord_with_point(coords[0], point)
+        changed = True
+    if len(endpoints) > 1 and endpoints[-1] == node_id:
+        coords[-1] = _coord_with_point(coords[-1], point)
+        changed = True
+    if changed:
+        road["geometry"] = LineString(coords)
+    return changed
+
+
+def _coord_with_point(coord: tuple[float, ...], point: Point) -> tuple[float, ...]:
+    x, y = point.coords[0][:2]
+    if len(coord) <= 2:
+        return (x, y)
+    return (x, y, *coord[2:])
+
+
+def _node_indexes(
+    nodes: list[dict[str, Any]],
+    *,
+    source_field_name: str,
+) -> tuple[dict[tuple[str, str], dict[str, Any]], dict[str, list[dict[str, Any]]]]:
+    node_by_key: dict[tuple[str, str], dict[str, Any]] = {}
+    node_by_id: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for node in nodes:
+        node_id = _feature_id(node)
+        source = _source_key(node, source_field_name)
+        node_by_key[(source, node_id)] = node
+        node_by_id[node_id].append(node)
+    return node_by_key, dict(node_by_id)
+
+
+def _mainnode_root_id(
+    node_id: str,
+    *,
+    source: str,
+    node_by_key: dict[tuple[str, str], dict[str, Any]],
+    node_by_id: dict[str, list[dict[str, Any]]],
+    source_field_name: str,
+) -> str:
+    current = node_id
+    current_source = source
+    seen: set[tuple[str, str]] = set()
+    while current and (current_source, current) not in seen:
+        seen.add((current_source, current))
+        node = node_by_key.get((current_source, current))
+        if node is None:
+            candidates = node_by_id.get(current, [])
+            node = candidates[0] if candidates else None
+        if node is None:
+            return current
+        current_source = _source_key(node, source_field_name)
+        props = dict(node.get("properties") or {})
+        next_id = _safe_normalize(props.get("mainnodeid"))
+        if not next_id or next_id == "0" or next_id == current:
+            return current
+        current = next_id
+    return node_id
 
 
 def _choose_new_mainnode_id(state: JunctionState, member_keys: list[tuple[str, str]], original_main_key: tuple[str, str]) -> tuple[str | None, str]:
@@ -865,8 +1649,13 @@ def _build_frcsd_roads(
     rcsd_source_value: int,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
+    adv_geometries = [
+        road.get("geometry")
+        for road in rcsd_roads
+        if _feature_id(road) in added_road_ids and _is_advance_right_rcsd_road(road)
+    ]
     for road in swsd_roads:
-        if _feature_id(road) not in removed_road_ids:
+        if _feature_id(road) not in removed_road_ids and not _is_adv_dup(dict(road.get("properties") or {}), road.get("geometry"), adv_geometries):
             rows.append(_with_source(road, source_field_name, swsd_source_value))
     for road in rcsd_roads:
         if _feature_id(road) in added_road_ids:
@@ -912,7 +1701,11 @@ def _build_swsd_frcsd_segment_relation_rows(
     swsd_source_value: int,
     rcsd_source_value: int,
 ) -> list[dict[str, Any]]:
-    unit_by_segment = {unit.segment_id: unit for unit in units}
+    unit_by_segment = {
+        unit.segment_id: unit
+        for unit in units
+        if unit.reason not in {MIXED_REPLACEMENT_REQUIRES_SWSD_CARRIER_REASON, FORMAL_REPLACEMENT_CORRIDOR_UNAVAILABLE_REASON}
+    }
     frcsd_road_by_source_id = {(_source_key(road, source_field_name), _feature_id(road)): road for road in frcsd_roads}
     retained_by_segment = _retained_swsd_roads_by_segment(
         frcsd_roads=frcsd_roads,
@@ -939,6 +1732,7 @@ def _build_swsd_frcsd_segment_relation_rows(
         rcsd_junc_nodes: list[str] = []
         node_map: list[dict[str, Any]] = []
         risk_flags: list[str] = []
+        retained_swsd_road_ids: list[str] = []
 
         if unit is not None and unit.status == "passed":
             removed_swsd_road_ids = unit.swsd_road_ids
@@ -955,16 +1749,15 @@ def _build_swsd_frcsd_segment_relation_rows(
                 for road_id in unit.retained_detached_swsd_road_ids
                 if (str(swsd_source_value), road_id) in frcsd_road_by_source_id
             ]
-            frcsd_road_ids = unique_preserve_order([*present_rcsd_road_ids, *retained_swsd_road_ids])
+            frcsd_road_ids = unique_preserve_order(present_rcsd_road_ids)
             frcsd_road_source_values = []
             if present_rcsd_road_ids:
                 frcsd_road_source_values.append(rcsd_source_value)
-            if retained_swsd_road_ids:
-                frcsd_road_source_values.append(swsd_source_value)
             if present_rcsd_road_ids and retained_swsd_road_ids:
                 relation_status = "replaced+retained_swsd"
-                relation_reason = "replacement_unit_passed_with_detached_junc_retained_swsd_roads"
-                risk_flags.append("detached_junc_retained_swsd_roads")
+                relation_reason = "replacement_unit_passed_with_retained_swsd_topology_supplement"
+                risk_flags.append("retained_swsd_topology_supplement")
+                risk_flags.append("retained_swsd_excluded_from_formal_replacement")
             else:
                 relation_status = "replaced" if present_rcsd_road_ids else "failed"
                 relation_reason = "replacement_unit_passed" if present_rcsd_road_ids else "replacement_roads_missing_in_frcsd"
@@ -980,7 +1773,8 @@ def _build_swsd_frcsd_segment_relation_rows(
                 mapped_by_swsd_node=_mapped_rcsd_semantic_by_c(unit),
                 identity=False,
             )
-            node_map.extend(_detached_junc_identity_node_map(unit.detached_junc_nodes))
+            if retained_swsd_road_ids:
+                node_map.extend(_detached_junc_identity_node_map(unit.detached_junc_nodes))
         elif unit is not None:
             relation_reason = unit.reason
             risk_flags.append("replacement_unit_failed")
@@ -1026,7 +1820,7 @@ def _build_swsd_frcsd_segment_relation_rows(
                     "detached_junc_nodes": (unit.detached_junc_nodes if unit is not None else []),
                     "swsd_road_ids": swsd_road_ids,
                     "removed_swsd_road_ids": removed_swsd_road_ids,
-                    "retained_detached_swsd_road_ids": (unit.retained_detached_swsd_road_ids if unit is not None else []),
+                    "retained_detached_swsd_road_ids": retained_swsd_road_ids,
                     "frcsd_road_ids": frcsd_road_ids,
                     "frcsd_road_source_values": frcsd_road_source_values,
                     "rcsd_pair_nodes": rcsd_pair_nodes,
@@ -1075,6 +1869,68 @@ def _retained_swsd_road_ids_for_segment(
         if (str(swsd_source_value), road_id) in frcsd_road_by_source_id and road_id not in retained_ids:
             retained_ids.append(road_id)
     return retained_ids
+
+
+def _backfill_missing_relation_node_maps_from_peer_segments(
+    rows: list[dict[str, Any]],
+    *,
+    frcsd_roads: list[dict[str, Any]],
+    source_field_name: str,
+    rcsd_source_value: int,
+) -> None:
+    mapped_rcsd_nodes_by_swsd_node: dict[str, list[str]] = defaultdict(list)
+    for row in rows:
+        props = dict(row.get("properties") or {})
+        for entry in props.get("swsd_to_frcsd_node_map") or []:
+            if not isinstance(entry, dict):
+                continue
+            mapping_status = str(entry.get("mapping_status") or "")
+            if mapping_status == "missing" or mapping_status.startswith("identity"):
+                continue
+            swsd_node_id = str(entry.get("swsd_node_id") or "")
+            if not swsd_node_id:
+                continue
+            for node_id in _parse_list(entry.get("frcsd_node_ids")):
+                mapped_rcsd_nodes_by_swsd_node[swsd_node_id] = unique_preserve_order(
+                    [*mapped_rcsd_nodes_by_swsd_node[swsd_node_id], node_id]
+                )
+    if not mapped_rcsd_nodes_by_swsd_node:
+        return
+
+    road_endpoint_nodes = {
+        _feature_id(road): set(_road_endpoint_node_ids(road))
+        for road in frcsd_roads
+        if _source_key(road, source_field_name) == str(rcsd_source_value)
+    }
+    for row in rows:
+        props = row.get("properties") or {}
+        node_map = props.get("swsd_to_frcsd_node_map") or []
+        if not isinstance(node_map, list):
+            continue
+        selected_endpoint_nodes: set[str] = set()
+        for road_id in _parse_list(props.get("frcsd_road_ids")):
+            selected_endpoint_nodes.update(road_endpoint_nodes.get(road_id, set()))
+        if not selected_endpoint_nodes:
+            continue
+        backfilled = False
+        for entry in node_map:
+            if not isinstance(entry, dict) or str(entry.get("mapping_status") or "") != "missing":
+                continue
+            swsd_node_id = str(entry.get("swsd_node_id") or "")
+            candidates = [
+                node_id
+                for node_id in mapped_rcsd_nodes_by_swsd_node.get(swsd_node_id, [])
+                if node_id in selected_endpoint_nodes
+            ]
+            if not candidates:
+                continue
+            entry["frcsd_node_ids"] = unique_preserve_order(candidates)
+            entry["mapping_status"] = "peer_mapped"
+            backfilled = True
+        if backfilled:
+            props["risk_flags"] = unique_preserve_order(
+                [*_parse_list(props.get("risk_flags")), "peer_backfilled_junc_node_map"]
+            )
 
 
 def _segment_node_map(
@@ -1207,6 +2063,35 @@ def _road_endpoint_node_ids(road: dict[str, Any]) -> list[str]:
     return unique_preserve_order(result)
 
 
+def _road_endpoint_node_id_pair(road: dict[str, Any]) -> list[str]:
+    props = dict(road.get("properties") or {})
+    result: list[str] = []
+    for field in ("snodeid", "enodeid"):
+        try:
+            result.append(normalize_id(props.get(field)))
+        except ParseError:
+            continue
+    return result
+
+
+def _road_endpoint_points(road: dict[str, Any]) -> list[Point]:
+    geometry = road.get("geometry")
+    if geometry is None or geometry.is_empty:
+        return []
+    if isinstance(geometry, MultiLineString):
+        merged = linemerge(geometry)
+        if isinstance(merged, LineString):
+            geometry = merged
+        else:
+            geometry = max(geometry.geoms, key=lambda item: item.length)
+    if not isinstance(geometry, LineString):
+        return []
+    coords = list(geometry.coords)
+    if not coords:
+        return []
+    return [Point(coords[0]), Point(coords[-1])]
+
+
 def _index_by_id(features: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     result: dict[str, dict[str, Any]] = {}
     for item in features:
@@ -1222,10 +2107,21 @@ def _feature_id(feature_item: dict[str, Any]) -> str:
 
 
 def _safe_normalize(value: Any) -> str:
+    if value in (None, "", "None"):
+        return ""
+    try:
+        if value != value:
+            return ""
+    except Exception:
+        pass
     try:
         return normalize_id(value)
     except ParseError:
         return str(value)
+
+
+def _coerce_id_value(node_id: str) -> Any:
+    return int(node_id) if node_id.isdigit() else node_id
 
 
 def _parse_list(value: Any) -> list[str]:

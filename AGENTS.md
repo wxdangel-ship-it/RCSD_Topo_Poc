@@ -11,7 +11,7 @@
 2. 当前任务书未授权，但本轮改动会触及：
    - 任务书显式排除的模块、目录或 spec；
    - 模块官方对外接口（`INTERFACE_CONTRACT.md`、CLI 子命令、入口脚本签名）；
-   - 项目级源事实文档（`SPEC.md`、`docs/PROJECT_BRIEF.md`、`docs/architecture/*`、`docs/doc-governance/module-lifecycle.md`）。
+   - 项目级源事实文档（`SPEC.md`、`docs/PROJECT_REQUIREMENTS.md`、`docs/architecture/*`、`docs/doc-governance/module-lifecycle.md`）。
 3. 当前任务书未授权，但本轮会**新增长期保留的正式执行入口**：`Makefile` 常驻目标、`scripts/` 与 `tools/` 下常驻命令、模块内 `__main__.py` / `run.py`、CLI 子命令，以及任何应登记到 `docs/repository-metadata/entrypoint-registry.md` 的入口。一次性实验脚本不在本条触发范围内。
 4. 命中 §3 中任何一条文件体量禁止行为。
 5. 数据现象与已确认的字段语义冲突，准备据此反推上游字段含义并固化为强规则。
@@ -22,9 +22,10 @@
 
 ## §2 阅读链路与源事实
 
-- 主阅读入口只有一处：`docs/doc-governance/README.md`。本文件不再维护第二份阅读顺序。
-- 项目级源事实集合：`SPEC.md`、`docs/PROJECT_BRIEF.md`、`docs/architecture/*`、`docs/doc-governance/module-lifecycle.md`。
-- 模块级源事实集合：`modules/<module>/architecture/*` 与 `modules/<module>/INTERFACE_CONTRACT.md`。
+- 主阅读入口只有一处：`README.md`。本文件不再维护第二份阅读顺序。
+- 项目级源事实集合：`SPEC.md`、`docs/PROJECT_REQUIREMENTS.md`、`docs/architecture/*`、`docs/doc-governance/module-lifecycle.md`。
+- 模块级源事实集合：`modules/<module>/SPEC.md`、`modules/<module>/architecture/*` 与 `modules/<module>/INTERFACE_CONTRACT.md`。
+- 模块级 `AGENTS.md` 是可选的 Agent 局部红线文件，不是模块源事实，也不是模块启动必建文档。
 - `specs/*` 是 spec-kit 变更工件，不是源事实；任务未显式要求时不当作 day-0 主阅读材料。
 - 默认主阅读 / 主搜索路径**不包含**：`outputs/`、`outputs/_work/`、`.claude/worktrees/`、`.venv/`、`.idea/`、临时审计工件。仅在任务明确要求时进入。
 

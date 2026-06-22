@@ -756,7 +756,10 @@ def _write_relation_evidence_json(
             for intersection_id in matched_intersection_ids
             if (record := intersection_by_id.get(intersection_id)) is not None and record.base_id_candidate
         ]
-        if relation_state in {"existing_rcsdintersection_matched", "multiple_intersections_for_group"} and base_candidates:
+        base_id_override = _normalize_id(result.get("base_id_candidate"))
+        if relation_state == "existing_rcsdintersection_matched" and base_id_override:
+            base_id_candidate = base_id_override
+        elif relation_state in {"existing_rcsdintersection_matched", "multiple_intersections_for_group"} and base_candidates:
             base_id_candidate = _pipe_join_text(base_candidates)
         else:
             base_id_candidate = -1
@@ -808,13 +811,14 @@ def _surface_candidate_row(
     intersection_record: IntersectionRecord,
     relation_state: str,
     status_suggested: int,
+    base_id_candidate_override: str | None = None,
 ) -> dict[str, Any]:
     representative_props = representative_feature.properties
     kind_2 = _normalize_id(representative_props.get("kind_2"))
     patch_id, patch_id_field = _first_text_property(intersection_record.properties, PATCH_ID_FIELDS)
     rcsd_point_x, rcsd_point_y = _point_xy(intersection_record.geometry)
     swsd_point_x, swsd_point_y = _point_xy(representative_feature.geometry)
-    base_id_candidate = intersection_record.base_id_candidate or -1
+    base_id_candidate = base_id_candidate_override or intersection_record.base_id_candidate or -1
     return {
         "surface_candidate_id": _surface_candidate_id(target_id, intersection_record.intersection_id),
         "target_id": target_id,
@@ -871,6 +875,7 @@ def _write_surface_candidate_gpkg(
             continue
         relation_state = "multiple_intersections_for_group" if final_state == "fail1" else "existing_rcsdintersection_matched"
         status_suggested = 1 if final_state == "fail1" else 0
+        base_id_candidate_override = _normalize_id(result.get("base_id_candidate")) if final_state == "yes" else None
         for intersection_id in matched_intersection_ids:
             intersection_record = intersection_by_id.get(intersection_id)
             if intersection_record is None:
@@ -883,6 +888,7 @@ def _write_surface_candidate_gpkg(
                 intersection_record=intersection_record,
                 relation_state=relation_state,
                 status_suggested=status_suggested,
+                base_id_candidate_override=base_id_candidate_override,
             )
             surface_props = dict(intersection_record.properties)
             surface_props.update(row)
@@ -1133,6 +1139,127 @@ def _intersection_contains_rcsd_semantic_node(
     return False
 
 
+def _rcsd_semantic_ids_covered_by_intersection(
+    *,
+    intersection: IntersectionRecord,
+    rcsdnode_tree: STRtree | None,
+    rcsdnode_records: list[RCSDSemanticNodeRecord],
+) -> list[str]:
+    if rcsdnode_tree is None:
+        return []
+    semantic_ids: set[str] = set()
+    for index in rcsdnode_tree.query(intersection.geometry, predicate="intersects"):
+        record = rcsdnode_records[int(index)]
+        if intersection.geometry.covers(record.geometry):
+            semantic_ids.add(record.semantic_id)
+    return sorted(semantic_ids)
+
+
+def _kind2048_surface_assessment(
+    *,
+    junction_id: str,
+    group: ResolvedGroup,
+    junction_ids: list[str],
+    by_mainnodeid: dict[str, list[NodeRecord]],
+    singleton_by_id: dict[str, NodeRecord],
+    intersections: list[IntersectionRecord],
+    intersection_by_id: dict[str, IntersectionRecord],
+    rcsdnode_tree: STRtree | None,
+    rcsdnode_records: list[RCSDSemanticNodeRecord],
+) -> dict[str, Any]:
+    node_surface_hits: list[set[str]] = []
+    for record in group.group_nodes:
+        hits = {
+            intersection.intersection_id
+            for intersection in intersections
+            if intersection.geometry.covers(record.geometry)
+        }
+        node_surface_hits.append(hits)
+    common_hits = set.intersection(*node_surface_hits) if node_surface_hits else set()
+    strict_hits = sorted(
+        intersection_id
+        for intersection_id in common_hits
+        if all(hits == {intersection_id} for hits in node_surface_hits)
+    )
+    if len(strict_hits) != 1:
+        all_hits = sorted({intersection_id for hits in node_surface_hits for intersection_id in hits})
+        return {
+            "accepted": False,
+            "reason": "t_junction_not_strict_single_surface",
+            "detail": "kind_2=2048 requires every SWSD node to be covered by one identical RCSDIntersection surface and by no other surface.",
+            "intersection_ids": all_hits,
+        }
+
+    intersection_id = strict_hits[0]
+    intersection = intersection_by_id.get(intersection_id)
+    if intersection is None:
+        return {
+            "accepted": False,
+            "reason": "t_junction_surface_missing",
+            "detail": "kind_2=2048 strict surface candidate is missing from the RCSDIntersection index.",
+            "intersection_ids": [intersection_id],
+        }
+
+    other_junction_ids: list[str] = []
+    for other_junction_id in junction_ids:
+        if other_junction_id == junction_id:
+            continue
+        other_group = _resolve_group(other_junction_id, by_mainnodeid=by_mainnodeid, singleton_by_id=singleton_by_id)
+        if other_group.representative is None:
+            continue
+        if any(intersection.geometry.covers(record.geometry) for record in other_group.group_nodes):
+            other_junction_ids.append(other_junction_id)
+    if other_junction_ids:
+        return {
+            "accepted": False,
+            "reason": "t_junction_surface_contains_other_swsd_semantic_junction",
+            "detail": "kind_2=2048 strict surface contains another SWSD semantic junction.",
+            "intersection_ids": [intersection_id],
+            "related_swsd_junction_ids": sorted(other_junction_ids),
+        }
+
+    if rcsdnode_tree is None:
+        return {
+            "accepted": False,
+            "reason": "t_junction_missing_rcsdnode_context",
+            "detail": "kind_2=2048 strict surface requires RCSDNode input to prove exactly one RCSD semantic junction.",
+            "intersection_ids": [intersection_id],
+        }
+
+    rcsd_semantic_ids = _rcsd_semantic_ids_covered_by_intersection(
+        intersection=intersection,
+        rcsdnode_tree=rcsdnode_tree,
+        rcsdnode_records=rcsdnode_records,
+    )
+    if len(rcsd_semantic_ids) != 1:
+        reason = (
+            "t_junction_surface_no_rcsd_semantic_node"
+            if not rcsd_semantic_ids
+            else "t_junction_surface_multiple_rcsd_semantic_nodes"
+        )
+        detail = (
+            "kind_2=2048 strict surface contains no RCSD semantic junction."
+            if not rcsd_semantic_ids
+            else "kind_2=2048 strict surface contains more than one RCSD semantic junction."
+        )
+        return {
+            "accepted": False,
+            "reason": reason,
+            "detail": detail,
+            "intersection_ids": [intersection_id],
+            "related_rcsd_semantic_ids": rcsd_semantic_ids,
+        }
+
+    return {
+        "accepted": True,
+        "reason": "kind2048_strict_surface_1v1_rcsdnode_matched",
+        "detail": "kind_2=2048 strict surface contains exactly one SWSD semantic junction and one RCSD semantic junction.",
+        "intersection_ids": [intersection_id],
+        "base_id_candidate": rcsd_semantic_ids[0],
+        "related_rcsd_semantic_ids": rcsd_semantic_ids,
+    }
+
+
 def _write_error_outputs(
     *,
     vector_path: Path,
@@ -1226,6 +1353,8 @@ def run_t07_step2_anchor_recognition(
         "roundabout_reason_count": 0,
         "t_reason_count": 0,
         "rcsdintersection_no_rcsdnode_count": 0,
+        "t_junction_surface_anchor_count": 0,
+        "t_junction_surface_rejected_count": 0,
     }
     group_results: dict[str, dict[str, Any]] = {}
     intersection_to_junctions: dict[str, set[str]] = {}
@@ -1260,30 +1389,6 @@ def run_t07_step2_anchor_recognition(
             group_results[junction_id] = {"participates": False, "group": group, "intersection_ids": []}
             continue
 
-        if kind_2 == "2048":
-            representative_props["is_anchor"] = "no"
-            representative_props["anchor_reason"] = None
-            counts["anchor_no_count"] += 1
-            group_results[junction_id] = {
-                "participates": False,
-                "fail2_eligible": False,
-                "group": group,
-                "kind_2": kind_2,
-                "intersection_ids": [],
-                "relation_state": "t_junction_deferred_to_t03",
-            }
-            audit_rows.append(
-                _audit_row(
-                    scope="semantic_junction",
-                    status="skipped",
-                    reason="t_junction_deferred_to_t03",
-                    detail="T07 does not build SWSD-RCSD relation for kind_2=2048; T03 handles T-junction virtual anchoring.",
-                    junction_id=junction_id,
-                    node_id=group.representative.node_id,
-                )
-            )
-            continue
-
         hit_intersection_ids: set[str] = set()
         for record in group.group_nodes:
             cached = node_hit_cache.get(record.output_index)
@@ -1313,6 +1418,72 @@ def run_t07_step2_anchor_recognition(
                 else:
                     unconsumable_intersection_ids.append(intersection_id)
             sorted_hits = consumable_hits
+
+        if kind_2 == "2048":
+            assessment = _kind2048_surface_assessment(
+                junction_id=junction_id,
+                group=group,
+                junction_ids=junction_ids,
+                by_mainnodeid=by_mainnodeid,
+                singleton_by_id=singleton_by_id,
+                intersections=intersections,
+                intersection_by_id=intersection_by_id,
+                rcsdnode_tree=rcsdnode_tree,
+                rcsdnode_records=rcsdnode_records,
+            )
+            if assessment["accepted"]:
+                counts["stage2_candidate_count"] += 1
+                counts["t_junction_surface_anchor_count"] += 1
+                group_results[junction_id] = {
+                    "participates": True,
+                    "fail2_eligible": False,
+                    "group": group,
+                    "kind_2": kind_2,
+                    "provisional_state": "yes",
+                    "provisional_reason": None,
+                    "intersection_ids": list(assessment.get("intersection_ids") or []),
+                    "relation_state": "existing_rcsdintersection_matched",
+                    "base_id_candidate": assessment.get("base_id_candidate"),
+                }
+                audit_rows.append(
+                    _audit_row(
+                        scope="semantic_junction",
+                        status="accepted",
+                        reason=assessment["reason"],
+                        detail=assessment["detail"],
+                        junction_id=junction_id,
+                        node_id=group.representative.node_id,
+                        intersection_ids=list(assessment.get("intersection_ids") or []),
+                    )
+                )
+            else:
+                representative_props["is_anchor"] = "no"
+                representative_props["anchor_reason"] = None
+                counts["anchor_no_count"] += 1
+                counts["t_junction_surface_rejected_count"] += 1
+                if assessment["reason"] == "t_junction_surface_no_rcsd_semantic_node":
+                    counts["rcsdintersection_no_rcsdnode_count"] += 1
+                group_results[junction_id] = {
+                    "participates": False,
+                    "fail2_eligible": False,
+                    "group": group,
+                    "kind_2": kind_2,
+                    "intersection_ids": list(assessment.get("intersection_ids") or []),
+                    "relation_state": assessment["reason"],
+                    "base_id_candidate": _pipe_join_text(list(assessment.get("related_rcsd_semantic_ids") or [])) or None,
+                }
+                audit_rows.append(
+                    _audit_row(
+                        scope="semantic_junction",
+                        status="skipped",
+                        reason=assessment["reason"],
+                        detail=assessment["detail"],
+                        junction_id=junction_id,
+                        node_id=group.representative.node_id,
+                        intersection_ids=list(assessment.get("intersection_ids") or []),
+                    )
+                )
+            continue
         if unconsumable_intersection_ids and not sorted_hits:
             counts["rcsdintersection_no_rcsdnode_count"] += 1
             audit_rows.append(

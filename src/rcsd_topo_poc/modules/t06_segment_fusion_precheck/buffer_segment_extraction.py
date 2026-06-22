@@ -16,6 +16,10 @@ from .relation_mapping import RelationCheck
 from .road_attributes import is_advance_right_turn_road
 
 
+PATH_REFERENCE_BUFFER_M = 15.0
+PATH_OFF_REFERENCE_PENALTY_MULTIPLIER = 6.0
+
+
 @dataclass(frozen=True)
 class BufferExtractionConfig:
     buffer_distance_m: float = 50.0
@@ -24,6 +28,9 @@ class BufferExtractionConfig:
     advance_right_formway_bit: int = 128
     max_geometry_buffer_mismatch_ratio: float = 0.1
     min_geometry_buffer_mismatch_length_m: float = 20.0
+    visual_consistency_buffer_distance_m: float | None = 15.0
+    max_visual_consistency_mismatch_ratio: float = 0.1
+    min_visual_consistency_mismatch_length_m: float = 20.0
 
 
 @dataclass(frozen=True)
@@ -209,7 +216,28 @@ class BufferSegmentExtractor:
             max_mismatch_ratio=cfg.max_geometry_buffer_mismatch_ratio,
             min_mismatch_length_m=cfg.min_geometry_buffer_mismatch_length_m,
         )
-        if ok and coverage_status.issue is not None:
+        visual_buffer_distance = cfg.visual_consistency_buffer_distance_m
+        soft_visual_continuity_issue = False
+        if (
+            ok
+            and coverage_status.issue is None
+            and visual_buffer_distance is not None
+            and 0 < visual_buffer_distance < cfg.buffer_distance_m
+        ):
+            visual_status = _retained_geometry_buffer_coverage_status(
+                corridor_edges,
+                segment_geometry,
+                segment_geometry.buffer(visual_buffer_distance),
+                buffer_distance_m=visual_buffer_distance,
+                max_mismatch_ratio=cfg.max_visual_consistency_mismatch_ratio,
+                min_mismatch_length_m=cfg.min_visual_consistency_mismatch_length_m,
+            )
+            if visual_status.issue is not None:
+                coverage_status = _visual_consistency_status(visual_status)
+                soft_visual_continuity_issue = (
+                    coverage_status.issue == "swsd_visual_continuity_not_covered_by_retained_rcsd"
+                )
+        if ok and coverage_status.issue is not None and not soft_visual_continuity_issue:
             ok = False
             reason = coverage_status.issue
         return _result(
@@ -851,8 +879,14 @@ def _weighted_adjacency(
     required_nodes: set[str],
 ) -> dict[str, list[tuple[str, float, str]]]:
     adjacency: dict[str, list[tuple[str, float, str]]] = defaultdict(list)
+    reference_buffer_geometry = _path_reference_buffer(reference_geometry)
     for edge in edges:
-        weight = _edge_weight(edge, reference_geometry=reference_geometry, required_nodes=required_nodes)
+        weight = _edge_weight(
+            edge,
+            reference_geometry=reference_geometry,
+            reference_buffer_geometry=reference_buffer_geometry,
+            required_nodes=required_nodes,
+        )
         if not directed:
             adjacency[edge.source].append((edge.target, weight, edge.edge_id))
             adjacency[edge.target].append((edge.source, weight, edge.edge_id))
@@ -866,18 +900,48 @@ def _weighted_adjacency(
 
 
 def _path_weight(edges: list[Edge], path: list[str], *, reference_geometry: BaseGeometry | None, required_nodes: set[str]) -> float:
-    weights = {edge.edge_id: _edge_weight(edge, reference_geometry=reference_geometry, required_nodes=required_nodes) for edge in edges}
+    reference_buffer_geometry = _path_reference_buffer(reference_geometry)
+    weights = {
+        edge.edge_id: _edge_weight(
+            edge,
+            reference_geometry=reference_geometry,
+            reference_buffer_geometry=reference_buffer_geometry,
+            required_nodes=required_nodes,
+        )
+        for edge in edges
+    }
     return sum(weights.get(edge_id, 1.0) for edge_id in path)
 
 
-def _edge_weight(edge: Edge, *, reference_geometry: BaseGeometry | None, required_nodes: set[str]) -> float:
+def _edge_weight(
+    edge: Edge,
+    *,
+    reference_geometry: BaseGeometry | None,
+    reference_buffer_geometry: BaseGeometry | None,
+    required_nodes: set[str],
+) -> float:
     length = 1.0
     if edge.geometry is not None and not edge.geometry.is_empty:
         length = max(float(edge.geometry.length), 1.0)
     if reference_geometry is None or reference_geometry.is_empty:
         return length
     shortcut_penalty = _required_shortcut_penalty(edge, length, reference_geometry, required_nodes)
-    return length + shortcut_penalty
+    off_reference_penalty = _off_reference_penalty(edge, length, reference_buffer_geometry)
+    return length + shortcut_penalty + off_reference_penalty
+
+
+def _path_reference_buffer(reference_geometry: BaseGeometry | None) -> BaseGeometry | None:
+    if reference_geometry is None or reference_geometry.is_empty:
+        return None
+    return reference_geometry.buffer(PATH_REFERENCE_BUFFER_M)
+
+
+def _off_reference_penalty(edge: Edge, length: float, reference_buffer_geometry: BaseGeometry | None) -> float:
+    if reference_buffer_geometry is None or edge.geometry is None or edge.geometry.is_empty:
+        return 0.0
+    inside_length = float(edge.geometry.intersection(reference_buffer_geometry).length)
+    off_reference_length = max(0.0, length - inside_length)
+    return off_reference_length * PATH_OFF_REFERENCE_PENALTY_MULTIPLIER
 
 
 def _required_shortcut_penalty(edge: Edge, length: float, reference_geometry: BaseGeometry, required_nodes: set[str]) -> float:
@@ -949,7 +1013,7 @@ def _mismatch_exceeds_threshold(
     max_mismatch_ratio: float,
     min_mismatch_length_m: float,
 ) -> bool:
-    return mismatch_ratio > max_mismatch_ratio and mismatch_length > min_mismatch_length_m
+    return mismatch_ratio > max_mismatch_ratio or mismatch_length > min_mismatch_length_m
 
 
 def _nodes_from_edges(edges: list[Edge]) -> set[str]:
@@ -1064,6 +1128,21 @@ def _retained_geometry_buffer_coverage_status(
         rcsd_outside_ratio=rcsd_outside_ratio,
         swsd_uncovered_length_m=swsd_uncovered_length,
         swsd_uncovered_ratio=swsd_uncovered_ratio,
+    )
+
+
+def _visual_consistency_status(status: _GeometryCoverageStatus) -> _GeometryCoverageStatus:
+    issue = status.issue
+    if issue == "retained_geometry_outside_swsd_buffer_scope":
+        issue = "retained_geometry_outside_swsd_visual_consistency_scope"
+    elif issue == "swsd_geometry_not_covered_by_retained_rcsd":
+        issue = "swsd_visual_continuity_not_covered_by_retained_rcsd"
+    return _GeometryCoverageStatus(
+        issue=issue,
+        rcsd_outside_length_m=status.rcsd_outside_length_m,
+        rcsd_outside_ratio=status.rcsd_outside_ratio,
+        swsd_uncovered_length_m=status.swsd_uncovered_length_m,
+        swsd_uncovered_ratio=status.swsd_uncovered_ratio,
     )
 
 

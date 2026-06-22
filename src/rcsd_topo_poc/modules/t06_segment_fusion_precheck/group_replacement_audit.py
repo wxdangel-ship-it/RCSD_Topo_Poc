@@ -51,12 +51,14 @@ def build_group_replacement_audit_rows(
         for row in replaceable_rows
         if (row.get("properties") or {}).get("swsd_segment_id") is not None
     }
+    replaceable_road_ids_by_segment = _replaceable_road_ids_by_segment(replaceable_rows)
     rejected_reason_by_segment = _rejected_reason_by_segment(rejected_rows)
     node_to_segments = _node_to_segments(segment_by_id)
     base_to_targets = _accepted_base_to_targets(relation_map, rcsd_node_canonicalizer)
     relation_base_ids = set(base_to_targets)
     graph_edges = _build_undirected_graph(rcsd_roads, node_canonicalizer=rcsd_node_canonicalizer).edges
     edge_by_id = {edge.edge_id: edge for edge in graph_edges}
+    rcsd_road_by_id = _index_features(rcsd_roads)
     group_probe_extractor = (
         BufferSegmentExtractor(rcsd_road_features=rcsd_roads, rcsd_node_features=rcsd_nodes)
         if rcsd_nodes is not None
@@ -118,21 +120,42 @@ def build_group_replacement_audit_rows(
         rejected_in_group = [sid for sid in external_group_segment_ids if sid in rejected_reason_by_segment]
         outside_step1 = [sid for sid in external_group_segment_ids if sid not in fusion_segment_ids]
         path_corridor_external_segment_ids = [sid for sid in path_corridor_segment_ids if sid != segment_id]
+        source_path_corridor_blocked = (
+            []
+            if _is_source_path_corridor_carrier(
+                segment=segment,
+                path_geometry=path_geometry,
+            )
+            else [segment_id]
+        )
         path_corridor_rejected = [sid for sid in path_corridor_external_segment_ids if sid in rejected_reason_by_segment]
         path_corridor_outside_step1 = [sid for sid in path_corridor_external_segment_ids if sid not in fusion_segment_ids]
         blocker_reasons = _blocker_reasons(rejected_in_group, outside_step1, rejected_reason_by_segment)
-        path_corridor_blocker_reasons = _blocker_reasons(path_corridor_rejected, path_corridor_outside_step1, rejected_reason_by_segment)
+        path_corridor_blocker_reasons = unique_preserve_order(
+            [
+                *[f"{sid}:source_segment_not_path_corridor_carrier" for sid in source_path_corridor_blocked],
+                *_blocker_reasons(path_corridor_rejected, path_corridor_outside_step1, rejected_reason_by_segment),
+            ]
+        )
+        path_corridor_blocked_segment_ids = unique_preserve_order(
+            [*source_path_corridor_blocked, *path_corridor_rejected, *path_corridor_outside_step1]
+        )
+        path_corridor_probe_segment_ids = [
+            sid for sid in path_corridor_segment_ids if sid not in set(path_corridor_blocked_segment_ids)
+        ]
         audit_status = _audit_status(path_infos, unexpected_targets, rejected_in_group, outside_step1)
         corridor_audit_status = _audit_status(path_infos, unexpected_targets, path_corridor_rejected, path_corridor_outside_step1)
         group_probe = _group_union_probe(
             extractor=group_probe_extractor,
-            segment_ids=path_corridor_segment_ids,
+            segment_ids=path_corridor_probe_segment_ids,
             segment_by_id=segment_by_id,
             rcsd_pair_nodes=rcsd_pair_nodes,
             allowed_base_ids=allowed_base_ids,
             relation_base_ids=relation_base_ids,
             source_directionality=directionality_from_sgrade(segment_props.get("sgrade") or props.get("swsd_sgrade")) or "",
             buffer_config=buffer_config,
+            replaceable_road_ids_by_segment=replaceable_road_ids_by_segment,
+            rcsd_road_by_id=rcsd_road_by_id,
         )
         rows.append(
             feature(
@@ -162,8 +185,9 @@ def build_group_replacement_audit_rows(
                     "blocker_reasons": blocker_reasons,
                     "path_corridor_group_segment_ids": path_corridor_segment_ids,
                     "path_corridor_group_segment_count": len(path_corridor_segment_ids),
-                    "path_corridor_blocked_segment_ids": unique_preserve_order([*path_corridor_rejected, *path_corridor_outside_step1]),
+                    "path_corridor_blocked_segment_ids": path_corridor_blocked_segment_ids,
                     "path_corridor_blocker_reasons": path_corridor_blocker_reasons,
+                    "path_corridor_probe_segment_ids": path_corridor_probe_segment_ids,
                     "side_incident_group_segment_ids": side_incident_segment_ids,
                     "group_probe_status": group_probe["status"],
                     "group_probe_reason": group_probe["reason"],
@@ -191,7 +215,9 @@ def path_corridor_group_covered_segment_ids(rows: list[dict[str, Any]]) -> set[s
         if props.get("group_probe_repair_owner") != "T06_path_corridor_group_replacement":
             continue
         try:
-            result.extend(parse_id_list(props.get("path_corridor_group_segment_ids"), allow_empty=True))
+            group_segment_ids = parse_id_list(props.get("path_corridor_group_segment_ids"), allow_empty=True)
+            blocked_segment_ids = set(parse_id_list(props.get("path_corridor_blocked_segment_ids"), allow_empty=True))
+            result.extend(segment_id for segment_id in group_segment_ids if segment_id not in blocked_segment_ids)
         except ParseError:
             continue
     return set(unique_preserve_order(result))
@@ -278,6 +304,19 @@ def _is_path_corridor_carrier(segment_geometry: BaseGeometry, path_geometry: Bas
     )
 
 
+def _is_source_path_corridor_carrier(
+    *,
+    segment: dict[str, Any] | None,
+    path_geometry: BaseGeometry | None,
+) -> bool:
+    if path_geometry is None or path_geometry.is_empty:
+        return False
+    geometry = (segment or {}).get("geometry")
+    if not isinstance(geometry, BaseGeometry) or geometry.is_empty:
+        return False
+    return _is_path_corridor_carrier(geometry, path_geometry)
+
+
 def _group_union_probe(
     *,
     extractor: BufferSegmentExtractor | None,
@@ -288,6 +327,8 @@ def _group_union_probe(
     relation_base_ids: set[str],
     source_directionality: str,
     buffer_config: BufferExtractionConfig | None,
+    replaceable_road_ids_by_segment: dict[str, list[str]],
+    rcsd_road_by_id: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
     if extractor is None:
         return _group_probe_row("not_evaluated", "missing_rcsd_nodes_for_probe")
@@ -318,6 +359,9 @@ def _group_union_probe(
             advance_right_formway_bit=base_config.advance_right_formway_bit,
             max_geometry_buffer_mismatch_ratio=base_config.max_geometry_buffer_mismatch_ratio,
             min_geometry_buffer_mismatch_length_m=base_config.min_geometry_buffer_mismatch_length_m,
+            visual_consistency_buffer_distance_m=base_config.visual_consistency_buffer_distance_m,
+            max_visual_consistency_mismatch_ratio=base_config.max_visual_consistency_mismatch_ratio,
+            min_visual_consistency_mismatch_length_m=base_config.min_visual_consistency_mismatch_length_m,
         )
         result = extractor.extract(
             segment_geometry=group_geometry,
@@ -332,13 +376,38 @@ def _group_union_probe(
         )
         last_result = result
         if result.ok:
+            road_ids = _augment_probe_with_uncovered_segment_geometry(
+                result.retained_road_ids,
+                segment_ids=segment_ids,
+                segment_by_id=segment_by_id,
+                rcsd_road_by_id=rcsd_road_by_id,
+            )
             return _group_probe_row(
                 "passed",
                 result.reason,
                 buffer_distance_m=distance_m,
                 result=result,
                 repair_owner="T06_path_corridor_group_replacement",
+                rcsd_road_ids=road_ids,
             )
+        augmented_probe = _augmented_standard_replacement_probe(
+            result=result,
+            segment_ids=segment_ids,
+            group_geometry=group_geometry,
+            replaceable_road_ids_by_segment=replaceable_road_ids_by_segment,
+            rcsd_road_by_id=rcsd_road_by_id,
+            config=cfg,
+        )
+        if augmented_probe is not None:
+            road_ids = _augment_probe_with_uncovered_segment_geometry(
+                augmented_probe["rcsd_road_ids"],
+                segment_ids=segment_ids,
+                segment_by_id=segment_by_id,
+                rcsd_road_by_id=rcsd_road_by_id,
+            )
+            augmented_probe["rcsd_road_ids"] = road_ids
+            augmented_probe["rcsd_road_count"] = len(road_ids)
+            return augmented_probe
     return _group_probe_row(
         "failed",
         last_result.reason if last_result is not None else "no_probe_result",
@@ -348,6 +417,237 @@ def _group_union_probe(
     )
 
 
+def _augment_probe_with_uncovered_segment_geometry(
+    retained_road_ids: list[str],
+    *,
+    segment_ids: list[str],
+    segment_by_id: dict[str, dict[str, Any]],
+    rcsd_road_by_id: dict[str, dict[str, Any]],
+    coverage_buffer_m: float = 5.0,
+    candidate_buffer_m: float = 8.0,
+    segment_max_uncovered_ratio: float = 0.02,
+    segment_min_uncovered_length_m: float = 20.0,
+    candidate_min_overlap_length_m: float = 8.0,
+    candidate_min_inside_ratio: float = 0.4,
+) -> list[str]:
+    current_ids = unique_preserve_order(retained_road_ids)
+    if not current_ids:
+        return current_ids
+
+    while True:
+        selected_geometry = _road_union(current_ids, rcsd_road_by_id)
+        if selected_geometry is None or selected_geometry.is_empty:
+            return current_ids
+        worst = _worst_uncovered_segment(
+            segment_ids=segment_ids,
+            segment_by_id=segment_by_id,
+            selected_geometry=selected_geometry,
+            coverage_buffer_m=coverage_buffer_m,
+        )
+        if worst is None:
+            return current_ids
+        ratio, uncovered_geometry = worst
+        if ratio <= segment_max_uncovered_ratio or uncovered_geometry.length <= segment_min_uncovered_length_m:
+            return current_ids
+        candidate_id = _best_uncovered_segment_candidate(
+            uncovered_geometry,
+            current_ids=set(current_ids),
+            rcsd_road_by_id=rcsd_road_by_id,
+            candidate_buffer_m=candidate_buffer_m,
+            candidate_min_overlap_length_m=candidate_min_overlap_length_m,
+            candidate_min_inside_ratio=candidate_min_inside_ratio,
+        )
+        if candidate_id is None:
+            return current_ids
+        current_ids.append(candidate_id)
+
+
+def _road_union(road_ids: list[str], rcsd_road_by_id: dict[str, dict[str, Any]]) -> BaseGeometry | None:
+    geometries = [
+        geometry
+        for road_id in road_ids
+        for road in [rcsd_road_by_id.get(str(road_id))]
+        for geometry in [road.get("geometry") if road is not None else None]
+        if isinstance(geometry, BaseGeometry) and not geometry.is_empty
+    ]
+    if not geometries:
+        return None
+    from shapely.ops import unary_union
+
+    return unary_union(geometries)
+
+
+def _worst_uncovered_segment(
+    *,
+    segment_ids: list[str],
+    segment_by_id: dict[str, dict[str, Any]],
+    selected_geometry: BaseGeometry,
+    coverage_buffer_m: float,
+) -> tuple[float, BaseGeometry] | None:
+    worst: tuple[float, BaseGeometry] | None = None
+    for segment_id in segment_ids:
+        segment = segment_by_id.get(segment_id)
+        geometry = segment.get("geometry") if segment is not None else None
+        if not isinstance(geometry, BaseGeometry) or geometry.is_empty or geometry.length <= 0:
+            continue
+        uncovered = geometry.difference(selected_geometry.buffer(coverage_buffer_m))
+        ratio = float(uncovered.length) / float(geometry.length)
+        if worst is None or ratio > worst[0]:
+            worst = (ratio, uncovered)
+    return worst
+
+
+def _best_uncovered_segment_candidate(
+    uncovered_geometry: BaseGeometry,
+    *,
+    current_ids: set[str],
+    rcsd_road_by_id: dict[str, dict[str, Any]],
+    candidate_buffer_m: float,
+    candidate_min_overlap_length_m: float,
+    candidate_min_inside_ratio: float,
+) -> str | None:
+    best: tuple[float, float, float, str] | None = None
+    for road_id, road in rcsd_road_by_id.items():
+        if road_id in current_ids:
+            continue
+        geometry = road.get("geometry")
+        if not isinstance(geometry, BaseGeometry) or geometry.is_empty or geometry.length <= 0:
+            continue
+        overlap = float(geometry.intersection(uncovered_geometry.buffer(candidate_buffer_m)).length)
+        inside_ratio = overlap / float(geometry.length)
+        if overlap < candidate_min_overlap_length_m or inside_ratio < candidate_min_inside_ratio:
+            continue
+        score = (overlap, inside_ratio, float(geometry.length), road_id)
+        if best is None or score > best:
+            best = score
+    return best[3] if best is not None else None
+
+
+def _augmented_standard_replacement_probe(
+    *,
+    result: BufferSegmentResult,
+    segment_ids: list[str],
+    group_geometry: BaseGeometry,
+    replaceable_road_ids_by_segment: dict[str, list[str]],
+    rcsd_road_by_id: dict[str, dict[str, Any]],
+    config: BufferExtractionConfig,
+) -> dict[str, Any] | None:
+    if result.reason not in {
+        "swsd_geometry_not_covered_by_retained_rcsd",
+        "swsd_visual_continuity_not_covered_by_retained_rcsd",
+        "retained_geometry_outside_swsd_buffer_scope",
+        "retained_geometry_outside_swsd_visual_consistency_scope",
+    }:
+        return None
+    standard_road_ids = unique_preserve_order(
+        road_id
+        for segment_id in segment_ids
+        for road_id in replaceable_road_ids_by_segment.get(segment_id, [])
+    )
+    augmented_road_ids = unique_preserve_order([*result.retained_road_ids, *standard_road_ids])
+    if not result.retained_road_ids or len(augmented_road_ids) <= len(result.retained_road_ids):
+        return None
+
+    road_geometries: list[BaseGeometry] = []
+    for road_id in augmented_road_ids:
+        road = rcsd_road_by_id.get(str(road_id))
+        geometry = road.get("geometry") if road is not None else None
+        if not isinstance(geometry, BaseGeometry) or geometry.is_empty:
+            return None
+        road_geometries.append(geometry)
+
+    coverage = _augmented_coverage_status(
+        road_geometries=road_geometries,
+        group_geometry=group_geometry,
+        config=config,
+        visual_scope="visual" in result.reason,
+    )
+    if coverage["issue"] is not None and coverage["issue"] != "swsd_visual_continuity_not_covered_by_retained_rcsd":
+        return None
+    return _group_probe_row(
+        "passed",
+        "augmented_standard_replacement_coverage_passed",
+        buffer_distance_m=config.buffer_distance_m,
+        result=result,
+        repair_owner="T06_path_corridor_group_replacement",
+        rcsd_road_ids=augmented_road_ids,
+        swsd_uncovered_ratio=coverage["swsd_uncovered_ratio"],
+        rcsd_outside_ratio=coverage["rcsd_outside_ratio"],
+    )
+
+
+def _augmented_coverage_status(
+    *,
+    road_geometries: list[BaseGeometry],
+    group_geometry: BaseGeometry,
+    config: BufferExtractionConfig,
+    visual_scope: bool,
+) -> dict[str, float | str | None]:
+    from shapely.ops import unary_union
+
+    road_geometry = unary_union(road_geometries)
+    buffer_distance = config.buffer_distance_m
+    max_mismatch_ratio = config.max_geometry_buffer_mismatch_ratio
+    min_mismatch_length_m = config.min_geometry_buffer_mismatch_length_m
+    if visual_scope and config.visual_consistency_buffer_distance_m is not None:
+        buffer_distance = config.visual_consistency_buffer_distance_m
+        max_mismatch_ratio = config.max_visual_consistency_mismatch_ratio
+        min_mismatch_length_m = config.min_visual_consistency_mismatch_length_m
+
+    road_length = float(road_geometry.length) if not road_geometry.is_empty else 0.0
+    group_length = float(group_geometry.length) if not group_geometry.is_empty else 0.0
+    rcsd_outside_length = (
+        float(road_geometry.difference(group_geometry.buffer(buffer_distance)).length)
+        if road_length > 0
+        else 0.0
+    )
+    swsd_uncovered_length = (
+        float(group_geometry.difference(road_geometry.buffer(buffer_distance)).length)
+        if road_length > 0 and group_length > 0
+        else 0.0
+    )
+    rcsd_outside_ratio = rcsd_outside_length / road_length if road_length > 0 else 0.0
+    swsd_uncovered_ratio = swsd_uncovered_length / group_length if group_length > 0 else 0.0
+    issue = None
+    if _mismatch_exceeds_threshold(
+        rcsd_outside_length,
+        rcsd_outside_ratio,
+        max_mismatch_ratio=max_mismatch_ratio,
+        min_mismatch_length_m=min_mismatch_length_m,
+    ):
+        issue = (
+            "retained_geometry_outside_swsd_visual_consistency_scope"
+            if visual_scope
+            else "retained_geometry_outside_swsd_buffer_scope"
+        )
+    elif _mismatch_exceeds_threshold(
+        swsd_uncovered_length,
+        swsd_uncovered_ratio,
+        max_mismatch_ratio=max_mismatch_ratio,
+        min_mismatch_length_m=min_mismatch_length_m,
+    ):
+        issue = (
+            "swsd_visual_continuity_not_covered_by_retained_rcsd"
+            if visual_scope
+            else "swsd_geometry_not_covered_by_retained_rcsd"
+        )
+    return {
+        "issue": issue,
+        "rcsd_outside_ratio": rcsd_outside_ratio,
+        "swsd_uncovered_ratio": swsd_uncovered_ratio,
+    }
+
+
+def _mismatch_exceeds_threshold(
+    mismatch_length: float,
+    mismatch_ratio: float,
+    *,
+    max_mismatch_ratio: float,
+    min_mismatch_length_m: float,
+) -> bool:
+    return mismatch_ratio > max_mismatch_ratio or mismatch_length > min_mismatch_length_m
+
+
 def _group_probe_row(
     status: str,
     reason: str,
@@ -355,15 +655,27 @@ def _group_probe_row(
     buffer_distance_m: float | None = None,
     result: BufferSegmentResult | None = None,
     repair_owner: str = "",
+    rcsd_road_ids: list[str] | None = None,
+    swsd_uncovered_ratio: float | None = None,
+    rcsd_outside_ratio: float | None = None,
 ) -> dict[str, Any]:
+    retained_road_ids = rcsd_road_ids if rcsd_road_ids is not None else (result.retained_road_ids if result is not None else [])
     return {
         "status": status,
         "reason": reason,
         "buffer_distance_m": buffer_distance_m,
-        "rcsd_road_ids": result.retained_road_ids if result is not None else [],
-        "rcsd_road_count": len(result.retained_road_ids) if result is not None else 0,
-        "swsd_uncovered_ratio": result.swsd_uncovered_by_rcsd_ratio if result is not None else None,
-        "rcsd_outside_ratio": result.rcsd_outside_swsd_buffer_ratio if result is not None else None,
+        "rcsd_road_ids": retained_road_ids,
+        "rcsd_road_count": len(retained_road_ids),
+        "swsd_uncovered_ratio": (
+            swsd_uncovered_ratio
+            if swsd_uncovered_ratio is not None
+            else (result.swsd_uncovered_by_rcsd_ratio if result is not None else None)
+        ),
+        "rcsd_outside_ratio": (
+            rcsd_outside_ratio
+            if rcsd_outside_ratio is not None
+            else (result.rcsd_outside_swsd_buffer_ratio if result is not None else None)
+        ),
         "repair_owner": repair_owner,
     }
 
@@ -433,6 +745,17 @@ def _rejected_reason_by_segment(rejected_rows: list[dict[str, Any]]) -> dict[str
         segment_id = str(props.get("swsd_segment_id") or "")
         if segment_id:
             result[segment_id] = str(props.get("reject_reason") or "")
+    return result
+
+
+def _replaceable_road_ids_by_segment(replaceable_rows: list[dict[str, Any]]) -> dict[str, list[str]]:
+    result: dict[str, list[str]] = {}
+    for row in replaceable_rows:
+        props = dict(row.get("properties") or {})
+        segment_id = str(props.get("swsd_segment_id") or "")
+        if not segment_id:
+            continue
+        result[segment_id] = _parse_list(props.get("rcsd_road_ids"))
     return result
 
 

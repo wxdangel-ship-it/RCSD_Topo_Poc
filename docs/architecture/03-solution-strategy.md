@@ -18,6 +18,41 @@
 | T09 | 基于 SWSD Laneinfo / restriction 与 F-RCSD 承载关系还原路口级通行规则。 |
 | T10 | 组织端到端编排与 Case 证据包；v1 Case runner 编排 T01 / T07 Step1/2 / T03 / T04 / T05 / T07 Step3 / T06 / T09，T08 独立前置运行；内网全量总控可把 T08 作为独立阶段串入全量链路。 |
 
+## 业务分层策略
+
+当前方案按四个业务层推进。
+
+### 输入与 Segment 基础层
+
+T08 先把原始 SWSD / RCSD 数据中不稳定的格式、字段、类型、restriction、Laneinfo 和 RCSD 拓扑问题显性化。T01 再把 SWSD Road/Node 组织成 Segment，使后续模块能以“两个语义路口之间的道路连续单元”作为替换对象，而不是直接处理零散 Road。
+
+### 路口 1:1 relation 层
+
+T07、T03、T04、T05 都服务于 SWSD-RCSD 语义路口关系构建，但它们覆盖的业务场景不同：
+
+- T07 处理已经存在道路面或 RCSDIntersection 证据的路口，并在 T05 relation 之后补齐无路口面特征的锚定。
+- T03 处理交叉路口和 T 型路口，在合法道路面空间、RCSD 关联和负向约束下构建虚拟锚定面。
+- T04 处理分歧、合流、连续分歧 / 合流和复杂路口，用事实事件解释和几何支撑域生成虚拟锚定面。
+- T05 将 T07/T03/T04 的证据统一融合，处理 road-only split、RCSDNode grouping、环岛和复杂路口归组，并发布 `intersection_match_all`。
+
+这一层的目标不是让每个模块各自输出一份局部成功关系，而是让下游 T06 能消费统一、唯一、可审计的 SWSD-RCSD relation。
+
+### Segment 替换层
+
+T06 的原始目标是基于 T01 Segment 与 T05 1:1 relation 执行 SWSD Segment 到 RCSD Segment 的替换。真实数据运行后，T06 需要承担更多质量承接工作：
+
+- RCSD 的道路切分可能与 SWSD Segment 不一致，单个 SWSD Segment 可能对应多条 RCSDRoad 或跨越短连接。
+- RCSDNode 的 `mainnodeid / subnodeid` 归组、端点节点和 Road 方向可能与 SWSD 语义路口侧位不完全一致。
+- 部分 pair anchor 可能缺失、错锚或两端坍缩到同一个 RCSD 语义路口。
+- 提前右转、内部调头口、road-only split 和 detached junc 会导致“主通道可替换，但局部通行 carrier 仍需保留”。
+- T03/T04/T05/T07 surface 可以提供节点闭合证据，但不能绕过 T04 reject、Patch 冲突或多候选冲突。
+
+因此 T06 采用“先证明可替换，再执行替换”的策略：Step2 通过 buffer corridor、方向、连通、覆盖、特殊组门控和 problem registry 发布 replacement plan；Step3 只执行 plan，并用 source 边界、提前右转后处理、surface topology closure 和 topology connectivity audit 保护最终 F-RCSD。
+
+### 通行恢复与验证层
+
+T09 基于 T06 的 F-RCSD carrier 恢复 restriction。T10 通过 Case replay、T06 funnel、visual check、feedback package 和 full pipeline summary 把真实数据问题组织成可追溯证据链。P01 作为 POC，在 Arm / RoadNextRoad 层探索更完整的通行能力建模，但不替代 T09。
+
 ## 生命周期影响
 
 - T00 保留为支撑工具集合，历史一次性预处理能力主要由 T08 吸收。
@@ -31,3 +66,21 @@
 - T06 之后的 F-RCSD 是 T09 还原规则的承载基础，但 RCSD Laneinfo 和轨迹通行证据仍是后续迭代缺口。
 - T07 的无路口特征补锚属于当前阶段兜底策略；未来 RCSD 滚动构图方案成熟后可退出主链。
 - T10 以文件级 handoff contract validation 为基础，已经接入空间切片 Case 包、Case 级 replay、T06 上游反馈包和内网全量总控；后续重点是稳定真实数据反馈迭代、全量审计口径和跨模块 handoff 质量。
+
+## T06 替换率提升策略
+
+T06 的替换率提升不是简单放宽阈值，而是在不破坏安全边界的前提下扩大可解释替换范围：
+
+1. 对 relation 缺失或疑似错锚的 Segment，先输出 buffer-only probe 和 repair candidates；只有候选唯一、高置信、方向和几何审计通过时，才允许当前 Segment 内 effective relation 重试。
+2. 对高等级 Segment 的裁剪窗口不足，允许 graph-first 或 adaptive buffer 受限重审；重审通过仍必须满足 50m core、方向、叶子端点、额外 mapped semantic node 和特殊组门控。
+3. 对环岛和复杂路口，要求关联 Segment 组完整可替换；若单段成功但组不完整，不允许局部替换破坏路口内部承载。
+4. 对跨外部 accepted anchor 的 path corridor，只有闭包内 carrier 通过正式 group probe 并由 replacement plan 发布时，Step3 才能成组替换。
+5. 对 detached junc、提前右转和保留 SWSD carrier，Step3 用 `replaced+retained_swsd` 与风险标记表达“主通道替换 + 局部 carrier 保留”，而不是把 SWSD carrier 混入正式 RCSD 替换道路清单。
+6. 对 surface-assisted node closure，T06 只在唯一候选、T04 未 reject、Patch 无冲突和距离门槛可解释时补写节点映射或 `mainnodeid`；它不新增正式替换道路，不修改原始道路几何。
+
+## 改进路线
+
+- Relation 质量产品化：T07/T03/T04/T05 需要继续减少“成功但不可图消费”的 relation，并把 blocked / review-only / fallback 状态稳定输出给 T06。
+- Feedback 闭环：T10 feedback iteration 应优先消费 T06 problem registry 中明确可自动转给 T05 的 endpoint candidate；其它问题形成上游模块任务，不进入 Step3 白名单。
+- F-RCSD QA：T06 Step3 后应持续扩展自动 QA，覆盖正式替换道路 source 同源性、road-node integrity、Segment 内连通、junction node map、提前右转挂接和 T09 carrier 可用性。
+- 通行能力增强：T09 当前以 SWSD restriction / Laneinfo 为主，后续应引入 RCSD Laneinfo 和轨迹证据；P01 的 Arm / RoadNextRoad 经验可作为正式化前的参考材料。

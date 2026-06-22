@@ -1,11 +1,11 @@
 # T04 分歧 / 合流 / 复杂路口虚拟锚定
 
-本文件是 T04 的模块阅读入口和文档索引。凝练版业务需求见 `SPEC.md`，详细业务落地见 `architecture/04-solution-strategy.md`，稳定接口见 `INTERFACE_CONTRACT.md`。
+本文件是 T04 的模块阅读入口。模块需求见 `SPEC.md`，稳定接口见 `INTERFACE_CONTRACT.md`，架构设计见 `architecture/01-introduction-and-goals.md` 至 `architecture/06-risks-and-technical-debt.md`。
 
 ## 1. 当前状态
 
 - 生命周期：Active。
-- 当前主职责：面向分歧、合流、连续分歧 / 合流和复杂路口执行 Step1-7 虚拟锚定。
+- 当前主职责：面向分歧、合流、连续分歧 / 合流和复杂路口构建虚拟锚定面与 T05 可消费 relation evidence。
 - 上游：T03/T07 downstream 状态、SWSD Road/Node、DriveZone、DivStripZone、RCSDRoad、RCSDNode。
 - 下游：T05 surface / relation evidence。
 
@@ -13,28 +13,29 @@
 
 | 文档 | 承载内容 |
 |---|---|
-| `SPEC.md` | 凝练版模块业务需求。 |
-| `architecture/04-solution-strategy.md` | Step1-7 详细需求 / 落地策略。 |
-| `INTERFACE_CONTRACT.md` | 正式范围、输入输出、状态机、入口和验收契约。 |
-| `architecture/05-building-block-view.md` | 实现构件职责映射。 |
-| `architecture/10-quality-requirements.md` | 质量、baseline、审计和性能要求。 |
-| `architecture/11-risks-and-technical-debt.md` | 当前风险与技术债。 |
-| `architecture/12-glossary.md` | 模块术语。 |
+| `SPEC.md` | 模块需求：业务目标、范围、上下游、输入输出、关键步骤、对错边界。 |
+| `INTERFACE_CONTRACT.md` | 稳定接口：正式范围、输入输出、状态机、入口和值域。 |
+| `architecture/01-introduction-and-goals.md` | 架构背景、目标和非目标。 |
+| `architecture/02-data-and-domain-model.md` | T04 业务对象、数据关系和关键字段语义。 |
+| `architecture/03-solution-strategy.md` | Step1-Step7 的需求具体实现策略。 |
+| `architecture/04-evidence-and-audit.md` | full-input、case-package、surface、relation 与 nodes 回写审计。 |
+| `architecture/05-quality-requirements.md` | 基线、质量门槛、GIS / 拓扑 / 性能要求。 |
+| `architecture/06-risks-and-technical-debt.md` | 当前风险、技术债和治理缺口。 |
+| `history/` | 历史阶段材料，只用于追溯，不作为当前主阅读结构。 |
 
 ## 3. 当前入口位置
 
-T04 稳定执行面是模块内 Python runner 和已登记 internal full-input 脚本。case-package、full-input、文本证据包和脚本边界以 `INTERFACE_CONTRACT.md` 为准。
+T04 稳定执行面是模块内 Python runner 和已登记 internal full-input 脚本。case-package、full-input、文本证据包和脚本边界以 `INTERFACE_CONTRACT.md` 与 `docs/repository-metadata/entrypoint-registry.md` 为准。
 
 ## 4. 阅读顺序
 
 1. `SPEC.md`
-2. `architecture/04-solution-strategy.md`
-3. `INTERFACE_CONTRACT.md`
-4. `architecture/05-building-block-view.md`
-5. `architecture/10-quality-requirements.md`
-6. `architecture/11-risks-and-technical-debt.md`
-7. `architecture/12-glossary.md`
-8. `AGENTS.md`
+2. `INTERFACE_CONTRACT.md`
+3. `architecture/03-solution-strategy.md`
+4. `architecture/02-data-and-domain-model.md`
+5. `architecture/04-evidence-and-audit.md`
+6. `architecture/05-quality-requirements.md`
+7. `architecture/06-risks-and-technical-debt.md`
 
 ## 5. 基线提示
 

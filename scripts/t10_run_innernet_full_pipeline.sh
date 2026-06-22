@@ -25,6 +25,10 @@ Common env:
   T03_WORKERS          Default: 8
   T04_WORKERS          Default: 8
   T05_READONLY_WORKERS Default: 4
+  FINALIZE_EXISTING    1 or 0. Default: 0. When 1, only finalize an existing RUN_ID or RESUME_RUN_ROOT.
+  RESUME_RUN_ROOT      Existing T10 full-pipeline run root to resume from.
+  RESUME_FROM_STAGE    First stage to rerun. Example: t06_step3.
+  RUN_STAGES           Optional comma list of exact stages to run.
 
 Input override env:
   SWSD_INPUT_NODES   Prepared SWSD nodes input for T01
@@ -58,8 +62,28 @@ RC4_ROOT="${RC4_ROOT:-$TESTDATA_ROOT/RC4}"
 RUN_ID="${RUN_ID:-t10_innernet_full_pipeline_$(date +%Y%m%d_%H%M%S)}"
 OUT_ROOT="${OUT_ROOT:-$REPO_DIR/outputs/_work/t10_innernet_full_pipeline}"
 RUN_ROOT="$OUT_ROOT/$RUN_ID"
+RESUME_RUN_ROOT="${RESUME_RUN_ROOT:-}"
+if [[ -n "$RESUME_RUN_ROOT" ]]; then
+  if [[ -d "$RESUME_RUN_ROOT" ]]; then
+    RUN_ROOT="$(cd "$RESUME_RUN_ROOT" && pwd)"
+  else
+    RUN_ROOT="$RESUME_RUN_ROOT"
+  fi
+  RUN_ID="$(basename "$RUN_ROOT")"
+  OUT_ROOT="$(cd "$(dirname "$RUN_ROOT")" && pwd)"
+fi
 LOG_ROOT="$RUN_ROOT/logs"
 MANIFEST_PATH="$RUN_ROOT/t10_innernet_full_pipeline_manifest.json"
+SUMMARY_PATH="$RUN_ROOT/t10_innernet_full_pipeline_summary.json"
+PIPELINE_STARTED_EPOCH="$(date +%s)"
+RESUME_FROM_STAGE="${RESUME_FROM_STAGE:-}"
+RUN_STAGES="${RUN_STAGES:-}"
+RESUME_MODE=0
+if [[ -n "$RESUME_RUN_ROOT" || -n "$RESUME_FROM_STAGE" || -n "$RUN_STAGES" ]]; then
+  RESUME_MODE=1
+fi
+REQUESTED_STAGES_CSV=""
+REQUESTED_STAGES_TEXT=""
 
 mkdir -p "$RUN_ROOT" "$LOG_ROOT"
 cd "$REPO_DIR"
@@ -126,6 +150,102 @@ optional_mode_should_run() {
   esac
 }
 
+normalize_stage_id() {
+  case "$1" in
+    t08|t08_preprocess) printf '%s\n' "t08_preprocess" ;;
+    t01) printf '%s\n' "t01" ;;
+    t07|t07_step12) printf '%s\n' "t07_step12" ;;
+    t03) printf '%s\n' "t03" ;;
+    t04) printf '%s\n' "t04" ;;
+    t05) printf '%s\n' "t05" ;;
+    t07_step3) printf '%s\n' "t07_step3" ;;
+    t06|t06_step12) printf '%s\n' "t06_step12" ;;
+    t06_step3) printf '%s\n' "t06_step3" ;;
+    t09) printf '%s\n' "t09" ;;
+    *)
+      echo "[BLOCK] Unknown T10 full-pipeline stage: $1" >&2
+      echo "[TIP] Supported stages: t08_preprocess,t01,t07_step12,t03,t04,t05,t07_step3,t06_step12,t06_step3,t09" >&2
+      exit 2
+      ;;
+  esac
+}
+
+stage_index() {
+  case "$1" in
+    t08_preprocess) printf '%s\n' 0 ;;
+    t01) printf '%s\n' 1 ;;
+    t07_step12) printf '%s\n' 2 ;;
+    t03) printf '%s\n' 3 ;;
+    t04) printf '%s\n' 4 ;;
+    t05) printf '%s\n' 5 ;;
+    t07_step3) printf '%s\n' 6 ;;
+    t06_step12) printf '%s\n' 7 ;;
+    t06_step3) printf '%s\n' 8 ;;
+    t09) printf '%s\n' 9 ;;
+    *) printf '%s\n' 99 ;;
+  esac
+}
+
+init_resume_plan() {
+  if [[ "$RESUME_MODE" != "1" ]]; then
+    return 0
+  fi
+  if [[ ! -f "$MANIFEST_PATH" ]]; then
+    echo "[BLOCK] Existing manifest does not exist: $MANIFEST_PATH" >&2
+    echo "[TIP] Set RESUME_RUN_ROOT to an existing T10 full-pipeline run root, or set RUN_ID/OUT_ROOT to locate it." >&2
+    exit 2
+  fi
+  local token stage start_stage start_index index
+  if [[ -n "$RUN_STAGES" ]]; then
+    REQUESTED_STAGES_CSV=","
+    REQUESTED_STAGES_TEXT=""
+    for token in ${RUN_STAGES//,/ }; do
+      [[ -n "$token" ]] || continue
+      stage="$(normalize_stage_id "$token")"
+      if [[ "$REQUESTED_STAGES_CSV" != *",$stage,"* ]]; then
+        REQUESTED_STAGES_CSV+="$stage,"
+        if [[ -n "$REQUESTED_STAGES_TEXT" ]]; then
+          REQUESTED_STAGES_TEXT+=","
+        fi
+        REQUESTED_STAGES_TEXT+="$stage"
+      fi
+    done
+  else
+    if [[ -z "$RESUME_FROM_STAGE" ]]; then
+      echo "[BLOCK] Resume mode requires RESUME_FROM_STAGE or RUN_STAGES." >&2
+      exit 2
+    fi
+    start_stage="$(normalize_stage_id "$RESUME_FROM_STAGE")"
+    start_index="$(stage_index "$start_stage")"
+    REQUESTED_STAGES_CSV=","
+    REQUESTED_STAGES_TEXT=""
+    local ordered=(t08_preprocess t01 t07_step12 t03 t04 t05 t07_step3 t06_step12 t06_step3 t09)
+    for index in "${!ordered[@]}"; do
+      if (( index >= start_index )); then
+        stage="${ordered[$index]}"
+        REQUESTED_STAGES_CSV+="$stage,"
+        if [[ -n "$REQUESTED_STAGES_TEXT" ]]; then
+          REQUESTED_STAGES_TEXT+=","
+        fi
+        REQUESTED_STAGES_TEXT+="$stage"
+      fi
+    done
+  fi
+  if [[ "$REQUESTED_STAGES_CSV" == "," ]]; then
+    echo "[BLOCK] Resume mode selected no stages." >&2
+    exit 2
+  fi
+  echo "[RESUME] RUN_ROOT=$RUN_ROOT"
+  echo "[RESUME] RUN_STAGES=$REQUESTED_STAGES_TEXT"
+}
+
+should_run_stage() {
+  if [[ "$RESUME_MODE" != "1" ]]; then
+    return 0
+  fi
+  [[ "$REQUESTED_STAGES_CSV" == *",$1,"* ]]
+}
+
 write_manifest() {
   "$PYTHON_BIN" - "$MANIFEST_PATH" <<'PY'
 from __future__ import annotations
@@ -142,6 +262,8 @@ payload = {
     "run_root": os.environ["RUN_ROOT"],
     "repo_dir": os.environ["REPO_DIR"],
     "created_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    "status": "running",
+    "passed": False,
     "pipeline": [
         "T08",
         "T01",
@@ -182,6 +304,69 @@ value = sys.argv[4]
 payload = json.loads(path.read_text(encoding="utf-8"))
 payload.setdefault(section, {})[key] = value
 path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+PY
+}
+
+manifest_get() {
+  local section="$1"
+  local key="$2"
+  local fallback="$3"
+  if [[ ! -f "$MANIFEST_PATH" ]]; then
+    printf '%s\n' "$fallback"
+    return 0
+  fi
+  "$PYTHON_BIN" - "$MANIFEST_PATH" "$section" "$key" "$fallback" <<'PY'
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+section = sys.argv[2]
+key = sys.argv[3]
+fallback = sys.argv[4]
+payload = json.loads(path.read_text(encoding="utf-8"))
+value = (payload.get(section) or {}).get(key)
+if section == "outputs" and value in (None, ""):
+    stage_output_keys = {
+        "swsd_nodes_after_t08": ("t08_preprocess", "swsd_nodes_for_t01"),
+        "swsd_roads_after_t08": ("t08_preprocess", "swsd_roads_for_t01"),
+        "rcsdroad_after_t08": ("t08_preprocess", "rcsdroad_for_downstream"),
+        "rcsdnode_after_t08": ("t08_preprocess", "rcsdnode_for_downstream"),
+        "sw_restriction_tool7": ("t08_preprocess", "sw_restriction_tool7"),
+        "sw_arrow_tool8": ("t08_preprocess", "sw_arrow_tool8"),
+        "t01_nodes": ("t01", "nodes"),
+        "t01_roads": ("t01", "roads"),
+        "t01_segment": ("t01", "segment"),
+        "t07_step2_nodes": ("t07_step12", "nodes"),
+        "t07_step2_surface": ("t07_step12", "anchor_surface"),
+        "t07_step2_relation_evidence": ("t07_step12", "relation_evidence"),
+        "t03_nodes": ("t03", "nodes"),
+        "t03_surface": ("t03", "surface"),
+        "t03_relation_evidence": ("t03", "relation_evidence"),
+        "t03_intersection_match": ("t03", "intersection_match"),
+        "t04_nodes": ("t04", "nodes"),
+        "t04_surface": ("t04", "surface"),
+        "t04_relation_evidence": ("t04", "relation_evidence"),
+        "t04_summary": ("t04", "summary"),
+        "t04_audit": ("t04", "audit"),
+        "t05_intersection_match_all": ("t05", "intersection_match_all"),
+        "t05_rcsdroad_out": ("t05", "rcsdroad_out"),
+        "t05_rcsdnode_out": ("t05", "rcsdnode_out"),
+        "t07_final_nodes": ("t07_step3", "nodes"),
+        "t07_intersection_match": ("t07_step3", "intersection_match"),
+        "t06_step2_replaceable": ("t06_step12", "replaceable"),
+        "t06_frcsd_road": ("t06_step3", "frcsd_road"),
+        "t06_frcsd_node": ("t06_step3", "frcsd_node"),
+        "t06_segment_relation": ("t06_step3", "segment_relation"),
+        "t09_frcsd_restriction": ("t09", "frcsd_restriction"),
+    }
+    stage_key = stage_output_keys.get(key)
+    if stage_key:
+        stage_id, output_key = stage_key
+        value = ((payload.get("stages") or {}).get(stage_id) or {}).get("outputs", {}).get(output_key)
+print(value if value not in (None, "") else fallback)
 PY
 }
 
@@ -240,6 +425,141 @@ if stage_id not in order:
     order.append(stage_id)
 path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 PY
+}
+
+manifest_finalize() {
+  local status="$1"
+  local exit_code="$2"
+  "$PYTHON_BIN" - "$MANIFEST_PATH" "$SUMMARY_PATH" "$status" "$exit_code" "$PIPELINE_STARTED_EPOCH" <<'PY'
+from __future__ import annotations
+
+import json
+import sys
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+manifest_path = Path(sys.argv[1])
+summary_path = Path(sys.argv[2])
+status = sys.argv[3]
+exit_code = int(sys.argv[4])
+started_epoch = float(sys.argv[5])
+
+payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+finished_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+duration_seconds = round(time.time() - started_epoch, 6)
+stages = payload.get("stages") or {}
+outputs = payload.setdefault("outputs", {})
+run_root = Path(payload.get("run_root") or manifest_path.parent)
+
+
+def _existing_output(flat_key: str, stage_id: str, stage_key: str, fallback: str) -> str:
+    value = outputs.get(flat_key) or (stages.get(stage_id) or {}).get("outputs", {}).get(stage_key) or ""
+    if not value:
+        value = str(run_root / fallback)
+    if value and Path(value).is_file():
+        outputs[flat_key] = value
+    return value
+
+
+t06_frcsd_road = _existing_output(
+    "t06_frcsd_road",
+    "t06_step3",
+    "frcsd_road",
+    "t06_segment_fusion_precheck/t06_innernet_precheck/step3_segment_replacement/t06_frcsd_road.gpkg",
+)
+t06_frcsd_node = _existing_output(
+    "t06_frcsd_node",
+    "t06_step3",
+    "frcsd_node",
+    "t06_segment_fusion_precheck/t06_innernet_precheck/step3_segment_replacement/t06_frcsd_node.gpkg",
+)
+t09_frcsd_restriction = _existing_output(
+    "t09_frcsd_restriction",
+    "t09",
+    "frcsd_restriction",
+    "t09_swsd_field_rule_restoration/t09_step3/frcsd_restriction.gpkg",
+)
+missing_final_outputs = [
+    key
+    for key, value in {
+        "t06_frcsd_road": t06_frcsd_road,
+        "t06_frcsd_node": t06_frcsd_node,
+        "t09_frcsd_restriction": t09_frcsd_restriction,
+    }.items()
+    if not value or not Path(value).is_file()
+]
+passed = status == "passed" and exit_code == 0 and not missing_final_outputs
+final_status = "passed" if passed else "failed"
+final_exit_code = exit_code if not (status == "passed" and missing_final_outputs) else 2
+payload["status"] = final_status
+payload["passed"] = passed
+payload["exit_code"] = final_exit_code
+payload["finished_at_utc"] = finished_at
+payload["duration_seconds"] = duration_seconds
+payload["summary_path"] = str(summary_path)
+stage_statuses = {
+    stage_id: (record or {}).get("status", "missing")
+    for stage_id, record in stages.items()
+}
+summary = {
+    "module_id": "t10_e2e_orchestration",
+    "run_id": payload.get("run_id"),
+    "run_root": payload.get("run_root"),
+    "repo_dir": payload.get("repo_dir"),
+    "status": payload["status"],
+    "passed": passed,
+    "exit_code": final_exit_code,
+    "created_at_utc": payload.get("created_at_utc"),
+    "finished_at_utc": finished_at,
+    "duration_seconds": duration_seconds,
+    "stage_count": len(stages),
+    "stage_order": payload.get("stage_order", []),
+    "stage_statuses": stage_statuses,
+    "missing_final_outputs": missing_final_outputs,
+    "t06_frcsd_road": t06_frcsd_road,
+    "t06_frcsd_node": t06_frcsd_node,
+    "t09_frcsd_restriction": t09_frcsd_restriction,
+    "manifest": str(manifest_path),
+}
+manifest_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+PY
+}
+
+finalize_existing_run() {
+  if [[ ! -f "$MANIFEST_PATH" ]]; then
+    echo "[BLOCK] Existing manifest does not exist: $MANIFEST_PATH" >&2
+    exit 2
+  fi
+  manifest_finalize passed 0
+  local finalized_status
+  finalized_status="$("$PYTHON_BIN" - "$SUMMARY_PATH" <<'PY'
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+summary = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+print(summary.get("status") or "")
+PY
+)"
+  echo "[DONE] Finalized existing innernet full pipeline run."
+  echo "[DONE] run_root=$RUN_ROOT"
+  echo "[DONE] manifest=$MANIFEST_PATH"
+  echo "[DONE] summary=$SUMMARY_PATH"
+  echo "[DONE] status=$finalized_status"
+  if [[ "$finalized_status" != "passed" ]]; then
+    exit 2
+  fi
+}
+
+pipeline_exit_trap() {
+  local exit_code=$?
+  if [[ "$exit_code" -ne 0 && -f "$MANIFEST_PATH" ]]; then
+    manifest_finalize failed "$exit_code" || true
+  fi
 }
 
 validate_swsd_t01_inputs() {
@@ -316,7 +636,22 @@ PY
 }
 
 export REPO_DIR RUN_ID RUN_ROOT
-write_manifest
+FINALIZE_EXISTING="${FINALIZE_EXISTING:-0}"
+if [[ "$FINALIZE_EXISTING" == "1" ]]; then
+  finalize_existing_run
+  exit 0
+fi
+
+if [[ "$RESUME_MODE" == "1" ]]; then
+  init_resume_plan
+  trap pipeline_exit_trap EXIT
+  manifest_set resume mode "stage_resume"
+  manifest_set resume requested_stages "$REQUESTED_STAGES_TEXT"
+  manifest_set resume updated_at_utc "$(date -u +%Y-%m-%dT%H:%M:%S+00:00)"
+else
+  write_manifest
+  trap pipeline_exit_trap EXIT
+fi
 
 DRIVEZONE_PATH="${DRIVEZONE_PATH:-$(first_existing "$TESTDATA_ROOT/patch_all/DriveZone.gpkg" "$TESTDATA_ROOT/DriveZone.gpkg")}"
 DIVSTRIPZONE_PATH="${DIVSTRIPZONE_PATH:-$(first_existing "$TESTDATA_ROOT/patch_all/DivStripZone.gpkg" "$TESTDATA_ROOT/DivStripZone.gpkg")}"
@@ -332,24 +667,34 @@ SW_NODE_GPKG="${SW_NODE_GPKG:-$FIRST_LAYER_ROOT/SW/A200-2025M12-node.gpkg}"
 SW_ROAD_GPKG="${SW_ROAD_GPKG:-$FIRST_LAYER_ROOT/SW/A200-2025M12-road.gpkg}"
 ROAD_SURFACE_GPKG="${ROAD_SURFACE_GPKG:-$TESTDATA_ROOT/road_surface.gpkg}"
 
-for pair in \
-  "DRIVEZONE_PATH:$DRIVEZONE_PATH" \
-  "DIVSTRIPZONE_PATH:$DIVSTRIPZONE_PATH" \
-  "RCSD_INTERSECTION_PATH:$RCSD_INTERSECTION_PATH" \
-  "RCSDROAD_PATH:$RCSDROAD_PATH" \
-  "RCSDNODE_PATH:$RCSDNODE_PATH" \
-  "SWSD_INPUT_NODES:$SWSD_INPUT_NODES" \
-  "SWSD_INPUT_ROADS:$SWSD_INPUT_ROADS"; do
-  require_file "${pair%%:*}" "${pair#*:}"
-done
+if [[ "$RESUME_MODE" == "1" ]]; then
+  DRIVEZONE_PATH="$(manifest_get inputs drivezone "$DRIVEZONE_PATH")"
+  DIVSTRIPZONE_PATH="$(manifest_get inputs divstripzone "$DIVSTRIPZONE_PATH")"
+  RCSD_INTERSECTION_PATH="$(manifest_get inputs rcsd_intersection "$RCSD_INTERSECTION_PATH")"
+  RCSDROAD_PATH="$(manifest_get inputs rcsdroad "$RCSDROAD_PATH")"
+  RCSDNODE_PATH="$(manifest_get inputs rcsdnode "$RCSDNODE_PATH")"
+  SWSD_INPUT_NODES="$(manifest_get inputs swsd_input_nodes "$SWSD_INPUT_NODES")"
+  SWSD_INPUT_ROADS="$(manifest_get inputs swsd_input_roads "$SWSD_INPUT_ROADS")"
+else
+  for pair in \
+    "DRIVEZONE_PATH:$DRIVEZONE_PATH" \
+    "DIVSTRIPZONE_PATH:$DIVSTRIPZONE_PATH" \
+    "RCSD_INTERSECTION_PATH:$RCSD_INTERSECTION_PATH" \
+    "RCSDROAD_PATH:$RCSDROAD_PATH" \
+    "RCSDNODE_PATH:$RCSDNODE_PATH" \
+    "SWSD_INPUT_NODES:$SWSD_INPUT_NODES" \
+    "SWSD_INPUT_ROADS:$SWSD_INPUT_ROADS"; do
+    require_file "${pair%%:*}" "${pair#*:}"
+  done
 
-manifest_set inputs drivezone "$DRIVEZONE_PATH"
-manifest_set inputs divstripzone "$DIVSTRIPZONE_PATH"
-manifest_set inputs rcsd_intersection "$RCSD_INTERSECTION_PATH"
-manifest_set inputs rcsdroad "$RCSDROAD_PATH"
-manifest_set inputs rcsdnode "$RCSDNODE_PATH"
-manifest_set inputs swsd_input_nodes "$SWSD_INPUT_NODES"
-manifest_set inputs swsd_input_roads "$SWSD_INPUT_ROADS"
+  manifest_set inputs drivezone "$DRIVEZONE_PATH"
+  manifest_set inputs divstripzone "$DIVSTRIPZONE_PATH"
+  manifest_set inputs rcsd_intersection "$RCSD_INTERSECTION_PATH"
+  manifest_set inputs rcsdroad "$RCSDROAD_PATH"
+  manifest_set inputs rcsdnode "$RCSDNODE_PATH"
+  manifest_set inputs swsd_input_nodes "$SWSD_INPUT_NODES"
+  manifest_set inputs swsd_input_roads "$SWSD_INPUT_ROADS"
+fi
 
 RUN_T08="${RUN_T08:-1}"
 RUN_T08_TOOL7="${RUN_T08_TOOL7:-auto}"
@@ -363,7 +708,16 @@ RCSDNODE_FOR_DOWNSTREAM="$RCSDNODE_PATH"
 SW_RESTRICTION_TOOL7="${SW_RESTRICTION_TOOL7:-$(first_existing "$FIRST_LAYER_ROOT/t08/sw_restriction_tool7.gpkg" "$FIRST_LAYER_ROOT/T08/sw_restriction_tool7.gpkg")}"
 SW_ARROW_TOOL8="${SW_ARROW_TOOL8:-$(first_existing "$FIRST_LAYER_ROOT/t08/sw_arrow_tool8.gpkg" "$FIRST_LAYER_ROOT/T08/sw_arrow_tool8.gpkg")}"
 
-if [[ "$RUN_T08" == "1" ]]; then
+if [[ "$RESUME_MODE" == "1" ]]; then
+  SWSD_NODES_FOR_T01="$(manifest_get outputs swsd_nodes_after_t08 "$SWSD_NODES_FOR_T01")"
+  SWSD_ROADS_FOR_T01="$(manifest_get outputs swsd_roads_after_t08 "$SWSD_ROADS_FOR_T01")"
+  RCSDROAD_FOR_DOWNSTREAM="$(manifest_get outputs rcsdroad_after_t08 "$RCSDROAD_FOR_DOWNSTREAM")"
+  RCSDNODE_FOR_DOWNSTREAM="$(manifest_get outputs rcsdnode_after_t08 "$RCSDNODE_FOR_DOWNSTREAM")"
+  SW_RESTRICTION_TOOL7="$(manifest_get outputs sw_restriction_tool7 "$SW_RESTRICTION_TOOL7")"
+  SW_ARROW_TOOL8="$(manifest_get outputs sw_arrow_tool8 "$SW_ARROW_TOOL8")"
+fi
+
+if [[ "$RUN_T08" == "1" ]] && should_run_stage t08_preprocess; then
   T08_DIR="$RUN_ROOT/t08_preprocess"
   mkdir -p "$T08_DIR"
 
@@ -455,299 +809,338 @@ if [[ "$RUN_T08" == "1" ]]; then
   fi
 fi
 
-require_file SW_RESTRICTION_TOOL7 "$SW_RESTRICTION_TOOL7"
-require_file SW_ARROW_TOOL8 "$SW_ARROW_TOOL8"
-validate_swsd_t01_inputs "$SWSD_NODES_FOR_T01" "$SWSD_ROADS_FOR_T01"
-
-manifest_set outputs swsd_nodes_after_t08 "$SWSD_NODES_FOR_T01"
-manifest_set outputs swsd_roads_after_t08 "$SWSD_ROADS_FOR_T01"
-manifest_set outputs rcsdroad_after_t08 "$RCSDROAD_FOR_DOWNSTREAM"
-manifest_set outputs rcsdnode_after_t08 "$RCSDNODE_FOR_DOWNSTREAM"
-manifest_set outputs sw_restriction_tool7 "$SW_RESTRICTION_TOOL7"
-manifest_set outputs sw_arrow_tool8 "$SW_ARROW_TOOL8"
-T08_STAGE_STATUS="skipped"
-T08_STAGE_LOG=""
-if [[ "$RUN_T08" == "1" ]]; then
-  T08_STAGE_STATUS="passed"
-  T08_STAGE_LOG="$LOG_ROOT/t08_tool6_final.log"
+if [[ "$RESUME_MODE" != "1" ]] || should_run_stage t09; then
+  require_file SW_RESTRICTION_TOOL7 "$SW_RESTRICTION_TOOL7"
+  require_file SW_ARROW_TOOL8 "$SW_ARROW_TOOL8"
 fi
-manifest_stage_record t08_preprocess T08 "$T08_STAGE_STATUS" "$T08_STAGE_LOG" \
-  "inputs.swsd_nodes=$SWSD_INPUT_NODES" \
-  "inputs.swsd_roads=$SWSD_INPUT_ROADS" \
-  "inputs.rcsdroad=$RCSDROAD_PATH" \
-  "inputs.rcsdnode=$RCSDNODE_PATH" \
-  "outputs.swsd_nodes_for_t01=$SWSD_NODES_FOR_T01" \
-  "outputs.swsd_roads_for_t01=$SWSD_ROADS_FOR_T01" \
-  "outputs.rcsdroad_for_downstream=$RCSDROAD_FOR_DOWNSTREAM" \
-  "outputs.rcsdnode_for_downstream=$RCSDNODE_FOR_DOWNSTREAM" \
-  "outputs.sw_restriction_tool7=$SW_RESTRICTION_TOOL7" \
-  "outputs.sw_arrow_tool8=$SW_ARROW_TOOL8" \
-  "execution_context.run_t08=$RUN_T08"
+if [[ "$RESUME_MODE" != "1" ]] || should_run_stage t08_preprocess || should_run_stage t01; then
+  validate_swsd_t01_inputs "$SWSD_NODES_FOR_T01" "$SWSD_ROADS_FOR_T01"
+fi
+
+if [[ "$RESUME_MODE" != "1" ]] || should_run_stage t08_preprocess; then
+  manifest_set outputs swsd_nodes_after_t08 "$SWSD_NODES_FOR_T01"
+  manifest_set outputs swsd_roads_after_t08 "$SWSD_ROADS_FOR_T01"
+  manifest_set outputs rcsdroad_after_t08 "$RCSDROAD_FOR_DOWNSTREAM"
+  manifest_set outputs rcsdnode_after_t08 "$RCSDNODE_FOR_DOWNSTREAM"
+  manifest_set outputs sw_restriction_tool7 "$SW_RESTRICTION_TOOL7"
+  manifest_set outputs sw_arrow_tool8 "$SW_ARROW_TOOL8"
+  T08_STAGE_STATUS="skipped"
+  T08_STAGE_LOG=""
+  if [[ "$RUN_T08" == "1" ]] && should_run_stage t08_preprocess; then
+    T08_STAGE_STATUS="passed"
+    T08_STAGE_LOG="$LOG_ROOT/t08_tool6_final.log"
+  fi
+  manifest_stage_record t08_preprocess T08 "$T08_STAGE_STATUS" "$T08_STAGE_LOG" \
+    "inputs.swsd_nodes=$SWSD_INPUT_NODES" \
+    "inputs.swsd_roads=$SWSD_INPUT_ROADS" \
+    "inputs.rcsdroad=$RCSDROAD_PATH" \
+    "inputs.rcsdnode=$RCSDNODE_PATH" \
+    "outputs.swsd_nodes_for_t01=$SWSD_NODES_FOR_T01" \
+    "outputs.swsd_roads_for_t01=$SWSD_ROADS_FOR_T01" \
+    "outputs.rcsdroad_for_downstream=$RCSDROAD_FOR_DOWNSTREAM" \
+    "outputs.rcsdnode_for_downstream=$RCSDNODE_FOR_DOWNSTREAM" \
+    "outputs.sw_restriction_tool7=$SW_RESTRICTION_TOOL7" \
+    "outputs.sw_arrow_tool8=$SW_ARROW_TOOL8" \
+    "execution_context.run_t08=$RUN_T08"
+fi
 
 T01_ROOT="$RUN_ROOT/t01_full_data"
-run_logged t01 \
-  bash scripts/t01_run_full_data.sh "$SWSD_ROADS_FOR_T01" "$SWSD_NODES_FOR_T01" "$T01_ROOT"
-T01_NODES="$T01_ROOT/nodes.gpkg"
-T01_ROADS="$T01_ROOT/roads.gpkg"
-T01_SEGMENT="$T01_ROOT/segment.gpkg"
+if should_run_stage t01; then
+  run_logged t01 \
+    bash scripts/t01_run_full_data.sh "$SWSD_ROADS_FOR_T01" "$SWSD_NODES_FOR_T01" "$T01_ROOT"
+fi
+T01_NODES="$(manifest_get outputs t01_nodes "$T01_ROOT/nodes.gpkg")"
+T01_ROADS="$(manifest_get outputs t01_roads "$T01_ROOT/roads.gpkg")"
+T01_SEGMENT="$(manifest_get outputs t01_segment "$T01_ROOT/segment.gpkg")"
 require_file T01_NODES "$T01_NODES"
 require_file T01_ROADS "$T01_ROADS"
 require_file T01_SEGMENT "$T01_SEGMENT"
-manifest_set outputs t01_nodes "$T01_NODES"
-manifest_set outputs t01_roads "$T01_ROADS"
-manifest_set outputs t01_segment "$T01_SEGMENT"
-manifest_stage_record t01 T01 passed "$LOG_ROOT/t01.log" \
-  "inputs.roads=$SWSD_ROADS_FOR_T01" \
-  "inputs.nodes=$SWSD_NODES_FOR_T01" \
-  "outputs.nodes=$T01_NODES" \
-  "outputs.roads=$T01_ROADS" \
-  "outputs.segment=$T01_SEGMENT" \
-  "execution_context.run_root=$T01_ROOT"
+if should_run_stage t01; then
+  manifest_set outputs t01_nodes "$T01_NODES"
+  manifest_set outputs t01_roads "$T01_ROADS"
+  manifest_set outputs t01_segment "$T01_SEGMENT"
+  manifest_stage_record t01 T01 passed "$LOG_ROOT/t01.log" \
+    "inputs.roads=$SWSD_ROADS_FOR_T01" \
+    "inputs.nodes=$SWSD_NODES_FOR_T01" \
+    "outputs.nodes=$T01_NODES" \
+    "outputs.roads=$T01_ROADS" \
+    "outputs.segment=$T01_SEGMENT" \
+    "execution_context.run_root=$T01_ROOT"
+fi
 
 T07_OUT_ROOT="$RUN_ROOT/t07_semantic_junction_anchor"
 T07_RUN_ID="t07_step12"
-run_logged t07_step12 \
-  env NODES_PATH="$T01_NODES" DRIVEZONE_PATH="$DRIVEZONE_PATH" INTERSECTION_PATH="$RCSD_INTERSECTION_PATH" RCSDNODE_PATH="$RCSDNODE_FOR_DOWNSTREAM" OUT_ROOT="$T07_OUT_ROOT" RUN_ID="$T07_RUN_ID" \
-  bash scripts/t07_run_semantic_junction_anchor_innernet.sh
+if should_run_stage t07_step12; then
+  run_logged t07_step12 \
+    env NODES_PATH="$T01_NODES" DRIVEZONE_PATH="$DRIVEZONE_PATH" INTERSECTION_PATH="$RCSD_INTERSECTION_PATH" RCSDNODE_PATH="$RCSDNODE_FOR_DOWNSTREAM" OUT_ROOT="$T07_OUT_ROOT" RUN_ID="$T07_RUN_ID" \
+    bash scripts/t07_run_semantic_junction_anchor_innernet.sh
+fi
 T07_RUN_ROOT="$T07_OUT_ROOT/$T07_RUN_ID"
-T07_STEP2_NODES="$T07_RUN_ROOT/step2_anchor_recognition/nodes.gpkg"
-T07_STEP2_SURFACE="$T07_RUN_ROOT/step2_anchor_recognition/t07_rcsdintersection_anchor_surface.gpkg"
-T07_STEP2_EVIDENCE="$T07_RUN_ROOT/step2_anchor_recognition/t07_swsd_rcsd_relation_evidence.csv"
+T07_STEP2_NODES="$(manifest_get outputs t07_step2_nodes "$T07_RUN_ROOT/step2_anchor_recognition/nodes.gpkg")"
+T07_STEP2_SURFACE="$(manifest_get outputs t07_step2_surface "$T07_RUN_ROOT/step2_anchor_recognition/t07_rcsdintersection_anchor_surface.gpkg")"
+T07_STEP2_EVIDENCE="$(manifest_get outputs t07_step2_relation_evidence "$T07_RUN_ROOT/step2_anchor_recognition/t07_swsd_rcsd_relation_evidence.csv")"
 require_file T07_STEP2_NODES "$T07_STEP2_NODES"
 require_file T07_STEP2_SURFACE "$T07_STEP2_SURFACE"
 require_file T07_STEP2_EVIDENCE "$T07_STEP2_EVIDENCE"
-manifest_set outputs t07_step2_nodes "$T07_STEP2_NODES"
-manifest_set outputs t07_step2_surface "$T07_STEP2_SURFACE"
-manifest_set outputs t07_step2_relation_evidence "$T07_STEP2_EVIDENCE"
-manifest_stage_record t07_step12 T07 passed "$LOG_ROOT/t07_step12.log" \
-  "inputs.nodes=$T01_NODES" \
-  "inputs.drivezone=$DRIVEZONE_PATH" \
-  "inputs.rcsd_intersection=$RCSD_INTERSECTION_PATH" \
-  "outputs.nodes=$T07_STEP2_NODES" \
-  "outputs.anchor_surface=$T07_STEP2_SURFACE" \
-  "outputs.relation_evidence=$T07_STEP2_EVIDENCE" \
-  "execution_context.run_root=$T07_RUN_ROOT"
+if should_run_stage t07_step12; then
+  manifest_set outputs t07_step2_nodes "$T07_STEP2_NODES"
+  manifest_set outputs t07_step2_surface "$T07_STEP2_SURFACE"
+  manifest_set outputs t07_step2_relation_evidence "$T07_STEP2_EVIDENCE"
+  manifest_stage_record t07_step12 T07 passed "$LOG_ROOT/t07_step12.log" \
+    "inputs.nodes=$T01_NODES" \
+    "inputs.drivezone=$DRIVEZONE_PATH" \
+    "inputs.rcsd_intersection=$RCSD_INTERSECTION_PATH" \
+    "outputs.nodes=$T07_STEP2_NODES" \
+    "outputs.anchor_surface=$T07_STEP2_SURFACE" \
+    "outputs.relation_evidence=$T07_STEP2_EVIDENCE" \
+    "execution_context.run_root=$T07_RUN_ROOT"
+fi
 
 T03_OUT_ROOT="$RUN_ROOT/t03_internal_full_input"
 T03_RUN_ID="t03_full"
-run_logged t03 \
-  env NODES_PATH="$T07_STEP2_NODES" ROADS_PATH="$T01_ROADS" DRIVEZONE_PATH="$DRIVEZONE_PATH" \
-    RCSDROAD_PATH="$RCSDROAD_FOR_DOWNSTREAM" RCSDNODE_PATH="$RCSDNODE_FOR_DOWNSTREAM" \
-    OUT_ROOT="$T03_OUT_ROOT" RUN_ID="$T03_RUN_ID" WORKERS="${T03_WORKERS:-8}" \
-  bash scripts/t03_run_internal_full_input_innernet_flat_review.sh
+if should_run_stage t03; then
+  run_logged t03 \
+    env NODES_PATH="$T07_STEP2_NODES" ROADS_PATH="$T01_ROADS" DRIVEZONE_PATH="$DRIVEZONE_PATH" \
+      RCSDROAD_PATH="$RCSDROAD_FOR_DOWNSTREAM" RCSDNODE_PATH="$RCSDNODE_FOR_DOWNSTREAM" \
+      OUT_ROOT="$T03_OUT_ROOT" RUN_ID="$T03_RUN_ID" WORKERS="${T03_WORKERS:-8}" \
+    bash scripts/t03_run_internal_full_input_innernet_flat_review.sh
+fi
 T03_RUN_ROOT="$T03_OUT_ROOT/$T03_RUN_ID"
-T03_NODES="$T03_RUN_ROOT/nodes.gpkg"
-T03_SURFACE="$T03_RUN_ROOT/virtual_intersection_polygons.gpkg"
-T03_EVIDENCE="$T03_RUN_ROOT/t03_swsd_rcsd_relation_evidence.csv"
-T03_INTERSECTION_MATCH="$T03_RUN_ROOT/intersection_match_t03.geojson"
+T03_NODES="$(manifest_get outputs t03_nodes "$T03_RUN_ROOT/nodes.gpkg")"
+T03_SURFACE="$(manifest_get outputs t03_surface "$T03_RUN_ROOT/virtual_intersection_polygons.gpkg")"
+T03_EVIDENCE="$(manifest_get outputs t03_relation_evidence "$T03_RUN_ROOT/t03_swsd_rcsd_relation_evidence.csv")"
+T03_INTERSECTION_MATCH="$(manifest_get outputs t03_intersection_match "$T03_RUN_ROOT/intersection_match_t03.geojson")"
 require_file T03_NODES "$T03_NODES"
 require_file T03_SURFACE "$T03_SURFACE"
 require_file T03_EVIDENCE "$T03_EVIDENCE"
 require_file T03_INTERSECTION_MATCH "$T03_INTERSECTION_MATCH"
-manifest_set outputs t03_nodes "$T03_NODES"
-manifest_set outputs t03_surface "$T03_SURFACE"
-manifest_set outputs t03_relation_evidence "$T03_EVIDENCE"
-manifest_set outputs t03_intersection_match "$T03_INTERSECTION_MATCH"
-manifest_stage_record t03 T03 passed "$LOG_ROOT/t03.log" \
-  "inputs.nodes=$T07_STEP2_NODES" \
-  "inputs.roads=$T01_ROADS" \
-  "inputs.drivezone=$DRIVEZONE_PATH" \
-  "inputs.rcsdroad=$RCSDROAD_FOR_DOWNSTREAM" \
-  "inputs.rcsdnode=$RCSDNODE_FOR_DOWNSTREAM" \
-  "outputs.nodes=$T03_NODES" \
-  "outputs.surface=$T03_SURFACE" \
-  "outputs.relation_evidence=$T03_EVIDENCE" \
-  "outputs.intersection_match=$T03_INTERSECTION_MATCH" \
-  "params.workers=${T03_WORKERS:-8}" \
-  "execution_context.run_root=$T03_RUN_ROOT"
+if should_run_stage t03; then
+  manifest_set outputs t03_nodes "$T03_NODES"
+  manifest_set outputs t03_surface "$T03_SURFACE"
+  manifest_set outputs t03_relation_evidence "$T03_EVIDENCE"
+  manifest_set outputs t03_intersection_match "$T03_INTERSECTION_MATCH"
+  manifest_stage_record t03 T03 passed "$LOG_ROOT/t03.log" \
+    "inputs.nodes=$T07_STEP2_NODES" \
+    "inputs.roads=$T01_ROADS" \
+    "inputs.drivezone=$DRIVEZONE_PATH" \
+    "inputs.rcsdroad=$RCSDROAD_FOR_DOWNSTREAM" \
+    "inputs.rcsdnode=$RCSDNODE_FOR_DOWNSTREAM" \
+    "outputs.nodes=$T03_NODES" \
+    "outputs.surface=$T03_SURFACE" \
+    "outputs.relation_evidence=$T03_EVIDENCE" \
+    "outputs.intersection_match=$T03_INTERSECTION_MATCH" \
+    "params.workers=${T03_WORKERS:-8}" \
+    "execution_context.run_root=$T03_RUN_ROOT"
+fi
 
 T04_OUT_ROOT="$RUN_ROOT/t04_internal_full_input"
 T04_RUN_ID="t04_full"
-run_logged t04 \
-  env NODES_PATH="$T03_NODES" ROADS_PATH="$T01_ROADS" DRIVEZONE_PATH="$DRIVEZONE_PATH" DIVSTRIPZONE_PATH="$DIVSTRIPZONE_PATH" \
-    RCSDROAD_PATH="$RCSDROAD_FOR_DOWNSTREAM" RCSDNODE_PATH="$RCSDNODE_FOR_DOWNSTREAM" \
-    INTERSECTION_MATCH_T07_PATH="$T07_STEP2_EVIDENCE" INTERSECTION_MATCH_T03_PATH="$T03_INTERSECTION_MATCH" \
-    OUT_ROOT="$T04_OUT_ROOT" RUN_ID="$T04_RUN_ID" WORKERS="${T04_WORKERS:-8}" \
-  bash scripts/t04_run_internal_full_input_innernet_flat_review.sh
+if should_run_stage t04; then
+  run_logged t04 \
+    env NODES_PATH="$T03_NODES" ROADS_PATH="$T01_ROADS" DRIVEZONE_PATH="$DRIVEZONE_PATH" DIVSTRIPZONE_PATH="$DIVSTRIPZONE_PATH" \
+      RCSDROAD_PATH="$RCSDROAD_FOR_DOWNSTREAM" RCSDNODE_PATH="$RCSDNODE_FOR_DOWNSTREAM" \
+      INTERSECTION_MATCH_T07_PATH="$T07_STEP2_EVIDENCE" INTERSECTION_MATCH_T03_PATH="$T03_INTERSECTION_MATCH" \
+      OUT_ROOT="$T04_OUT_ROOT" RUN_ID="$T04_RUN_ID" WORKERS="${T04_WORKERS:-8}" \
+    bash scripts/t04_run_internal_full_input_innernet_flat_review.sh
+fi
 T04_RUN_ROOT="$T04_OUT_ROOT/$T04_RUN_ID"
-T04_NODES="$T04_RUN_ROOT/nodes.gpkg"
-T04_SURFACE="$T04_RUN_ROOT/divmerge_virtual_anchor_surface.gpkg"
-T04_EVIDENCE="$T04_RUN_ROOT/t04_swsd_rcsd_relation_evidence.csv"
-T04_SUMMARY="$T04_RUN_ROOT/divmerge_virtual_anchor_surface_summary.json"
-T04_AUDIT="$T04_RUN_ROOT/divmerge_virtual_anchor_surface_audit.gpkg"
+T04_NODES="$(manifest_get outputs t04_nodes "$T04_RUN_ROOT/nodes.gpkg")"
+T04_SURFACE="$(manifest_get outputs t04_surface "$T04_RUN_ROOT/divmerge_virtual_anchor_surface.gpkg")"
+T04_EVIDENCE="$(manifest_get outputs t04_relation_evidence "$T04_RUN_ROOT/t04_swsd_rcsd_relation_evidence.csv")"
+T04_SUMMARY="$(manifest_get outputs t04_summary "$T04_RUN_ROOT/divmerge_virtual_anchor_surface_summary.json")"
+T04_AUDIT="$(manifest_get outputs t04_audit "$T04_RUN_ROOT/divmerge_virtual_anchor_surface_audit.gpkg")"
 require_file T04_NODES "$T04_NODES"
 require_file T04_SURFACE "$T04_SURFACE"
 require_file T04_EVIDENCE "$T04_EVIDENCE"
 require_file T04_SUMMARY "$T04_SUMMARY"
 require_file T04_AUDIT "$T04_AUDIT"
-manifest_set outputs t04_nodes "$T04_NODES"
-manifest_set outputs t04_surface "$T04_SURFACE"
-manifest_set outputs t04_relation_evidence "$T04_EVIDENCE"
-manifest_set outputs t04_summary "$T04_SUMMARY"
-manifest_set outputs t04_audit "$T04_AUDIT"
-manifest_stage_record t04 T04 passed "$LOG_ROOT/t04.log" \
-  "inputs.nodes=$T03_NODES" \
-  "inputs.roads=$T01_ROADS" \
-  "inputs.drivezone=$DRIVEZONE_PATH" \
-  "inputs.divstripzone=$DIVSTRIPZONE_PATH" \
-  "inputs.rcsdroad=$RCSDROAD_FOR_DOWNSTREAM" \
-  "inputs.rcsdnode=$RCSDNODE_FOR_DOWNSTREAM" \
-  "inputs.t07_relation_evidence=$T07_STEP2_EVIDENCE" \
-  "inputs.t03_intersection_match=$T03_INTERSECTION_MATCH" \
-  "outputs.nodes=$T04_NODES" \
-  "outputs.surface=$T04_SURFACE" \
-  "outputs.relation_evidence=$T04_EVIDENCE" \
-  "outputs.summary=$T04_SUMMARY" \
-  "outputs.audit=$T04_AUDIT" \
-  "params.workers=${T04_WORKERS:-8}" \
-  "execution_context.run_root=$T04_RUN_ROOT"
+if should_run_stage t04; then
+  manifest_set outputs t04_nodes "$T04_NODES"
+  manifest_set outputs t04_surface "$T04_SURFACE"
+  manifest_set outputs t04_relation_evidence "$T04_EVIDENCE"
+  manifest_set outputs t04_summary "$T04_SUMMARY"
+  manifest_set outputs t04_audit "$T04_AUDIT"
+  manifest_stage_record t04 T04 passed "$LOG_ROOT/t04.log" \
+    "inputs.nodes=$T03_NODES" \
+    "inputs.roads=$T01_ROADS" \
+    "inputs.drivezone=$DRIVEZONE_PATH" \
+    "inputs.divstripzone=$DIVSTRIPZONE_PATH" \
+    "inputs.rcsdroad=$RCSDROAD_FOR_DOWNSTREAM" \
+    "inputs.rcsdnode=$RCSDNODE_FOR_DOWNSTREAM" \
+    "inputs.t07_relation_evidence=$T07_STEP2_EVIDENCE" \
+    "inputs.t03_intersection_match=$T03_INTERSECTION_MATCH" \
+    "outputs.nodes=$T04_NODES" \
+    "outputs.surface=$T04_SURFACE" \
+    "outputs.relation_evidence=$T04_EVIDENCE" \
+    "outputs.summary=$T04_SUMMARY" \
+    "outputs.audit=$T04_AUDIT" \
+    "params.workers=${T04_WORKERS:-8}" \
+    "execution_context.run_root=$T04_RUN_ROOT"
+fi
 
 T05_OUT_ROOT="$RUN_ROOT/t05_innernet_experiment"
-run_logged t05 \
-  "$PYTHON_BIN" scripts/t05_innernet_experiment.py \
-    --t07-dir "$T07_RUN_ROOT" \
-    --t03-dir "$T03_RUN_ROOT" \
-    --t04-dir "$T04_RUN_ROOT" \
-    --rcsdroad "$RCSDROAD_FOR_DOWNSTREAM" \
-    --rcsdnode "$RCSDNODE_FOR_DOWNSTREAM" \
-    --nodes "$T04_NODES" \
-    --t07-input "$T07_STEP2_SURFACE" \
-    --t07-evidence "$T07_STEP2_EVIDENCE" \
-    --t03-surface "$T03_SURFACE" \
-    --t03-evidence "$T03_EVIDENCE" \
-    --t04-surface "$T04_SURFACE" \
-    --t04-evidence "$T04_EVIDENCE" \
-    --t04-summary "$T04_SUMMARY" \
-    --t04-audit "$T04_AUDIT" \
-    --out-root "$T05_OUT_ROOT" \
-    --phase1-run-id t05_phase1_innernet \
-    --phase2-run-id t05_phase2_innernet \
-    --readonly-workers "${T05_READONLY_WORKERS:-4}"
+if should_run_stage t05; then
+  run_logged t05 \
+    "$PYTHON_BIN" scripts/t05_innernet_experiment.py \
+      --t07-dir "$T07_RUN_ROOT" \
+      --t03-dir "$T03_RUN_ROOT" \
+      --t04-dir "$T04_RUN_ROOT" \
+      --rcsdroad "$RCSDROAD_FOR_DOWNSTREAM" \
+      --rcsdnode "$RCSDNODE_FOR_DOWNSTREAM" \
+      --nodes "$T04_NODES" \
+      --t07-input "$T07_STEP2_SURFACE" \
+      --t07-evidence "$T07_STEP2_EVIDENCE" \
+      --t03-surface "$T03_SURFACE" \
+      --t03-evidence "$T03_EVIDENCE" \
+      --t04-surface "$T04_SURFACE" \
+      --t04-evidence "$T04_EVIDENCE" \
+      --t04-summary "$T04_SUMMARY" \
+      --t04-audit "$T04_AUDIT" \
+      --out-root "$T05_OUT_ROOT" \
+      --phase1-run-id t05_phase1_innernet \
+      --phase2-run-id t05_phase2_innernet \
+      --readonly-workers "${T05_READONLY_WORKERS:-4}"
+fi
 T05_PHASE2_ROOT="$T05_OUT_ROOT/t05_phase2_innernet"
-T05_INTERSECTION_MATCH_ALL="$T05_PHASE2_ROOT/intersection_match_all.geojson"
-T05_RCSDROAD_OUT="$T05_PHASE2_ROOT/rcsdroad_out.gpkg"
-T05_RCSDNODE_OUT="$T05_PHASE2_ROOT/rcsdnode_out.gpkg"
+T05_INTERSECTION_MATCH_ALL="$(manifest_get outputs t05_intersection_match_all "$T05_PHASE2_ROOT/intersection_match_all.geojson")"
+T05_RCSDROAD_OUT="$(manifest_get outputs t05_rcsdroad_out "$T05_PHASE2_ROOT/rcsdroad_out.gpkg")"
+T05_RCSDNODE_OUT="$(manifest_get outputs t05_rcsdnode_out "$T05_PHASE2_ROOT/rcsdnode_out.gpkg")"
 require_file T05_INTERSECTION_MATCH_ALL "$T05_INTERSECTION_MATCH_ALL"
 require_file T05_RCSDROAD_OUT "$T05_RCSDROAD_OUT"
 require_file T05_RCSDNODE_OUT "$T05_RCSDNODE_OUT"
-manifest_set outputs t05_intersection_match_all "$T05_INTERSECTION_MATCH_ALL"
-manifest_set outputs t05_rcsdroad_out "$T05_RCSDROAD_OUT"
-manifest_set outputs t05_rcsdnode_out "$T05_RCSDNODE_OUT"
-manifest_stage_record t05 T05 passed "$LOG_ROOT/t05.log" \
-  "inputs.t07_run_root=$T07_RUN_ROOT" \
-  "inputs.t03_run_root=$T03_RUN_ROOT" \
-  "inputs.t04_run_root=$T04_RUN_ROOT" \
-  "inputs.nodes=$T04_NODES" \
-  "inputs.rcsdroad=$RCSDROAD_FOR_DOWNSTREAM" \
-  "inputs.rcsdnode=$RCSDNODE_FOR_DOWNSTREAM" \
-  "inputs.t07_surface=$T07_STEP2_SURFACE" \
-  "inputs.t07_evidence=$T07_STEP2_EVIDENCE" \
-  "inputs.t03_surface=$T03_SURFACE" \
-  "inputs.t03_evidence=$T03_EVIDENCE" \
-  "inputs.t04_surface=$T04_SURFACE" \
-  "inputs.t04_evidence=$T04_EVIDENCE" \
-  "inputs.t04_summary=$T04_SUMMARY" \
-  "inputs.t04_audit=$T04_AUDIT" \
-  "outputs.intersection_match_all=$T05_INTERSECTION_MATCH_ALL" \
-  "outputs.rcsdroad_out=$T05_RCSDROAD_OUT" \
-  "outputs.rcsdnode_out=$T05_RCSDNODE_OUT" \
-  "params.readonly_workers=${T05_READONLY_WORKERS:-4}" \
-  "execution_context.run_root=$T05_PHASE2_ROOT"
+if should_run_stage t05; then
+  manifest_set outputs t05_intersection_match_all "$T05_INTERSECTION_MATCH_ALL"
+  manifest_set outputs t05_rcsdroad_out "$T05_RCSDROAD_OUT"
+  manifest_set outputs t05_rcsdnode_out "$T05_RCSDNODE_OUT"
+  manifest_stage_record t05 T05 passed "$LOG_ROOT/t05.log" \
+    "inputs.t07_run_root=$T07_RUN_ROOT" \
+    "inputs.t03_run_root=$T03_RUN_ROOT" \
+    "inputs.t04_run_root=$T04_RUN_ROOT" \
+    "inputs.nodes=$T04_NODES" \
+    "inputs.rcsdroad=$RCSDROAD_FOR_DOWNSTREAM" \
+    "inputs.rcsdnode=$RCSDNODE_FOR_DOWNSTREAM" \
+    "inputs.t07_surface=$T07_STEP2_SURFACE" \
+    "inputs.t07_evidence=$T07_STEP2_EVIDENCE" \
+    "inputs.t03_surface=$T03_SURFACE" \
+    "inputs.t03_evidence=$T03_EVIDENCE" \
+    "inputs.t04_surface=$T04_SURFACE" \
+    "inputs.t04_evidence=$T04_EVIDENCE" \
+    "inputs.t04_summary=$T04_SUMMARY" \
+    "inputs.t04_audit=$T04_AUDIT" \
+    "outputs.intersection_match_all=$T05_INTERSECTION_MATCH_ALL" \
+    "outputs.rcsdroad_out=$T05_RCSDROAD_OUT" \
+    "outputs.rcsdnode_out=$T05_RCSDNODE_OUT" \
+    "params.readonly_workers=${T05_READONLY_WORKERS:-4}" \
+    "execution_context.run_root=$T05_PHASE2_ROOT"
+fi
 
 T07_STEP3_OUT_ROOT="$RUN_ROOT/t07_step3_intersection_match"
 T07_STEP3_RUN_ID="t07_step3"
-run_logged t07_step3 \
-  env T07_SOURCE_RUN_ROOT="$T07_OUT_ROOT" T07_SOURCE_RUN_ID="$T07_RUN_ID" \
-    NODES_PATH="$T07_STEP2_NODES" T05_PHASE2_ROOT="$T05_PHASE2_ROOT" \
-    INTERSECTION_MATCH_ALL_PATH="$T05_INTERSECTION_MATCH_ALL" RCSDNODE_PATH="$T05_RCSDNODE_OUT" \
-    OUT_ROOT="$T07_STEP3_OUT_ROOT" RUN_ID="$T07_STEP3_RUN_ID" \
-  bash scripts/t07_run_step3_intersection_match_innernet.sh
+if should_run_stage t07_step3; then
+  run_logged t07_step3 \
+    env T07_SOURCE_RUN_ROOT="$T07_OUT_ROOT" T07_SOURCE_RUN_ID="$T07_RUN_ID" \
+      NODES_PATH="$T07_STEP2_NODES" T05_PHASE2_ROOT="$T05_PHASE2_ROOT" \
+      INTERSECTION_MATCH_ALL_PATH="$T05_INTERSECTION_MATCH_ALL" RCSDNODE_PATH="$T05_RCSDNODE_OUT" \
+      OUT_ROOT="$T07_STEP3_OUT_ROOT" RUN_ID="$T07_STEP3_RUN_ID" \
+    bash scripts/t07_run_step3_intersection_match_innernet.sh
+fi
 T07_STEP3_ROOT="$T07_STEP3_OUT_ROOT/$T07_STEP3_RUN_ID/step3_intersection_match"
-T07_FINAL_NODES="$T07_STEP3_ROOT/nodes.gpkg"
-T07_INTERSECTION_MATCH="$T07_STEP3_ROOT/intersection_match_t07.geojson"
+T07_FINAL_NODES="$(manifest_get outputs t07_final_nodes "$T07_STEP3_ROOT/nodes.gpkg")"
+T07_INTERSECTION_MATCH="$(manifest_get outputs t07_intersection_match "$T07_STEP3_ROOT/intersection_match_t07.geojson")"
 require_file T07_FINAL_NODES "$T07_FINAL_NODES"
 require_file T07_INTERSECTION_MATCH "$T07_INTERSECTION_MATCH"
-manifest_set outputs t07_final_nodes "$T07_FINAL_NODES"
-manifest_set outputs t07_intersection_match "$T07_INTERSECTION_MATCH"
-manifest_stage_record t07_step3 T07 passed "$LOG_ROOT/t07_step3.log" \
-  "inputs.nodes=$T07_STEP2_NODES" \
-  "inputs.t05_phase2_root=$T05_PHASE2_ROOT" \
-  "inputs.intersection_match_all=$T05_INTERSECTION_MATCH_ALL" \
-  "inputs.rcsdnode=$T05_RCSDNODE_OUT" \
-  "outputs.nodes=$T07_FINAL_NODES" \
-  "outputs.intersection_match=$T07_INTERSECTION_MATCH" \
-  "execution_context.run_root=$T07_STEP3_ROOT"
+if should_run_stage t07_step3; then
+  manifest_set outputs t07_final_nodes "$T07_FINAL_NODES"
+  manifest_set outputs t07_intersection_match "$T07_INTERSECTION_MATCH"
+  manifest_stage_record t07_step3 T07 passed "$LOG_ROOT/t07_step3.log" \
+    "inputs.nodes=$T07_STEP2_NODES" \
+    "inputs.t05_phase2_root=$T05_PHASE2_ROOT" \
+    "inputs.intersection_match_all=$T05_INTERSECTION_MATCH_ALL" \
+    "inputs.rcsdnode=$T05_RCSDNODE_OUT" \
+    "outputs.nodes=$T07_FINAL_NODES" \
+    "outputs.intersection_match=$T07_INTERSECTION_MATCH" \
+    "execution_context.run_root=$T07_STEP3_ROOT"
+fi
 
 T06_OUT_ROOT="$RUN_ROOT/t06_segment_fusion_precheck"
 T06_RUN_ID="t06_innernet_precheck"
-run_logged t06_step12 \
-  "$PYTHON_BIN" scripts/t06_run_innernet_precheck.py \
-    --swsd-segment "$T01_SEGMENT" \
-    --swsd-roads "$T01_ROADS" \
-    --swsd-nodes "$T07_FINAL_NODES" \
-    --t05-phase2-root "$T05_PHASE2_ROOT" \
-    --intersection-match "$T05_INTERSECTION_MATCH_ALL" \
-    --rcsdroad "$T05_RCSDROAD_OUT" \
-    --rcsdnode "$T05_RCSDNODE_OUT" \
-    --out-root "$T06_OUT_ROOT" \
-    --run-id "$T06_RUN_ID"
+if should_run_stage t06_step12; then
+  run_logged t06_step12 \
+    "$PYTHON_BIN" scripts/t06_run_innernet_precheck.py \
+      --swsd-segment "$T01_SEGMENT" \
+      --swsd-roads "$T01_ROADS" \
+      --swsd-nodes "$T07_FINAL_NODES" \
+      --t05-phase2-root "$T05_PHASE2_ROOT" \
+      --intersection-match "$T05_INTERSECTION_MATCH_ALL" \
+      --rcsdroad "$T05_RCSDROAD_OUT" \
+      --rcsdnode "$T05_RCSDNODE_OUT" \
+      --out-root "$T06_OUT_ROOT" \
+      --run-id "$T06_RUN_ID"
+fi
 T06_RUN_ROOT="$T06_OUT_ROOT/$T06_RUN_ID"
-T06_REPLACEABLE="$T06_RUN_ROOT/step2_extract_rcsd_segments/t06_rcsd_segment_replaceable.gpkg"
+T06_REPLACEABLE="$(manifest_get outputs t06_step2_replaceable "$T06_RUN_ROOT/step2_extract_rcsd_segments/t06_rcsd_segment_replaceable.gpkg")"
 require_file T06_REPLACEABLE "$T06_REPLACEABLE"
-manifest_set outputs t06_step2_replaceable "$T06_REPLACEABLE"
-manifest_stage_record t06_step12 T06 passed "$LOG_ROOT/t06_step12.log" \
-  "inputs.swsd_segment=$T01_SEGMENT" \
-  "inputs.swsd_roads=$T01_ROADS" \
-  "inputs.swsd_nodes=$T07_FINAL_NODES" \
-  "inputs.t05_phase2_root=$T05_PHASE2_ROOT" \
-  "inputs.intersection_match=$T05_INTERSECTION_MATCH_ALL" \
-  "inputs.rcsdroad=$T05_RCSDROAD_OUT" \
-  "inputs.rcsdnode=$T05_RCSDNODE_OUT" \
-  "outputs.final_fusion_units=$T06_RUN_ROOT/step1_identify_fusion_units/t06_swsd_segment_final_fusion_units.gpkg" \
-  "outputs.replaceable=$T06_REPLACEABLE" \
-  "outputs.rejected=$T06_RUN_ROOT/step2_extract_rcsd_segments/t06_rcsd_segment_rejected.gpkg" \
-  "outputs.failure_business_audit=$T06_RUN_ROOT/step2_extract_rcsd_segments/t06_rcsd_segment_failure_business_audit.gpkg" \
-  "outputs.summary=$T06_RUN_ROOT/step2_extract_rcsd_segments/t06_step2_summary.json" \
-  "execution_context.run_root=$T06_RUN_ROOT"
+if should_run_stage t06_step12; then
+  manifest_set outputs t06_step2_replaceable "$T06_REPLACEABLE"
+  manifest_stage_record t06_step12 T06 passed "$LOG_ROOT/t06_step12.log" \
+    "inputs.swsd_segment=$T01_SEGMENT" \
+    "inputs.swsd_roads=$T01_ROADS" \
+    "inputs.swsd_nodes=$T07_FINAL_NODES" \
+    "inputs.t05_phase2_root=$T05_PHASE2_ROOT" \
+    "inputs.intersection_match=$T05_INTERSECTION_MATCH_ALL" \
+    "inputs.rcsdroad=$T05_RCSDROAD_OUT" \
+    "inputs.rcsdnode=$T05_RCSDNODE_OUT" \
+    "outputs.final_fusion_units=$T06_RUN_ROOT/step1_identify_fusion_units/t06_swsd_segment_final_fusion_units.gpkg" \
+    "outputs.replaceable=$T06_REPLACEABLE" \
+    "outputs.rejected=$T06_RUN_ROOT/step2_extract_rcsd_segments/t06_rcsd_segment_rejected.gpkg" \
+    "outputs.failure_business_audit=$T06_RUN_ROOT/step2_extract_rcsd_segments/t06_rcsd_segment_failure_business_audit.gpkg" \
+    "outputs.summary=$T06_RUN_ROOT/step2_extract_rcsd_segments/t06_step2_summary.json" \
+    "execution_context.run_root=$T06_RUN_ROOT"
+fi
 
-run_logged t06_step3 \
-  "$PYTHON_BIN" scripts/t06_run_step3_segment_replacement.py \
-    --t06-run-root "$T06_RUN_ROOT" \
-    --swsd-segment "$T01_SEGMENT" \
-    --swsd-roads "$T01_ROADS" \
-    --swsd-nodes "$T07_FINAL_NODES" \
-    --t05-phase2-root "$T05_PHASE2_ROOT" \
-    --rcsdroad "$T05_RCSDROAD_OUT" \
-    --rcsdnode "$T05_RCSDNODE_OUT" \
-    --out-root "$T06_OUT_ROOT" \
-    --run-id "$T06_RUN_ID"
+if should_run_stage t06_step3; then
+  run_logged t06_step3 \
+    "$PYTHON_BIN" scripts/t06_run_step3_segment_replacement.py \
+      --t06-run-root "$T06_RUN_ROOT" \
+      --swsd-segment "$T01_SEGMENT" \
+      --swsd-roads "$T01_ROADS" \
+      --swsd-nodes "$T07_FINAL_NODES" \
+      --t05-phase2-root "$T05_PHASE2_ROOT" \
+      --rcsdroad "$T05_RCSDROAD_OUT" \
+      --rcsdnode "$T05_RCSDNODE_OUT" \
+      --out-root "$T06_OUT_ROOT" \
+      --run-id "$T06_RUN_ID"
+fi
 T06_STEP3_ROOT="$T06_RUN_ROOT/step3_segment_replacement"
-T06_FRCSD_ROAD="$T06_STEP3_ROOT/t06_frcsd_road.gpkg"
-T06_FRCSD_NODE="$T06_STEP3_ROOT/t06_frcsd_node.gpkg"
-T06_SEGMENT_RELATION="$T06_STEP3_ROOT/t06_step3_swsd_frcsd_segment_relation.gpkg"
+T06_FRCSD_ROAD="$(manifest_get outputs t06_frcsd_road "$T06_STEP3_ROOT/t06_frcsd_road.gpkg")"
+T06_FRCSD_NODE="$(manifest_get outputs t06_frcsd_node "$T06_STEP3_ROOT/t06_frcsd_node.gpkg")"
+T06_SEGMENT_RELATION="$(manifest_get outputs t06_segment_relation "$T06_STEP3_ROOT/t06_step3_swsd_frcsd_segment_relation.gpkg")"
 require_file T06_FRCSD_ROAD "$T06_FRCSD_ROAD"
 require_file T06_FRCSD_NODE "$T06_FRCSD_NODE"
 require_file T06_SEGMENT_RELATION "$T06_SEGMENT_RELATION"
-manifest_set outputs t06_frcsd_road "$T06_FRCSD_ROAD"
-manifest_set outputs t06_frcsd_node "$T06_FRCSD_NODE"
-manifest_set outputs t06_segment_relation "$T06_SEGMENT_RELATION"
-manifest_stage_record t06_step3 T06 passed "$LOG_ROOT/t06_step3.log" \
-  "inputs.t06_run_root=$T06_RUN_ROOT" \
-  "inputs.swsd_segment=$T01_SEGMENT" \
-  "inputs.swsd_roads=$T01_ROADS" \
-  "inputs.swsd_nodes=$T07_FINAL_NODES" \
-  "inputs.t05_phase2_root=$T05_PHASE2_ROOT" \
-  "inputs.rcsdroad=$T05_RCSDROAD_OUT" \
-  "inputs.rcsdnode=$T05_RCSDNODE_OUT" \
-  "outputs.frcsd_road=$T06_FRCSD_ROAD" \
-  "outputs.frcsd_node=$T06_FRCSD_NODE" \
-  "outputs.segment_relation=$T06_SEGMENT_RELATION" \
-  "outputs.summary=$T06_STEP3_ROOT/t06_step3_summary.json" \
-  "execution_context.run_root=$T06_STEP3_ROOT"
+if should_run_stage t06_step3; then
+  manifest_set outputs t06_frcsd_road "$T06_FRCSD_ROAD"
+  manifest_set outputs t06_frcsd_node "$T06_FRCSD_NODE"
+  manifest_set outputs t06_segment_relation "$T06_SEGMENT_RELATION"
+  manifest_stage_record t06_step3 T06 passed "$LOG_ROOT/t06_step3.log" \
+    "inputs.t06_run_root=$T06_RUN_ROOT" \
+    "inputs.swsd_segment=$T01_SEGMENT" \
+    "inputs.swsd_roads=$T01_ROADS" \
+    "inputs.swsd_nodes=$T07_FINAL_NODES" \
+    "inputs.t05_phase2_root=$T05_PHASE2_ROOT" \
+    "inputs.rcsdroad=$T05_RCSDROAD_OUT" \
+    "inputs.rcsdnode=$T05_RCSDNODE_OUT" \
+    "outputs.frcsd_road=$T06_FRCSD_ROAD" \
+    "outputs.frcsd_node=$T06_FRCSD_NODE" \
+    "outputs.segment_relation=$T06_SEGMENT_RELATION" \
+    "outputs.summary=$T06_STEP3_ROOT/t06_step3_summary.json" \
+    "execution_context.run_root=$T06_STEP3_ROOT"
+fi
 
 T09_OUT_ROOT="$RUN_ROOT/t09_swsd_field_rule_restoration"
-run_logged t09 \
-  "$PYTHON_BIN" - "$T09_OUT_ROOT" t09_step12 t09_step3 "$T07_FINAL_NODES" "$T01_ROADS" "$T01_SEGMENT" "$SW_RESTRICTION_TOOL7" "$SW_ARROW_TOOL8" "$T06_FRCSD_ROAD" "$T06_FRCSD_NODE" "$T06_SEGMENT_RELATION" <<'PY'
+if should_run_stage t09; then
+  run_logged t09 \
+    "$PYTHON_BIN" - "$T09_OUT_ROOT" t09_step12 t09_step3 "$T07_FINAL_NODES" "$T01_ROADS" "$T01_SEGMENT" "$SW_RESTRICTION_TOOL7" "$SW_ARROW_TOOL8" "$T06_FRCSD_ROAD" "$T06_FRCSD_NODE" "$T06_SEGMENT_RELATION" <<'PY'
 from __future__ import annotations
 
 import json
@@ -819,30 +1212,37 @@ print(
     )
 )
 PY
+fi
 T09_STEP12_ROOT="$T09_OUT_ROOT/t09_step12"
 T09_STEP3_ROOT="$T09_OUT_ROOT/t09_step3"
-T09_RESTRICTION="$T09_STEP3_ROOT/frcsd_restriction.gpkg"
+T09_RESTRICTION="$(manifest_get outputs t09_frcsd_restriction "$T09_STEP3_ROOT/frcsd_restriction.gpkg")"
 require_file T09_RESTRICTION "$T09_RESTRICTION"
-manifest_set outputs t09_step12_root "$T09_STEP12_ROOT"
-manifest_set outputs t09_frcsd_restriction "$T09_RESTRICTION"
-manifest_stage_record t09 T09 passed "$LOG_ROOT/t09.log" \
-  "inputs.swnode=$T07_FINAL_NODES" \
-  "inputs.swroad=$T01_ROADS" \
-  "inputs.segment=$T01_SEGMENT" \
-  "inputs.sw_restriction_tool7=$SW_RESTRICTION_TOOL7" \
-  "inputs.sw_arrow_tool8=$SW_ARROW_TOOL8" \
-  "inputs.frcsd_road=$T06_FRCSD_ROAD" \
-  "inputs.frcsd_node=$T06_FRCSD_NODE" \
-  "inputs.segment_relation=$T06_SEGMENT_RELATION" \
-  "outputs.step12_root=$T09_STEP12_ROOT" \
-  "outputs.frcsd_restriction=$T09_RESTRICTION" \
-  "outputs.summary=$T09_STEP3_ROOT/t09_step3_frcsd_restriction_summary.json" \
-  "execution_context.run_root=$T09_OUT_ROOT"
+if should_run_stage t09; then
+  manifest_set outputs t09_step12_root "$T09_STEP12_ROOT"
+  manifest_set outputs t09_frcsd_restriction "$T09_RESTRICTION"
+  manifest_stage_record t09 T09 passed "$LOG_ROOT/t09.log" \
+    "inputs.swnode=$T07_FINAL_NODES" \
+    "inputs.swroad=$T01_ROADS" \
+    "inputs.segment=$T01_SEGMENT" \
+    "inputs.sw_restriction_tool7=$SW_RESTRICTION_TOOL7" \
+    "inputs.sw_arrow_tool8=$SW_ARROW_TOOL8" \
+    "inputs.frcsd_road=$T06_FRCSD_ROAD" \
+    "inputs.frcsd_node=$T06_FRCSD_NODE" \
+    "inputs.segment_relation=$T06_SEGMENT_RELATION" \
+    "outputs.step12_root=$T09_STEP12_ROOT" \
+    "outputs.frcsd_restriction=$T09_RESTRICTION" \
+    "outputs.summary=$T09_STEP3_ROOT/t09_step3_frcsd_restriction_summary.json" \
+    "execution_context.run_root=$T09_OUT_ROOT"
+fi
+
+manifest_finalize passed 0
+trap - EXIT
 
 echo
 echo "[DONE] Innernet full pipeline completed."
 echo "[DONE] run_root=$RUN_ROOT"
 echo "[DONE] manifest=$MANIFEST_PATH"
+echo "[DONE] summary=$SUMMARY_PATH"
 echo "[DONE] final_frcsd_road=$T06_FRCSD_ROAD"
 echo "[DONE] final_frcsd_node=$T06_FRCSD_NODE"
 echo "[DONE] final_restriction=$T09_RESTRICTION"

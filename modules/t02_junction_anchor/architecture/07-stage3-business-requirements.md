@@ -1,16 +1,18 @@
 # 07 Stage3 业务需求说明
 
+> 当前项目级生命周期中，T02 已 Retired。本文档保留 stage3 历史业务需求，用于解释旧 baseline 和旧实现，不代表当前主业务链仍以 T02 承接虚拟路口锚定需求。
+
 ## 1. 文档定位
 
-- 状态：`current implementation aligned business requirements`
+- 状态：`Retired historical stage3 business requirements`
 - 作用：
-  - 将 stage3 `virtual intersection anchoring` 当前需要满足的业务要求单独整理出来。
+  - 将 stage3 `virtual intersection anchoring` 历史需要满足的业务要求单独整理出来。
   - 明确“为什么要生成虚拟路口面”“什么结果算业务成功”“什么情况即使出面也不能算成功”。
   - 本文档不替代 accepted baseline；业务边界仍以 [06-accepted-baseline.md](/mnt/e/Work/RCSD_Topo_Poc/modules/t02_junction_anchor/architecture/06-accepted-baseline.md) 与 [INTERFACE_CONTRACT.md](/mnt/e/Work/RCSD_Topo_Poc/modules/t02_junction_anchor/INTERFACE_CONTRACT.md) 为准。
-- 当前实现依据：
+- 历史实现依据：
   - [virtual_intersection_poc.py](/mnt/e/Work/RCSD_Topo_Poc/src/rcsd_topo_poc/modules/t02_junction_anchor/virtual_intersection_poc.py)
   - [virtual_intersection_full_input_poc.py](/mnt/e/Work/RCSD_Topo_Poc/src/rcsd_topo_poc/modules/t02_junction_anchor/virtual_intersection_full_input_poc.py)
-  - 当前 stage3 样例回归与 smoke
+  - T02 stage3 历史样例回归与 smoke
 
 ## 2. Stage3 要解决的业务问题
 
@@ -33,7 +35,7 @@ stage3 要回答的不是“程序能不能跑完”，而是：
 
 ### 3.1 候选前提
 
-当前 stage3 正式候选口径是：
+T02 历史 stage3 正式候选口径是：
 
 - `has_evd = yes`
 - `kind_2 in {4, 2048}`
@@ -46,7 +48,7 @@ stage3 要回答的不是“程序能不能跑完”，而是：
 
 ### 3.2 局部输入数据
 
-stage3 当前业务上依赖五类局部输入：
+stage3 历史业务上依赖五类局部输入：
 
 - `nodes`
 - `roads`
@@ -232,9 +234,9 @@ stage3 当前业务要求不仅是输出 polygon，还要输出：
 - 几何 / 支撑无法自洽
 - RC 与当前路口存在实质矛盾
 
-### 6.3 当前唯一硬守门样例
+### 6.3 历史唯一硬守门样例
 
-在现有本地样例集中，当前持续作为硬守门失败样例的是：
+在历史本地样例集中，持续作为硬守门失败样例的是：
 
 - `520394575`
 
@@ -244,7 +246,7 @@ stage3 当前业务要求不仅是输出 polygon，还要输出：
 
 ## 7. 本文档不定义的内容
 
-以下内容仍不在当前正式 stage3 业务需求内：
+以下内容仍不在 T02 历史正式 stage3 业务需求内：
 
 - 最终唯一锚定决策闭环
 - 概率 / 置信度
@@ -255,4 +257,4 @@ stage3 当前业务要求不仅是输出 polygon，还要输出：
 ## 8. 与算法文档的关系
 
 - 本文档回答“stage3 为何这样判、业务上到底想要什么”。
-- [08-stage3-algorithm-strategy.md](/mnt/e/Work/RCSD_Topo_Poc/modules/t02_junction_anchor/architecture/08-stage3-algorithm-strategy.md) 回答“当前代码如何用局部 patch、分支证据、栅格 mask 和支撑校验把这些需求落地”。
+- [08-stage3-algorithm-strategy.md](/mnt/e/Work/RCSD_Topo_Poc/modules/t02_junction_anchor/architecture/08-stage3-algorithm-strategy.md) 回答“历史代码如何用局部 patch、分支证据、栅格 mask 和支撑校验把这些需求落地”。

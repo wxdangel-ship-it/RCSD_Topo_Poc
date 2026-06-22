@@ -1,30 +1,36 @@
 # 01 引言与目标
 
-## 文档状态
-- 状态：`模块级架构说明`
-- 当前正式业务 baseline 主体见：
-  - [06-accepted-baseline.md](/mnt/e/Work/RCSD_Topo_Poc/modules/t01_data_preprocess/architecture/06-accepted-baseline.md)
-  - [INTERFACE_CONTRACT.md](/mnt/e/Work/RCSD_Topo_Poc/modules/t01_data_preprocess/INTERFACE_CONTRACT.md)
+## 1. 文档定位
 
-## 模块定位
-- 模块路径：`modules/t01_data_preprocess`
-- 角色：
-  - 在非封闭式双向道路场景中，逐阶段构建双向 Segment
-  - 为后续 Segment 聚合与更高层拓扑分析提供稳定输入
-  - 当前正式流程以双向 Segment 构建为主，并登记了 `Step5` 后基于 refreshed 结果的单向补段 continuation
+本文件说明 T01 的架构背景、业务目标和边界。模块需求以 `SPEC.md` 为准，稳定接口以 `INTERFACE_CONTRACT.md` 为准，具体实现策略见 `03-solution-strategy.md`。
 
-## 模块目标
-1. 在普通道路网络上稳定提取双向 Segment。
-2. 通过 staged residual graph 从高等级逐轮扩展到更低等级。
-3. 在构段过程中滚动刷新 `grade_2 / kind_2` 当前语义。
-4. 在 Step6 形成可审计的 Segment 聚合输出。
+## 2. 模块定位
 
-## 文档边界
-- `architecture/*`
-  - 承载模块级源事实与 accepted baseline
-- `INTERFACE_CONTRACT.md`
-  - 承载字段与阶段输入输出契约摘要
-- `README.md`
-  - 承载使用说明、入口与文档索引
-- `specs/t01-data-preprocess/*`
-  - 承载本轮治理/整改的 spec-kit 过程文档，不作为 steady-state baseline 正本
+T01 位于 SWSD 数据进入主业务链后的 Segment 构建阶段。它消费 T08 预处理后的 SWSD `nodes / roads`，通过双向多阶段构段、单向补段和最终聚合，形成 T06/T09 可继续消费的 `segment.gpkg` 与配套审计产物。
+
+T01 不直接生产 RCSD Segment，也不负责路口 1:1 关系构建。它的业务价值是把 SWSD 道路网络整理成可解释、可审计、可回归保护的 Segment 承载层，为后续替换、通行规则恢复和端到端 Case 证据组织提供稳定输入。
+
+## 3. 目标
+
+- 在非封闭式双向道路场景下稳定构建双向 Segment。
+- 在 Step5C refreshed 结果之后执行单向补段，补齐双向流程无法覆盖但业务上需要承载的 road。
+- 在 Step6 聚合正式 `segment.gpkg`，并反查内部节点、`sgrade`、grade/kind 冲突和未构段 road。
+- 通过 freeze compare 与证据包保护 active baseline，避免单向补段或局部修复误覆盖已确认双向口径。
+
+## 4. 非目标
+
+- 不修改 T05/T06/T09 的下游产物。
+- 不把单向补段规则反向写入双向 Step1-Step5C。
+- 不从局部样本或几何形态反推未确认字段语义。
+- 不在未授权时更新 active freeze baseline。
+
+## 5. 文档边界
+
+- `SPEC.md`：业务需求、范围和对错边界。
+- `INTERFACE_CONTRACT.md`：稳定输入输出、官方入口和参数类别。
+- `02-data-and-domain-model.md`：对象、字段和上下游数据关系。
+- `03-solution-strategy.md`：Step1-Step6 与单向补段的实现策略。
+- `04-evidence-and-audit.md`：证据、审计和 baseline。
+- `05-quality-requirements.md`：质量、GIS / 拓扑 / 性能要求。
+- `06-risks-and-technical-debt.md`：风险和技术债。
+- `accepted-baseline.md`：已确认 baseline 的补充说明；不替代 01-06 主结构。

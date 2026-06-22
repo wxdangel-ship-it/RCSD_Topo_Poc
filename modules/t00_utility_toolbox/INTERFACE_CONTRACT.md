@@ -1,5 +1,11 @@
 # T00 - INTERFACE_CONTRACT
 
+## 定位
+
+本文件是 `t00_utility_toolbox` 的稳定接口契约速查，主要给实现、运行、联调和 Agent 维护使用。
+
+业务需求优先看 `SPEC.md`；架构设计按 `architecture/01~06` 阅读。本文件保留 Tool1-7、Tool9-11 的输入、输出、入口、覆盖、异常和摘要契约，不把 T00 提升为业务生产模块。
+
 ## 1. 模块概览
 
 - 模块 ID：`t00_utility_toolbox`
@@ -20,9 +26,9 @@
 
 ## 1.1 文档角色边界
 
-- `architecture/*` 承担长期结构、背景与风险说明。
-- `README.md` 只承担操作者入口与固定脚本总览。
-- `AGENTS.md` 只承担模块级 durable guidance。
+- `architecture/*` 承担架构设计、业务策略、证据、质量和风险说明。
+- `README.md` 只承担模块阅读入口和文档索引。
+- `AGENTS.md` 只承担可选 Agent 局部红线，不替代模块源事实。
 - `specs/t00-utility-toolbox/*` 只用于治理过程追溯，不替代 steady-state 契约。
 - `T00` 官方入口采用 repo root `scripts/` 下的固定脚本，并以仓库入口注册表为准。
 

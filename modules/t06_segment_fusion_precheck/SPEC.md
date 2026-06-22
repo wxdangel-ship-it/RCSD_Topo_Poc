@@ -13,6 +13,8 @@ T06 消费 T01 SWSD Segment 与 T05 SWSD-RCSD 语义路口关系，构建 RCSDSe
 - Step3 优先消费 Step2 replacement plan 执行替换，旧 replaceable + group/special audit 只作为兼容 fallback。
 - 对失败 Segment 输出诊断、候选修复证据和上游责任归因；默认不覆盖 T05 relation，但 pair anchor 锚定错误在满足受限高置信安全门槛时，可在 T06 当前 Segment 内使用候选 pair 执行一次自动重试；普通缺失 pair 端点补全必须保留 T05 已知端点所在 SWSD pair 侧，只补失败侧；高等级 single 当缺失端点同时伴随已知端点被 `candidate_anchor_mismatch` 判错时，必须由诊断明确覆盖两个 SWSD pair 端点并通过正式硬审计后，才可整体采用候选 pair；两端 pair relation 均缺失时，只允许非人工复核、连通与方向评分满分、shape similarity 不低于 `0.95` 的 buffer-only 候选 pair 进入正式硬审计重试。
 - 对高等级 Segment 的裁剪窗口不足失败，允许在 T05 原始 pair relation 不变且全图拓扑证据充分时执行受限重审；单向采用 RCSD graph-first 纵向联通并要求经过 50m buffer core，双向优先采用 adaptive buffer，必要时采用 dual graph-first 双向联通且不得跨越额外 mapped semantic nodes；重审通过仍必须满足全部硬审计并输出实际审计来源。
+- 在 50m buffer 覆盖通过后继续执行窄通道视觉连续性复核，防止 RCSD 虽然处在宽 buffer 内、但实际替换后主线目视断裂或明显偏离 SWSD 主通道。
+- Step3 在不重判可替换性的前提下处理真实数据差异：正式替换道路保持 RCSD source 边界，保留 SWSD carrier 只作为局部通行承载和风险审计；提前右转挂接、端点补齐、surface-assisted node closure 和最终 topology connectivity audit 用于提高 F-RCSD 可用性。
 
 ## 3. 当前范围
 
@@ -24,6 +26,8 @@ T06 消费 T01 SWSD Segment 与 T05 SWSD-RCSD 语义路口关系，构建 RCSDSe
 - `kind_2=64 / 128` 特殊路口组门控。
 - buffer-only probe、repair candidates 与 failure business audit。
 - 高等级 single graph-first 纵向联通、dual adaptive buffer 与 dual graph-first 双向联通重审审计。
+- Step2 窄通道视觉连续性复核。
+- Step3 source 边界审计、提前右转后处理、端点补齐、surface topology closure 和 topology connectivity audit。
 - 内网脚本和文本证据包 helper。
 
 ### 3.2 当前非目标
@@ -52,6 +56,7 @@ T06 消费 T01 SWSD Segment 与 T05 SWSD-RCSD 语义路口关系，构建 RCSDSe
 | T05 `intersection_match_all.geojson` | Step2 将 SWSD pair/junc 映射到 RCSD 语义路口。 |
 | T05 `rcsdroad_out.gpkg / rcsdnode_out.gpkg` | Step2 RCSD 建图和 Step3 引入 RCSD Road/Node 的来源。 |
 | `t06_segment_replacement_plan.*` | Step3 优先消费的统一执行计划；旧产物无 plan 时才回退读取 passed 特殊路口组和 group replacement 审计。 |
+| T03/T04/T05/T07 surface 与 T04 audit | Step3 可选 surface topology closure 输入；只用于节点语义闭合和 relation node map 补写，不作为替换道路白名单。 |
 
 ## 6. 输出
 
@@ -67,6 +72,9 @@ T06 消费 T01 SWSD Segment 与 T05 SWSD-RCSD 语义路口关系，构建 RCSDSe
 | `t06_segment_replacement_problem_registry.*` | Segment 替换问题注册表，记录已由当前 plan 覆盖、已由 Step2 标准计划解决或仍需上游迭代的问题。 |
 | `t06_frcsd_road.* / t06_frcsd_node.*` | Step3 F-RCSD 替换结果。 |
 | `t06_step3_unreplaced_rcsd_roads.*` | 未进入替换结果的 RCSDRoad 审计。 |
+| `t06_step3_swsd_frcsd_segment_relation.*` | 所有 SWSD Segment 到 F-RCSD carrier 的稳定关系索引，区分 `replaced / replaced+retained_swsd / retained_swsd / failed`。 |
+| `t06_step3_topology_connectivity_audit.*` | Step3 最终道路-节点完整性、正式替换 source 一致性、Segment 内连通、路口映射和挂接质量审计。 |
+| `t06_step3_surface_topology_audit.*` | 可选 surface-assisted closure 审计，记录 T03/T04/T05/T07 surface 对节点闭合的贡献和阻断原因。 |
 
 ## 7. 关键业务步骤
 
@@ -76,12 +84,13 @@ T06 消费 T01 SWSD Segment 与 T05 SWSD-RCSD 语义路口关系，构建 RCSDSe
 | Step2 relation mapping | 用 T05 relation 映射 pair required nodes，optional junc 只做审计和受控约束。 |
 | Step2 buffer candidate | 以 SWSD Segment 50m buffer 筛选 RCSDRoad/RCSDNode 候选。 |
 | Step2 corridor 构建 | 基于 pair required semantic nodes 构建最小 corridor 子图，不直接发布连通分量。 |
-| Step2 pruning / hard audit | 裁剪 out seeds，检查叶子端点、双向 / 单向可达、buffer overlap 和额外 mapped semantic nodes。 |
+| Step2 pruning / hard audit | 裁剪 out seeds，检查叶子端点、双向 / 单向可达、buffer overlap、窄通道视觉连续性和额外 mapped semantic nodes。 |
 | 高等级受限重审 | 对 `0-0* / 0-1*` Segment 的裁剪窗口不足失败，在原始 pair relation 不变时执行受限重审；single 以 RCSD 有向图联通 pair 路口并经过 50m buffer core，dual 优先 adaptive 到 125m，仍失败时可在不跨越额外 mapped semantic nodes 的前提下执行 dual graph-first 双向联通。 |
 | 特殊组门控 | 环岛和复杂路口关联 Segment 必须全组可替换，否则整组移出 replaceable。 |
 | Step2 replacement plan | 把标准 replaceable、特殊组内部对象、path-corridor group replacement 统一发布为 Step3 执行计划。 |
 | Step2 problem registry | 将 rejected、当前 plan 覆盖和 Step2 自动解决的问题登记为可回流上游模块的审计记录。 |
 | Step3 替换 | 按 replacement plan 删除被替换 SWSDRoad 和端点 Node，引入 retained RCSDRoad/RCSDNode；若 Step1 detached junc 仍触达原 SWSDRoad，则以 `source=2` 保留为局部 restriction carrier，并重建语义路口 C。 |
+| Step3 后处理 | 对提前右转、缺失端点、保留 SWSD carrier、surface-assisted node closure 和最终 topology connectivity 做审计或受控补齐，提升 F-RCSD 下游可用性。 |
 
 ## 8. 什么是对
 
@@ -94,6 +103,9 @@ T06 消费 T01 SWSD Segment 与 T05 SWSD-RCSD 语义路口关系，构建 RCSDSe
 - buffer-only probe 若给出非 ambiguous、非人工复核的 `high_confidence_pair_anchor_candidate`，即使 T05 两端已有 anchor 但一端或两端被诊断为 `candidate_anchor_mismatch`，或 T05 两端 pair relation 均缺失但候选 pair 满足高置信安全门槛，也只允许在 T06 当前 Segment 内构造候选 effective relation 并重新执行正式 extractor；重试失败仍保持 rejected，不回写 T05 relation。
 - 单向 `multi_anchor_ambiguous` 只能在 probe 高置信、oriented RCSD pair 与 SWSD Segment 轴向端点侧位一致、且正式试算恰好一个 oriented candidate 通过时自动替换；多个候选通过、无候选通过或硬审计失败必须保持 rejected / 人工复核。
 - Step3 只执行 Step2 replacement plan，不重新判定特殊组或 path-corridor group 可替换性；若标准 replaceable 的 final junc 集合相对 T01 原始 Segment 发生 detached junc 缩减，detached junc 触达的原 SWSDRoad 必须保留为 `source=2` 局部 carrier，并在 relation 中标记 `replaced+retained_swsd`。
+- Step3 relation 中的 `frcsd_road_ids` 只表达正式 RCSD 替换道路清单；保留 SWSD carrier、SWSD 派生 topology supplement 和提前右转挂接补丁必须通过状态、风险标记和审计单独暴露。
+- Surface-assisted closure 只在唯一候选、T04 未 reject、Patch 无冲突、距离和 source 条件可解释时补节点语义或 relation node map；它不能新增替换道路，不能修改原始道路几何。
+- T06 输出必须同时能解释“为什么能替换”和“为什么没有替换”：replacement plan 是执行边界，problem registry 是回流边界，topology audit 是最终 QA 边界。
 
 ## 9. 什么是错
 
@@ -105,8 +117,12 @@ T06 消费 T01 SWSD Segment 与 T05 SWSD-RCSD 语义路口关系，构建 RCSDSe
 - 绕过 Step2 replacement plan 对 rejected Segment 执行 Step3 替换。
 - 将 detached junc 的 `identity_retained_swsd` node map 解释成 RCSD 锚定成功，或因此回写 T05 relation。
 - 因 SWSD/RCSD 原始 `id` 冲突而重写 ID；应依赖 `source` 区分并输出 collision audit。
+- 把保留 SWSD carrier 或 topology supplement 混入正式 RCSD 替换道路清单。
+- 用 surface evidence 绕过 T04 reject、多 RCSD 候选、Patch 冲突或 Step2 可替换性判定。
+- 因宽 buffer 审计通过就忽略窄通道主线断裂风险。
 
 ## 10. 当前治理缺口
 
-- 架构目录仍保留旧 `02-business-rules / 03-input-output-contract / 04-algorithm-strategy`，本轮新增标准 `architecture/04-solution-strategy.md` 后，旧文件应作为兼容参考逐步收敛。
+- 架构目录已收敛为模块级 01-06 主结构，后续新增说明应优先落入 `03-solution-strategy.md`、`04-evidence-and-audit.md` 或 `06-risks-and-technical-debt.md`。
 - Step3 输出的 SWSD-FRCSD Segment relation 需持续与 T09 输入契约保持同步。
+- Step3 topology audit、surface topology audit 与 T10 visual check 已形成多类质量证据，后续需要沉淀为稳定的批量质量看板和上游任务分流口径。

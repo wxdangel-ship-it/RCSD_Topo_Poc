@@ -15,6 +15,9 @@ if str(SRC_ROOT) not in sys.path:
 from rcsd_topo_poc.modules.t06_segment_fusion_precheck import (  # noqa: E402
     run_t06_step3_segment_replacement,
 )
+from rcsd_topo_poc.modules.t06_segment_fusion_precheck.step3_surface_topology_audit import (  # noqa: E402
+    run_surface_topology_postprocess,
+)
 
 
 DEFAULT_SWSD_SEGMENT = "/mnt/d/TestData/POC_Data/first_layer_road_net_v0/T01/segment.gpkg"
@@ -53,6 +56,11 @@ def main() -> int:
         "swsd_nodes_path": _require_file(args.swsd_nodes),
         "rcsdroad_path": rcsdroad,
         "rcsdnode_path": rcsdnode,
+        "t07_surface_path": _optional_file_arg(args.t07_surface),
+        "t03_surface_path": _optional_file_arg(args.t03_surface),
+        "t04_surface_path": _optional_file_arg(args.t04_surface),
+        "t04_audit_path": _optional_file_arg(args.t04_audit),
+        "t05_surface_path": _optional_file_arg(args.t05_surface),
     }
 
     print("[T06 Step3] run segment replacement from Step2 replaceable outputs", flush=True)
@@ -69,6 +77,23 @@ def main() -> int:
         run_id=run_id,
         progress=args.progress,
     )
+    surface_inputs = {
+        key: inputs[key]
+        for key in ("t07_surface_path", "t03_surface_path", "t04_surface_path", "t04_audit_path", "t05_surface_path")
+    }
+    surface_topology = None
+    if any(surface_inputs.values()):
+        surface_topology = run_surface_topology_postprocess(
+            step_root=artifacts.step_root,
+            swsd_segment_path=inputs["swsd_segment_path"],
+            swsd_roads_path=inputs["swsd_roads_path"],
+            t07_surface_path=inputs["t07_surface_path"],
+            t03_surface_path=inputs["t03_surface_path"],
+            t04_surface_path=inputs["t04_surface_path"],
+            t04_audit_path=inputs["t04_audit_path"],
+            t05_surface_path=inputs["t05_surface_path"],
+            apply_closure=args.surface_topology_closure,
+        )
     summary = _read_json(artifacts.summary_path)
     print(
         json.dumps(
@@ -94,6 +119,8 @@ def main() -> int:
                     "node_id_collision_count": summary.get("node_id_collision_count"),
                     "frcsd_road_count": summary.get("frcsd_road_count"),
                     "frcsd_node_count": summary.get("frcsd_node_count"),
+                    "topology_connectivity_fail_count": summary.get("topology_connectivity_fail_count"),
+                    "surface_topology": surface_topology,
                     "outputs": summary.get("outputs"),
                 },
             },
@@ -117,6 +144,12 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--t05-phase2-root", default=DEFAULT_T05_PHASE2_ROOT, help="T05 Phase 2 root containing rcsdroad_out.gpkg and rcsdnode_out.gpkg.")
     parser.add_argument("--rcsdroad", default=None, help="Explicit rcsdroad_out.gpkg path.")
     parser.add_argument("--rcsdnode", default=None, help="Explicit rcsdnode_out.gpkg path.")
+    parser.add_argument("--t07-surface", default=None, help="Optional T07 RCSD intersection anchor surface path.")
+    parser.add_argument("--t03-surface", default=None, help="Optional T03 virtual intersection polygon path.")
+    parser.add_argument("--t04-surface", default=None, help="Optional T04 divmerge virtual anchor surface path.")
+    parser.add_argument("--t04-audit", default=None, help="Optional T04 divmerge virtual anchor surface audit path.")
+    parser.add_argument("--t05-surface", default=None, help="Optional T05 junction anchor surface path.")
+    parser.add_argument("--surface-topology-closure", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--out-root", default=None, help="Output root. Defaults to parent of --t06-run-root.")
     parser.add_argument("--run-id", default=None, help="Run ID. Defaults to basename of --t06-run-root.")
     parser.add_argument("--progress", action=argparse.BooleanOptionalAction, default=True)
@@ -149,6 +182,12 @@ def _require_file(path: str | Path) -> Path:
     if resolved.is_file():
         return resolved
     raise FileNotFoundError(f"input file does not exist: {resolved}")
+
+
+def _optional_file_arg(path: str | None) -> Path | None:
+    if not path:
+        return None
+    return _require_file(path)
 
 
 def _read_json(path: Path) -> dict:

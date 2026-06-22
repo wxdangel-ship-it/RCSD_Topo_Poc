@@ -270,6 +270,7 @@ t10_case_bundle.part_0002_of_000N.txt
 - `t10_upstream_pair_anchor_endpoint_clusters.csv/json`
 - `t10_upstream_feedback_relations.csv/json`
 - `t10_upstream_feedback_relation_summary.csv/json`
+- `t10_t06_visual_check_summary.csv/json`
 - `cases/<case_id>/t10_e2e_case_run_manifest.json`
 - `cases/<case_id>/t10_e2e_case_run_summary.json`
 - `cases/<case_id>/t10_t06_funnel.json`
@@ -277,6 +278,8 @@ t10_case_bundle.part_0002_of_000N.txt
 - `cases/<case_id>/t10_t06_funnel.md`
 - `cases/<case_id>/<stage>/stdout.log`
 - `cases/<case_id>/<stage>/<stage>_stage.json`
+
+顶层 `t10_e2e_run_summary.json` 必须输出机器可读完成口径：`status / passed / started_at_utc / ended_at_utc / duration_seconds / completed_case_count`。`status` 的取值与 Case 汇总状态一致：全部 Case 通过时为 `passed`；存在 `failed` Case 时为 `failed`；不存在失败但存在 `blocked` Case 时为 `blocked`；其它截断或未完整执行口径为 `skipped`。每个 `cases/<case_id>/t10_e2e_case_run_summary.json` 同步输出 `status`，取值等于该 Case 的 `overall_status`。
 
 当 `feedback_iterations > 0` 或脚本环境变量 `T10_FEEDBACK_ITERATIONS > 0` 时，顶层 `<out_root>/<run_id>/` 作为反馈迭代汇总目录；每个 pass 写入：
 
@@ -300,6 +303,12 @@ T06 数据漏斗至少记录：
 - Step2：`input_fusion_unit_count / rcsd_candidate_count / replaceable_count / replacement_plan_count / replacement_plan_ready_count / problem_registry_count / rejected_count / buffer_segment_count / buffer_rejected_count`。
 - Step3：`input_replaceable_count / input_replacement_plan_count / input_standard_replacement_plan_count / replacement_unit_success_count / replacement_unit_failure_count / removed_swsd_road_count / removed_swsd_node_count / added_rcsd_road_count / added_rcsd_node_count / frcsd_road_count / frcsd_node_count / segment_relation_count`。
 - 质量：Step1/Step2 reject reason、Step2 buffer reject reason、replacement plan scope、problem registry status、Step3 collision 与 segment relation 状态计数。
+
+T10 Case runner 在 run root 额外发布 T06 目视检查索引：
+
+- `t10_t06_visual_check_summary.csv/json`：每个 Case 一行，列出目视叠加所需的 T01/T03/T04/T05/T06/T07 GPKG 路径，包括 `t01/segment.gpkg`、`t01/roads.gpkg`、T07 Step3 `nodes.gpkg` 与 `t07_rcsdintersection_anchor_surface.gpkg`、T03 `virtual_intersection_polygons.gpkg`、T04 `divmerge_virtual_anchor_surface.gpkg` 与 `divmerge_virtual_anchor_surface_audit.gpkg`、T05 `junction_anchor_surface.gpkg`、T06 Step2 `t06_rcsd_segment_replaceable.gpkg`、`t06_segment_replacement_plan.gpkg`、`t06_segment_replacement_problem_registry.gpkg`，以及 T06 Step3 `t06_frcsd_road.gpkg`、`t06_frcsd_node.gpkg`、`t06_step3_swsd_frcsd_segment_relation.gpkg`、`t06_step3_topology_connectivity_audit.gpkg`、`t06_step3_surface_topology_audit.gpkg`。
+- 该索引同步记录 Step2/Step3 关键计数、已存在图层 CRS 状态、缺失图层清单、提右道路总数、RCSD/SWSD 提右数量、SWSD 提右与 RCSD 提右几何重叠超过 20% 的疑似重复数量、提右道路端点缺节点数量、全量道路端点缺节点数量。
+- 该索引为 audit-only 产物，只读取既有 GPKG 并生成 CSV/JSON，不改写 road/node/relation，不执行几何修复，不作为 T06 Step3 替换白名单。
 
 T10 Case runner 在 run root 额外发布 T06 上游反馈包：
 
@@ -332,6 +341,7 @@ Relation 级反馈只用于把 T05/T07/T03/T04 的 relation handoff 或 junction
 根目录文件：
 
 - `t10_innernet_full_pipeline_manifest.json`
+- `t10_innernet_full_pipeline_summary.json`
 - `logs/<stage>.log`
 - `t08_preprocess/`
 - `t01_full_data/`
@@ -344,6 +354,30 @@ Relation 级反馈只用于把 T05/T07/T03/T04 的 relation handoff 或 junction
 - `t09_swsd_field_rule_restoration/`
 
 `t10_innernet_full_pipeline_manifest.json` 保留兼容的 flat `inputs / outputs`，同时必须提供阶段级 `stage_order / stages`。每个 `stages.<stage_id>` 至少包含 `stage_id / module_id / status / stdout_log / inputs / outputs / params / execution_context`，用于统一表达 T08、T01、T07 Step1/2、T03、T04、T05、T07 Step3、T06 Step1/2、T06 Step3、T09 的显式 handoff。下游审计应优先消费 `stages`，仅在兼容旧产物时读取 flat `outputs`。
+
+全量 runner 在创建 manifest 时必须先写入 `status=running / passed=false`；进程退出时必须写入 `status / passed / exit_code / finished_at_utc / duration_seconds`。T09 阶段完成且最终 `frcsd_restriction.gpkg` 存在时，`status=passed`；任一阶段命令失败或必要输出缺失时，退出 trap 必须把顶层状态写为 `failed`。`t10_innernet_full_pipeline_summary.json` 是 manifest 的轻量完成判定文件，至少记录 `run_id / run_root / status / passed / exit_code / stage_statuses / missing_final_outputs / t06_frcsd_road / t06_frcsd_node / t09_frcsd_restriction / manifest`。
+
+若既有全量 run 已完成 T09 但缺少 T10 顶层完成状态，可使用同一入口的只收尾模式补写 summary：
+
+```bash
+FINALIZE_EXISTING=1 RESUME_RUN_ROOT=<existing_run_root> bash scripts/t10_run_innernet_full_pipeline.sh
+```
+
+该模式只读取既有 `t10_innernet_full_pipeline_manifest.json`、T06 Step3 F-RCSD Road/Node 和 T09 `frcsd_restriction.gpkg`，不重跑 T01-T09，不修改中间阶段产物。最终三类产物缺任一项时，summary 写为 `status=failed` 并列出 `missing_final_outputs`。
+
+若既有全量 run 已完成前序阶段，但只需从某个模块阶段继续执行，可使用同一入口的阶段续跑模式：
+
+```bash
+RESUME_RUN_ROOT=<existing_run_root> RESUME_FROM_STAGE=t06_step3 bash scripts/t10_run_innernet_full_pipeline.sh
+```
+
+`RESUME_FROM_STAGE` 会从指定阶段开始按正式顺序继续执行到 `t09`；`RUN_STAGES` 可进一步指定精确阶段集合，例如：
+
+```bash
+RESUME_RUN_ROOT=<existing_run_root> RUN_STAGES=t06_step3,t09 bash scripts/t10_run_innernet_full_pipeline.sh
+```
+
+阶段续跑模式不创建新 run root，不重跑未列入 `RUN_STAGES` 的前序阶段；它优先读取既有 manifest 中的 `inputs / outputs` 作为 handoff，缺失时才回退到该全量 runner 的固定目录结构。支持阶段名：`t08_preprocess / t01 / t07_step12 / t03 / t04 / t05 / t07_step3 / t06_step12 / t06_step3 / t09`。最终完整 T10 通过仍以 T06 F-RCSD Road/Node 和 T09 `frcsd_restriction.gpkg` 存在为准。
 
 manifest 至少记录：
 
@@ -397,6 +431,10 @@ bash scripts/t10_run_innernet_full_pipeline.sh
 - `TESTDATA_ROOT`：内网测试数据根目录，默认 `/mnt/d/TestData/POC_Data`。
 - `RUN_ID`：全量执行 run id，未指定时自动生成。
 - `OUT_ROOT`：全量执行输出根目录，默认 `outputs/_work/t10_innernet_full_pipeline`。
+- `FINALIZE_EXISTING`：`1` 时只对既有 `RUN_ID` 补写顶层完成状态，不重跑全量链路。
+- `RESUME_RUN_ROOT`：既有 T10 全量 run root；设置后从该目录读取 manifest 与前序 handoff。
+- `RESUME_FROM_STAGE`：阶段续跑的起始阶段；未设置 `RUN_STAGES` 时，从该阶段顺序执行到 `t09`。
+- `RUN_STAGES`：可选，逗号分隔的精确执行阶段集合；设置后只执行列出的阶段。
 - `RUN_T08`：是否运行 T08 前置阶段，默认 `1`。
 - `RUN_T08_TOOL7` / `RUN_T08_TOOL8`：可选值 `1 / 0 / auto`，默认 `auto`，仅当原始 SW 输入齐全时自动生成 Tool7/Tool8 输出。
 - `RUN_T08_TOOL9`：可选值 `1 / 0 / auto`，默认 `0`，用于显式启用 RCSD 清理前置输出。
@@ -456,3 +494,4 @@ from rcsd_topo_poc.modules.t10_e2e_orchestration import (
 12. Case runner 必须输出每阶段显式输入、输出、命令、状态与日志路径。
 13. T06 已运行时必须输出 `t10_t06_funnel.json/csv/md`。
 14. T05 之后必须执行 `t07_step3`，并把补锚后的 `nodes.gpkg` 作为 T06/T09 的 `t07_nodes` handoff。
+15. Case runner 必须输出 `t10_t06_visual_check_summary.csv/json`，用于固定 T06 目视叠加图层索引和提右快速审计指标。

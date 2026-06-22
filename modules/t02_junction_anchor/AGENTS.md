@@ -1,57 +1,9 @@
-# t02_junction_anchor - AGENTS
+# T02 Agent Guardrails
 
-## 开工前先读
+本文件只保留 `t02_junction_anchor` 的历史模块红线；模块源事实以 `SPEC.md`、`INTERFACE_CONTRACT.md` 与 `architecture/*` 为准。
 
-- 先读 `architecture/01-introduction-and-goals.md`、`architecture/02-constraints.md`、`architecture/04-solution-strategy.md`、`architecture/10-quality-requirements.md`。
-- 再读 `INTERFACE_CONTRACT.md`，确认稳定输入、输出、入口、参数类别和验收标准。
-- 若需要操作者入口，再读 `README.md`。
-- 若需要历史背景，再读 `history/*`。
-
-## 允许改动范围
-
-- 默认可改：
-  - `architecture/*`
-  - `INTERFACE_CONTRACT.md`
-  - `AGENTS.md`
-  - `README.md`
-  - `history/*`
-  - `src/rcsd_topo_poc/modules/t02_junction_anchor/*`
-  - `tests/modules/t02_junction_anchor/*`
-- 若无明确任务，不修改：
-  - T01 文档
-  - stage2 相关实现
-  - 概率 / 置信度定义
-  - 无关公共工具逻辑
-
-## 必做验证
-
-- 改文档前后对照 repo root `AGENTS.md`、`SPEC.md`、项目级治理文档，避免口径冲突。
-- 改 `INTERFACE_CONTRACT.md` 时，必须回看当前 CLI 入口、实现文件和关键测试，确保入口、输出与参数类别没有写错。
-- 触碰 stage1 实现时，至少执行：
-  - 相关 pytest
-  - `git diff --check`
-
-## 必守边界
-
-- 当前已实现 stage1 `DriveZone / has_evd gate`、stage2 `anchor recognition / anchor existence` 与 stage3 `virtual intersection anchoring` baseline。
-- `t02-virtual-intersection-poc` 当前是 stage3 baseline 入口：
-  - `case-package` 是唯一正式验收基线
-  - `full-input` 仅用于完整数据 `fixture / dev-only / regression`
-- 单 `mainnodeid` 文本证据包当前是 stage3 复核与外部复现支撑工具，不等于新的业务阶段或正式产线批处理方案。
-- 最终唯一锚定决策、概率 / 置信度、误伤捞回、环岛新规则都不在当前正式实现范围。
-- `mainnode` 可作为业务概念名，但 stage1 正式输入字段只能是 `mainnodeid`。
-- `working_mainnodeid` 不得作为 stage1 正式输入字段写回契约或强规则。
-- `s_grade` 逻辑字段只允许显式兼容 `s_grade / sgrade`。
-- `has_evd` 必须保持 `yes/no/null` 业务语义。
-- stage1 `summary` 除 `0-0双 / 0-1双 / 0-2双` 外，还必须补充 `all__d_sgrade`。
-- stage2 只处理 `has_evd = yes` 的路口组；其它组 `is_anchor = null`。
-- `is_anchor` 只允许 `yes / no / fail1 / fail2 / null`。
-- `node_error_1 -> fail1`，`node_error_2 -> fail2`，且 `fail2` 优先于 `fail1`。
-- 不允许 silent skip；异常必须留痕。
-- 未经用户明确允许，不修改 T01 文档。
-
-## 相邻模块关系
-
-- T01 是 T02 的上游事实源之一，当前提供 `segment` 与 `nodes`。
-- T02 当前是 T01 之后的 stage1 / stage2 / stage3 baseline 模块，不承担最终概率型锚定决策。
-- 若发现 T01 文档、T02 契约与现实现有冲突，先停下并汇报，再决定如何调整。
+- T02 已 Retired，只保留历史实现、历史入口、baseline 和证据包追溯价值。
+- 不把 T02 历史能力重新写成当前主业务链需求。
+- `t02-virtual-intersection-poc` 仅是历史 stage3 baseline 入口；`case-package` 是历史验收基线。
+- 不把 `working_mainnodeid`、概率 / 置信度、误伤捞回或环岛新规则写回 T02 历史正式契约。
+- 未经明确任务，不修改 T01 文档或无关公共工具逻辑。

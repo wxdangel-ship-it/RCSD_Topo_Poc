@@ -121,6 +121,15 @@ def buffer_failed_threshold_value(result: BufferSegmentResult, config: BufferExt
             "max_geometry_buffer_mismatch_ratio": config.max_geometry_buffer_mismatch_ratio,
             "min_geometry_buffer_mismatch_length_m": config.min_geometry_buffer_mismatch_length_m,
         }
+    if result.reason in {
+        "retained_geometry_outside_swsd_visual_consistency_scope",
+        "swsd_visual_continuity_not_covered_by_retained_rcsd",
+    }:
+        return {
+            "visual_consistency_buffer_distance_m": config.visual_consistency_buffer_distance_m,
+            "max_visual_consistency_mismatch_ratio": config.max_visual_consistency_mismatch_ratio,
+            "min_visual_consistency_mismatch_length_m": config.min_visual_consistency_mismatch_length_m,
+        }
     return None
 
 
@@ -226,7 +235,12 @@ def _root_cause_category(
         return "candidate_pruned_to_empty_by_hard_rules"
     if reason == "retained_road_buffer_overlap_insufficient":
         return "retained_road_outside_buffer_scope"
-    if reason in {"retained_geometry_outside_swsd_buffer_scope", "swsd_geometry_not_covered_by_retained_rcsd"}:
+    if reason in {
+        "retained_geometry_outside_swsd_buffer_scope",
+        "swsd_geometry_not_covered_by_retained_rcsd",
+        "retained_geometry_outside_swsd_visual_consistency_scope",
+        "swsd_visual_continuity_not_covered_by_retained_rcsd",
+    }:
         return "retained_geometry_buffer_coverage_mismatch"
     return "buffer_extraction_rule_rejected"
 

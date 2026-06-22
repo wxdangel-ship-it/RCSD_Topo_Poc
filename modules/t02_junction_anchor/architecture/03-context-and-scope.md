@@ -1,12 +1,14 @@
 # 03 上下文与范围
 
-## 当前上下文
+> 当前项目级生命周期中，T02 已 Retired。本文档保留历史上下文与历史范围，用于解释旧实现边界；当前主业务链不再以 T02 作为正式 handoff 模块。
 
-- T02 位于 T01 之后。
-- T01 负责整理双向 Segment 相关上游事实；T02 当前承担资料 gate、anchor recognition，以及 stage3 `virtual intersection anchoring`。
-- T02 不是最终锚定模块终局形态；当前正式 baseline 闭环覆盖 stage1 / stage2 / stage3，但仍未进入最终唯一锚定决策闭环。
+## 历史上下文
 
-## 当前范围
+- T02 历史上位于 T01 之后。
+- T01 负责整理双向 Segment 相关上游事实；T02 历史上承担资料 gate、anchor recognition，以及 stage3 `virtual intersection anchoring`。
+- T02 不是最终锚定模块终局形态；历史正式 baseline 闭环覆盖 stage1 / stage2 / stage3，但仍未进入最终唯一锚定决策闭环。
+
+## 历史范围
 
 - 读取 T01 `segment`
 - 读取 T01 `nodes`
@@ -22,7 +24,7 @@
 - 处理单 `mainnodeid` 的 `roads / RCSDRoad / RCSDNode`
 - 输出虚拟路口面、RC 关联、状态、批次汇总与文本证据包支撑产物
 
-## 当前范围外
+## 历史范围外
 
 - 最终唯一锚定决策结果
 - 正式产线级全量虚拟路口批处理

@@ -1,28 +1,26 @@
-# 01 Introduction And Goals
+# 01 引言与目标
 
-## 目标
+## 1. 文档定位
 
-T05 整体分为两个独立阶段：
+本文件说明 T05 的架构背景、目标和边界。模块需求以 `SPEC.md` 为准，稳定接口以 `INTERFACE_CONTRACT.md` 为准，Phase 1 / Phase 2 实现策略见 `03-solution-strategy.md`。
 
-- Phase 1：路口面融合发布。
-- Phase 2：RCSD 打断、预处理与 SWSD-RCSD 关系生产。
+## 2. 模块定位
 
-当前模块实现 Phase 1 与 Phase 2。Phase 1 把已锚定到 SWSD 语义路口的既有 RCSDIntersection / T03 / T04 路口面候选融合成统一发布层 `junction_anchor_surface.gpkg`，并提供可追溯 audit 与 summary；Phase 2 消费 Phase 1 成果、final nodes、原始 RCSDRoad/RCSDNode 与 T07/T03/T04 relation evidence，输出 `intersection_match_all.geojson`、copy-on-write RCSD 网络成果与 junctionization audit。旧 T02 evidence 仅作为兼容输入保留。
+T05 是项目路口 1:1 关系层的统一发布模块。T07、T03、T04 分别解决已有路口面、常规虚拟路口和复杂虚拟路口的锚定证据；T05 将这些证据收口为统一路口面、SWSD-RCSD 语义路口关系主表和 copy-on-write RCSD 网络成果。
 
-## 成功判据
+## 3. 目标
 
-- 只消费 formal accepted surface candidate。
-- 不发布无法解析 `mainnodeid` 的未锚定路口面。
-- 输出 CRS 固定为 `EPSG:3857`。
-- 主图层字段固定为 7 字段 schema。
-- 多源合并规则可解释、可审计。
-- Phase 1 不输出关系表，不打断 RCSDRoad，不新增 RCSDNode；Phase 2 的 RCSDRoad / RCSDNode 变化只通过 copy-on-write 输出表达。
-- 不新增 repo CLI 或长期入口。
+- Phase 1 将多来源 accepted surface 归一、分组、融合并发布为 `junction_anchor_surface.gpkg`。
+- Phase 2 消费 relation evidence、final nodes 和 RCSDRoad/RCSDNode，发布 `intersection_match_all.geojson`。
+- 对 road-only、multi-RCSDNode、复杂路口、环岛和 T07 relation-only target 执行可审计 junctionization。
+- 保证一个 SWSD `target_id` 在最终关系主表中最多只有一条成功 relation。
 
-## 当前非目标
+## 4. 非目标
 
-- 不在 Phase 1 建立 SWSD-RCSD 最终关系。
-- 不在 Phase 1 处理 RCSD-only / support-only 的拓扑改造。
-- 不回头修改 T02/T03/T04 路口面几何生成逻辑。
-- 不把 relation evidence 当作 Phase 1 主输入。
-- Phase 2 不重新融合路口面，不修改 Phase 1 成果，不原地修改输入 RCSDRoad / RCSDNode / nodes。
+- Phase 1 不建立最终关系表，不打断 RCSDRoad，不新增 RCSDNode。
+- Phase 2 不重新融合路口面，不原地修改输入 RCSDRoad/RCSDNode，不回改 T07/T03/T04 主链。
+- T10 feedback 只能作为补充证据，不单独创建 SWSD-RCSD relation。
+
+## 5. 架构边界
+
+T05 的 Phase 1 代码由 `normalizer.py`、`fusion.py`、`outputs.py`、`runner.py` 等模块承载；Phase 2 由 `phase2_runner.py`、relation evidence、junctionization、cardinality 和 graph consumability 审计相关模块承载。内网脚本只负责组织输入与调用，不改变模块契约。

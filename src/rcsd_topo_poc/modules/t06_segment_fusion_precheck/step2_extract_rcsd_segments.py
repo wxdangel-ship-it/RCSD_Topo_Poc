@@ -967,9 +967,29 @@ def run_t06_step2_extract_rcsd_segments(
             if adaptive_plan is not None and auto_pair_anchor_original_relation is None:
                 adaptive_success = False
                 adaptive_failure_category = _adaptive_buffer_failure_category(buffer_result.reason, diagnostic)
-                for adaptive_distance_m in adaptive_plan.distances_m:
+                adaptive_attempts: tuple[float | None, ...] = adaptive_plan.distances_m
+                if directionality == "dual":
+                    adaptive_attempts = (*adaptive_attempts, None)
+                for adaptive_distance_m in adaptive_attempts:
                     src_reason = buffer_result.reason
-                    if directionality == "single":
+                    if adaptive_distance_m is None:
+                        graph = graph_retry.retry_dual_bidirectional(
+                            segment.get("geometry"),
+                            relation,
+                            optional_allowed_rcsd_nodes,
+                            unexpected_base_ids_for_segment,
+                            segment_props.get("sgrade") or props.get("sgrade"),
+                            buffer_result,
+                            diagnostic,
+                            buffer_config,
+                            max_coarse_length_ratio,
+                        )
+                        if graph is None:
+                            continue
+                        r = graph.buffer_result
+                        adaptive_distance_m = graph.reference_distance_m
+                        src_reason = graph.source_reason
+                    elif directionality == "single":
                         graph = graph_retry.retry(
                             segment.get("geometry"),
                             relation,
@@ -1291,10 +1311,16 @@ def run_t06_step2_extract_rcsd_segments(
         group_replacement_audit_rows = pre_gate_group_replacement_audit_rows
     replacement_plan_rows = _build_replacement_plan_rows(
         replaceable_rows=replaceable_rows,
+        rejected_rows=rejected_rows,
+        buffer_rejected_rows=buffer_rejected_rows,
+        failure_business_audit_rows=failure_business_audit_rows,
         special_group_rows=special_group_rows,
         group_replacement_audit_rows=group_replacement_audit_rows,
         rcsd_roads=rcsd_roads,
         rcsd_node_canonicalizer=rcsd_node_canonicalizer,
+        swsd_segments=list(segments.values()),
+        swsd_nodes=swsd_node_features,
+        rcsd_nodes=rcsd_node_features,
     )
     problem_registry_rows = _build_problem_registry_rows(
         rejected_rows=rejected_rows,
@@ -1374,6 +1400,9 @@ def run_t06_step2_extract_rcsd_segments(
                 "advance_right_formway_bit": advance_right_formway_bit,
                 "max_geometry_buffer_mismatch_ratio": buffer_config.max_geometry_buffer_mismatch_ratio,
                 "min_geometry_buffer_mismatch_length_m": buffer_config.min_geometry_buffer_mismatch_length_m,
+                "visual_consistency_buffer_distance_m": buffer_config.visual_consistency_buffer_distance_m,
+                "max_visual_consistency_mismatch_ratio": buffer_config.max_visual_consistency_mismatch_ratio,
+                "min_visual_consistency_mismatch_length_m": buffer_config.min_visual_consistency_mismatch_length_m,
             },
             "input_fusion_unit_count": len(fusion_units),
             "relation_success_count": relation_success_count,
@@ -1503,6 +1532,9 @@ def _buffer_config_with_distance(config: BufferExtractionConfig, distance_m: flo
         advance_right_formway_bit=config.advance_right_formway_bit,
         max_geometry_buffer_mismatch_ratio=config.max_geometry_buffer_mismatch_ratio,
         min_geometry_buffer_mismatch_length_m=config.min_geometry_buffer_mismatch_length_m,
+        visual_consistency_buffer_distance_m=config.visual_consistency_buffer_distance_m,
+        max_visual_consistency_mismatch_ratio=config.max_visual_consistency_mismatch_ratio,
+        min_visual_consistency_mismatch_length_m=config.min_visual_consistency_mismatch_length_m,
     )
 
 
@@ -1519,7 +1551,12 @@ def _annotate_adaptive_buffer_metadata(
 
 
 def _adaptive_buffer_failure_category(reason: str, diagnostic: dict[str, Any]) -> str:
-    if reason in {"retained_geometry_outside_swsd_buffer_scope", "swsd_geometry_not_covered_by_retained_rcsd"}:
+    if reason in {
+        "retained_geometry_outside_swsd_buffer_scope",
+        "swsd_geometry_not_covered_by_retained_rcsd",
+        "retained_geometry_outside_swsd_visual_consistency_scope",
+        "swsd_visual_continuity_not_covered_by_retained_rcsd",
+    }:
         return "geometry_shape_mismatch"
     if diagnostic.get("full_graph_status") == "required_nodes_connected":
         return "rcsd_graph_break_inside_buffer"

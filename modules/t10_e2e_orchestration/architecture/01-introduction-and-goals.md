@@ -1,22 +1,29 @@
-# 01 Introduction And Goals
+# 01 引言与目标
 
-## 1. 目标
+## 1. 文档定位
 
-T10 的目标是为 RCSD_Topo 建立端到端业务流程编排与 Case 级证据组织能力。
+本文件说明 T10 的架构背景、目标和边界。模块需求以 `SPEC.md` 为准，稳定接口以 `INTERFACE_CONTRACT.md` 为准，编排与 Case 证据策略见 `03-solution-strategy.md`。
 
-v1 目标：
+## 2. 模块定位
 
-- 固化 Case runner `T01 -> T07 Step1/2 -> T03 -> T04 -> T05 -> T07 Step3 -> T06 -> T09` 编排链路。
-- 明确 T08 独立前置运行，不由 T10 v1 callable 或 Case runner 调用；内网全量总控可把 T08 作为独立前置阶段串联。
-- 建立显式文件级 handoff slot。
-- 建立以 SWSD 语义路口 ID 和半径为范围的 Case evidence package manifest。
-- 建立 Case 候选建议、多个 CaseID 打包、自动分片和解包重组能力。
+T10 是端到端业务流程编排与 Case 级证据组织模块。它不定义 T01-T09 的算法规则，也不替代项目级主业务链。T10 的价值在于把外部输入、模块 handoff、Case package、Case replay、feedback、visual check、full pipeline manifest 和 summary 组织成可追溯的证据链。
 
-## 2. 成功标准
+## 3. 目标
 
-- 能生成稳定 workflow plan。
-- 能审计目录型 handoff 并报错。
-- 能生成只包含外部输入、不包含模块间中间产物的 Case package manifest。
-- 能从 SWSD semantic junction inventory 与 selector evidence 生成候选 Case。
-- 多 Case 包解包后能恢复 `cases/<case_id>/` 目录。
-- 不新增未登记执行入口。
+- 固化 T10 v1 Case runner 编排范围：`T01 -> T07 Step1/2 -> T03 -> T04 -> T05 -> T07 Step3 -> T06 -> T09`。
+- 以 SWSD semantic junction id 组织 Case package 和本地 replay。
+- 为每个阶段记录显式输入、输出、命令、日志、状态和耗时。
+- 输出 T06 funnel、visual check summary 和 upstream feedback package。
+- 支持 innernet full pipeline 的阶段级 manifest、summary、resume 和 finalize-existing。
+
+## 4. 非目标
+
+- 不改变项目级主业务链。
+- T10 v1 callable 与 Case runner 不调用 T08。
+- 不修改 T01-T09 算法。
+- 不把 feedback 直接变成 Step3 替换白名单。
+- 不把未执行的内网操作表述为已执行。
+
+## 5. 架构边界
+
+T10 有三个层级：Case package / Case runner 面向局部复现；feedback 和 visual check 面向 Case 证据与上游迭代；innernet full pipeline 脚本面向全量阶段总控。三者都只组织调用和证据，不改变模块算法。

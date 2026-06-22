@@ -2,9 +2,10 @@
 
 ## 1. 文档定位
 - 状态：`accepted baseline contract / revised alignment`
-- 本文件只固化稳定输入、稳定输出、官方入口、关键参数类别、continuation 约束与验收口径。
-- 具体阶段语义、节点重分类规则、gate / barrier / arbitration 细节以 `/mnt/e/Work/RCSD_Topo_Poc/modules/t01_data_preprocess/architecture/06-accepted-baseline.md` 为准。
-- `README.md` 只承担操作者入口与索引，不替代本文件与 accepted baseline。
+- 本文件固化稳定输入、稳定输出、官方入口、关键参数类别、continuation 约束与验收口径。
+- 模块需求以 `SPEC.md` 为准；架构设计与实现策略以 `architecture/01-introduction-and-goals.md` 至 `architecture/06-risks-and-technical-debt.md` 为准。
+- 具体阶段语义、节点重分类规则、gate / barrier / arbitration 的已确认 baseline 补充见 `architecture/accepted-baseline.md`。
+- `README.md` 只承担操作者入口与索引，不替代本文件、`SPEC.md` 与架构文档。
 - repo root `scripts/t01_*.sh` 属于环境 / 交付辅助，不作为模块 steady-state 契约主表面。
 
 ## 2. 官方输入契约

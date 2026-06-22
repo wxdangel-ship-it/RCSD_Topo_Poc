@@ -1,57 +1,9 @@
-# <module_id> - AGENTS
+# <module_id> Agent Guardrails
 
-## 开工前先读
+本文件是可选的 Agent 局部红线，不是模块源事实，也不是模块启动必建文档。
 
-- 先对照 repo root `AGENTS.md`、`docs/doc-governance/README.md` 与 `SPEC.md`，确认项目级边界、阅读链路和当前模块登记口径。
-- 先读 `README.md`，确认凝练版需求说明、输入输出和对错边界。
-- 再读 `architecture/04-solution-strategy.md`，确认详细版需求说明和每个业务步骤如何落地。
-- 再读 `INTERFACE_CONTRACT.md`，确认稳定输入、输出、参数类别和验收标准。
-- 若需要治理摘要，再读 `review-summary.md`。
-- 如需标准可复用流程，应创建 repo root `.agents/skills/<skill-name>/SKILL.md`，而不是在模块根目录新建 `SKILL.md`。
-
-## Day-0 最少文档集
-
-- 必建：
-  - `AGENTS.md`
-  - `README.md`
-  - `INTERFACE_CONTRACT.md`
-  - `architecture/01-introduction-and-goals.md`
-  - `architecture/03-context-and-scope.md`
-  - `architecture/04-solution-strategy.md`
-- 建议尽早补齐：
-  - `architecture/02-constraints.md`
-  - `architecture/05-building-block-view.md`
-  - `architecture/10-quality-requirements.md`
-  - `architecture/11-risks-and-technical-debt.md`
-  - `architecture/12-glossary.md`
-- 模块成熟后再补：
-  - `review-summary.md`
-  - `history/`
-- `scripts/` 不是默认必建项；若需要新增可执行入口，必须先满足 repo root `AGENTS.md` 的入口治理规则。
-
-## 允许改动范围
-
-- 默认只改本目录下文档：`architecture/*`、`INTERFACE_CONTRACT.md`、`AGENTS.md`、`README.md`、`review-summary.md`。
-- 若无明确任务，不修改 `src/`、`tests/`、`scripts/`、`outputs/`、`data/`。
-- 不跨模块改动其它 `INTERFACE_CONTRACT.md`。
-
-## 必做验证
-
-- 改文档前后对照 repo root `AGENTS.md`、`SPEC.md` 与项目级 `docs/architecture/*`，避免口径冲突。
-- 修改 contract 时，必须回看本模块实现入口与关键测试，确认入口、输出与参数类别没有写错。
-- 若本模块官方入口走 repo-level CLI 或 root `scripts/`，必须同步检查 `docs/repository-metadata/entrypoint-registry.md` 是否需要更新。
-- 提交前至少执行 `git diff --check`。
-
-## 禁做事项
-
-- 不把 `AGENTS.md` 写成模块真相主表面。
-- 不把 `README.md` 写成运行教程集合；它首先是凝练版需求说明。
-- 不把 `architecture/04-solution-strategy.md` 写成伪代码堆砌；每个步骤必须有中文业务说明。
-- 不在没有明确任务书的情况下扩写为业务实现计划。
-- 不在模块根目录新增 `SKILL.md`。
-- 不把 `README.md`、`review-summary.md` 或临时样例说明写成 source-of-truth。
-
-## 相邻模块关系
-
-- 本文件应在模块具体化时补充上下游关系。
-- 如发现与相邻模块或项目级源事实冲突，先停止并汇报。
+- 仓库级硬规则继承 repo root `AGENTS.md`。
+- 模块需求以 `SPEC.md` 为准；接口契约以 `INTERFACE_CONTRACT.md` 为准；架构设计以 `architecture/*` 为准。
+- 只有当模块存在项目级规则无法覆盖的特殊红线时，才保留本文件。
+- 不在模块根目录新增 `SKILL.md`；可复用流程统一放 repo root `.agents/skills/`。
+- 新增 repo CLI、root `scripts/`、Makefile 目标、模块 `run.py` 或模块 `__main__.py` 前，必须先满足 repo root 入口治理规则。

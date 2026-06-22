@@ -43,6 +43,73 @@ T10_E2E_STAGE_MODULES = {
     "t09_step3": "t09_swsd_field_rule_restoration",
 }
 
+T10_T06_VISUAL_CHECK_SCHEMA_VERSION = "2026-06-20.t06_visual_check.v1"
+
+T10_T06_VISUAL_CHECK_FIELDNAMES = (
+    "case_id",
+    "status",
+    "case_run_dir",
+    "t06_run_root",
+    "t01_segment_gpkg",
+    "t01_roads_gpkg",
+    "t07_nodes_gpkg",
+    "t07_surface_gpkg",
+    "t03_surface_gpkg",
+    "t04_surface_gpkg",
+    "t04_audit_gpkg",
+    "t05_junction_surface_gpkg",
+    "t06_rcsd_segment_replaceable_gpkg",
+    "t06_segment_replacement_plan_gpkg",
+    "t06_segment_replacement_problem_registry_gpkg",
+    "t06_frcsd_road_gpkg",
+    "t06_frcsd_node_gpkg",
+    "t06_segment_relation_gpkg",
+    "t06_topology_connectivity_audit_gpkg",
+    "t06_surface_topology_audit_gpkg",
+    "step2_replaceable_count",
+    "step2_replacement_plan_count",
+    "step2_replacement_plan_ready_count",
+    "step2_problem_registry_count",
+    "step2_rejected_count",
+    "step3_replacement_unit_success_count",
+    "step3_replacement_unit_failure_count",
+    "step3_removed_swsd_road_count",
+    "step3_added_rcsd_road_count",
+    "step3_frcsd_road_count",
+    "step3_frcsd_node_count",
+    "crs_status",
+    "crs_values",
+    "missing_visual_layer_count",
+    "missing_visual_layers",
+    "advance_right_count",
+    "advance_right_rcsd_count",
+    "advance_right_swsd_count",
+    "swsd_advance_duplicate_ge20pct_count",
+    "advance_endpoint_missing_road_count",
+    "all_endpoint_missing_road_count",
+    "spatial_check_status",
+    "spatial_check_error",
+)
+
+T10_T06_VISUAL_LAYER_ROLES = {
+    "t01_segment_gpkg": "SWSD Segment source layer for baseline overlay.",
+    "t01_roads_gpkg": "SWSD Road source layer before T06 replacement.",
+    "t07_nodes_gpkg": "SWSD/F-RCSD node handoff consumed by T06.",
+    "t07_surface_gpkg": "T07 semantic junction surface for F-RCSD anchor review.",
+    "t03_surface_gpkg": "T03 virtual intersection surface for visual overlay.",
+    "t04_surface_gpkg": "T04 divmerge virtual surface for grade-separated anchor review.",
+    "t04_audit_gpkg": "T04 surface audit; rejected rows block non-1:1 closure.",
+    "t05_junction_surface_gpkg": "T05 fused junction surface consumed by T06 surface topology closure.",
+    "t06_rcsd_segment_replaceable_gpkg": "T06 Step2 replaceable RCSD segment evidence.",
+    "t06_segment_replacement_plan_gpkg": "T06 Step2 formal replacement plan.",
+    "t06_segment_replacement_problem_registry_gpkg": "T06 Step2 retained or blocked Segment reasons.",
+    "t06_frcsd_road_gpkg": "T06 Step3 final F-RCSD Road layer for visual overlay.",
+    "t06_frcsd_node_gpkg": "T06 Step3 final F-RCSD Node layer for endpoint attachment checks.",
+    "t06_segment_relation_gpkg": "T06 Step3 SWSD Segment to F-RCSD relation evidence.",
+    "t06_topology_connectivity_audit_gpkg": "T06 Step3 final topology connectivity hard-gate audit.",
+    "t06_surface_topology_audit_gpkg": "T06 Step3 surface-assisted junction closure audit.",
+}
+
 
 @dataclass(frozen=True)
 class T10E2ECaseRunArtifacts:
@@ -58,6 +125,8 @@ class T10E2ECaseRunArtifacts:
     upstream_side_group_candidates_csv: Path
     upstream_side_group_endpoint_candidates_csv: Path
     upstream_pair_anchor_endpoint_clusters_csv: Path
+    t06_visual_check_summary_json: Path
+    t06_visual_check_summary_csv: Path
 
 
 def run_t10_e2e_cases_from_package(
@@ -100,6 +169,8 @@ def run_t10_e2e_cases_from_package(
     effective_run_id = run_id or _default_run_id()
     run_root = Path(out_root).expanduser().resolve() / effective_run_id
     run_root.mkdir(parents=True, exist_ok=True)
+    started = time.perf_counter()
+    started_at = _now_text()
 
     repo_root = _repo_root()
     python_bin = _python_bin(repo_root)
@@ -128,11 +199,20 @@ def run_t10_e2e_cases_from_package(
             break
 
     upstream_feedback = write_t10_upstream_feedback(run_root=run_root, case_results=case_results)
+    visual_check = _write_t06_visual_check_summary(run_root=run_root, case_results=case_results)
+    ended_at = _now_text()
+    duration_seconds = round(time.perf_counter() - started, 6)
+    run_status = _overall_run_status(case_results)
     manifest = {
         "module_id": T10_MODULE_ID,
         "runner": "run_t10_e2e_cases_from_package",
         "run_id": effective_run_id,
         "produced_at_utc": _now_text(),
+        "started_at_utc": started_at,
+        "ended_at_utc": ended_at,
+        "duration_seconds": duration_seconds,
+        "status": run_status,
+        "passed": run_status == "passed",
         "package_dir": str(package_root),
         "run_root": str(run_root),
         "repo_root": str(repo_root),
@@ -165,19 +245,30 @@ def run_t10_e2e_cases_from_package(
             "side_group_endpoint_candidate_count": upstream_feedback.side_group_endpoint_candidate_count,
             "pair_anchor_endpoint_cluster_count": upstream_feedback.pair_anchor_endpoint_cluster_count,
         },
+        "t06_visual_check": {
+            "summary_csv": str(visual_check["csv_path"]),
+            "summary_json": str(visual_check["json_path"]),
+            "case_count": len(visual_check["rows"]),
+            "schema_version": visual_check["schema_version"],
+        },
         "qa": _runner_qa(case_results),
     }
     summary = {
         "module_id": T10_MODULE_ID,
         "run_id": effective_run_id,
+        "status": run_status,
         "package_dir": str(package_root),
         "run_root": str(run_root),
+        "started_at_utc": started_at,
+        "ended_at_utc": ended_at,
+        "duration_seconds": duration_seconds,
         "case_count": len(case_results),
+        "completed_case_count": len(case_results),
         "passed_case_count": sum(1 for item in case_results if item["overall_status"] == "passed"),
         "failed_case_count": sum(1 for item in case_results if item["overall_status"] == "failed"),
         "blocked_case_count": sum(1 for item in case_results if item["overall_status"] == "blocked"),
         "skipped_case_count": sum(1 for item in case_results if item["overall_status"] == "skipped"),
-        "passed": bool(case_results) and all(item["overall_status"] == "passed" for item in case_results),
+        "passed": run_status == "passed",
         "exit_on_incomplete": exit_on_incomplete,
         "upstream_feedback_segment_count": upstream_feedback.segment_count,
         "upstream_feedback_relation_count": upstream_feedback.relation_count,
@@ -191,6 +282,9 @@ def run_t10_e2e_cases_from_package(
         "upstream_side_group_endpoint_candidates_csv": str(upstream_feedback.side_group_endpoint_candidates_csv),
         "upstream_pair_anchor_endpoint_cluster_count": upstream_feedback.pair_anchor_endpoint_cluster_count,
         "upstream_pair_anchor_endpoint_clusters_csv": str(upstream_feedback.pair_anchor_endpoint_clusters_csv),
+        "t06_visual_check_summary_json": str(visual_check["json_path"]),
+        "t06_visual_check_summary_csv": str(visual_check["csv_path"]),
+        "t06_visual_check_case_count": len(visual_check["rows"]),
     }
     manifest_path = run_root / "t10_e2e_run_manifest.json"
     summary_path = run_root / "t10_e2e_run_summary.json"
@@ -209,6 +303,8 @@ def run_t10_e2e_cases_from_package(
         upstream_side_group_candidates_csv=upstream_feedback.side_group_candidates_csv,
         upstream_side_group_endpoint_candidates_csv=upstream_feedback.side_group_endpoint_candidates_csv,
         upstream_pair_anchor_endpoint_clusters_csv=upstream_feedback.pair_anchor_endpoint_clusters_csv,
+        t06_visual_check_summary_json=visual_check["json_path"],
+        t06_visual_check_summary_csv=visual_check["csv_path"],
     )
 
 
@@ -228,6 +324,8 @@ def _run_t10_e2e_feedback_iterations_from_package(
     run_root = Path(out_root).expanduser().resolve() / effective_run_id
     iterations_root = run_root / "iterations"
     run_root.mkdir(parents=True, exist_ok=True)
+    started = time.perf_counter()
+    started_at = _now_text()
     current_side_group_candidates = _path_from(t10_side_group_endpoint_candidates)
     current_pair_anchor_clusters = _path_from(t10_pair_anchor_endpoint_clusters)
     iteration_records: list[dict[str, Any]] = []
@@ -274,6 +372,9 @@ def _run_t10_e2e_feedback_iterations_from_package(
             "upstream_pair_anchor_endpoint_clusters_csv": summary.get(
                 "upstream_pair_anchor_endpoint_clusters_csv", ""
             ),
+            "t06_visual_check_summary_json": summary.get("t06_visual_check_summary_json", ""),
+            "t06_visual_check_summary_csv": summary.get("t06_visual_check_summary_csv", ""),
+            "t06_visual_check_case_count": summary.get("t06_visual_check_case_count", 0),
         }
         iteration_records.append(record)
         iteration_artifacts.append(artifacts)
@@ -329,6 +430,7 @@ def _run_t10_e2e_feedback_iterations_from_package(
     baseline_artifacts = iteration_artifacts[0]
     final_artifacts = iteration_artifacts[-1]
     final_summary = _read_json(final_artifacts.summary_json)
+    final_status = str(final_summary.get("status") or ("passed" if final_summary.get("passed") else "failed"))
     comparison = _compare_feedback_iteration_outputs(
         baseline_run_root=baseline_artifacts.run_root,
         final_run_root=final_artifacts.run_root,
@@ -337,11 +439,19 @@ def _run_t10_e2e_feedback_iterations_from_package(
         not comparison["removed_replaced_segment_ids"]
         and not comparison["removed_replacement_plan_segment_ids"]
     )
+    run_status = final_status if regression_guard_passed else "failed"
+    ended_at = _now_text()
+    duration_seconds = round(time.perf_counter() - started, 6)
     manifest = {
         "module_id": T10_MODULE_ID,
         "runner": "run_t10_e2e_cases_from_package",
         "run_id": effective_run_id,
         "produced_at_utc": _now_text(),
+        "started_at_utc": started_at,
+        "ended_at_utc": ended_at,
+        "duration_seconds": duration_seconds,
+        "status": run_status,
+        "passed": run_status == "passed",
         "package_dir": str(Path(package_dir).expanduser().resolve()),
         "run_root": str(run_root),
         "feedback_iteration_mode": True,
@@ -363,8 +473,12 @@ def _run_t10_e2e_feedback_iterations_from_package(
     summary = {
         "module_id": T10_MODULE_ID,
         "run_id": effective_run_id,
+        "status": run_status,
         "package_dir": str(Path(package_dir).expanduser().resolve()),
         "run_root": str(run_root),
+        "started_at_utc": started_at,
+        "ended_at_utc": ended_at,
+        "duration_seconds": duration_seconds,
         "feedback_iteration_mode": True,
         "feedback_iteration_requested_count": feedback_iterations,
         "feedback_iteration_pass_count": len(iteration_records),
@@ -372,11 +486,12 @@ def _run_t10_e2e_feedback_iterations_from_package(
         "feedback_regression_guard_passed": regression_guard_passed,
         "feedback_comparison": comparison,
         "case_count": final_summary.get("case_count", 0),
+        "completed_case_count": final_summary.get("completed_case_count", final_summary.get("case_count", 0)),
         "passed_case_count": final_summary.get("passed_case_count", 0),
         "failed_case_count": final_summary.get("failed_case_count", 0),
         "blocked_case_count": final_summary.get("blocked_case_count", 0),
         "skipped_case_count": final_summary.get("skipped_case_count", 0),
-        "passed": bool(final_summary.get("passed")) and regression_guard_passed,
+        "passed": run_status == "passed",
         "exit_on_incomplete": exit_on_incomplete,
         "upstream_feedback_segment_count": final_summary.get("upstream_feedback_segment_count", 0),
         "upstream_feedback_relation_count": final_summary.get("upstream_feedback_relation_count", 0),
@@ -400,6 +515,9 @@ def _run_t10_e2e_feedback_iterations_from_package(
         "upstream_pair_anchor_endpoint_clusters_csv": final_summary.get(
             "upstream_pair_anchor_endpoint_clusters_csv", ""
         ),
+        "t06_visual_check_summary_json": final_summary.get("t06_visual_check_summary_json", ""),
+        "t06_visual_check_summary_csv": final_summary.get("t06_visual_check_summary_csv", ""),
+        "t06_visual_check_case_count": final_summary.get("t06_visual_check_case_count", 0),
     }
     manifest_path = run_root / "t10_e2e_run_manifest.json"
     summary_path = run_root / "t10_e2e_run_summary.json"
@@ -418,6 +536,8 @@ def _run_t10_e2e_feedback_iterations_from_package(
         upstream_side_group_candidates_csv=final_artifacts.upstream_side_group_candidates_csv,
         upstream_side_group_endpoint_candidates_csv=final_artifacts.upstream_side_group_endpoint_candidates_csv,
         upstream_pair_anchor_endpoint_clusters_csv=final_artifacts.upstream_pair_anchor_endpoint_clusters_csv,
+        t06_visual_check_summary_json=final_artifacts.t06_visual_check_summary_json,
+        t06_visual_check_summary_csv=final_artifacts.t06_visual_check_summary_csv,
     )
 
 
@@ -497,6 +617,7 @@ def _run_one_case(
         "module_id": T10_MODULE_ID,
         "runner": "run_t10_e2e_cases_from_package",
         "case_id": case_id,
+        "status": overall_status,
         "case_dir": str(case_dir),
         "package_root": str(package_root),
         "case_run_dir": str(case_run_dir),
@@ -518,6 +639,7 @@ def _run_one_case(
     case_summary = {
         "module_id": T10_MODULE_ID,
         "case_id": case_id,
+        "status": overall_status,
         "overall_status": overall_status,
         "passed": overall_status == "passed",
         "stage_statuses": {record["stage_id"]: record["status"] for record in stage_records},
@@ -965,8 +1087,14 @@ def _run_t06_step3(
         "t07_nodes": _path_from(handoffs.get("t07_nodes")),
         "t05_rcsdroad_out": _path_from(handoffs.get("t05_rcsdroad_out")),
         "t05_rcsdnode_out": _path_from(handoffs.get("t05_rcsdnode_out")),
+        "t07_surface": _path_from(handoffs.get("t07_surface")),
+        "t03_surface": _path_from(handoffs.get("t03_surface")),
+        "t04_surface": _path_from(handoffs.get("t04_surface")),
+        "t04_audit": _path_from(handoffs.get("t04_audit")),
+        "t05_junction_surface": _path_from(handoffs.get("t05_junction_surface")),
     }
-    missing = _missing_files(inputs)
+    required_inputs = {key: inputs[key] for key in ("t06_step2_replaceable", "t01_segment", "t01_roads", "t07_nodes", "t05_rcsdroad_out", "t05_rcsdnode_out")}
+    missing = _missing_files(required_inputs)
     if missing:
         return _blocked_record("t06_step3", stage_dir, "Missing T06 Step3 inputs.", inputs=inputs, missing=missing), {}
     if t06_run_root is None or not t06_run_root.is_dir():
@@ -992,16 +1120,31 @@ def _run_t06_step3(
         t06_run_root.name,
         "--no-progress",
     ]
+    for arg_name, input_key in (
+        ("--t07-surface", "t07_surface"),
+        ("--t03-surface", "t03_surface"),
+        ("--t04-surface", "t04_surface"),
+        ("--t04-audit", "t04_audit"),
+        ("--t05-surface", "t05_junction_surface"),
+    ):
+        value = inputs.get(input_key)
+        if value and value.is_file():
+            command.extend([arg_name, str(value)])
+    command.append("--surface-topology-closure")
     record = _execute_command("t06_step3", stage_dir, repo_root, command, {}, inputs)
     record["execution_context"] = _paths_payload({"t06_run_root": t06_run_root})
     step3_root = t06_run_root / "step3_segment_replacement"
+    has_surface_inputs = any(inputs.get(key) for key in ("t07_surface", "t03_surface", "t04_surface", "t04_audit", "t05_junction_surface"))
     produced = {
         "t06_step3_root": _path_text(step3_root),
         "t06_frcsd_road": _path_text(step3_root / "t06_frcsd_road.gpkg"),
         "t06_frcsd_node": _path_text(step3_root / "t06_frcsd_node.gpkg"),
         "t06_swsd_frcsd_segment_relation": _path_text(step3_root / "t06_step3_swsd_frcsd_segment_relation.gpkg"),
+        "t06_topology_connectivity_audit": _path_text(step3_root / "t06_step3_topology_connectivity_audit.gpkg"),
         "t06_step3_summary": _path_text(step3_root / "t06_step3_summary.json"),
     }
+    if has_surface_inputs:
+        produced["t06_surface_topology_audit"] = _path_text(step3_root / "t06_step3_surface_topology_audit.gpkg")
     _attach_outputs(record, produced)
     return record, produced
 
@@ -1147,6 +1290,204 @@ def _write_t06_funnel(
     _write_funnel_csv(csv_path, summary)
     _write_funnel_md(md_path, summary)
     return {"json_path": json_path, "csv_path": csv_path, "md_path": md_path, "summary": summary}
+
+
+def _write_t06_visual_check_summary(
+    *,
+    run_root: Path,
+    case_results: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    rows = [_build_t06_visual_check_row(case_result) for case_result in case_results]
+    json_path = run_root / "t10_t06_visual_check_summary.json"
+    csv_path = run_root / "t10_t06_visual_check_summary.csv"
+    payload = {
+        "schema_version": T10_T06_VISUAL_CHECK_SCHEMA_VERSION,
+        "generated_at_utc": _now_text(),
+        "run_root": str(run_root),
+        "case_count": len(rows),
+        "fieldnames": list(T10_T06_VISUAL_CHECK_FIELDNAMES),
+        "visual_layer_roles": T10_T06_VISUAL_LAYER_ROLES,
+        "qa": {
+            "crs_and_transform": "Each listed visual layer is read with explicit CRS metadata; spatial metrics are evaluated in EPSG:3857.",
+            "topology_silent_fix": False,
+            "geometry_semantics": "The summary indexes visual overlay layers and reports endpoint or duplicate evidence; it does not modify geometry.",
+            "audit_traceability": "Every row records the case run directory and the exact T01/T06 GPKG paths used for inspection.",
+            "performance_verifiability": "The summary records per-case counts and spatial check status; T10 run summary keeps total duration.",
+        },
+        "rows": rows,
+    }
+    _write_json(json_path, payload)
+    _write_visual_check_csv(csv_path, rows)
+    return {
+        "schema_version": T10_T06_VISUAL_CHECK_SCHEMA_VERSION,
+        "json_path": json_path,
+        "csv_path": csv_path,
+        "rows": rows,
+    }
+
+
+def _build_t06_visual_check_row(case_result: Mapping[str, Any]) -> dict[str, Any]:
+    case_id = str(case_result.get("case_id") or "")
+    case_run_dir = _case_run_dir_from_result(case_result)
+    t06_run_root = case_run_dir / "t06_step12" / "t06" if case_run_dir else None
+    step2_root = t06_run_root / "step2_extract_rcsd_segments" if t06_run_root else None
+    step3_root = t06_run_root / "step3_segment_replacement" if t06_run_root else None
+    step2 = _read_json_if_file(step2_root / "t06_step2_summary.json" if step2_root else None)
+    step3 = _read_json_if_file(step3_root / "t06_step3_summary.json" if step3_root else None)
+    visual_paths = _t06_visual_paths(case_run_dir=case_run_dir, t06_run_root=t06_run_root)
+    missing_layers = [key for key, path in visual_paths.items() if not path.is_file()]
+    row: dict[str, Any] = {
+        "case_id": case_id,
+        "status": str(case_result.get("overall_status") or case_result.get("status") or ""),
+        "case_run_dir": str(case_run_dir) if case_run_dir else "",
+        "t06_run_root": str(t06_run_root) if t06_run_root and t06_run_root.exists() else "",
+        "step2_replaceable_count": step2.get("replaceable_count", ""),
+        "step2_replacement_plan_count": step2.get("replacement_plan_count", ""),
+        "step2_replacement_plan_ready_count": step2.get("replacement_plan_ready_count", ""),
+        "step2_problem_registry_count": step2.get("problem_registry_count", ""),
+        "step2_rejected_count": step2.get("rejected_count", ""),
+        "step3_replacement_unit_success_count": step3.get("replacement_unit_success_count", ""),
+        "step3_replacement_unit_failure_count": step3.get("replacement_unit_failure_count", ""),
+        "step3_removed_swsd_road_count": step3.get("removed_swsd_road_count", ""),
+        "step3_added_rcsd_road_count": step3.get("added_rcsd_road_count", ""),
+        "step3_frcsd_road_count": step3.get("frcsd_road_count", ""),
+        "step3_frcsd_node_count": step3.get("frcsd_node_count", ""),
+        "crs_status": "not_run",
+        "crs_values": "",
+        "missing_visual_layer_count": len(missing_layers),
+        "missing_visual_layers": "|".join(missing_layers),
+        "advance_right_count": "",
+        "advance_right_rcsd_count": "",
+        "advance_right_swsd_count": "",
+        "swsd_advance_duplicate_ge20pct_count": "",
+        "advance_endpoint_missing_road_count": "",
+        "all_endpoint_missing_road_count": "",
+        "spatial_check_status": "not_run",
+        "spatial_check_error": "",
+    }
+    for key, path in visual_paths.items():
+        row[key] = str(path) if path.is_file() else ""
+    row.update(_t06_visual_spatial_metrics(visual_paths))
+    return row
+
+
+def _case_run_dir_from_result(case_result: Mapping[str, Any]) -> Path | None:
+    raw_dir = str(case_result.get("case_run_dir") or "").strip()
+    if raw_dir:
+        return Path(raw_dir).expanduser().resolve()
+    raw_summary = str(case_result.get("case_run_summary_path") or "").strip()
+    if raw_summary:
+        return Path(raw_summary).expanduser().resolve().parent
+    return None
+
+
+def _t06_visual_paths(*, case_run_dir: Path | None, t06_run_root: Path | None) -> dict[str, Path]:
+    empty = Path("")
+    if case_run_dir is None or t06_run_root is None:
+        return {key: empty for key in T10_T06_VISUAL_LAYER_ROLES}
+    step2_root = t06_run_root / "step2_extract_rcsd_segments"
+    step3_root = t06_run_root / "step3_segment_replacement"
+    return {
+        "t01_segment_gpkg": case_run_dir / "t01" / "segment.gpkg",
+        "t01_roads_gpkg": case_run_dir / "t01" / "roads.gpkg",
+        "t07_nodes_gpkg": case_run_dir / "t07_step3" / "t07_step3" / "step3_intersection_match" / "nodes.gpkg",
+        "t07_surface_gpkg": case_run_dir
+        / "t07_step3"
+        / "t07_step3"
+        / "step3_intersection_match"
+        / "t07_rcsdintersection_anchor_surface.gpkg",
+        "t03_surface_gpkg": case_run_dir / "t03" / "t03" / "virtual_intersection_polygons.gpkg",
+        "t04_surface_gpkg": case_run_dir / "t04" / "t04" / "divmerge_virtual_anchor_surface.gpkg",
+        "t04_audit_gpkg": case_run_dir / "t04" / "t04" / "divmerge_virtual_anchor_surface_audit.gpkg",
+        "t05_junction_surface_gpkg": case_run_dir / "t05" / "t05_phase1" / "junction_anchor_surface.gpkg",
+        "t06_rcsd_segment_replaceable_gpkg": step2_root / "t06_rcsd_segment_replaceable.gpkg",
+        "t06_segment_replacement_plan_gpkg": step2_root / "t06_segment_replacement_plan.gpkg",
+        "t06_segment_replacement_problem_registry_gpkg": step2_root
+        / "t06_segment_replacement_problem_registry.gpkg",
+        "t06_frcsd_road_gpkg": step3_root / "t06_frcsd_road.gpkg",
+        "t06_frcsd_node_gpkg": step3_root / "t06_frcsd_node.gpkg",
+        "t06_segment_relation_gpkg": step3_root / "t06_step3_swsd_frcsd_segment_relation.gpkg",
+        "t06_topology_connectivity_audit_gpkg": step3_root / "t06_step3_topology_connectivity_audit.gpkg",
+        "t06_surface_topology_audit_gpkg": step3_root / "t06_step3_surface_topology_audit.gpkg",
+    }
+
+
+def _t06_visual_spatial_metrics(visual_paths: Mapping[str, Path]) -> dict[str, Any]:
+    existing_paths = {key: path for key, path in visual_paths.items() if path.is_file()}
+    if not existing_paths:
+        return {}
+    try:
+        from rcsd_topo_poc.modules.t06_segment_fusion_precheck.road_attributes import (
+            is_advance_right_turn_road,
+            is_near_advance_right_turn_duplicate,
+        )
+        from rcsd_topo_poc.modules.t08_preprocess.vector_io import read_vector
+    except Exception as exc:  # noqa: BLE001 - summary must remain best-effort.
+        return {"spatial_check_status": "error", "spatial_check_error": f"import_error:{type(exc).__name__}:{exc}"}
+
+    crs_values: dict[str, str] = {}
+    spatial_status = "passed"
+    spatial_error = ""
+    try:
+        for key, path in existing_paths.items():
+            crs_values[key] = _vector_source_crs_text(path)
+        road_path = existing_paths.get("t06_frcsd_road_gpkg")
+        node_path = existing_paths.get("t06_frcsd_node_gpkg")
+        if road_path is None or node_path is None:
+            spatial_status = "missing_required_layers"
+            return {
+                "crs_status": _crs_status(crs_values),
+                "crs_values": json.dumps(crs_values, ensure_ascii=False, sort_keys=True),
+                "spatial_check_status": spatial_status,
+                "spatial_check_error": spatial_error,
+            }
+        roads = read_vector(road_path, target_epsg=3857).features
+        nodes = read_vector(node_path, target_epsg=3857).features
+        node_ids = {_id_text(feature.properties.get("id")) for feature in nodes}
+        advance_features = [
+            feature for feature in roads if is_advance_right_turn_road(dict(feature.properties))
+        ]
+        rcsd_advance_geometries = [
+            feature.geometry
+            for feature in advance_features
+            if _source_text(feature.properties.get("source")) == "1"
+        ]
+        swsd_advance_features = [
+            feature
+            for feature in advance_features
+            if _source_text(feature.properties.get("source")) == "2"
+        ]
+        duplicate_count = sum(
+            1
+            for feature in swsd_advance_features
+            if is_near_advance_right_turn_duplicate(
+                dict(feature.properties),
+                feature.geometry,
+                rcsd_advance_geometries,
+                min_covered_ratio=0.2,
+            )
+        )
+        advance_missing = sum(1 for feature in advance_features if _road_endpoint_missing(feature.properties, node_ids))
+        all_missing = sum(1 for feature in roads if _road_endpoint_missing(feature.properties, node_ids))
+        return {
+            "crs_status": _crs_status(crs_values),
+            "crs_values": json.dumps(crs_values, ensure_ascii=False, sort_keys=True),
+            "advance_right_count": len(advance_features),
+            "advance_right_rcsd_count": len(rcsd_advance_geometries),
+            "advance_right_swsd_count": len(swsd_advance_features),
+            "swsd_advance_duplicate_ge20pct_count": duplicate_count,
+            "advance_endpoint_missing_road_count": advance_missing,
+            "all_endpoint_missing_road_count": all_missing,
+            "spatial_check_status": spatial_status,
+            "spatial_check_error": spatial_error,
+        }
+    except Exception as exc:  # noqa: BLE001 - visual summary must not hide runner outputs.
+        return {
+            "crs_status": _crs_status(crs_values),
+            "crs_values": json.dumps(crs_values, ensure_ascii=False, sort_keys=True),
+            "spatial_check_status": "error",
+            "spatial_check_error": f"{type(exc).__name__}:{exc}",
+        }
 
 
 def build_t10_t06_funnel_summary(
@@ -1505,6 +1846,19 @@ def _overall_case_status(stage_records: Sequence[Mapping[str, Any]], stage_limit
     return "passed" if all(status == "passed" for status in statuses) else "skipped"
 
 
+def _overall_run_status(case_results: Sequence[Mapping[str, Any]]) -> str:
+    statuses = [str(item.get("overall_status") or "") for item in case_results]
+    if not statuses:
+        return "skipped"
+    if any(status == "failed" for status in statuses):
+        return "failed"
+    if any(status == "blocked" for status in statuses):
+        return "blocked"
+    if all(status == "passed" for status in statuses):
+        return "passed"
+    return "skipped"
+
+
 def _runner_qa(case_results: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     return {
         "crs_and_transform": "T10 does not transform data in the runner; CRS audit comes from package slicing and module summaries.",
@@ -1567,6 +1921,84 @@ def _write_funnel_csv(path: Path, summary: Mapping[str, Any]) -> None:
                     "value": "" if row.get("value") is None else row.get("value"),
                 }
             )
+
+
+def _write_visual_check_csv(path: Path, rows: Sequence[Mapping[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8", newline="") as fp:
+        writer = csv.DictWriter(fp, fieldnames=T10_T06_VISUAL_CHECK_FIELDNAMES)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(
+                {
+                    field: _csv_value(row.get(field, ""))
+                    for field in T10_T06_VISUAL_CHECK_FIELDNAMES
+                }
+            )
+
+
+def _csv_value(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, (dict, list, tuple, set)):
+        return json.dumps(value, ensure_ascii=False, sort_keys=True)
+    return str(value)
+
+
+def _vector_source_crs_text(path: Path) -> str:
+    import fiona
+    from pyproj import CRS
+
+    with fiona.open(str(path)) as source:
+        crs_wkt = getattr(source, "crs_wkt", None)
+        crs_mapping = getattr(source, "crs", None)
+        if crs_wkt:
+            return _crs_text(CRS.from_wkt(crs_wkt))
+        if crs_mapping:
+            return _crs_text(CRS.from_user_input(crs_mapping))
+    return "NONSPATIAL"
+
+
+def _crs_text(value: Any) -> str:
+    try:
+        authority = value.to_authority()
+    except Exception:
+        authority = None
+    if authority:
+        return f"{authority[0]}:{authority[1]}"
+    try:
+        return value.to_string()
+    except Exception:
+        return str(value)
+
+
+def _crs_status(crs_values: Mapping[str, str]) -> str:
+    if not crs_values:
+        return "not_run"
+    allowed = {"EPSG:3857", "NONSPATIAL"}
+    return "passed" if all(str(value).upper() in allowed for value in crs_values.values()) else "failed"
+
+
+def _road_endpoint_missing(properties: Mapping[str, Any], node_ids: set[str]) -> bool:
+    snode = _id_text(properties.get("snodeid"))
+    enode = _id_text(properties.get("enodeid"))
+    return bool((snode and snode not in node_ids) or (enode and enode not in node_ids))
+
+
+def _id_text(value: Any) -> str:
+    if value in (None, ""):
+        return ""
+    try:
+        number = float(str(value).strip())
+    except Exception:
+        return str(value).strip()
+    if number.is_integer():
+        return str(int(number))
+    return str(value).strip()
+
+
+def _source_text(value: Any) -> str:
+    return _id_text(value)
 
 
 def _write_funnel_md(path: Path, summary: Mapping[str, Any]) -> None:

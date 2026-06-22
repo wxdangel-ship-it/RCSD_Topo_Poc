@@ -124,7 +124,7 @@ def _candidate_from_row(
         return None
 
     source_segment_id = _safe_id(props.get("swsd_segment_id"))
-    segment_ids = _parse_list(props.get("path_corridor_group_segment_ids"))
+    segment_ids = _path_corridor_replacement_segment_ids(props)
     rcsd_road_ids = _parse_list(props.get("group_probe_rcsd_road_ids"))
     if not source_segment_id or not segment_ids or not rcsd_road_ids:
         return None
@@ -266,6 +266,12 @@ def _parse_list(value: Any) -> list[str]:
         return parse_id_list(value, allow_empty=True)
     except ParseError:
         return []
+
+
+def _path_corridor_replacement_segment_ids(props: dict[str, Any]) -> list[str]:
+    segment_ids = _parse_list(props.get("path_corridor_group_segment_ids"))
+    blocked_segment_ids = set(_parse_list(props.get("path_corridor_blocked_segment_ids")))
+    return [segment_id for segment_id in segment_ids if segment_id not in blocked_segment_ids]
 
 
 def _safe_id(value: Any) -> str:

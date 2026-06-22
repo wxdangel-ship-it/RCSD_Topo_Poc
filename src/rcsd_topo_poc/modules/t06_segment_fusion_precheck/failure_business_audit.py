@@ -213,7 +213,12 @@ def failure_business_category(
         return "multi_anchor_ambiguous"
     if probe_result.status == "corridor_found_with_anchor_mismatch":
         return "pair_anchor_mismatch"
-    if reason in {"retained_geometry_outside_swsd_buffer_scope", "swsd_geometry_not_covered_by_retained_rcsd"}:
+    if reason in {
+        "retained_geometry_outside_swsd_buffer_scope",
+        "swsd_geometry_not_covered_by_retained_rcsd",
+        "retained_geometry_outside_swsd_visual_consistency_scope",
+        "swsd_visual_continuity_not_covered_by_retained_rcsd",
+    }:
         return "geometry_shape_mismatch"
     root_cause = (diagnostic or {}).get("root_cause_category")
     if root_cause in {"full_rcsd_graph_required_nodes_disconnected", "buffer_candidate_required_nodes_disconnected", "full_rcsd_graph_missing_required_nodes"}:

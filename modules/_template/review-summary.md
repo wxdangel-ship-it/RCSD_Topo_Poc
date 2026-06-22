@@ -5,27 +5,30 @@
 - 当前模块：`modules/<module_id>`
 - 当前角色：`<补充>`
 - 当前文档分层：
-  - `architecture/*`：长期真相
+  - `SPEC.md`：模块需求
+  - `architecture/*`：架构设计
   - `INTERFACE_CONTRACT.md`：稳定契约
-  - `AGENTS.md`：稳定工作规则
+  - `AGENTS.md`：可选 Agent 局部红线
   - repo root `.agents/skills/<skill-name>/SKILL.md`：标准可复用流程
-  - `README.md`：操作者总览
+  - `README.md`：模块阅读入口
 
 ## 当前标准文档面
 
 ### 启动时必建
 
-- `AGENTS.md`
+- `SPEC.md`
+- `README.md`
 - `INTERFACE_CONTRACT.md`
 - `architecture/01-introduction-and-goals.md`
-- `architecture/03-context-and-scope.md`
-- `architecture/04-solution-strategy.md`
+- `architecture/03-solution-strategy.md`
 
 ### 建议尽早补齐
 
-- `README.md`
-- `architecture/05-building-block-view.md`
-- `architecture/10-quality-requirements.md`
+- `architecture/02-data-and-domain-model.md`
+- `architecture/04-evidence-and-audit.md`
+- `architecture/05-quality-requirements.md`
+- `architecture/06-risks-and-technical-debt.md`
+- `AGENTS.md`（仅当模块存在项目级规则无法覆盖的特殊红线时）
 
 ### 模块成熟后补齐
 

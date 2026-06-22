@@ -1,24 +1,29 @@
-# 01 Introduction And Goals
+# 01 引言与目标
 
-## 1. 模块目标
+## 1. 文档定位
 
-T09 的目标是把 SWSD 现场通行规则证据还原为可审计的路口级规则，并把显式禁止通行关系恢复到 F-RCSD 承载网络。
+本文件说明 T09 的架构背景、目标和边界。模块需求以 `SPEC.md` 为准，稳定接口以 `INTERFACE_CONTRACT.md` 为准，Step1-Step3 实现策略见 `03-solution-strategy.md`。
 
-## 2. 业务目标
+## 2. 模块定位
 
-1. 基于 SWSD Node / Road 与 T01 Segment 构建语义路口 Arm 和 Arm-to-Arm Movement。
-2. 基于 T08 Tool7 restriction 和 Tool8 arrow 还原现场禁止通行证据、箭头证据和冲突证据。
-3. 基于 T06 SWSD-FRCSD Segment relation，把已确认 SWSD 禁止关系投影到 F-RCSD `LinkID -> outLinkID`。
+T09 是当前主链中从融合拓扑走向通行能力恢复的正式模块。它基于 SWSD restriction、Laneinfo arrow、SWSD Road/Node、T01 Segment 与 T06 F-RCSD 承载关系，还原现场路口级通行规则，并把显式禁止通行规则投影为 F-RCSD `LinkID -> outLinkID` restriction。
 
-## 3. 成功标准
+## 3. 目标
 
-- 读者可从 `README.md` 理解 T09 做什么、输入输出是什么、什么是对和错。
-- 读者可从 `04-solution-strategy.md` 理解 Step1/2/3 每一步如何落地。
-- AI 或审计者可从 `INTERFACE_CONTRACT.md` 确认稳定输入、输出、callable 和验收口径。
+- Step1 构建 SWSD Arm 和 Movement 候选。
+- Step2 用 restriction、arrow 和 special carrier 还原 Movement 级现场规则。
+- Step3 使用 T06 SWSD-FRCSD Segment relation 将显式禁止规则投影到 F-RCSD。
+- 支持 retained SWSD seed carrier fallback，并以风险标记暴露。
+- 输出 GPKG / CSV / JSON 与 summary，服务 T10 Case 证据和人工复核。
 
-## 4. 当前非目标
+## 4. 非目标
 
 - 不生成 F-RCSD `RoadNextRoad`。
-- 不以 F-RCSD 独立 Arm 构建替代 T06 relation-first 策略。
-- 不补充 RCSD Laneinfo 或轨迹证据。
-- 不修改上游或输入数据。
+- 不以 F-RCSD 独立 Arm 构建作为主策略。
+- 不消费 F-RCSD Laneinfo 或轨迹通行证据。
+- 不修改 T06、T08、SWSD 或 F-RCSD 输入。
+- 不新增 repo 官方 CLI 或主 runner 脚本。
+
+## 5. 架构边界
+
+T09 主业务通过模块 callable 执行。`scripts/t09_export_step3_input_text_bundle_innernet.sh` 只用于 Step3 输入证据包导出和解包，不替代 T09 Step1/2/3 主业务 callable。

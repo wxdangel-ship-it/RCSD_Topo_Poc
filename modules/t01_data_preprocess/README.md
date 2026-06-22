@@ -1,47 +1,51 @@
 # T01 数据预处理模块
 
-本文件是 T01 的模块阅读入口和文档索引。凝练版业务需求见 `SPEC.md`，详细业务落地见 `architecture/04-solution-strategy.md`，稳定接口见 `INTERFACE_CONTRACT.md`。
+本文件是 T01 的模块阅读入口。模块需求见 `SPEC.md`，稳定接口见 `INTERFACE_CONTRACT.md`，架构设计见 `architecture/01-introduction-and-goals.md` 至 `architecture/06-risks-and-technical-debt.md`。
 
 ## 1. 当前状态
 
 - 生命周期：Active。
-- 当前主职责：构建 SWSD 双向与单向 Segment。
+- 当前主职责：把 T08 预处理后的 SWSD `nodes / roads` 构建为 SWSD Segment。
 - 上游：T08 预处理后的 SWSD `nodes / roads`。
-- 下游：T06 Segment 替换、T09 通行规则恢复。
+- 下游：T06 Segment 替换前检查与替换执行、T09 SWSD 字段与通行规则恢复。
 
 ## 2. 文档职责
 
 | 文档 | 承载内容 |
 |---|---|
-| `SPEC.md` | 凝练版模块业务需求：目标、范围、上下游、输入输出、关键步骤和对错边界。 |
-| `architecture/04-solution-strategy.md` | 详细版需求 / 落地策略：Step1-Step6 与单向补段如何落地。 |
-| `INTERFACE_CONTRACT.md` | 稳定输入、输出、入口、参数类别、freeze compare 与验收口径。 |
-| `architecture/06-accepted-baseline.md` | 当前 accepted baseline 业务口径。 |
-| `architecture/05-building-block-view.md` | 实现构件职责映射。 |
-| `architecture/10-quality-requirements.md` | 质量、审计、GIS / 拓扑和性能要求。 |
-| `architecture/11-risks-and-technical-debt.md` | 当前风险与技术债。 |
+| `SPEC.md` | 模块需求：业务目标、范围、上下游、输入输出、关键步骤、对错边界。 |
+| `INTERFACE_CONTRACT.md` | 稳定接口：官方输入输出、CLI 入口、关键参数类别、continuation 约束、验收口径。 |
+| `architecture/01-introduction-and-goals.md` | 架构背景、目标和边界。 |
+| `architecture/02-data-and-domain-model.md` | 业务对象、数据关系和字段语义。 |
+| `architecture/03-solution-strategy.md` | 需求具体实现策略：Step1-Step6、单向补段、freeze compare 如何落地。 |
+| `architecture/04-evidence-and-audit.md` | 运行证据、审计产物和回归基线。 |
+| `architecture/05-quality-requirements.md` | 质量要求、GIS / 拓扑 / 性能检查要求。 |
+| `architecture/06-risks-and-technical-debt.md` | 当前风险、技术债和治理缺口。 |
+| `architecture/accepted-baseline.md` | 已确认 baseline 的补充说明；作为当前业务口径补充，不占用 01-06 主结构编号。 |
 
 ## 3. 当前入口位置
 
-T01 官方入口采用 repo-level CLI 子命令，具体命令、参数和辅助脚本边界以 `INTERFACE_CONTRACT.md` 为准。
+T01 官方入口采用 repo-level CLI 子命令，具体命令、参数和辅助脚本边界以 `INTERFACE_CONTRACT.md` 与 `docs/repository-metadata/entrypoint-registry.md` 为准。
 
 常用入口类别：
 
 - official end-to-end：`t01-run-skill-v1`
 - oneway continuation：`t01-continue-oneway-segment`
 - freeze compare：`t01-compare-freeze`
-- 分步 / 调试入口：见 `INTERFACE_CONTRACT.md`
+- 分步 / 调试入口：`t01-step1-pair-poc`、`t01-step2-segment-poc`、`t01-s2-refresh-node-road`、`t01-step4-residual-graph`、`t01-step5-staged-residual-graph`、`t01-step6-segment-aggregation-poc`
+
+repo root `scripts/t01_run_full_data.sh` 与 `scripts/t01_run_full_data_skill_v1.sh` 是交付和环境辅助脚本，不替代模块官方 CLI 契约。
 
 ## 4. 阅读顺序
 
 1. `SPEC.md`
-2. `architecture/04-solution-strategy.md`
-3. `INTERFACE_CONTRACT.md`
-4. `architecture/06-accepted-baseline.md`
-5. `architecture/05-building-block-view.md`
-6. `architecture/10-quality-requirements.md`
-7. `architecture/11-risks-and-technical-debt.md`
-8. `AGENTS.md`
+2. `INTERFACE_CONTRACT.md`
+3. `architecture/03-solution-strategy.md`
+4. `architecture/02-data-and-domain-model.md`
+5. `architecture/04-evidence-and-audit.md`
+6. `architecture/05-quality-requirements.md`
+7. `architecture/06-risks-and-technical-debt.md`
+8. `architecture/accepted-baseline.md`
 
 ## 5. 入口治理提示
 

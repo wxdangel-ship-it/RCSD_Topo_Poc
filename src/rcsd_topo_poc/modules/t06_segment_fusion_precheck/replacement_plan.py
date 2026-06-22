@@ -8,17 +8,45 @@ from .parsing import ParseError, normalize_id, parse_id_list, unique_preserve_or
 from .schemas import feature
 
 
+MAX_FORMAL_REPLACEMENT_BUFFER_M = 75.0
+MIN_VISUAL_REPAIR_GEOMETRY_OVERLAP_RATIO = 0.65
+MAX_RETAINED_JUNCTION_ATTACHMENT_GAP_M = 20.0
+MAX_REPLACED_JUNCTION_MAPPING_DIVERGENCE_M = 5.0
+
+
 def build_replacement_plan_rows(
     *,
     replaceable_rows: list[dict[str, Any]],
+    rejected_rows: list[dict[str, Any]] | None = None,
+    buffer_rejected_rows: list[dict[str, Any]] | None = None,
+    failure_business_audit_rows: list[dict[str, Any]] | None = None,
     special_group_rows: list[dict[str, Any]],
     group_replacement_audit_rows: list[dict[str, Any]],
     rcsd_roads: list[dict[str, Any]],
     rcsd_node_canonicalizer: NodeCanonicalizer,
+    swsd_segments: list[dict[str, Any]] | None = None,
+    swsd_nodes: list[dict[str, Any]] | None = None,
+    rcsd_nodes: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     rcsd_road_by_id = _index_by_id(rcsd_roads)
+    rcsd_node_by_id = _index_by_id(rcsd_nodes or [])
+    replaceable_segment_ids = {_safe_id((row.get("properties") or {}).get("swsd_segment_id")) for row in replaceable_rows}
+    pair_anchor_bridges = _pair_anchor_bridges_by_segment(failure_business_audit_rows or [])
+    reverse_blockers = _reverse_pair_blockers(
+        rejected_rows or [],
+        failure_business_audit_rows or [],
+        replaceable_segment_ids=replaceable_segment_ids,
+    )
     rows: list[dict[str, Any]] = []
-    rows.extend(_standard_plan_rows(replaceable_rows))
+    rows.extend(
+        _standard_plan_rows(
+            replaceable_rows,
+            reverse_blockers=reverse_blockers,
+            pair_anchor_bridges=pair_anchor_bridges,
+            rcsd_road_by_id=rcsd_road_by_id,
+            rcsd_node_canonicalizer=rcsd_node_canonicalizer,
+        )
+    )
     rows.extend(
         _group_replacement_plan_rows(
             group_replacement_audit_rows,
@@ -26,7 +54,22 @@ def build_replacement_plan_rows(
             rcsd_node_canonicalizer=rcsd_node_canonicalizer,
         )
     )
+    rows.extend(
+        _visual_consistency_repair_plan_rows(
+            buffer_rejected_rows or [],
+            rejected_rows or [],
+            failure_business_audit_rows or [],
+            planned_segment_ids=_ready_plan_segment_ids(rows),
+        )
+    )
     rows.extend(_special_group_plan_rows(special_group_rows))
+    _apply_junction_alignment_plan_gate(
+        rows,
+        swsd_segments=swsd_segments or [],
+        swsd_nodes=swsd_nodes or [],
+        rcsd_node_by_id=rcsd_node_by_id,
+        rcsd_road_by_id=rcsd_road_by_id,
+    )
     return rows
 
 
@@ -125,7 +168,14 @@ def build_problem_registry_rows(
     return rows
 
 
-def _standard_plan_rows(replaceable_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _standard_plan_rows(
+    replaceable_rows: list[dict[str, Any]],
+    *,
+    reverse_blockers: dict[tuple[str, str], dict[str, str]],
+    pair_anchor_bridges: dict[str, dict[str, Any]],
+    rcsd_road_by_id: dict[str, dict[str, Any]],
+    rcsd_node_canonicalizer: NodeCanonicalizer,
+) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for row in replaceable_rows:
         props = dict(row.get("properties") or {})
@@ -133,36 +183,87 @@ def _standard_plan_rows(replaceable_rows: list[dict[str, Any]]) -> list[dict[str
         if not segment_id:
             continue
         strategy = str(props.get("replacement_strategy") or "buffer_segment_extraction")
+        pair_nodes = _parse_list(props.get("swsd_pair_nodes"))
+        reverse_blocker = _blocker_for_pair(pair_nodes, reverse_blockers)
+        bridge = pair_anchor_bridges.get(segment_id, {})
+        pair_anchor_bridge_road_ids = [
+            road_id for road_id in _parse_list(bridge.get("road_ids")) if road_id in rcsd_road_by_id
+        ]
+        rcsd_road_ids = unique_preserve_order([*_parse_list(props.get("rcsd_road_ids")), *pair_anchor_bridge_road_ids])
+        buffer_distances = _parse_float_list(props.get("adaptive_buffer_distance_m"))
+        buffer_distance_blocked = bool(buffer_distances and max(buffer_distances) > MAX_FORMAL_REPLACEMENT_BUFFER_M)
+        retained_node_ids = unique_preserve_order(
+            [
+                *_parse_list(props.get("retained_node_ids")),
+                *_canonical_road_endpoint_ids(pair_anchor_bridge_road_ids, rcsd_road_by_id, rcsd_node_canonicalizer),
+            ]
+        )
+        plan_status = "blocked" if reverse_blocker or buffer_distance_blocked else "ready"
+        action = "hold" if plan_status == "blocked" else "replace"
+        if reverse_blocker:
+            reason = reverse_blocker.get("reason", strategy)
+        elif buffer_distance_blocked:
+            reason = "adaptive_buffer_exceeds_topology_connectivity_gate"
+        else:
+            reason = strategy
+        risk_flags = ["reverse_retained_swsd_pair_blocked"] if reverse_blocker else []
+        if buffer_distance_blocked:
+            risk_flags.append("adaptive_buffer_exceeds_topology_connectivity_gate")
+        if pair_anchor_bridge_road_ids:
+            risk_flags.append("pair_anchor_bridge_roads_added")
+        if reverse_blocker:
+            notes = f"blocked by reverse retained SWSD segment {reverse_blocker['segment_id']}"
+        elif buffer_distance_blocked:
+            notes = (
+                f"blocked because adaptive buffer exceeds {MAX_FORMAL_REPLACEMENT_BUFFER_M:g}m "
+                "topology connectivity gate"
+            )
+        else:
+            notes = (
+                "standard Step2 replaceable segment with pair-anchor bridge roads"
+                if pair_anchor_bridge_road_ids
+                else "standard Step2 replaceable segment"
+            )
         rows.append(
             feature(
                 {
                     "replacement_plan_id": f"standard:{segment_id}",
                     "swsd_segment_id": segment_id,
-                    "plan_status": "ready",
-                    "execution_action": "replace",
+                    "plan_status": plan_status,
+                    "execution_action": action,
                     "execution_scope": "standard_segment",
                     "plan_owner": "T06_STEP2",
-                    "upstream_owner": "T05_relation_consumed",
+                    "upstream_owner": (
+                        "T06_reverse_pair_consistency"
+                        if reverse_blocker
+                        else (
+                            "T06_step2_topology_connectivity_gate"
+                            if buffer_distance_blocked
+                            else "T05_relation_consumed"
+                        )
+                    ),
                     "source_artifact": "t06_rcsd_segment_replaceable",
-                    "source_reason": strategy,
+                    "source_reason": reason,
                     "replacement_strategy": strategy,
                     "special_junction_id": "",
                     "special_junction_type": "",
                     "swsd_sgrade": props.get("swsd_sgrade"),
                     "swsd_directionality": props.get("swsd_directionality"),
-                    "swsd_pair_nodes": _parse_list(props.get("swsd_pair_nodes")),
+                    "swsd_pair_nodes": pair_nodes,
                     "swsd_junc_nodes": _parse_list(props.get("swsd_junc_nodes")),
                     "junc_kind2_exempt_nodes": _parse_list(props.get("junc_kind2_exempt_nodes")),
                     "detached_junc_nodes": _parse_list(props.get("detached_junc_nodes")),
                     "rcsd_pair_nodes": _parse_list(props.get("rcsd_pair_nodes")),
                     "rcsd_junc_nodes": _parse_list(props.get("rcsd_junc_nodes")),
-                    "rcsd_road_ids": _parse_list(props.get("rcsd_road_ids")),
-                    "retained_node_ids": _parse_list(props.get("retained_node_ids")),
+                    "rcsd_road_ids": rcsd_road_ids,
+                    "retained_node_ids": retained_node_ids,
+                    "pair_anchor_bridge_road_ids": pair_anchor_bridge_road_ids,
+                    "pair_anchor_bridge_length_m": bridge.get("length_m") if pair_anchor_bridge_road_ids else "",
                     "group_segment_ids": [segment_id],
                     "source_segment_ids": [segment_id],
-                    "buffer_distances_m": _parse_float_list(props.get("adaptive_buffer_distance_m")),
-                    "risk_flags": [],
-                    "notes": "standard Step2 replaceable segment",
+                    "buffer_distances_m": buffer_distances,
+                    "risk_flags": risk_flags,
+                    "notes": notes,
                 },
                 row.get("geometry"),
             )
@@ -184,22 +285,32 @@ def _group_replacement_plan_rows(
         if props.get("group_probe_repair_owner") != "T06_path_corridor_group_replacement":
             continue
         segment_id = _safe_id(props.get("swsd_segment_id"))
-        group_segment_ids = _parse_list(props.get("path_corridor_group_segment_ids"))
+        group_segment_ids = _path_corridor_replacement_segment_ids(props)
         rcsd_road_ids = _parse_list(props.get("group_probe_rcsd_road_ids"))
         if not segment_id or not group_segment_ids or not rcsd_road_ids:
             continue
+        buffer_distances = _parse_float_list(props.get("group_probe_buffer_distance_m"))
+        buffer_distance_blocked = bool(buffer_distances and max(buffer_distances) > MAX_FORMAL_REPLACEMENT_BUFFER_M)
         rows.append(
             feature(
                 {
                     "replacement_plan_id": f"group_path_corridor:{segment_id}",
                     "swsd_segment_id": segment_id,
-                    "plan_status": "ready",
-                    "execution_action": "replace",
+                    "plan_status": "blocked" if buffer_distance_blocked else "ready",
+                    "execution_action": "hold" if buffer_distance_blocked else "replace",
                     "execution_scope": "path_corridor_group",
                     "plan_owner": "T06_STEP2",
-                    "upstream_owner": "T03/T04/T05_feedback_candidate",
+                    "upstream_owner": (
+                        "T06_step2_topology_connectivity_gate"
+                        if buffer_distance_blocked
+                        else "T03/T04/T05_feedback_candidate"
+                    ),
                     "source_artifact": "t06_segment_group_replacement_audit",
-                    "source_reason": props.get("group_probe_reason"),
+                    "source_reason": (
+                        "group_probe_buffer_exceeds_topology_connectivity_gate"
+                        if buffer_distance_blocked
+                        else props.get("group_probe_reason")
+                    ),
                     "replacement_strategy": "path_corridor_group_replacement",
                     "special_junction_id": "",
                     "special_junction_type": "",
@@ -215,11 +326,89 @@ def _group_replacement_plan_rows(
                     "retained_node_ids": _canonical_road_endpoint_ids(rcsd_road_ids, rcsd_road_by_id, rcsd_node_canonicalizer),
                     "group_segment_ids": group_segment_ids,
                     "source_segment_ids": [segment_id],
-                    "buffer_distances_m": _parse_float_list(props.get("group_probe_buffer_distance_m")),
-                    "risk_flags": ["group_path_corridor_replacement"],
-                    "notes": props.get("notes") or "path-corridor group replacement plan",
+                    "buffer_distances_m": buffer_distances,
+                    "risk_flags": unique_preserve_order(
+                        [
+                            "group_path_corridor_replacement",
+                            *(
+                                ["group_probe_buffer_exceeds_topology_connectivity_gate"]
+                                if buffer_distance_blocked
+                                else []
+                            ),
+                        ]
+                    ),
+                    "notes": (
+                        f"blocked because group probe buffer exceeds {MAX_FORMAL_REPLACEMENT_BUFFER_M:g}m "
+                        "topology connectivity gate"
+                        if buffer_distance_blocked
+                        else props.get("notes") or "path-corridor group replacement plan"
+                    ),
                 },
                 row.get("geometry"),
+            )
+        )
+    return rows
+
+
+def _visual_consistency_repair_plan_rows(
+    buffer_rejected_rows: list[dict[str, Any]],
+    rejected_rows: list[dict[str, Any]],
+    failure_business_audit_rows: list[dict[str, Any]],
+    *,
+    planned_segment_ids: set[str],
+) -> list[dict[str, Any]]:
+    rejected_by_segment = _props_by_segment(rejected_rows)
+    audit_by_segment = _props_by_segment(failure_business_audit_rows)
+    rows: list[dict[str, Any]] = []
+    for row in buffer_rejected_rows:
+        props = dict(row.get("properties") or {})
+        segment_id = _safe_id(props.get("swsd_segment_id"))
+        if not segment_id or segment_id in planned_segment_ids:
+            continue
+        rejected_props = rejected_by_segment.get(segment_id, {})
+        audit_props = audit_by_segment.get(segment_id, {})
+        if not _is_visual_consistency_repair_ready(props, rejected_props, audit_props):
+            continue
+        retained_road_ids = _parse_list(props.get("retained_rcsd_road_ids"))
+        retained_node_ids = _parse_list(props.get("retained_node_ids"))
+        if not retained_road_ids or not retained_node_ids:
+            continue
+        rows.append(
+            feature(
+                {
+                    "replacement_plan_id": f"visual_consistency:{segment_id}",
+                    "swsd_segment_id": segment_id,
+                    "plan_status": "ready",
+                    "execution_action": "replace",
+                    "execution_scope": "standard_segment",
+                    "plan_owner": "T06_STEP2",
+                    "upstream_owner": str(audit_props.get("upstream_issue_owner") or "T06_visual_consistency_repair"),
+                    "source_artifact": "t06_rcsd_buffer_segment_rejected",
+                    "source_reason": props.get("reject_reason"),
+                    "replacement_strategy": "visual_consistency_high_confidence_repair",
+                    "special_junction_id": "",
+                    "special_junction_type": "",
+                    "swsd_sgrade": rejected_props.get("swsd_sgrade"),
+                    "swsd_directionality": rejected_props.get("swsd_directionality"),
+                    "swsd_pair_nodes": _parse_list(audit_props.get("swsd_pair_nodes")),
+                    "swsd_junc_nodes": _parse_list(audit_props.get("swsd_junc_nodes")),
+                    "junc_kind2_exempt_nodes": _parse_list(rejected_props.get("junc_kind2_exempt_nodes")),
+                    "detached_junc_nodes": [],
+                    "rcsd_pair_nodes": _parse_list(audit_props.get("rcsd_pair_nodes"))
+                    or _parse_list(props.get("required_rcsd_nodes")),
+                    "rcsd_junc_nodes": _parse_list(audit_props.get("rcsd_junc_nodes")),
+                    "rcsd_road_ids": retained_road_ids,
+                    "retained_node_ids": retained_node_ids,
+                    "group_segment_ids": [segment_id],
+                    "source_segment_ids": [segment_id],
+                    "buffer_distances_m": [],
+                    "risk_flags": ["visual_consistency_high_confidence_repair"],
+                    "notes": "topology and directionality passed; visual consistency mismatch accepted by high-confidence T06 repair gate",
+                },
+                row.get("geometry") or next(
+                    (audit.get("geometry") for audit in failure_business_audit_rows if _safe_id((audit.get("properties") or {}).get("swsd_segment_id")) == segment_id),
+                    None,
+                ),
             )
         )
     return rows
@@ -286,6 +475,294 @@ def _covered_plan_scopes_by_segment(replacement_plan_rows: list[dict[str, Any]])
             if segment_id:
                 result[segment_id].append(artifact)
     return {segment_id: unique_preserve_order(scopes) for segment_id, scopes in result.items()}
+
+
+def _apply_junction_alignment_plan_gate(
+    rows: list[dict[str, Any]],
+    *,
+    swsd_segments: list[dict[str, Any]],
+    swsd_nodes: list[dict[str, Any]],
+    rcsd_node_by_id: dict[str, dict[str, Any]],
+    rcsd_road_by_id: dict[str, dict[str, Any]],
+) -> None:
+    if not swsd_segments or not swsd_nodes or not rcsd_node_by_id:
+        return
+    swsd_node_by_id = _index_by_id(swsd_nodes)
+    incident_segments_by_node = _incident_segments_by_swsd_node(swsd_segments)
+    ready_segments = _ready_plan_segment_ids(rows)
+    mappings_by_node: dict[str, list[tuple[dict[str, Any], str]]] = defaultdict(list)
+    for row in rows:
+        props = row.get("properties") or {}
+        if not _is_replace_ready_plan(props):
+            continue
+        for swsd_node_id, rcsd_node_ids in _plan_node_mappings(props).items():
+            for rcsd_node_id in rcsd_node_ids:
+                mappings_by_node[swsd_node_id].append((props, rcsd_node_id))
+
+    for swsd_node_id, mappings in mappings_by_node.items():
+        incident_segments = incident_segments_by_node.get(swsd_node_id, [])
+        if incident_segments and any(segment_id not in ready_segments for segment_id in incident_segments):
+            swsd_point = _feature_point(swsd_node_by_id.get(swsd_node_id))
+            if swsd_point is not None:
+                for props, rcsd_node_id in mappings:
+                    rcsd_point = _feature_point(rcsd_node_by_id.get(rcsd_node_id))
+                    if rcsd_point is None:
+                        continue
+                    if float(swsd_point.distance(rcsd_point)) > MAX_RETAINED_JUNCTION_ATTACHMENT_GAP_M:
+                        _mark_plan_row_risk(
+                            props,
+                            reason="junction_alignment_to_retained_swsd_exceeds_topology_gate",
+                            risk_flag="junction_alignment_to_retained_swsd_exceeds_topology_gate",
+                        )
+
+        for left_index, (left_props, left_rcsd_node_id) in enumerate(mappings):
+            left_point = _feature_point(rcsd_node_by_id.get(left_rcsd_node_id))
+            if left_point is None:
+                continue
+            for right_props, right_rcsd_node_id in mappings[left_index + 1 :]:
+                if left_rcsd_node_id == right_rcsd_node_id:
+                    continue
+                right_point = _feature_point(rcsd_node_by_id.get(right_rcsd_node_id))
+                if right_point is None:
+                    continue
+                if float(left_point.distance(right_point)) <= MAX_REPLACED_JUNCTION_MAPPING_DIVERGENCE_M:
+                    continue
+                if _mappings_connected_by_pair_anchor_bridge(
+                    left_props,
+                    left_rcsd_node_id,
+                    right_props,
+                    right_rcsd_node_id,
+                    rcsd_road_by_id=rcsd_road_by_id,
+                ):
+                    _mark_plan_row_risk(
+                        left_props,
+                        reason="junction_alignment_between_replacement_plans_connected_by_pair_anchor_bridge",
+                        risk_flag="junction_alignment_between_replacement_plans_connected_by_pair_anchor_bridge",
+                    )
+                    _mark_plan_row_risk(
+                        right_props,
+                        reason="junction_alignment_between_replacement_plans_connected_by_pair_anchor_bridge",
+                        risk_flag="junction_alignment_between_replacement_plans_connected_by_pair_anchor_bridge",
+                    )
+                    continue
+                _block_plan_row(
+                    left_props,
+                    reason="junction_alignment_between_replacement_plans_diverged",
+                    risk_flag="junction_alignment_between_replacement_plans_diverged",
+                )
+                _block_plan_row(
+                    right_props,
+                    reason="junction_alignment_between_replacement_plans_diverged",
+                    risk_flag="junction_alignment_between_replacement_plans_diverged",
+                )
+
+
+def _mappings_connected_by_pair_anchor_bridge(
+    left_props: dict[str, Any],
+    left_rcsd_node_id: str,
+    right_props: dict[str, Any],
+    right_rcsd_node_id: str,
+    *,
+    rcsd_road_by_id: dict[str, dict[str, Any]],
+) -> bool:
+    bridge_road_ids = unique_preserve_order(
+        [
+            *_parse_list(left_props.get("pair_anchor_bridge_road_ids")),
+            *_parse_list(right_props.get("pair_anchor_bridge_road_ids")),
+        ]
+    )
+    if not bridge_road_ids:
+        return False
+    expected = {_safe_id(left_rcsd_node_id), _safe_id(right_rcsd_node_id)}
+    if len(expected) != 2:
+        return False
+    for road_id in bridge_road_ids:
+        road = rcsd_road_by_id.get(road_id)
+        props = dict(road.get("properties") or {}) if road is not None else {}
+        endpoints = {_safe_id(props.get("snodeid")), _safe_id(props.get("enodeid"))}
+        if expected.issubset(endpoints):
+            return True
+    return False
+
+
+def _is_replace_ready_plan(props: dict[str, Any]) -> bool:
+    return props.get("plan_status") == "ready" and props.get("execution_action") == "replace"
+
+
+def _block_plan_row(props: dict[str, Any], *, reason: str, risk_flag: str) -> None:
+    if props.get("plan_status") != "ready":
+        return
+    props["plan_status"] = "blocked"
+    props["execution_action"] = "hold"
+    props["source_reason"] = reason
+    props["upstream_owner"] = "T06_step2_topology_connectivity_gate"
+    props["risk_flags"] = unique_preserve_order([*_parse_list(props.get("risk_flags")), risk_flag])
+    notes = str(props.get("notes") or "")
+    suffix = f"blocked by {reason}"
+    props["notes"] = f"{notes}; {suffix}" if notes else suffix
+
+
+def _mark_plan_row_risk(props: dict[str, Any], *, reason: str, risk_flag: str) -> None:
+    if props.get("plan_status") != "ready":
+        return
+    props["risk_flags"] = unique_preserve_order([*_parse_list(props.get("risk_flags")), risk_flag])
+    notes = str(props.get("notes") or "")
+    suffix = f"risk: {reason}"
+    props["notes"] = f"{notes}; {suffix}" if notes else suffix
+
+
+def _incident_segments_by_swsd_node(swsd_segments: list[dict[str, Any]]) -> dict[str, list[str]]:
+    result: dict[str, list[str]] = defaultdict(list)
+    for segment in swsd_segments:
+        props = dict(segment.get("properties") or {})
+        segment_id = _safe_id(props.get("id") or props.get("swsd_segment_id"))
+        if not segment_id:
+            continue
+        for node_id in unique_preserve_order([*_parse_list(props.get("pair_nodes")), *_parse_list(props.get("junc_nodes"))]):
+            result[node_id] = unique_preserve_order([*result[node_id], segment_id])
+    return dict(result)
+
+
+def _plan_node_mappings(props: dict[str, Any]) -> dict[str, list[str]]:
+    result: dict[str, list[str]] = defaultdict(list)
+    for swsd_node_id, rcsd_node_id in zip(_parse_list(props.get("swsd_pair_nodes")), _parse_list(props.get("rcsd_pair_nodes"))):
+        if swsd_node_id and rcsd_node_id:
+            result[swsd_node_id] = unique_preserve_order([*result[swsd_node_id], rcsd_node_id])
+    exempt_nodes = set(_parse_list(props.get("junc_kind2_exempt_nodes")))
+    swsd_junc_nodes = [node_id for node_id in _parse_list(props.get("swsd_junc_nodes")) if node_id not in exempt_nodes]
+    for swsd_node_id, rcsd_node_id in zip(swsd_junc_nodes, _parse_list(props.get("rcsd_junc_nodes"))):
+        if swsd_node_id and rcsd_node_id:
+            result[swsd_node_id] = unique_preserve_order([*result[swsd_node_id], rcsd_node_id])
+    return dict(result)
+
+
+def _feature_point(feature_value: dict[str, Any] | None) -> Any:
+    geometry = (feature_value or {}).get("geometry")
+    if geometry is None or getattr(geometry, "is_empty", False):
+        return None
+    return geometry if getattr(geometry, "geom_type", "") == "Point" else None
+
+
+def _ready_plan_segment_ids(replacement_plan_rows: list[dict[str, Any]]) -> set[str]:
+    result: set[str] = set()
+    for row in replacement_plan_rows:
+        props = dict(row.get("properties") or {})
+        if props.get("plan_status") != "ready":
+            continue
+        result.update(segment_id for segment_id in _parse_list(props.get("group_segment_ids")) if segment_id)
+        segment_id = _safe_id(props.get("swsd_segment_id"))
+        if segment_id:
+            result.add(segment_id)
+    return result
+
+
+def _pair_anchor_bridges_by_segment(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    result: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        props = dict(row.get("properties") or {})
+        segment_id = _safe_id(props.get("swsd_segment_id"))
+        road_ids = _parse_list(props.get("pair_anchor_bridge_road_ids"))
+        if not segment_id or not road_ids:
+            continue
+        result[segment_id] = {
+            "road_ids": road_ids,
+            "length_m": props.get("pair_anchor_bridge_length_m"),
+        }
+    return result
+
+
+def _props_by_segment(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    result: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        props = dict(row.get("properties") or {})
+        segment_id = _safe_id(props.get("swsd_segment_id"))
+        if segment_id:
+            result.setdefault(segment_id, props)
+    return result
+
+
+def _is_visual_consistency_repair_ready(
+    buffer_props: dict[str, Any],
+    rejected_props: dict[str, Any],
+    audit_props: dict[str, Any],
+) -> bool:
+    if buffer_props.get("reject_reason") not in {
+        "retained_geometry_outside_swsd_visual_consistency_scope",
+        "swsd_visual_continuity_not_covered_by_retained_rcsd",
+    }:
+        return False
+    if rejected_props.get("swsd_directionality") != "single":
+        return False
+    if buffer_props.get("full_graph_status") != "required_nodes_connected":
+        return False
+    if buffer_props.get("candidate_graph_status") != "required_nodes_connected":
+        return False
+    directional_status = str(buffer_props.get("directional_status") or "")
+    if "directed_path_present" not in directional_status:
+        return False
+    if _parse_list(buffer_props.get("missing_required_node_ids")):
+        return False
+    if _parse_list(buffer_props.get("unexpected_endpoint_node_ids")):
+        return False
+    if _parse_list(buffer_props.get("unexpected_mapped_semantic_node_ids")):
+        return False
+    if _coerce_float(buffer_props.get("retained_road_count")) < 2:
+        return False
+    if audit_props.get("manual_review_required"):
+        return False
+    if audit_props.get("repair_recommendation") != "high_confidence_pair_anchor_candidate":
+        return False
+    geometry_overlap_ratio = _coerce_optional_float(audit_props.get("geometry_overlap_ratio"))
+    if geometry_overlap_ratio is not None and geometry_overlap_ratio < MIN_VISUAL_REPAIR_GEOMETRY_OVERLAP_RATIO:
+        return False
+    if _coerce_float(audit_props.get("candidate_score")) < 0.88:
+        return False
+    if _coerce_float(audit_props.get("directionality_score")) < 1.0:
+        return False
+    if _coerce_float(audit_props.get("connectivity_score")) < 1.0:
+        return False
+    if _coerce_float(audit_props.get("shape_similarity_score")) < 1.0:
+        return False
+    return True
+
+
+def _reverse_pair_blockers(
+    rejected_rows: list[dict[str, Any]],
+    failure_business_audit_rows: list[dict[str, Any]],
+    *,
+    replaceable_segment_ids: set[str],
+) -> dict[tuple[str, str], dict[str, str]]:
+    blockers: dict[tuple[str, str], dict[str, str]] = {}
+    for row in [*failure_business_audit_rows, *rejected_rows]:
+        props = dict(row.get("properties") or {})
+        segment_id = _safe_id(props.get("swsd_segment_id"))
+        if segment_id in replaceable_segment_ids:
+            continue
+        pair = _pair_key(_parse_list(props.get("swsd_pair_nodes")) or _parse_list(props.get("failed_pair_nodes")))
+        if not segment_id or pair is None:
+            continue
+        blockers[(pair[1], pair[0])] = {
+            "segment_id": segment_id,
+            "reason": str(props.get("reject_reason") or "reverse_retained_swsd_pair_consistency"),
+        }
+    return blockers
+
+
+def _blocker_for_pair(pair_nodes: list[str], reverse_blockers: dict[tuple[str, str], dict[str, str]]) -> dict[str, str]:
+    pair = _pair_key(pair_nodes)
+    return reverse_blockers.get(pair, {}) if pair is not None else {}
+
+
+def _pair_key(pair_nodes: list[str]) -> tuple[str, str] | None:
+    if len(pair_nodes) != 2:
+        return None
+    return (str(pair_nodes[0]), str(pair_nodes[1]))
+
+
+def _path_corridor_replacement_segment_ids(props: dict[str, Any]) -> list[str]:
+    group_segment_ids = _parse_list(props.get("path_corridor_group_segment_ids"))
+    blocked_segment_ids = set(_parse_list(props.get("path_corridor_blocked_segment_ids")))
+    return [segment_id for segment_id in group_segment_ids if segment_id not in blocked_segment_ids]
 
 
 def _problem_status(props: dict[str, Any], covered_scopes: list[str]) -> str:
@@ -445,6 +922,25 @@ def _parse_float_list(value: Any) -> list[float]:
             continue
         result.append(number)
     return sorted(set(result))
+
+
+def _coerce_float(value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _coerce_optional_float(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if number != number:
+        return None
+    return number
 
 
 def _safe_id(value: Any) -> str:

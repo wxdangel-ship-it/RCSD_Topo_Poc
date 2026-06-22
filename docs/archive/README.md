@@ -11,5 +11,5 @@
 ## 边界
 
 - 本目录不承载当前项目级 source-of-truth。
-- 需要长期生效的项目事实必须回到 `SPEC.md`、`docs/PROJECT_BRIEF.md` 或 `docs/architecture/*`。
+- 需要长期生效的项目事实必须回到 `SPEC.md`、`docs/PROJECT_REQUIREMENTS.md` 或 `docs/architecture/*`。
 - 历史治理过程优先放在 `docs/doc-governance/history/`，SpecKit 变更工件优先放在 `specs/archive/`。

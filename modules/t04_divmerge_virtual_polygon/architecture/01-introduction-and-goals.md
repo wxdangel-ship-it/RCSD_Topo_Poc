@@ -1,39 +1,27 @@
-# 01 Introduction And Goals
+# 01 引言与目标
 
-## 1. 模块目标
+## 1. 文档定位
 
-T04 为分歧、合流、连续分歧 / 合流与复杂连续链路口生成道路面约束下的虚拟锚定面，并输出可追溯的发布层、审计层、review 图和 downstream node 状态回写结果。
+本文件说明 T04 的架构背景、目标和边界。模块需求以 `SPEC.md` 为准，稳定接口以 `INTERFACE_CONTRACT.md` 为准，Step1-Step7 实现策略见 `03-solution-strategy.md`。
 
-当前目标不是重开业务语义，而是把 GitHub `main` 上已经固化的实现事实表达清楚：
+## 2. 模块定位
 
-- Step1-7 是当前正式业务链。
-- Step7 最终状态机只允许 `accepted / rejected`。
-- Anchor_2 official 39-case baseline 冻结为 `39 case / accepted = 35 / rejected = 4`。
-- `857993 = rejected` 是人工验收确认后的正确结论。
-- T04 正式 surface 主产物仍为 `divmerge_virtual_anchor_surface*`。
-- downstream `nodes.gpkg` 与 `nodes_anchor_update_audit.csv/json` 只表达 representative node 的状态回写，写回值域为 `yes / fail4 / fail4_fallback`。
+T04 是项目路口 1:1 关系层中的复杂虚拟锚定模块。T07 处理已有路口面，T03 处理交叉 / T 型虚拟路口，T04 负责分歧、合流、连续分歧 / 合流和复杂 `kind_2=128` 场景。它输出的主价值不是单独的 `nodes.gpkg` 状态，而是受事实证据和道路面约束的 accepted surface 以及面向 T05 的 relation evidence。
 
-## 2. 业务目标
+## 3. 目标
 
-- 用 Step1 admission 明确候选是否进入 T04。
-- 用 Step2 local context 组织高召回的局部道路、节点、SWSD negative context 与 RCSD 上下文。
-- 用 Step3 topology skeleton 把 case coordination skeleton 与 event-unit executable skeleton 分开。
-- 用 Step4 fact event interpretation 解释局部事实、主证据、参考点、正向 RCSD 与受控恢复路径。
-- 用 Step5 geometric support domain 形成 `must_cover / allowed_growth / forbidden / terminal_cut` 约束。
-- 用 Step6 polygon assembly 在约束内生成单一连通最终面。
-- 用 Step7 final publish 发布 surface、rejected、summary、audit、consistency 与 downstream nodes 结果。
+- 以 Step1-Step7 处理复杂路口候选，形成 accepted / rejected 分层结果。
+- 用 DivStripZone、DriveZone、RCSDRoad、RCSDNode 和 SWSD 拓扑解释事实事件，避免用抽象点伪造主证据。
+- 将 road-surface fork、partial RCSD、road-only、SWSD-only 等弱证据场景转为可审计 fallback。
+- 输出 T05 可消费的 surface、relation evidence、nodes 状态和 final 1:1 cardinality 审计。
 
-## 3. 成功判据
+## 4. 非目标
 
-- CRS、拓扑关系、几何语义与审计链路可解释。
-- Step1-7 的输入、输出与失败原因不串层。
-- batch / internal full-input 的 summary、audit、consistency report、surface 发布层与 downstream nodes 输出保持一致。
-- official 39-case baseline 自动守住 `39 / 35 / 4`，且 `607602562 / 760598 / 760936 / 857993` 不被误改为 accepted。
+- 不处理 T03 负责的交叉 / T 型虚拟路口。
+- 不把 rejected baseline 样本强行修成 accepted。
+- 不把 `STEP4_REVIEW` 作为 Step7 最终状态。
+- 不用 T06 Segment 阶段反推复杂路口基点。
 
-## 4. 当前非目标
+## 5. 架构边界
 
-- 不新增 repo 官方 CLI。
-- 不直接 import / 调用 / 硬拷贝 T03 模块代码。
-- 不把 T04 surface 主产物改名为 T03 风格产物。
-- 不保留最终 `review / review_required` 作为正式发布状态。
-- 不把 RCSD 缺失、Step4 soft-degrade 或 review 提示直接等同于 Step7 最终失败。
+T04 的业务主链由 `admission`、`local_context`、`topology`、`event_interpretation`、`support_domain`、`polygon_assembly`、`final_publish` 等模块承载；工程编排和批处理由 `batch_runner`、`internal_full_input_runner`、`full_input_*`、`nodes_publish`、`outputs` 等模块承载。架构文档只描述业务和设计边界，具体字段和值域以 `INTERFACE_CONTRACT.md` 为准。

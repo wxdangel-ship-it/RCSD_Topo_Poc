@@ -103,5 +103,5 @@ T08 是项目正式预处理模块，负责 SWSD / RCSD 输入数据的格式转
 
 ## 10. 当前治理缺口
 
-- T08 缺标准 `architecture/02-constraints.md`，后续需要补齐模块约束。
-- Tool1-9 需要持续保证脚本入口、接口契约和文档描述同步。
+- T08 文档已收敛为模块级 01-06 主结构，后续新增工具说明应优先落入 `03-solution-strategy.md`、`04-evidence-and-audit.md` 或 `06-risks-and-technical-debt.md`。
+- Tool1-9 需要持续保证脚本入口、接口契约、代码实现和文档描述同步。

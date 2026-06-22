@@ -2,7 +2,7 @@
 
 ## 1. 模块定位
 
-T05 汇总 T07 / T03 / T04 的锚定与构面成果，生产 SWSD-RCSD 语义路口关系，并对 RCSDRoad / RCSDNode 做 copy-on-write junctionization。模块分为 Phase 1 surface fusion 与 Phase 2 relation production，是 T06 Segment 替换和 T09 F-RCSD 通行恢复的关键上游。
+T05 是项目“路口 1:1 关系层”的统一发布模块。它汇总 T07 / T03 / T04 的锚定与构面成果，生产 SWSD-RCSD 语义路口关系，并对 RCSDRoad / RCSDNode 做 copy-on-write junctionization。模块分为 Phase 1 surface fusion 与 Phase 2 relation production，是 T06 Segment 替换和 T09 F-RCSD 通行恢复的关键上游。
 
 ## 2. 业务目标
 
@@ -11,6 +11,7 @@ T05 汇总 T07 / T03 / T04 的锚定与构面成果，生产 SWSD-RCSD 语义路
 - 对 road-only、multi-RCSDNode、复杂路口和环岛场景执行可审计 junctionization。
 - 输出 copy-on-write `rcsdroad_out.gpkg / rcsdnode_out.gpkg`，不原地修改输入。
 - 用 cardinality audit 阻断同一 SWSD 多 RCSD 或重复 success target 的错误成功关系；同一 RCSD 可对应多个 SWSD 语义路口时保留关系并审计 `many_target_to_one_base`。
+- 将 T07/T03/T04 的多来源证据收口为 T06 可消费的单一关系主表，确保每个 SWSD target 在主表中最多只有一个成功 RCSD base。
 
 ## 3. 当前范围
 
@@ -96,5 +97,5 @@ T05 汇总 T07 / T03 / T04 的锚定与构面成果，生产 SWSD-RCSD 语义路
 
 ## 10. 当前治理缺口
 
-- T05 缺少标准 `architecture/02 / 05 / 11 / 12` 文档，后续需补齐。
+- T05 文档已收敛为模块级 01-06 主结构，后续新增说明应优先落入 `03-solution-strategy.md`、`04-evidence-and-audit.md` 或 `06-risks-and-technical-debt.md`。
 - Phase 2 正确率仍需更多真实样本统计，但当前召回与审计链路已进入正式模块口径。

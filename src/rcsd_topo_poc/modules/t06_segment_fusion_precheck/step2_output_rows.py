@@ -6,6 +6,16 @@ from .buffer_segment_extraction import BufferSegmentResult
 from .schemas import feature
 
 
+def _geometry_audit_props(result: BufferSegmentResult) -> dict[str, Any]:
+    return {
+        "geometry_buffer_coverage_issue": result.geometry_buffer_coverage_issue,
+        "rcsd_outside_swsd_buffer_length_m": result.rcsd_outside_swsd_buffer_length_m,
+        "rcsd_outside_swsd_buffer_ratio": result.rcsd_outside_swsd_buffer_ratio,
+        "swsd_uncovered_by_rcsd_length_m": result.swsd_uncovered_by_rcsd_length_m,
+        "swsd_uncovered_by_rcsd_ratio": result.swsd_uncovered_by_rcsd_ratio,
+    }
+
+
 def buffer_segment_row(segment_id: str, result: BufferSegmentResult) -> dict[str, Any]:
     return {
         "swsd_segment_id": segment_id,
@@ -32,6 +42,7 @@ def buffer_segment_row(segment_id: str, result: BufferSegmentResult) -> dict[str
         "retained_road_count": result.retained_road_count,
         "candidate_node_count": result.candidate_node_count,
         "retained_node_count": result.retained_node_count,
+        **_geometry_audit_props(result),
     }
 
 
@@ -95,6 +106,7 @@ def buffer_candidate_row(
         "retained_road_count": result.retained_road_count,
         "candidate_node_count": result.candidate_node_count,
         "retained_node_count": result.retained_node_count,
+        **_geometry_audit_props(result),
     }
 
 
@@ -139,6 +151,11 @@ def buffer_replaceable_row(candidate_feature: dict[str, Any]) -> dict[str, Any]:
             "unexpected_endpoint_node_ids": props.get("unexpected_endpoint_node_ids"),
             "unexpected_mapped_semantic_node_ids": props.get("unexpected_mapped_semantic_node_ids"),
             "excluded_advance_right_turn_road_ids": props.get("excluded_advance_right_turn_road_ids"),
+            "geometry_buffer_coverage_issue": props.get("geometry_buffer_coverage_issue"),
+            "rcsd_outside_swsd_buffer_length_m": props.get("rcsd_outside_swsd_buffer_length_m"),
+            "rcsd_outside_swsd_buffer_ratio": props.get("rcsd_outside_swsd_buffer_ratio"),
+            "swsd_uncovered_by_rcsd_length_m": props.get("swsd_uncovered_by_rcsd_length_m"),
+            "swsd_uncovered_by_rcsd_ratio": props.get("swsd_uncovered_by_rcsd_ratio"),
             "hard_filter_passed": True,
         },
         candidate_feature.get("geometry"),

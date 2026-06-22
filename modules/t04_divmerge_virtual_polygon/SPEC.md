@@ -2,7 +2,7 @@
 
 ## 1. 模块定位
 
-T04 在 T03 交叉 / T 型虚拟锚定之后，面向分歧、合流、连续分歧 / 合流和复杂连续链路口构建虚拟锚定面。模块基于 SWSD 候选、道路面、DivStripZone、RCSDRoad 与 RCSDNode，生成受道路面和事实证据约束的 `divmerge_virtual_anchor_surface*`，并向 T05 发布 surface 与 relation evidence。
+T04 是项目“路口 1:1 关系层”的复杂虚拟锚定模块。它在 T03 交叉 / T 型虚拟锚定之后，面向分歧、合流、连续分歧 / 合流和复杂连续链路口构建虚拟锚定面。模块基于 SWSD 候选、道路面、DivStripZone、RCSDRoad 与 RCSDNode，生成受道路面和事实证据约束的 `divmerge_virtual_anchor_surface*`，并向 T05 发布 surface 与 relation evidence。
 
 ## 2. 业务目标
 
@@ -13,6 +13,7 @@ T04 在 T03 交叉 / T 型虚拟锚定之后，面向分歧、合流、连续分
 - 对 T04 自身 relation 与 T07/T03 relation 做最终 1:1 cardinality 校验。
 - 对 T07/T03 可选外部校验输入执行容错读取：路径已提供但文件为空、非法 JSON 或缺少 GeoJSON `features` 时，只按不可消费外部输入审计并以 0 条外部成功关系继续，不阻断 T04 自身 Step1-7 构面和 relation closeout。
 - 对 `road_surface_fork + partial` 且局部 RCSD node 与远端语义主点分离的场景，面向 T05/T06 的 relation handoff base 采用局部 `local_rcsd_unit_id`，原 `required_rcsd_node` 保留为 `semantic_required_rcsd_node_ids` 审计链。
+- 将复杂路口的 accepted surface、局部 RCSD 基点和失败审计统一转换为 T05 可消费的 1:1 relation 候选，避免 T06 在 Segment 阶段再反推复杂路口基点。
 
 ## 3. 当前范围
 

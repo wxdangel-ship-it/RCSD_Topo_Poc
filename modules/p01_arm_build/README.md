@@ -113,11 +113,12 @@ bash modules/p01_arm_build/dev_helpers/run_p01_case_full.sh
 
 ## 主要文档
 
+- `SPEC.md`
 - `INTERFACE_CONTRACT.md`
 - `architecture/01-introduction-and-goals.md`
 - `architecture/02-constraints.md`
 - `architecture/03-context-and-scope.md`
-- `architecture/04-solution-strategy.md`
+- `architecture/03-solution-strategy.md`
 - `architecture/05-building-block-view.md`
 - `architecture/10-quality-requirements.md`
 - `architecture/11-risks-and-technical-debt.md`

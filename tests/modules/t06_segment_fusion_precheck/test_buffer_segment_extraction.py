@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from shapely.geometry import LineString, Point
 
+from rcsd_topo_poc.modules.t06_segment_fusion_precheck.adaptive_buffer_retry import (
+    high_grade_adaptive_buffer_retry_plan,
+)
 from rcsd_topo_poc.modules.t06_segment_fusion_precheck.buffer_segment_extraction import (
     BufferExtractionConfig,
     BufferSegmentExtractor,
@@ -57,6 +62,30 @@ def test_buffer_extraction_keeps_intersecting_roads_and_excludes_advance_right()
     assert result.optional_allowed_rcsd_nodes == ["30"]
 
 
+def test_buffer_extraction_prefers_reference_corridor_over_shortcut() -> None:
+    extractor = BufferSegmentExtractor(
+        rcsd_road_features=[
+            _road("corridor_a", 10, 30, [(0, 0), (50, 20)], direction=2),
+            _road("corridor_b", 30, 20, [(50, 20), (100, 0)], direction=2),
+            _road("shortcut", 10, 20, [(0, 0), (100, 0)], direction=2),
+        ],
+        rcsd_node_features=[_node(10, 0, 0), _node(20, 100, 0), _node(30, 50, 20)],
+    )
+
+    result = extractor.extract(
+        segment_geometry=LineString([(0, 0), (50, 20), (100, 0)]),
+        relation=RelationCheck(True, ["10", "20"], []),
+        optional_allowed_rcsd_nodes=[],
+        all_relation_base_ids={"10", "20", "30"},
+        directed_pair_nodes=["10", "20"],
+        require_directed_pair=True,
+        config=BufferExtractionConfig(buffer_distance_m=50, min_road_overlap_ratio=0.2, min_road_overlap_length_m=1.0),
+    )
+
+    assert result.ok
+    assert result.retained_road_ids == ["corridor_a", "corridor_b"]
+
+
 def test_retained_road_must_satisfy_buffer_overlap_ratio() -> None:
     extractor = BufferSegmentExtractor(
         rcsd_road_features=[
@@ -104,7 +133,7 @@ def test_retained_geometry_must_stay_inside_swsd_buffer_scope() -> None:
     assert result.rcsd_outside_swsd_buffer_ratio > 0.1
 
 
-def test_retained_geometry_allows_absolute_outside_length_when_ratio_is_low() -> None:
+def test_retained_geometry_rejects_absolute_outside_length_when_ratio_is_low() -> None:
     extractor = BufferSegmentExtractor(
         rcsd_road_features=[
             _road("slightly_overlong", 10, 20, [(0, 0), (1035, 0)]),
@@ -120,10 +149,32 @@ def test_retained_geometry_allows_absolute_outside_length_when_ratio_is_low() ->
         config=BufferExtractionConfig(buffer_distance_m=10, min_road_overlap_ratio=0.2),
     )
 
-    assert result.ok
-    assert result.reason == "passed"
+    assert not result.ok
+    assert result.reason == "retained_geometry_outside_swsd_buffer_scope"
     assert result.rcsd_outside_swsd_buffer_length_m > 20
     assert result.rcsd_outside_swsd_buffer_ratio < 0.1
+
+
+def test_retained_geometry_rejects_outside_ratio_when_length_is_low() -> None:
+    extractor = BufferSegmentExtractor(
+        rcsd_road_features=[
+            _road("slightly_overlong", 10, 20, [(0, 0), (125, 0)]),
+        ],
+        rcsd_node_features=[_node(10, 0, 0), _node(20, 125, 0)],
+    )
+
+    result = extractor.extract(
+        segment_geometry=LineString([(0, 0), (100, 0)]),
+        relation=RelationCheck(True, ["10", "20"], []),
+        optional_allowed_rcsd_nodes=[],
+        all_relation_base_ids={"10", "20"},
+        config=BufferExtractionConfig(buffer_distance_m=10, min_road_overlap_ratio=0.2),
+    )
+
+    assert not result.ok
+    assert result.reason == "retained_geometry_outside_swsd_buffer_scope"
+    assert result.rcsd_outside_swsd_buffer_length_m < 20
+    assert result.rcsd_outside_swsd_buffer_ratio > 0.1
 
 
 def test_swsd_geometry_must_be_covered_by_retained_rcsd_buffer_scope() -> None:
@@ -149,7 +200,7 @@ def test_swsd_geometry_must_be_covered_by_retained_rcsd_buffer_scope() -> None:
     assert result.swsd_uncovered_by_rcsd_ratio > 0.1
 
 
-def test_swsd_geometry_allows_absolute_uncovered_length_when_ratio_is_low() -> None:
+def test_swsd_geometry_rejects_absolute_uncovered_length_when_ratio_is_low() -> None:
     extractor = BufferSegmentExtractor(
         rcsd_road_features=[
             _road("slightly_short", 10, 20, [(0, 0), (965, 0)]),
@@ -165,10 +216,74 @@ def test_swsd_geometry_allows_absolute_uncovered_length_when_ratio_is_low() -> N
         config=BufferExtractionConfig(buffer_distance_m=10, min_road_overlap_ratio=0.2),
     )
 
-    assert result.ok
-    assert result.reason == "passed"
+    assert not result.ok
+    assert result.reason == "swsd_geometry_not_covered_by_retained_rcsd"
     assert result.swsd_uncovered_by_rcsd_length_m > 20
     assert result.swsd_uncovered_by_rcsd_ratio < 0.1
+
+
+def test_swsd_geometry_rejects_uncovered_ratio_when_length_is_low() -> None:
+    extractor = BufferSegmentExtractor(
+        rcsd_road_features=[
+            _road("slightly_short", 10, 20, [(0, 0), (75, 0)]),
+        ],
+        rcsd_node_features=[_node(10, 0, 0), _node(20, 75, 0)],
+    )
+
+    result = extractor.extract(
+        segment_geometry=LineString([(0, 0), (100, 0)]),
+        relation=RelationCheck(True, ["10", "20"], []),
+        optional_allowed_rcsd_nodes=[],
+        all_relation_base_ids={"10", "20"},
+        config=BufferExtractionConfig(buffer_distance_m=10, min_road_overlap_ratio=0.2),
+    )
+
+    assert not result.ok
+    assert result.reason == "swsd_geometry_not_covered_by_retained_rcsd"
+    assert result.swsd_uncovered_by_rcsd_length_m < 20
+    assert result.swsd_uncovered_by_rcsd_ratio > 0.1
+
+
+def test_visual_consistency_records_narrow_gap_without_rejecting() -> None:
+    extractor = BufferSegmentExtractor(
+        rcsd_road_features=[
+            _road("visually_short", 10, 20, [(0, 0), (70, 0)]),
+        ],
+        rcsd_node_features=[_node(10, 0, 0), _node(20, 100, 0)],
+    )
+
+    result = extractor.extract(
+        segment_geometry=LineString([(0, 0), (100, 0)]),
+        relation=RelationCheck(True, ["10", "20"], []),
+        optional_allowed_rcsd_nodes=[],
+        all_relation_base_ids={"10", "20"},
+        config=BufferExtractionConfig(
+            buffer_distance_m=50,
+            visual_consistency_buffer_distance_m=15,
+            min_road_overlap_ratio=0.2,
+        ),
+    )
+
+    assert result.ok
+    assert result.reason == "passed"
+    assert result.geometry_buffer_coverage_issue == "swsd_visual_continuity_not_covered_by_retained_rcsd"
+    assert result.swsd_uncovered_by_rcsd_length_m < 20
+    assert result.swsd_uncovered_by_rcsd_ratio > 0.1
+
+
+def test_visual_consistency_failure_is_not_adaptive_retryable() -> None:
+    plan = high_grade_adaptive_buffer_retry_plan(
+        sgrade="0-1单",
+        directionality="single",
+        buffer_result=SimpleNamespace(reason="swsd_visual_continuity_not_covered_by_retained_rcsd"),
+        diagnostic={
+            "full_graph_status": "required_nodes_connected",
+            "directional_status": "full=directed_path_present",
+        },
+        base_buffer_distance_m=50.0,
+    )
+
+    assert plan is None
 
 
 def test_buffer_extraction_keeps_advance_right_when_second_degree_linked() -> None:

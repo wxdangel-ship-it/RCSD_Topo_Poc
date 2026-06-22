@@ -1,0 +1,79 @@
+# 03 方案策略
+
+## 状态
+
+- 当前状态：`Retired 历史模块方案策略说明`
+- 来源依据：
+  - 历史 CLI 子命令
+  - 历史 stage1/stage2/stage3/stage4 实现
+  - 历史单元测试与 smoke
+
+## 历史主策略
+
+T02 的历史方案用于解释早期路口锚定链路，不再作为当前主业务链的新增需求承接面。当前同类能力的正式归属为：T07 承接已有路口面 1:1 锚定，T03 承接交叉 / T 型虚拟锚定，T04 承接分歧 / 合流 / 复杂路口虚拟锚定，T08 承接预处理与字段修复。
+
+1. 通过历史 CLI 入口读取 `segment / nodes / DriveZone / RCSDIntersection`
+2. 对输入字段、CRS 与 geometry 做显式校验，不做隐式猜测
+3. 从 `nodes` 全表组装 `semantic_junction_set`，同时保留 `pair_nodes + junc_nodes` 的 `segment_referenced_junction_set`
+4. 以 `semantic_junction_set ∪ segment_referenced_junction_set` 作为 stage1/stage2 历史候选边界，并按 `mainnodeid` 分组 / 单点兜底组装 junction group
+5. 在 `EPSG:3857` 下对 junction group 与 `DriveZone` 做 stage1 gate，并保持 `summary_by_s_grade` 的 segment 视图
+6. 对 `has_evd = yes` 的组，用 `RCSDIntersection` 做 stage2 anchor recognition / anchor existence；`kind_2 in {8,16}` 也按同一套标准判定，只有最终 `is_anchor = no` 的 case 才继续进入 stage4
+7. 对 stage2 后仍未锚定、但有资料的路口，进入 stage3 `virtual intersection anchoring`
+8. stage3 统一复用单 case worker，支持：
+   - `case-package` 历史验收基线 / 小样本复核
+   - `full-input` 指定 `mainnodeid` 的完整数据 regression / dev-only
+   - `full-input` 自动识别候选并批量处理的完整数据 regression / dev-only
+9. stage3 构造局部 patch、分支证据、RC 关联与虚拟路口面，并汇总单 case 与批次级输出
+10. 产出 `nodes.has_evd`、`nodes.is_anchor`、`segment.has_evd`、`summary`、`audit / log` 与 stage3 产物
+
+## 历史阶段串联策略
+
+1. stage1 负责回答“该路口是否有道路面资料”。
+2. stage2 负责回答“该路口是否已经稳定锚定到 `RCSDIntersection`”。
+3. stage3 负责回答“对于有资料但未锚定的路口，是否能构造合理的虚拟路口面，并将其锚定到 own-group nodes / RCSDNode / RCSDRoad 局部组件”。
+4. 文本证据包不构成新的业务阶段；它位于 stage3 之后，只承担单 case 复核、外部复现与回传支撑职责。
+
+## 当前承接策略
+
+- T07 只做语义路口级 1:1 锚定和 T05 relation 补锚，不继承 T02 Segment 视角的 stage1/stage2 候选域。
+- T03 将交叉 / T 型路口虚拟锚定拆为合法空间冻结、RCSD 关联、负向约束、几何生成和最终发布。
+- T04 将分歧 / 合流 / 复杂路口虚拟锚定拆为准入、局部上下文、事实事件解释、几何支撑域、polygon assembly 和最终发布。
+- T08 将字段修复、复杂路口预处理、restriction / Laneinfo 显性化和 RCSD 清理前置到正式预处理层。
+- T02 历史产物只可用于追溯和比较，不得作为 T05/T06 当前正式输入替代 T07/T03/T04/T08 产物。
+
+## 降级与失败策略
+
+- 业务级 `no`：
+  - `junction_nodes_not_found`
+  - `representative_node_missing`
+  - `no_target_junctions`
+- 执行级失败：
+  - `missing_required_field`
+  - `invalid_crs_or_unprojectable`
+- POC 级明确失败或风险：
+  - `anchor_support_conflict`
+  - `no_valid_rc_connection`
+  - `node_component_conflict`
+- 设计原则：
+  - 不能 silent skip
+  - 不能把执行失败伪装成业务 `no`
+  - 不能为环岛与代表 node 缺失补充新的泛化 fallback
+  - 不能为了通过单 case 把错误 RC 分支或错误节点硬凑进 polygon
+
+## Stage3 虚拟路口锚定策略
+
+1. stage3 先检查代表 node 的 `has_evd / is_anchor / kind_2` 是否落在 T02 历史 baseline 范围内。
+2. 从代表 node 周边构造局部 patch，并在统一 CRS 下加载 `nodes / roads / DriveZone / RCSDRoad / RCSDNode`。
+3. 先做保守的 RC association，再单独构造 `polygon-support`，两者允许解耦。
+4. `polygon-support` 必须覆盖 own-group nodes，并只允许吸纳与当前路口局部组件一致的紧凑 RC 支撑子图。
+5. 若 RC 不存在与 roads 同方向的有效局部分支，不得拿其它横向或直行 RC 替代。
+6. 最终 polygon 必须通过 support validation；无法同时满足 own-group nodes 与局部 RC 支撑时，明确失败而不是 silent fix。
+7. `case-package` 模式作为历史验收基线入口与小样本复核入口保留，不允许回退。
+8. `full-input` 模式仅作为完整数据 regression / dev-only 入口，统一承接单点验证与自动识别候选两类业务诉求，并支持 `max_cases / workers`。
+9. `review_mode` 只放宽 anchor gate 与 RC outside DriveZone 的处理方式，用于人工复核，不改变正式契约边界。
+
+## 文档策略
+
+- 历史阶段链与边界由 `architecture/*` 承担。
+- 输入、输出、入口、参数类别与验收由 `INTERFACE_CONTRACT.md` 承担。
+- `README.md` 只给操作者入口与常见运行方式。

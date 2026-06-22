@@ -1,10 +1,10 @@
 # 06 Accepted Baseline
 
 ## 1. 文档状态
-- 状态：`accepted baseline / revised official alignment`
+- 状态：`Retired historical accepted baseline`
 - 说明：
-  - 本文档承载当前已确认的 T02 accepted baseline 业务口径。
-  - 若实现与本文档冲突，应先视为实现待对齐，不得自行改写 accepted baseline。
+  - 本文档承载 T02 退役前已确认的 accepted baseline 历史业务口径，不代表当前主业务链仍由 T02 承担。
+  - 若历史实现与本文档冲突，应先视为实现待对齐，不得自行改写 accepted baseline。
   - 若 T01 上游事实、当前实现与本文档之间存在理解分歧，应先说明 T02 文档存在歧义，再由业务拍板。
   - `t02-fix-node-error-2` 与文本证据包是独立支撑入口，不改写 stage1 / stage2 / stage3 主阶段链。
   - 连续分歧 / 合流聚合工具是独立支撑入口，不构成新的业务阶段。
@@ -23,7 +23,7 @@
   - stage4 div/merge 虚拟路口面与关联审计输出
 - 保持输出可审计、可复现、可 smoke，而不是把异常、歧义与人工复核信息藏进黑箱逻辑。
 
-## 3. 当前正式阶段链
+## 3. 历史正式阶段链
 - stage1：`DriveZone / has_evd gate`
 - stage2：`anchor recognition / anchor existence`
 - stage3：`virtual intersection anchoring`
@@ -34,11 +34,11 @@
   - `t02-aggregate-continuous-divmerge` 连续分歧 / 合流聚合离线工具
 
 说明：
-- stage3 已纳入当前正式 baseline。
+- stage3 已纳入 T02 历史正式 baseline。
 - 文本证据包、`t02-fix-node-error-2` 与 `t02-aggregate-continuous-divmerge` 不属于新的业务阶段。
-- 当前正式阶段链只包含 stage1 / stage2 / stage3 / stage4，不包含最终唯一锚定决策闭环、概率阶段或正式产线级全量治理闭环。
+- T02 历史正式阶段链只包含 stage1 / stage2 / stage3 / stage4，不包含最终唯一锚定决策闭环、概率阶段或当前正式产线级全量治理闭环。
 
-## 4. 当前有效输入
+## 4. 历史有效输入
 
 ### 4.1 stage1 / stage2 官方输入
 - `segment.gpkg`
@@ -85,7 +85,7 @@
   - `RCSDNode.gpkg`
   - `mainnodeid`（单个或多个）
 
-### 4.4 当前输入兼容口径
+### 4.4 历史输入兼容口径
 - 输入兼容 `GeoPackage(.gpkg)`、`GeoJSON` 与 `Shapefile`。
 - 历史 `.gpkt` 只保留兼容读取，不作为正式输出格式。
 - 若同名 `.gpkg` 与 `.geojson` 同时存在，默认优先读取 `GeoPackage`。
@@ -93,7 +93,7 @@
 
 ## 4A. 数据源特性与精度约束
 
-- 当前 T02 消费两组道路数据源：
+- T02 历史实现消费两组道路数据源：
   - **SWSD（`nodes` / `roads`）**：覆盖性高，但精度有误差且工艺有差异；与道路面（`DriveZone`）和导流带（`DivStripZone`）存在偏差，SWSD node 点位与真实的道路分歧 / 合流位置最大可偏差约 `200m`
   - **RCSD（`RCSDNode` / `RCSDRoad`）**：覆盖性差，但精度高，与道路面和导流带套合较好；RCSD node 与真实路口位置差距不超过 `20m`
 - 这一特性决定了 stage3 / stage4 的核心策略：
@@ -104,7 +104,7 @@
   - 路口面可以不包含 SWSD 路口点位
   - 对于存在挂接的事实路口，stage3 / stage4 必须保护对应的 `RCSDNode`
 
-## 5. 当前业务输入约束
+## 5. 历史业务输入约束
 
 ### 5.1 stage1 / stage2 输入约束
 - `segment` 与 `nodes` 必须来自同一轮、可追溯的 T01 成果。
@@ -128,16 +128,16 @@
   - `is_anchor`
   - `kind_2`
   - `grade_2`
-- `roads / RCSDRoad` 当前正式依赖：
+- `roads / RCSDRoad` 历史正式依赖：
   - `id`
   - `snodeid`
   - `enodeid`
   - `direction`
-- `RCSDNode` 当前正式依赖：
+- `RCSDNode` 历史正式依赖：
   - `id`
   - `mainnodeid`
-- `case-package` 是 stage3 唯一正式验收基线入口，不允许回退。
-- `full-input` 当前仅保留为 stage3 完整数据 `fixture / dev-only / regression` 入口，统一承接：
+- `case-package` 是 T02 历史 stage3 唯一验收基线入口，不允许回退。
+- `full-input` 仅保留为 T02 历史 stage3 完整数据 `fixture / dev-only / regression` 入口，统一承接：
   - 完整数据 + 指定 `mainnodeid`
   - 完整数据 + 自动识别“有资料但未锚定”的路口
 
@@ -150,12 +150,12 @@
   - `is_anchor`
   - `kind` 或 `kind_2`
   - `grade_2`
-- `roads / RCSDRoad` 当前正式依赖：
+- `roads / RCSDRoad` 历史正式依赖：
   - `id`
   - `snodeid`
   - `enodeid`
   - `direction`
-- `RCSDNode` 当前正式依赖：
+- `RCSDNode` 历史正式依赖：
   - `id`
   - `mainnodeid`
 - `stage4` 候选口径冻结为：
@@ -174,7 +174,7 @@
   - 若事实路口缺失对应 RCSD 挂接，不以 RCSD 未覆盖作为单独失败条件
 
 ### 5.3 语义字段约束
-- T02 当前正式业务字段为：
+- T02 历史正式业务字段为：
   - `has_evd`
   - `is_anchor`
   - `anchor_reason`
@@ -235,7 +235,7 @@
 - `summary_by_s_grade` 继续只保留 segment 视图。
 - `summary_by_kind_grade` 改按 `stage1_candidate_junction_set` 统计。
 
-### 6.3 stage1 当前正式输出语义
+### 6.3 stage1 历史正式输出语义
 - `nodes.gpkg`：继承输入 `nodes` 并新增 `has_evd`
 - `segment.gpkg`：继承输入 `segment` 并新增 `has_evd`
 - `t02_stage1_summary.json`：
@@ -290,7 +290,7 @@
   - 若同一组同时命中新豁免规则与 `node_error_2`，最终仍记 `fail2`
   - 被 `fail2` 覆盖时，`anchor_reason = null`
 
-### 7.3 stage2 当前正式输出语义
+### 7.3 stage2 历史正式输出语义
 - `nodes.gpkg`：继承 stage1 输出 `nodes` 并新增/刷新：
   - `is_anchor`
   - `anchor_reason`
@@ -353,7 +353,7 @@
   - 可将 RC outside DriveZone 从 hard fail 改成风险记录 + 软排除
   - 不改变正式 baseline 契约边界
 
-### 8.4 stage3 当前正式输出语义
+### 8.4 stage3 历史正式输出语义
 - 单 case 输出：
   - `virtual_intersection_polygon.gpkg`
   - `branch_evidence.json/gpkg`
@@ -448,26 +448,26 @@
   - 当算法收敛到认可水平后
   - stage4 可与 stage3 合并进入同一锚定流程
   - 并承担对应的锚定信息关联职责
-- stage4 的业务主线冻结为：
+- stage4 的历史业务主线冻结为：
   - 真实事件优先
   - 不是中心优先
   - SWSD `nodes` 只作为 seed / 候选入口
   - 不能替代真实分歧 / 合流事件定位
-- RCSD 当前不是无条件第一硬约束：
+- RCSD 在 T02 历史规则中不是无条件第一硬约束：
   - 只有在对应事实路口存在对应 RCSD 挂接时
   - RCSD 覆盖 / 容差才构成条件性硬约束
 
-### 10.2 当前处理对象与非目标
-- stage4 当前处理对象冻结为：
+### 10.2 历史处理对象与非目标
+- stage4 历史处理对象冻结为：
   - 有证据、尚未完成正式锚定
   - 需要按真实分歧 / 合流事件解释的事实路口候选
-- 当前正式处理两类对象：
+- T02 历史正式处理两类对象：
   - 简单 div/merge 候选
   - 连续分歧 / 合流聚合后的 complex 128 主节点
 - `kind` 与 `kind_2` 在 stage4 候选识别语义上等价；不得把候选识别写死在单一字段上。
 - 普通 div/merge 场景中，`nodeid` 可作为等效 `mainnodeid`；不把“必须存在独立 `mainnodeid`”写成业务前提。
 - RCSD 缺失挂接但事实事件存在时，仍属于 stage4 处理对象，不得因为缺少 RCSD 挂接而排除。
-- 当前非目标冻结为：
+- T02 历史非目标冻结为：
   - 不写回 `nodes.is_anchor`
   - 不并入统一锚定结果
   - 不做最终唯一锚定决策闭环
@@ -475,14 +475,14 @@
   - 不做概率 / 置信度实现
   - 不做误伤捞回
   - 不做环岛新业务规则
-  - 当前可用于审计 / 验证批跑，但不承担正式产线级全量锚定闭环职责
+  - 可用于历史审计 / 验证批跑，但不承担当前正式产线级全量锚定闭环职责
 
 ### 10.3 七步正式业务定义
 - Step1 候选验证（Candidate Admission）：
   - Step1 是准入 gate，不是正确性 gate
-  - 只验证目标对象是否属于 stage4 当前处理范围
+  - 只验证目标对象是否属于 stage4 历史处理范围
   - RCSD 是否存在不影响准入
-  - `mainnodeid_out_of_scope` 只表示“不属于 stage4 当前处理范围”
+  - `mainnodeid_out_of_scope` 只表示“不属于 stage4 历史处理范围”
 - Step2 高召回事件局部上下文构建（High-recall Local Context）：
   - Step2 不是 patch 全量解释，而是 `DriveZone` 硬边界内的高召回事实事件局部上下文构建
   - diverge：主干向后最多 `50m`，各 branch 臂向前最多 `200m`，不得越过相邻语义路口
@@ -548,34 +548,34 @@
   - 建议同步固化 `acceptance_class / acceptance_reason`
   - 不得只把这些信息散落在 JSON 中
 
-### 10.5 当前阶段性边界与未来合并方向
-- stage4 当前是独立补充阶段，不承担统一锚定结果写回责任。
-- 当前 accepted baseline 只冻结 Stage4 的业务定义、审计口径、目视复核口径和输出字段规则，不把当前实现细节直接冻结成业务规则。
+### 10.5 历史阶段性边界与未来合并方向
+- stage4 在 T02 历史口径中是独立补充阶段，不承担统一锚定结果写回责任。
+- T02 历史 accepted baseline 只冻结 Stage4 的业务定义、审计口径、目视复核口径和输出字段规则，不把当时实现细节直接冻结成业务规则。
 - 后续当算法收敛到认可水平后，stage4 可与 stage3 合并进入同一锚定流程，并承担相应的锚定信息关联职责。
 
-## 11. 当前已落地 / 已固化内容
-- stage1 `DriveZone / has_evd gate` 已正式落地。
-- stage2 `anchor recognition / anchor existence` 已正式落地。
+## 11. 历史已落地 / 已固化内容
+- stage1 `DriveZone / has_evd gate` 已在 T02 历史实现中落地。
+- stage2 `anchor recognition / anchor existence` 已在 T02 历史实现中落地。
 - stage2 的 `is_anchor = yes / no / fail1 / fail2 / null` 已冻结。
 - stage2 的 `anchor_reason = roundabout / t / null` 已冻结。
 - 单节点多面命中、`kind_2 = 64` 全组命中、`kind_2 = 2048` 全组命中的 stage2 豁免已固化。
 - `node_error_2` 在反向包含时先过滤代表 node `kind_2 = 1` 的组已固化。
-- stage3 `virtual intersection anchoring` 已纳入当前 baseline。
+- stage3 `virtual intersection anchoring` 已纳入 T02 历史 baseline。
 - `t02-virtual-intersection-poc` 已统一承接 `case-package` 与 `full-input`。
 - full-input 已支持统一汇总 `virtual_intersection_polygons.gpkg` 与 `_rendered_maps/`。
 - 文本证据包已明确为 stage3 支撑工具，不属于新的业务阶段。
 - `t02-fix-node-error-2` 已明确为独立离线修复工具，不纳入 stage 主流程。
 - `t02-aggregate-continuous-divmerge` 已明确为独立离线聚合工具，不纳入 stage 主流程。
 
-## 12. 当前仍需继续验证 / 修正的内容
+## 12. 历史仍需继续验证 / 修正的内容
 - 少量 stage2 `fail1 / fail2 / anchor_reason` 的边界 case 仍需继续回归验证。
 - stage3 在特殊主辅路、复合 T 型、复杂 RC 局部组件上的锚定规则仍需继续验证。
 - stage3 full-input 的性能优化、共享大图层局部裁剪与输出体积控制仍需继续治理。
-- `t02-fix-node-error-2` 当前需要进一步做局部化读取与定点更新，以改善性能与输出体量。
-- 文本证据包之外的更完整外部复现闭环仍未纳入当前 baseline。
-- 最终唯一锚定决策、概率 / 置信度与正式产线闭环仍未进入当前正式范围。
+- `t02-fix-node-error-2` 历史上需要进一步做局部化读取与定点更新，以改善性能与输出体量。
+- 文本证据包之外的更完整外部复现闭环仍未纳入 T02 历史 baseline。
+- 最终唯一锚定决策、概率 / 置信度与正式产线闭环仍未进入 T02 历史正式范围。
 
-## 13. 当前推荐对齐原则
+## 13. 历史推荐对齐原则
 - 若 T02 仓库文档与本 accepted baseline 冲突，以本文档为准。
 - 若实现与本文档冲突，应先说明文档歧义或实现偏差，再由业务拍板。
 - 未经明确允许，不修改已固化的 T02 accepted baseline。

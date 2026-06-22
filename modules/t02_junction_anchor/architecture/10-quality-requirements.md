@@ -1,5 +1,7 @@
 # 10 质量要求
 
+> 当前项目级生命周期中，T02 已 Retired。本文档保留退役前历史质量要求；其中“官方 / 正式 / 当前”表述均按 T02 历史基线理解，不代表当前主业务链仍以 T02 作为正式模块。
+
 ## 1. 可理解
 
 - stage1 的输入、字段映射、代表 node 规则、输出与失败口径应能直接从文档读出。
@@ -7,8 +9,8 @@
 
 ## 2. 可运行
 
-- 官方入口应能稳定读取 T01 `segment / nodes` 与 `DriveZone`，并输出正式产物。
-- stage2 官方入口与 stage3 `case-package` 正式验收基线入口应能稳定读取输入并产出最小闭环结果。
+- 历史官方入口应能稳定读取 T01 `segment / nodes` 与 `DriveZone`，并输出历史正式产物。
+- stage2 历史官方入口与 stage3 `case-package` 历史验收基线入口应能稳定读取输入并产出最小闭环结果。
 - stage3 `full-input` regression 入口应能稳定输出：
   - `preflight.json`
   - `summary.json`
@@ -27,7 +29,7 @@
 
 - 模块长期真相不得只留在 `specs/` 或 `README.md`。
 - 模块文档面、CLI 入口、实现与测试应保持一致。
-- stage3 `case-package` 正式验收基线与 `full-input` 支撑入口都必须写入模块契约和架构文档，不能只留在聊天记录或临时脚本。
+- stage3 `case-package` 历史验收基线与 `full-input` 支撑入口都必须写入模块契约和架构文档，不能只留在聊天记录或临时脚本。
 
 ## 5. GIS 正确性
 
@@ -40,4 +42,4 @@
 ## 6. 可扩展
 
 - stage3 full-input 模式必须支持 `max_cases` 与 `workers`，且并行化不能改变稳定排序后的结果语义。
-- stage3 `case-package` 正式验收基线不得因 `full-input` 扩展而回退。
+- stage3 `case-package` 历史验收基线不得因 `full-input` 扩展而回退。

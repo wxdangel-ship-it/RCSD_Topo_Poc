@@ -130,6 +130,11 @@ STEP2_CANDIDATE_FIELDS = [
     "retained_road_count",
     "candidate_node_count",
     "retained_node_count",
+    "geometry_buffer_coverage_issue",
+    "rcsd_outside_swsd_buffer_length_m",
+    "rcsd_outside_swsd_buffer_ratio",
+    "swsd_uncovered_by_rcsd_length_m",
+    "swsd_uncovered_by_rcsd_ratio",
 ]
 
 STEP2_REPLACEABLE_FIELDS = [
@@ -174,6 +179,11 @@ STEP2_REPLACEABLE_FIELDS = [
     "unexpected_endpoint_node_ids",
     "unexpected_mapped_semantic_node_ids",
     "excluded_advance_right_turn_road_ids",
+    "geometry_buffer_coverage_issue",
+    "rcsd_outside_swsd_buffer_length_m",
+    "rcsd_outside_swsd_buffer_ratio",
+    "swsd_uncovered_by_rcsd_length_m",
+    "swsd_uncovered_by_rcsd_ratio",
     "hard_filter_passed",
 ]
 
@@ -222,6 +232,11 @@ STEP2_BUFFER_SEGMENT_FIELDS = [
     "retained_road_count",
     "candidate_node_count",
     "retained_node_count",
+    "geometry_buffer_coverage_issue",
+    "rcsd_outside_swsd_buffer_length_m",
+    "rcsd_outside_swsd_buffer_ratio",
+    "swsd_uncovered_by_rcsd_length_m",
+    "swsd_uncovered_by_rcsd_ratio",
 ]
 
 STEP2_BUFFER_REJECTED_FIELDS = [
@@ -431,6 +446,8 @@ STEP2_REPLACEMENT_PLAN_FIELDS = [
     "rcsd_junc_nodes",
     "rcsd_road_ids",
     "retained_node_ids",
+    "pair_anchor_bridge_road_ids",
+    "pair_anchor_bridge_length_m",
     "group_segment_ids",
     "source_segment_ids",
     "buffer_distances_m",
@@ -524,6 +541,7 @@ STEP3_JUNCTION_REBUILD_AUDIT_FIELDS = [
     "removed_swsd_node_ids",
     "remaining_swsd_node_ids",
     "added_rcsd_node_ids",
+    "advance_attachment_rcsd_node_ids",
     "rebuilt_node_ids",
     "inherited_kind",
     "inherited_grade",

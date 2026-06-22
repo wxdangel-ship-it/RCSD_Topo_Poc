@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import csv
 import json
+import subprocess
+import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 from shapely.geometry import LineString, Point
 
@@ -269,6 +272,7 @@ def test_t10_t06_step3_uses_replaceable_file_not_run_root_input(tmp_path: Path, 
         _write_file(step3_root / "t06_frcsd_road.gpkg")
         _write_file(step3_root / "t06_frcsd_node.gpkg")
         _write_file(step3_root / "t06_step3_swsd_frcsd_segment_relation.gpkg")
+        _write_file(step3_root / "t06_step3_topology_connectivity_audit.gpkg")
         _write_file(step3_root / "t06_step3_summary.json")
         return {"stage_id": stage_id, "stage": stage_id, "status": "passed", "outputs": {}}
 
@@ -1306,6 +1310,416 @@ def test_t10_feedback_regression_guard_detects_removed_replaced_segment(tmp_path
 
     assert comparison["removed_replaced_segment_ids"] == ["removed_segment"]
     assert comparison["added_replaced_segment_ids"] == []
+
+
+def test_t10_case_runner_summary_exposes_completion_status(tmp_path: Path, monkeypatch) -> None:
+    package_dir = tmp_path / "package"
+    case_dir = package_dir / "9001"
+    case_dir.mkdir(parents=True)
+
+    def fake_discover_case_dirs(*, package_root, case_ids):
+        return [case_dir]
+
+    def fake_run_one_case(**kwargs):
+        case_run_dir = kwargs["run_root"] / "cases" / "9001"
+        case_run_dir.mkdir(parents=True)
+        (case_run_dir / "t10_e2e_case_run_manifest.json").write_text("{}", encoding="utf-8")
+        (case_run_dir / "t10_t06_funnel.json").write_text("{}", encoding="utf-8")
+        return {
+            "case_id": "9001",
+            "case_dir": str(case_dir),
+            "case_run_dir": str(case_run_dir),
+            "case_run_manifest_path": str(case_run_dir / "t10_e2e_case_run_manifest.json"),
+            "case_run_summary_path": str(case_run_dir / "t10_e2e_case_run_summary.json"),
+            "overall_status": "passed",
+            "stage_statuses": {"t09_step3": "passed"},
+            "t06_funnel_json": str(case_run_dir / "t10_t06_funnel.json"),
+        }
+
+    def fake_write_upstream_feedback(*, run_root, case_results):
+        for name in [
+            "segments",
+            "summary",
+            "relations",
+            "relation_summary",
+            "side_group_candidates",
+            "side_group_endpoint_candidates",
+            "pair_anchor_endpoint_clusters",
+        ]:
+            (run_root / f"{name}.csv").write_text("", encoding="utf-8")
+            (run_root / f"{name}.json").write_text("[]", encoding="utf-8")
+        return SimpleNamespace(
+            segments_csv=run_root / "segments.csv",
+            segments_json=run_root / "segments.json",
+            summary_csv=run_root / "summary.csv",
+            summary_json=run_root / "summary.json",
+            relations_csv=run_root / "relations.csv",
+            relations_json=run_root / "relations.json",
+            relation_summary_csv=run_root / "relation_summary.csv",
+            relation_summary_json=run_root / "relation_summary.json",
+            side_group_candidates_csv=run_root / "side_group_candidates.csv",
+            side_group_candidates_json=run_root / "side_group_candidates.json",
+            side_group_endpoint_candidates_csv=run_root / "side_group_endpoint_candidates.csv",
+            side_group_endpoint_candidates_json=run_root / "side_group_endpoint_candidates.json",
+            pair_anchor_endpoint_clusters_csv=run_root / "pair_anchor_endpoint_clusters.csv",
+            pair_anchor_endpoint_clusters_json=run_root / "pair_anchor_endpoint_clusters.json",
+            segment_count=0,
+            summary_count=0,
+            relation_count=0,
+            relation_summary_count=0,
+            side_group_candidate_count=0,
+            side_group_endpoint_candidate_count=0,
+            pair_anchor_endpoint_cluster_count=0,
+        )
+
+    monkeypatch.setattr(t10_case_runner, "_discover_case_dirs", fake_discover_case_dirs)
+    monkeypatch.setattr(t10_case_runner, "_run_one_case", fake_run_one_case)
+    monkeypatch.setattr(t10_case_runner, "write_t10_upstream_feedback", fake_write_upstream_feedback)
+
+    artifacts = t10_case_runner.run_t10_e2e_cases_from_package(
+        package_dir=package_dir,
+        out_root=tmp_path / "runs",
+        run_id="status_run",
+    )
+
+    summary = json.loads(artifacts.summary_json.read_text(encoding="utf-8"))
+    manifest = json.loads(artifacts.manifest_json.read_text(encoding="utf-8"))
+    assert summary["status"] == "passed"
+    assert summary["passed"] is True
+    assert summary["completed_case_count"] == 1
+    assert summary["duration_seconds"] >= 0
+    assert manifest["status"] == "passed"
+    assert manifest["passed"] is True
+
+
+def test_t10_case_runner_writes_t06_visual_check_summary(tmp_path: Path, monkeypatch) -> None:
+    package_dir = tmp_path / "package"
+    case_dir = package_dir / "9001"
+    case_dir.mkdir(parents=True)
+
+    def fake_discover_case_dirs(*, package_root, case_ids):
+        return [case_dir]
+
+    def fake_run_one_case(**kwargs):
+        case_run_dir = kwargs["run_root"] / "cases" / "9001"
+        step2 = case_run_dir / "t06_step12" / "t06" / "step2_extract_rcsd_segments"
+        step3 = case_run_dir / "t06_step12" / "t06" / "step3_segment_replacement"
+        t07 = case_run_dir / "t07_step3" / "t07_step3" / "step3_intersection_match"
+        t03 = case_run_dir / "t03" / "t03"
+        t04 = case_run_dir / "t04" / "t04"
+        t05 = case_run_dir / "t05" / "t05_phase1"
+        for path in [case_run_dir / "t01", step2, step3, t07, t03, t04, t05]:
+            path.mkdir(parents=True, exist_ok=True)
+        write_gpkg(
+            case_run_dir / "t01" / "segment.gpkg",
+            [{"properties": {"id": "s1_s2"}, "geometry": LineString([(0, 0), (10, 0)])}],
+            crs_text="EPSG:3857",
+            layer_name="segment",
+        )
+        write_gpkg(
+            case_run_dir / "t01" / "roads.gpkg",
+            [{"properties": {"id": "sw1", "snodeid": "s1", "enodeid": "s2"}, "geometry": LineString([(0, 0), (10, 0)])}],
+            crs_text="EPSG:3857",
+            layer_name="roads",
+        )
+        write_gpkg(
+            t07 / "nodes.gpkg",
+            [
+                {"properties": {"id": "s1"}, "geometry": Point(0, 0)},
+                {"properties": {"id": "s2"}, "geometry": Point(10, 0)},
+            ],
+            crs_text="EPSG:3857",
+            layer_name="nodes",
+        )
+        for path in [
+            t07 / "t07_rcsdintersection_anchor_surface.gpkg",
+            t03 / "virtual_intersection_polygons.gpkg",
+            t04 / "divmerge_virtual_anchor_surface.gpkg",
+            t04 / "divmerge_virtual_anchor_surface_audit.gpkg",
+            t05 / "junction_anchor_surface.gpkg",
+        ]:
+            write_gpkg(
+                path,
+                [{"properties": {"id": "surface1"}, "geometry": LineString([(0, 0), (10, 0)])}],
+                crs_text="EPSG:3857",
+                layer_name=path.stem,
+            )
+        for name in [
+            "t06_rcsd_segment_replaceable.gpkg",
+            "t06_segment_replacement_plan.gpkg",
+            "t06_segment_replacement_problem_registry.gpkg",
+        ]:
+            write_gpkg(
+                step2 / name,
+                [{"properties": {"swsd_segment_id": "s1_s2"}, "geometry": LineString([(0, 0), (10, 0)])}],
+                crs_text="EPSG:3857",
+                layer_name=Path(name).stem,
+            )
+        write_gpkg(
+            step3 / "t06_frcsd_road.gpkg",
+            [
+                {
+                    "properties": {"id": "rc_right", "snodeid": "r1", "enodeid": "r2", "source": 1, "formway": 128},
+                    "geometry": LineString([(0, 0), (10, 0)]),
+                },
+                {
+                    "properties": {"id": "sw_right", "snodeid": "s1", "enodeid": "s2", "source": 2, "formway": 128},
+                    "geometry": LineString([(0, 0), (10, 0)]),
+                },
+            ],
+            crs_text="EPSG:3857",
+            layer_name="t06_frcsd_road",
+        )
+        write_gpkg(
+            step3 / "t06_frcsd_node.gpkg",
+            [
+                {"properties": {"id": "r1"}, "geometry": Point(0, 0)},
+                {"properties": {"id": "r2"}, "geometry": Point(10, 0)},
+                {"properties": {"id": "s1"}, "geometry": Point(0, 0)},
+                {"properties": {"id": "s2"}, "geometry": Point(10, 0)},
+            ],
+            crs_text="EPSG:3857",
+            layer_name="t06_frcsd_node",
+        )
+        write_gpkg(
+            step3 / "t06_step3_swsd_frcsd_segment_relation.gpkg",
+            [{"properties": {"swsd_segment_id": "s1_s2", "relation_status": "replaced"}, "geometry": LineString([(0, 0), (10, 0)])}],
+            crs_text="EPSG:3857",
+            layer_name="t06_step3_swsd_frcsd_segment_relation",
+        )
+        for path in [
+            step3 / "t06_step3_topology_connectivity_audit.gpkg",
+            step3 / "t06_step3_surface_topology_audit.gpkg",
+        ]:
+            write_gpkg(
+                path,
+                [{"properties": {"audit_status": "pass"}, "geometry": LineString([(0, 0), (10, 0)])}],
+                crs_text="EPSG:3857",
+                layer_name=path.stem,
+            )
+        (step2 / "t06_step2_summary.json").write_text(
+            json.dumps(
+                {
+                    "replaceable_count": 1,
+                    "replacement_plan_count": 1,
+                    "replacement_plan_ready_count": 1,
+                    "problem_registry_count": 0,
+                    "rejected_count": 0,
+                }
+            ),
+            encoding="utf-8",
+        )
+        (step3 / "t06_step3_summary.json").write_text(
+            json.dumps(
+                {
+                    "replacement_unit_success_count": 1,
+                    "replacement_unit_failure_count": 0,
+                    "removed_swsd_road_count": 1,
+                    "added_rcsd_road_count": 1,
+                    "frcsd_road_count": 2,
+                    "frcsd_node_count": 4,
+                }
+            ),
+            encoding="utf-8",
+        )
+        (case_run_dir / "t10_e2e_case_run_manifest.json").write_text("{}", encoding="utf-8")
+        (case_run_dir / "t10_t06_funnel.json").write_text("{}", encoding="utf-8")
+        return {
+            "case_id": "9001",
+            "case_dir": str(case_dir),
+            "case_run_dir": str(case_run_dir),
+            "case_run_manifest_path": str(case_run_dir / "t10_e2e_case_run_manifest.json"),
+            "case_run_summary_path": str(case_run_dir / "t10_e2e_case_run_summary.json"),
+            "overall_status": "passed",
+            "stage_statuses": {"t06_step3": "passed"},
+            "t06_funnel_json": str(case_run_dir / "t10_t06_funnel.json"),
+        }
+
+    def fake_write_upstream_feedback(*, run_root, case_results):
+        for name in [
+            "segments",
+            "summary",
+            "relations",
+            "relation_summary",
+            "side_group_candidates",
+            "side_group_endpoint_candidates",
+            "pair_anchor_endpoint_clusters",
+        ]:
+            (run_root / f"{name}.csv").write_text("", encoding="utf-8")
+            (run_root / f"{name}.json").write_text("[]", encoding="utf-8")
+        return SimpleNamespace(
+            segments_csv=run_root / "segments.csv",
+            segments_json=run_root / "segments.json",
+            summary_csv=run_root / "summary.csv",
+            summary_json=run_root / "summary.json",
+            relations_csv=run_root / "relations.csv",
+            relations_json=run_root / "relations.json",
+            relation_summary_csv=run_root / "relation_summary.csv",
+            relation_summary_json=run_root / "relation_summary.json",
+            side_group_candidates_csv=run_root / "side_group_candidates.csv",
+            side_group_candidates_json=run_root / "side_group_candidates.json",
+            side_group_endpoint_candidates_csv=run_root / "side_group_endpoint_candidates.csv",
+            side_group_endpoint_candidates_json=run_root / "side_group_endpoint_candidates.json",
+            pair_anchor_endpoint_clusters_csv=run_root / "pair_anchor_endpoint_clusters.csv",
+            pair_anchor_endpoint_clusters_json=run_root / "pair_anchor_endpoint_clusters.json",
+            segment_count=0,
+            summary_count=0,
+            relation_count=0,
+            relation_summary_count=0,
+            side_group_candidate_count=0,
+            side_group_endpoint_candidate_count=0,
+            pair_anchor_endpoint_cluster_count=0,
+        )
+
+    monkeypatch.setattr(t10_case_runner, "_discover_case_dirs", fake_discover_case_dirs)
+    monkeypatch.setattr(t10_case_runner, "_run_one_case", fake_run_one_case)
+    monkeypatch.setattr(t10_case_runner, "write_t10_upstream_feedback", fake_write_upstream_feedback)
+
+    artifacts = t10_case_runner.run_t10_e2e_cases_from_package(
+        package_dir=package_dir,
+        out_root=tmp_path / "runs",
+        run_id="visual_check_run",
+    )
+
+    run_summary = json.loads(artifacts.summary_json.read_text(encoding="utf-8"))
+    visual_summary = json.loads(artifacts.t06_visual_check_summary_json.read_text(encoding="utf-8"))
+    rows = list(csv.DictReader(artifacts.t06_visual_check_summary_csv.open(newline="", encoding="utf-8")))
+    row = rows[0]
+
+    assert Path(run_summary["t06_visual_check_summary_json"]).is_file()
+    assert visual_summary["case_count"] == 1
+    assert row["case_id"] == "9001"
+    assert row["crs_status"] == "passed"
+    assert row["missing_visual_layer_count"] == "0"
+    assert row["advance_right_count"] == "2"
+    assert row["advance_right_rcsd_count"] == "1"
+    assert row["advance_right_swsd_count"] == "1"
+    assert row["swsd_advance_duplicate_ge20pct_count"] == "1"
+    assert row["advance_endpoint_missing_road_count"] == "0"
+    assert row["spatial_check_status"] == "passed"
+
+
+def test_t10_t06_visual_check_tolerates_geometryless_plan_rows(tmp_path: Path) -> None:
+    import fiona
+
+    road = tmp_path / "t06_frcsd_road.gpkg"
+    node = tmp_path / "t06_frcsd_node.gpkg"
+    plan = tmp_path / "t06_segment_replacement_plan.gpkg"
+    write_gpkg(
+        road,
+        [{"properties": {"id": "r1", "snodeid": "n1", "enodeid": "n2", "source": 1, "formway": 128}, "geometry": LineString([(0, 0), (1, 0)])}],
+        crs_text="EPSG:3857",
+        layer_name="t06_frcsd_road",
+    )
+    write_gpkg(
+        node,
+        [
+            {"properties": {"id": "n1"}, "geometry": Point(0, 0)},
+            {"properties": {"id": "n2"}, "geometry": Point(1, 0)},
+        ],
+        crs_text="EPSG:3857",
+        layer_name="t06_frcsd_node",
+    )
+    with fiona.open(
+        plan,
+        "w",
+        driver="GPKG",
+        layer="t06_segment_replacement_plan",
+        crs="EPSG:3857",
+        schema={"geometry": "None", "properties": {"swsd_segment_id": "str"}},
+    ) as collection:
+        collection.write({"properties": {"swsd_segment_id": "s1_s2"}, "geometry": None})
+
+    metrics = t10_case_runner._t06_visual_spatial_metrics(
+        {
+            "t06_frcsd_road_gpkg": road,
+            "t06_frcsd_node_gpkg": node,
+            "t06_segment_replacement_plan_gpkg": plan,
+        }
+    )
+
+    assert metrics["crs_status"] == "passed"
+    assert metrics["spatial_check_status"] == "passed"
+    assert metrics["advance_right_count"] == 1
+    assert metrics["advance_endpoint_missing_road_count"] == 0
+
+
+def test_t10_innernet_full_pipeline_finalize_existing_run_root(tmp_path: Path) -> None:
+    repo_root = Path(__file__).resolve().parents[3]
+    run_root = tmp_path / "t10_existing_run"
+    t06_step3 = run_root / "t06_segment_fusion_precheck" / "t06_innernet_precheck" / "step3_segment_replacement"
+    t09_step3 = run_root / "t09_swsd_field_rule_restoration" / "t09_step3"
+    t06_step3.mkdir(parents=True)
+    t09_step3.mkdir(parents=True)
+    frcsd_road = t06_step3 / "t06_frcsd_road.gpkg"
+    frcsd_node = t06_step3 / "t06_frcsd_node.gpkg"
+    frcsd_restriction = t09_step3 / "frcsd_restriction.gpkg"
+    frcsd_road.touch()
+    frcsd_node.touch()
+    frcsd_restriction.touch()
+    manifest = {
+        "run_id": run_root.name,
+        "run_root": str(run_root),
+        "repo_dir": str(repo_root),
+        "created_at_utc": "2026-06-20T00:00:00+00:00",
+        "status": "running",
+        "passed": False,
+        "inputs": {},
+        "outputs": {},
+        "stage_order": ["t06_step3", "t09"],
+        "stages": {
+            "t06_step3": {
+                "stage_id": "t06_step3",
+                "module_id": "T06",
+                "status": "passed",
+                "outputs": {
+                    "frcsd_road": str(frcsd_road),
+                    "frcsd_node": str(frcsd_node),
+                },
+            },
+            "t09": {
+                "stage_id": "t09",
+                "module_id": "T09",
+                "status": "passed",
+                "outputs": {
+                    "frcsd_restriction": str(frcsd_restriction),
+                },
+            },
+        },
+    }
+    (run_root / "t10_innernet_full_pipeline_manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        ["bash", "scripts/t10_run_innernet_full_pipeline.sh"],
+        cwd=repo_root,
+        env={
+            "PATH": "/usr/bin:/bin",
+            "PYTHON_BIN": sys.executable,
+            "REPO_DIR": str(repo_root),
+            "FINALIZE_EXISTING": "1",
+            "RESUME_RUN_ROOT": str(run_root),
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr + result.stdout
+    summary = json.loads((run_root / "t10_innernet_full_pipeline_summary.json").read_text(encoding="utf-8"))
+    updated_manifest = json.loads(
+        (run_root / "t10_innernet_full_pipeline_manifest.json").read_text(encoding="utf-8")
+    )
+    assert summary["status"] == "passed"
+    assert summary["passed"] is True
+    assert summary["missing_final_outputs"] == []
+    assert summary["t06_frcsd_road"] == str(frcsd_road)
+    assert summary["t06_frcsd_node"] == str(frcsd_node)
+    assert summary["t09_frcsd_restriction"] == str(frcsd_restriction)
+    assert updated_manifest["status"] == "passed"
+    assert updated_manifest["passed"] is True
 
 
 def _write_feedback_iteration_case_outputs(

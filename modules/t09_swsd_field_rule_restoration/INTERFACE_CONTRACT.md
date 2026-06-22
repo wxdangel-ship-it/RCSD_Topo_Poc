@@ -4,7 +4,7 @@
 
 本文件是 `t09_swsd_field_rule_restoration` 的稳定接口契约。
 凝练业务说明见 `SPEC.md`。
-详细业务落地见 `architecture/04-solution-strategy.md`。
+架构设计见 `architecture/03-solution-strategy.md`。
 阅读入口见 `README.md`。
 
 ## 1. 目标与范围

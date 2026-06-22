@@ -28,8 +28,8 @@
 
 ### `docs/`
 
-- 放项目级文档
-- 只保留项目摘要、项目级架构、治理入口、结构元数据和归档目录
+- 放项目级详细文档
+- 只保留项目级详细需求、项目级架构、治理盘点、结构元数据和归档目录
 
 ### `modules/`
 
@@ -108,7 +108,7 @@
 
 允许：
 
-- `PROJECT_BRIEF.md`
+- `PROJECT_REQUIREMENTS.md`
 - `architecture/`
 - `doc-governance/`
 - `repository-metadata/`
@@ -118,7 +118,6 @@
 
 允许：
 
-- `README.md`
 - `module-lifecycle.md`
 - `current-module-inventory.md`
 - `current-doc-inventory.md`
@@ -139,7 +138,8 @@
 
 允许：
 
-- `AGENTS.md`
+- `AGENTS.md`（可选模板，仅当模块存在特殊 Agent 红线时使用）
+- `SPEC.md`
 - `INTERFACE_CONTRACT.md`
 - `README.md`
 - `review-summary.md`
@@ -151,7 +151,8 @@
 
 允许：
 
-- `AGENTS.md`
+- `AGENTS.md`（可选，仅当模块存在特殊 Agent 红线时保留）
+- `SPEC.md`
 - `INTERFACE_CONTRACT.md`
 - `README.md`
 - `review-summary.md`
@@ -176,7 +177,7 @@
 ## 5. 本目录的按需阅读顺序
 
 本目录不是仓库 day-0 主入口。
-人类查看仓库时可先读 repo root `README.md`；Agent 执行任务时仍以 `AGENTS.md` 为硬规则入口，并按其要求进入 `docs/doc-governance/README.md`。只有在需要确认仓库结构、入口边界与体量约束时，再按下列顺序阅读：
+人类查看仓库时先读 repo root `README.md`；Agent 执行任务时仍以 `AGENTS.md` 为硬规则入口，并按其要求回到 repo root `README.md` 的主阅读顺序。只有在需要确认仓库结构、入口边界与体量约束时，再按下列顺序阅读：
 
 1. `README.md`
 2. `repository-structure-metadata.md`

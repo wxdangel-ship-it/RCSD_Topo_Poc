@@ -1,31 +1,34 @@
 # t02_junction_anchor
 
-> 本文件是 `t02_junction_anchor` 的操作者总览与运行入口说明。当前业务需求对齐与 accepted baseline 以 `architecture/06-accepted-baseline.md` 为准，稳定输入/输出/入口契约以 `INTERFACE_CONTRACT.md` 为准；如本文件与长期源事实表述不一致，以后者为准。
+> 本文件是 `t02_junction_anchor` 的历史操作者总览与运行入口说明。当前项目级生命周期以 `../../docs/doc-governance/module-lifecycle.md` 为准；T02 已 Retired，历史业务需求摘要见 `SPEC.md`，历史输入/输出/入口契约以 `INTERFACE_CONTRACT.md` 与 `architecture/*` 作为追溯依据，不再代表当前主业务链的正式需求入口。
 
 ## 1. 模块定位
 
-- T02 是当前已登记的正式业务模块。
-- 当前正式实现范围包括：
+- T02 是 Retired 历史模块，已退出当前 `T08 -> T01 -> T07 -> T03 -> T04 -> T05 -> T06 -> T09` 主业务链。
+- T02 历史实现范围包括：
   - stage1 `DriveZone / has_evd gate`
   - stage2 `anchor recognition / anchor existence`
   - stage3 `virtual intersection anchoring`
   - stage4 `diverge / merge virtual polygon`
   - 连续分歧 / 合流复杂路口聚合离线工具
-- 模块长期目标是为双向 Segment 相关路口锚定提供可审计、可复现的下游基础。
-- `t02-virtual-intersection-poc` 是当前 stage3 baseline 官方入口。
-- `t02-stage4-divmerge-virtual-polygon` 是当前 stage4 独立入口，只输出虚拟路口面及关联审计，不回写 `nodes.is_anchor`。
-- 单 / 多 `mainnodeid` 文本证据包当前作为 stage3 复核与外部复现支撑工具保留。
-- 当前代码已实现最小闭环，但尚未进入最终唯一锚定决策、概率阶段与正式产线级全量批处理。
+- 当前主链能力承接关系：
+  - T07 承接既有 RCSDIntersection / 道路面 1:1 语义锚定和 relation 补锚。
+  - T03 承接交叉路口与 T 型路口虚拟锚定。
+  - T04 承接分歧、合流、连续分歧 / 合流和复杂路口虚拟锚定。
+  - T08 承接预处理、字段修复、复杂路口预处理和质量显性化。
+- T02 代码、历史入口、baseline 与文本证据包保留用于追溯、回归比较和必要的历史 case 复现；新业务需求不得继续扩展 T02。
 
-### Stage4 摘要
+### Stage4 历史摘要
 
-- 当前定位：面向分歧 / 合流场景的独立补充阶段；当前不写回 `nodes.is_anchor`，不并入统一锚定结果，也不承担最终唯一锚定闭环。
-- 当前处理对象：`has_evd = yes`、`is_anchor = no` 且需要按真实分歧 / 合流事件解释的事实路口候选；包括简单 div/merge 候选和连续分歧 / 合流聚合后的 complex 128 主节点，不等于“所有 complex 128”。
-- 当前非目标：不做候选生成 / 打分，不做概率 / 置信度，不做误伤捞回，不做环岛新规则。
+- 历史定位：面向分歧 / 合流场景的独立补充阶段；不写回 `nodes.is_anchor`，不并入当前统一锚定结果，也不承担最终唯一锚定闭环。
+- 历史处理对象：`has_evd = yes`、`is_anchor = no` 且需要按真实分歧 / 合流事件解释的事实路口候选；包括简单 div/merge 候选和连续分歧 / 合流聚合后的 complex 128 主节点，不等于“所有 complex 128”。
+- 历史非目标：不做候选生成 / 打分，不做概率 / 置信度，不做误伤捞回，不做环岛新规则。
 - 审计与目视复核：复用 Stage3 的机器审计 + 人工目视双线模板与三态 PNG 样式，但不继承 Stage3 业务语义。
 - 最终成果输出：Stage4 产出 `stage4_virtual_polygon.gpkg` / `stage4_virtual_polygons.gpkg` 及关联审计；polygon 图层至少承载 `mainnodeid`、`kind` 和 Stage4 审计字段，支持脱离 JSON 的基本独立复核。
 
-## 2. 官方运行入口
+## 2. 历史运行入口
+
+以下入口是历史兼容入口，仅用于追溯、旧 baseline 复现或旧测试解释。当前主业务链不从 T02 启动新需求，也不把 T02 输出作为 T05/T06 的当前正式 handoff。
 
 运行前先在 repo root 执行：
 
@@ -66,24 +69,24 @@ make doctor
 .venv/bin/python -m rcsd_topo_poc t02-aggregate-continuous-divmerge --help
 ```
 
-- `t02-virtual-intersection-poc` 是当前 stage3 baseline 官方入口
-- 默认 `case-package` 模式承载单 `mainnodeid` 的唯一正式验收基线与小样本复核能力
+- `t02-virtual-intersection-poc` 是历史 stage3 baseline 入口。
+- 默认 `case-package` 模式承载历史单 `mainnodeid` 验收基线与小样本复核能力。
 - 显式 `--input-mode full-input` 时，仅作为完整数据 `fixture / dev-only / regression` 入口，统一承接：
   - 完整数据 + 指定 `mainnodeid`
   - 完整数据 + 自动识别“有资料但未锚定”的路口
 - 它不重算 stage1 `has_evd` 或 stage2 `is_anchor`，而是直接消费其结果字段
 - `t02-fix-node-error-2` 是独立离线修复工具，只消费 `node_error_2 / nodes / roads / RCSDIntersection` 并输出 `nodes_fix.gpkg / roads_fix.gpkg / fix_report.json`；它不属于 stage 主流程
 - `t02-export-text-bundle` / `t02-decode-text-bundle` 用于单 / 多 `mainnodeid` 文本证据包导出与解包，服务于 stage3 复核与外部复现
-- `t02-stage4-divmerge-virtual-polygon` 用于单 case 的 div/merge 虚拟路口面 baseline，输入为 `nodes / roads / DriveZone / DivStripZone / RCSDRoad / RCSDNode / mainnodeid`；当前处理对象包括简单 div/merge 候选，以及连续分歧 / 合流聚合后的 complex 128 主节点
+- `t02-stage4-divmerge-virtual-polygon` 用于历史单 case 的 div/merge 虚拟路口面 baseline，输入为 `nodes / roads / DriveZone / DivStripZone / RCSDRoad / RCSDNode / mainnodeid`；历史处理对象包括简单 div/merge 候选，以及连续分歧 / 合流聚合后的 complex 128 主节点。
 - `t02-aggregate-continuous-divmerge` 是独立离线聚合工具，按 T04 continuous chain 语义识别连续分歧/合流组，改写 `nodes / roads` 并输出 `nodes_fix.gpkg / roads_fix.gpkg / continuous_divmerge_report.json`
 - 该工具会同步输出：
   - 新生成复杂路口数量 `complex_junction_count`
   - 新生成复杂路口 `mainnodeid` 列表 `complex_mainnodeids`
   - CLI 结束时也会直接打印这两个摘要
-- T02 当前输入兼容 `GeoPackage(.gpkg)`、`GeoJSON` 与 `Shapefile`；历史 `.gpkt` 后缀仅做兼容读取；若同名 `.gpkg` 与 `.geojson` 同时存在，默认优先读取 `GeoPackage`
-- T02 当前矢量输出统一写为 `GeoPackage(.gpkg)`；文本证据包仍输出单个 txt，但解包后的矢量文件也统一为 `.gpkg`
-- `case-package` 是 stage3 唯一正式验收基线入口，不允许回退
-- 当前唯一正式验收基线冻结为 `E:\TestData\POC_Data\T02\Anchor`（WSL：`/mnt/e/TestData/POC_Data/T02/Anchor`）下的 `61` 个 case
+- T02 历史输入兼容 `GeoPackage(.gpkg)`、`GeoJSON` 与 `Shapefile`；历史 `.gpkt` 后缀仅做兼容读取；若同名 `.gpkg` 与 `.geojson` 同时存在，默认优先读取 `GeoPackage`。
+- T02 历史矢量输出统一写为 `GeoPackage(.gpkg)`；文本证据包仍输出单个 txt，但解包后的矢量文件也统一为 `.gpkg`。
+- `case-package` 是 stage3 历史验收基线入口，不允许回退。
+- 历史验收基线冻结为 `E:\TestData\POC_Data\T02\Anchor`（WSL：`/mnt/e/TestData/POC_Data/T02/Anchor`）下的 `61` 个 case。
 - `full-input` 当前仅作为 fixture / dev-only / regression 入口；共享大图层直连运行必须先满足正确 layer / CRS / 预裁剪与 preflight 约束
 - `test_virtual_intersection_full_input_poc.py` 当前只承担 regression 角色，不再表述为 Stage3 正式交付基线
 ## 3. 常见运行方式
@@ -238,7 +241,7 @@ bash scripts/t02_run_stage3_internal_full_input_8workers.sh
   - `DIVSTRIPZONE_PATH=/mnt/d/TestData/POC_Data/patch_all/DivStripZone.gpkg`
   - `RCSDROAD_PATH=/mnt/d/TestData/POC_Data/RC4/RCSDRoad.gpkg`
   - `RCSDNODE_PATH=/mnt/d/TestData/POC_Data/RC4/RCSDNode.gpkg`
-- Stage4 当前正式读取 `DivStripZone` 的局部 patch；它是合法 `DriveZone` patch 内的一级局部参考，用于分支裁决和虚拟面约束，不直接作为输出 polygon。
+- Stage4 历史正式读取 `DivStripZone` 的局部 patch；它是合法 `DriveZone` patch 内的一级局部参考，用于分支裁决和虚拟面约束，不直接作为输出 polygon。
 - 若局部 patch 中缺少 nearby `DivStripZone` 或未提供该输入，默认先降级到 `roads / RCSDRoad` 支撑面，并在 `stage4_status.json / stage4_audit.json` 中写出 `divstrip_present / divstrip_nearby / divstrip_component_count / divstrip_component_selected / selection_mode / evidence_source`。
 - `mainnodeid` 对应的主 `RCSDNode` 不再无条件当作精确 seed：
   - `kind_2=16` 允许位于分歧前主干 `<=20m`
@@ -431,7 +434,7 @@ cd /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_text_bundle
 1. `architecture/06-accepted-baseline.md`
 2. `architecture/01-introduction-and-goals.md`
 3. `architecture/02-constraints.md`
-4. `architecture/04-solution-strategy.md`
+4. `architecture/03-solution-strategy.md`
 5. `architecture/05-building-block-view.md`
 6. `INTERFACE_CONTRACT.md`
 7. `architecture/10-quality-requirements.md`
@@ -439,11 +442,11 @@ cd /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_text_bundle
 补充：
 
 - `architecture/overview.md` 用于快速总览和索引，不替代标准 architecture 文档组。
-- `architecture/06-accepted-baseline.md` 是当前 T02 模块需求对齐与 accepted baseline 主文档。
-- `history/*` 保留阶段演进记录，不替代当前正式源事实。
+- `architecture/06-accepted-baseline.md` 是 T02 历史需求对齐与 accepted baseline 主文档。
+- `history/*` 保留阶段演进记录，不替代当前项目级生命周期事实。
 - `specs/t02-junction-anchor/*` 与 `specs/t02-virtual-intersection-batch-poc/*` 是变更工件，不是长期模块真相主表面。
 
-## 6. 当前实现范围
+## 6. 历史实现范围
 
 - 已实现：
   - stage1 输入读取与严格字段校验

@@ -2,7 +2,7 @@
 
 ## 定位
 
-本文档是 `t04_divmerge_virtual_polygon` 的稳定接口契约，约束输入、输出、状态机、枚举和值域。Step1-7 的业务策略见 `architecture/04-solution-strategy.md`；质量门槛与冻结 baseline gate 见 `architecture/10-quality-requirements.md`。
+本文档是 `t04_divmerge_virtual_polygon` 的稳定接口契约，约束输入、输出、状态机、枚举和值域。模块需求见 `SPEC.md`；Step1-7 的业务策略见 `architecture/03-solution-strategy.md`；质量门槛与冻结 baseline gate 见 `architecture/05-quality-requirements.md`。
 
 本文档不作为实现细节清单，不复制 T03 业务语义，也不新增 repo 官方 CLI。
 

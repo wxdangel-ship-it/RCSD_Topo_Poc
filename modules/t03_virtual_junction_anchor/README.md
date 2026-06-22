@@ -1,6 +1,6 @@
 # T03 交叉 / T 型虚拟路口锚定
 
-本文件是 T03 的模块阅读入口和文档索引。凝练版业务需求见 `SPEC.md`，详细业务落地见 `architecture/04-solution-strategy.md`，稳定接口见 `INTERFACE_CONTRACT.md`。
+本文件是 T03 的模块阅读入口和文档索引。模块需求见 `SPEC.md`，架构设计见 `architecture/01~06`，稳定接口契约见 `INTERFACE_CONTRACT.md`。
 
 ## 1. 当前状态
 
@@ -13,13 +13,15 @@
 
 | 文档 | 承载内容 |
 |---|---|
-| `SPEC.md` | 凝练版模块业务需求。 |
-| `architecture/04-solution-strategy.md` | Step1-Step7 详细需求 / 落地策略。 |
-| `INTERFACE_CONTRACT.md` | 输入、输出、状态机、入口和验收契约。 |
-| `architecture/10-business-steps-vs-implementation-stages.md` | 正式业务步骤与历史实现阶段命名映射。 |
-| `architecture/05-building-block-view.md` | 实现构件职责映射。 |
-| `architecture/09-quality-requirements.md` | 当前质量要求。 |
-| `history/` | 历史阶段 closeout 材料，仅用于追溯。 |
+| `SPEC.md` | 模块需求，用业务语言说明 T03 为什么存在、解决什么问题、什么算对。 |
+| `architecture/01-introduction-and-goals.md` | 模块架构目标、上下文、当前范围和非目标。 |
+| `architecture/02-data-and-domain-model.md` | T03 关键输入对象、业务对象、RCSD 语义分层和数据约束。 |
+| `architecture/03-solution-strategy.md` | 架构设计 / 需求具体实现策略，说明 Step1-Step7 需求如何落地。 |
+| `architecture/04-evidence-and-audit.md` | formal、review-only、internal full-input 证据与审计分层。 |
+| `architecture/05-quality-requirements.md` | 质量要求和验收关注点，适合做业务验收、QA 或端到端 Case 复盘时阅读。 |
+| `architecture/06-risks-and-technical-debt.md` | 历史命名、Step3 冻结语义、RCSD 数据质量、full-input 和入口治理风险。 |
+| `INTERFACE_CONTRACT.md` | 输入、输出、状态机、入口和最小审计字段契约，主要供实现、运行、联调和 Agent 维护时查阅。 |
+| `history/` | 历史阶段 closeout 材料，仅用于追溯历史交付背景。 |
 
 ## 3. 当前入口位置
 
@@ -35,12 +37,13 @@
 ## 4. 阅读顺序
 
 1. `SPEC.md`
-2. `architecture/04-solution-strategy.md`
-3. `INTERFACE_CONTRACT.md`
-4. `architecture/10-business-steps-vs-implementation-stages.md`
-5. `architecture/05-building-block-view.md`
-6. `architecture/09-quality-requirements.md`
-7. `AGENTS.md`
+2. `architecture/01-introduction-and-goals.md`
+3. `architecture/02-data-and-domain-model.md`
+4. `architecture/03-solution-strategy.md`
+5. `architecture/04-evidence-and-audit.md`
+6. `architecture/05-quality-requirements.md`
+7. `architecture/06-risks-and-technical-debt.md`
+8. `INTERFACE_CONTRACT.md`（仅在需要查入口、字段、状态和值域时）
 
 ## 5. 入口治理提示
 

@@ -1,0 +1,315 @@
+# 03 Solution Strategy
+
+本文件是 T04 的架构设计 / 需求具体实现策略说明。模块需求见 `../SPEC.md`，稳定输入输出、状态机和入口契约见 `../INTERFACE_CONTRACT.md`。
+
+## 1. 总体策略
+
+在项目全局链路中，T04 负责补齐 T07/T03 无法覆盖的复杂路口 1:1 关系证据。它的核心业务价值不是单纯“画出一个面”，而是用可解释的事实事件、支撑域和最终发布结果，确定复杂 SWSD 语义路口应交给 T05 的唯一关系候选或明确失败原因。这样 T06 在 Segment 替换阶段可以消费已经收口的路口关系，而不是重新解释分歧 / 合流事实。
+
+T04 采用“业务主链 + 工程编排层”的分工：
+
+- 业务主链由 `admission -> local_context -> topology -> event_units -> event_interpretation -> support_domain -> polygon_assembly -> final_publish` 承载。
+- 工程编排层由 `outputs -> batch_runner -> internal_full_input_runner -> full_input_* -> nodes_publish` 承载。
+- Step1-7 的业务语义不依赖 T02/T03 运行时代码；T02/T03 只作为历史经验和产物组织形式参考。
+
+本文件表达 Step1-7 的业务目标、输入、输出和实现策略。稳定文件名、字段、枚举和值域以 `INTERFACE_CONTRACT.md` 为准；回归门槛和冻结 baseline 以 `architecture/05-quality-requirements.md` 为准。
+
+## 2. Step1 Candidate Admission
+
+业务目标：
+
+- 判断给定 representative node 是否属于 T04 当前正式处理范围。
+- 将不属于 T04 的候选在入口处明确拒绝，避免后续步骤用几何现象反推字段语义。
+
+主要输入：
+
+- representative node。
+- group nodes。
+- node 字段中的 `mainnodeid / has_evd / is_anchor / kind_2`。
+- `kind` 仅作为 case-package legacy 兼容或审计字段，不参与 full-input 正式候选发现主路由。
+
+主要输出：
+
+- `step1_status.json`。
+- `case_meta.json`。
+
+实现策略：
+
+- 由 `admission.py` 的 `build_step1_admission(...)` 执行准入 gate。
+- full-input 正式候选发现只支持 `kind_2 in {8, 16, 128}` 的分歧 / 合流 / continuous complex 候选；`kind = 128` 不得在 `kind_2` 缺失或不属于该集合时使 node 进入正式候选。
+- `has_evd` 与 `is_anchor` 用于确认候选仍需 T04 生成虚拟锚定结果。
+
+边界：
+
+- Step1 不做事实解释、拓扑裁决、polygon 判定或 RCSD 成败判断。
+- RCSD 缺失不在 Step1 直接阻断；RCSD 语义在 Step4 及后续审计链路中解释。
+
+## 3. Step2 High-recall Local Context
+
+业务目标：
+
+- 围绕已准入候选构建高召回 local world，让 Step3/4 有足够道路、节点与 SWSD negative context。
+- 在保持召回的同时，把上下文限定在 case-local patch 内。
+
+主要输入：
+
+- Step1 admission 结果。
+- case-package 或 full-input 收集得到的 `nodes / roads / drivezone / divstripzone / rcsdroad / rcsdnode`。
+
+主要输出：
+
+- Step2 local context 对象。
+- local roads、node group、SWSD negative context、RCSD raw context。
+
+实现策略：
+
+- 由 `local_context.py` 的 `build_step2_local_context(...)` 组织 patch-scoped local world。
+- diverge 类场景以前向 branch 为主、merge 类场景以反向 branch 为主组织召回窗口。
+- continuous / complex 场景保留更宽的双向局部召回，给 Step3 的 chain coordination 留出空间。
+
+边界：
+
+- Step2 只组织上下文，不生成最终候选空间。
+- Step2 的 SWSD negative context 是负向提示；正向 RCSD 支持必须后移到 Step4。
+
+## 4. Step3 Topology Skeleton
+
+业务目标：
+
+- 把候选 case 的局部拓扑拆成 case coordination skeleton 与 unit-level executable skeleton。
+- 对 continuous / complex 场景保持 branch 语义连续，避免把 same-case sibling internal node 误切成断裂 pair。
+
+主要输入：
+
+- Step2 local context。
+- local roads、member nodes、passthrough nodes、candidate branch seeds。
+
+主要输出：
+
+- 顶层 `step3_status.json / step3_audit.json`。
+- event-unit 级 `event_units/<event_unit_id>/step3_status.json`。
+- case-level `SWSDSemanticJunction`，以及 unit 级 `swsd_junction_ref / unit_owned_arm_ids / sibling_unit_arm_ids`。
+
+实现策略：
+
+- 由 `topology.py` 的 `build_step3_topology(...)` 生成 skeleton。
+- 顶层 case coordination skeleton 负责 member population、chain context、event-unit population 和 case overview。
+- event-unit executable skeleton 才是 Step4 的执行输入，包含 `event_branch_ids / boundary_branch_ids / preferred_axis_branch_id` 等 unit-local 信息。
+- Step3 同步实体化 `SWSDSemanticJunction`：以 representative node `mainnodeid` 作为 `junction_id`，以 case-level 合并节点集合判定 `intra_junction_road_ids`，并沿 patch 内语义 arm 输出 `inter_junction_connector_road_ids` 与终端状态。arm 延伸的 `degree` 必须按语义节点组进出道路数统计：有有效 `mainnodeid` 时按 `mainnodeid` 聚合，无有效 `mainnodeid` 时按节点自身 `id` 成组；只允许语义组 degree==2 passthrough，语义组 degree>=3 立即停止。
+- continuous complex / merge 场景下，unit population 仍锚定当前 representative node；但如果 same-case sibling internal node 之后仍保持同一 `(L, R)` pair-middle 语义，executable branch 允许沿合法 continuation 延续，硬上限为 `200m`。
+- sibling node 上的 continuation 选择顺序固定为：先对齐 `external associated road`，再确认 `L' / R'` 中间没有其他 road，保持左右顺序，最后才用最小转角做 tie-breaker。
+- multi-diverge / multi-merge 必须保留 `ordered_side_branch_ids / adjacent_side_pairs / unit_boundary_branch_ids / preferred_axis_branch_id`，不得把多方向过度压扁成单 pair。
+- simple 二分歧 / 二合流可以保留 trunk / event-side 粗框架，但 Step3 不承担 DivStrip 事实、tip/throat 或 final reference 的事实定位。
+
+边界：
+
+- `augmented_member_node_ids` 只作为 chain context hint，不直接冒充 Step4 可执行 population。
+- local truncation 只限制扫描方向，不得把已经合法延续的 boundary branch membership 裁回 seed road。
+- Step3 不选择 Step4 主证据，也不生成最终 polygon。
+
+## 5. Step4 Fact Event Interpretation
+
+业务目标：
+
+- 以 event unit 为单位解释局部事实事件，确定主证据、Reference Point、section reference、候选空间、正向 RCSD / SWSD 支持与受控恢复路径。
+- 为 Step5 提供可解释的几何与语义输入，而不是直接发布面。
+
+主要输入：
+
+- Step3 event-unit executable skeleton。
+- DivStripZone / DriveZone / local roads / RCSDRoad / RCSDNode。
+- Step2/3 形成的 branch、axis、pair-local context。
+
+主要输出：
+
+- `step4_status.json / step4_audit.json`。
+- `event_units/<event_unit_id>/step4_status.json`。
+- `event_units/<event_unit_id>/step4_candidates.json`。
+- `RCSDSemanticJunction`、`RCSDRoadOnlyChain` 与 `swsd_rcsd_alignment_consistent` 一致性 verdict。
+- event-unit review PNG 与 flat mirror。
+
+实现策略：
+
+- 由 `event_units.py` 先物化 event unit。
+- 由 `event_interpretation.py` 作为 facade / composition root，调用私有 Step4 core、selection、branch variant、unit preparation、runtime support 与 postprocess 模块。
+- Step4 采用 branch-first + pair-local 策略：先确定当前 unit 的有序边界 pair `(L, R)`，再在合法 continuation 内形成 `pair_local_region / structure_face / selected_candidate_region`。
+- `selected_candidate_region` 表示合法候选空间容器；`selected_evidence`、`localized_evidence_core_geometry` 与 `fact_reference_point` 才承担主事实证据和位置语义。
+- T04 主证据只包括真实世界物理空间证据：导流带与道路面分叉；RCSD 语义路口、RCSDRoad、SWSD 语义路口、SWSD candidate、历史抽象 node、拓扑召回点和抽象路网代理点不属于主证据。
+- `fact_reference_point / Reference Point` 只能来自主证据：导流带主证据取真实决定分歧 / 合流的位置，道路面分叉主证据取道路面形态真实切换的位置；无主证据时 `fact_reference_point = null`，不得为了流程完整构造虚拟 Reference Point。
+- `section reference / 截面参考对象` 用于确定前后横向截面位置，可来自 Reference Point、`Reference Point + RCSD 语义路口`、RCSD 语义路口或 SWSD 语义路口；RCSD/SWSD junction window 只能作为 section reference 或支撑域辅助，不得命名为 Reference Point。
+- `RCSD 语义路口` 必须表示召回 RCSD 路口与当前 SWSD 路口语义一致：进入道路、退出道路和角度趋势与当前事件对齐。仅存在 RCSD 数据、RCSDRoad 趋势一致、或 RCSD 聚合结果缺少进入 / 退出道路时，不得称为 RCSD 语义路口。
+- 无 RCSD 语义路口不等于无 RCSD 数据：该状态可包含趋势一致但不成路口的 RCSDRoad、缺进入 / 退出道路的 RCSD 局部结构或弱聚合结果；这些对象只能作为 fallback、趋势参考或审计辅助。
+- Step4 或 Step4/5 交界处必须输出 `surface_scenario_type` 与唯一 `rcsd_alignment_type`。`surface_scenario_type` 按主证据、RCSD 对齐类型和 SWSD 可用性区分六类业务场景；`rcsd_alignment_type` 至少区分 `rcsd_semantic_junction / rcsd_junction_partial_alignment / rcsdroad_only_alignment / no_rcsd_alignment / ambiguous_rcsd_alignment`。Step5 及之后不重新选择 RCSD 候选，只消费 Step4 的唯一对齐结果。
+- 当 `rcsd_alignment_type` 指向完整或 partial 路口级对象时，Step4 必须输出可追溯的 `RCSDSemanticJunction`；当仅有 road-only 正向对象时，必须输出 `RCSDRoadOnlyChain` 的端点、闭合状态、方向一致性证据和唯一性证明。
+- Step4 必须把 RCSD/SWSD 关系聚合为单一 `swsd_rcsd_alignment_consistent` verdict，并保持 `rcsd_consistency_result` 只取冻结值域。
+- Step4 arbiter rearchitecture 将 Step4 内部发布职责收窄为四层数据流：
+
+```text
+候选生成层
+  forward / promotion / recovery / cleanup / divstrip / swsd_rcsdroad / anchored_reverse / conflict_resolver
+  只追加 T04Step4Candidate 到 ledger
+        ↓
+候选评分层
+  SWSD-RCSD 趋势、角色完整性、reference distance、跨语义对象惩罚、近邻候选惩罚
+        ↓
+唯一仲裁层
+  destructive_downgrade_guard + best-so-far + main-evidence re-arbitration
+  发布 selected_rcsd* / positive_rcsd* / rcsd_alignment_type / rcsd_match_type
+  发布 fact_reference_point / section_reference_source / surface_scenario_type
+        ↓
+发布消费层
+  surface_scenario / outputs / Step5 / Step6 / Step7 只消费仲裁结果
+```
+
+- 数据流约束：生成器不直接 `replace()` 最终字段；ledger 记录所有候选与来源；评分层只写 candidate score；仲裁器是 `surface_scenario_type / rcsd_alignment_type / rcsd_match_type / section_reference_source` 的唯一发布层。该架构约束不新增正式入口、不改变 `run_t04_step14_batch / run_t04_step14_case / run_t04_internal_full_input` 签名。
+- 六类主业务场景的截面边界来源固定为：
+  - `main_evidence_with_rcsd_junction`：有主证据 + 完整 RCSD 语义路口。Reference Point 来自主证据；两个终止截面由 `Reference Point + RCSD 语义路口` 共同确定。SWSD 不参与截面边界构建。
+  - `main_evidence_with_rcsdroad_fallback`：有主证据 + 无完整 RCSD 语义路口但存在可用 RCSD 对齐对象。若 `rcsd_alignment_type = rcsd_junction_partial_alignment`，两个终止截面由 `Reference Point + RCSD partial junction` 共同确定；若 `rcsd_alignment_type = rcsdroad_only_alignment`，两个终止截面由 `Reference Point` 自身前后 `20m` 构成。SWSD 不参与截面边界构建。
+  - `main_evidence_without_rcsd`：有主证据 + `no_rcsd_alignment`。两个终止截面由 `Reference Point` 自身前后 `20m` 构成；所有 RCSDNode / RCSDRoad 均作为负向掩膜输入。SWSD 不参与截面边界构建。
+  - `no_main_evidence_with_rcsd_junction`：无主证据 + 完整 RCSD 语义路口。无 Reference Point，不得从 RCSD 反推虚拟 Reference Point；两个终止截面由 RCSD 语义路口自身前后 `20m` 构成。SWSD 不参与截面边界构建。
+  - `no_main_evidence_with_rcsdroad_fallback_and_swsd`：无主证据 + 无完整 RCSD 语义路口但存在可用 RCSD 对齐对象。若 `rcsd_alignment_type = rcsd_junction_partial_alignment`，两个终止截面由 RCSD partial junction 自身前后 `20m` 构成；若 `rcsd_alignment_type = rcsdroad_only_alignment`，两个终止截面由 SWSD 自身前后 `20m` 构成。
+  - `no_main_evidence_with_swsd_only`：无主证据 + `no_rcsd_alignment` + SWSD 语义路口。两个终止截面由 SWSD 自身前后 `20m` 构成；所有 RCSDNode / RCSDRoad 均作为负向掩膜输入。
+- 所有正常构面场景共享同一底层生成口径：单个 unit 以两个终止截面为边界，在两个边界之间铺满合法道路面；当前 unit 正相关的 SWSD roads 与该场景允许参与的 RCSDRoad 作为正向掩膜生长输入，生长范围控制在相关道路外侧约 `20m` 内，且不得侵入负向掩膜。负向掩膜是正向生长不可跨越的业务屏障：可以在生长阶段抑制，也可以在后处理裁剪，但最终面必须同时满足截面关系、allowed growth、forbidden/negative mask 后验复核。complex / multi 不是单独场景，而是上述场景的多 unit 形态；最终 case 面由各 unit 面和相邻 unit 间按同规则补齐的 inter-unit bridge surface 合成，并默认要求唯一联通。若唯一阻断来自真实负向掩膜，`barrier_separated_case_surface_ok` 只能记录该阻断事实，不得作为跳过 inter-unit bridge 或普通 MultiPolygon accepted 的通用放行条件。
+- 若 Step4 无法物化 SWSD section reference，必须把它审计为输入 / 上游上下文异常或 Step4 恢复失败；不得把这种异常兜底误写成“无主证据 + 无 RCSD 语义路口”的正常结果。
+- 正向 RCSD 只在当前 pair-local 语义框架内选择，不回退到 case-level RCSD 世界补证据。
+- reverse、road-surface fork、SWSD/RCSD junction window 与 `rcsd_anchored_reverse` 是受控恢复路径，由 `step4_postprocess` 归口。
+- complex / multi 的 local throat gate 必须使用当前 unit 的 `boundary_branch_ids`，不得静默退回 case-level main pair；若 throat pair 无法有效形成，必须写出 `degraded_scope_reason`。
+- reverse tip 只允许在 forward missing、forward 被 local throat 拒绝、forward 被 same-axis prior conflict 拒绝时作为证据查找重试；它不得扩大、补全或反向追溯当前 `pair-local region`。
+- ownership 几何分为 `selected_component_union_geometry / localized_evidence_core_geometry / coarse_anchor_zone_geometry`；component ownership、core ownership 和 review 粗表达不得混用。
+- 点位语义分为 `fact_reference_point / review_materialized_point`；`fact_reference_point` 与 `event_chosen_s_m` 对齐，`review_materialized_point` 只服务 PNG 表达。
+
+边界：
+
+- Step4 可产生 `STEP4_OK / STEP4_REVIEW / STEP4_FAIL` 内部审计态，但这些状态不得进入 Step7 最终状态机。
+- `STEP4_REVIEW` 在当前 official 39-case baseline 中是可解释的 soft-degrade 常态，不表示要把 `857993` 追修成 accepted。
+- candidate pruning 采用硬排除与显式 degraded state，不允许静默复用已被排除的 component。
+- Step4 不生成最终 polygon，也不决定最终发布层。
+- 无主证据时允许选择 RCSD/SWSD 作为 `section_reference_source`，但不得写入 `reference_point_source`，不得反推 `fact_reference_point`。
+
+## 6. Step5 Geometric Support Domain
+
+业务目标：
+
+- 把 Step4 的事实解释转成 Step6 可消费的几何支撑域和硬约束。
+- 明确哪些区域必须覆盖、哪些区域可以增长、哪些区域禁止进入、哪里必须切断。
+
+主要输入：
+
+- Step4 unit / case 结果。
+- `selected_evidence`、`fact_reference_point`、section reference、正向 RCSD / SWSD、DriveZone、road-surface fork 与 fallback support strip。
+
+主要输出：
+
+- `step5_status.json`。
+- `step5_audit.json`。
+- Unit / Case 两级 `must_cover_domain / allowed_growth_domain / forbidden_domain / terminal_cut_constraints`。
+
+实现策略：
+
+- 由 `support_domain.py` 的 `build_step5_support_domain(...)` 构建支撑域。
+- 对主证据充分的单元，围绕 evidence core、fact reference patch 与 required RCSD 组织 must-cover。
+- 对证据弱但可解释的场景，使用 fallback support strip、bridge zone 或 junction window / full-fill domain，并显式审计启用原因；该类 section reference 不得反写为 Reference Point。
+- 将 `section_reference_source / section_reference_geometry` 转换为支撑域时，默认以前后 `20m` 生成横向截面，横向截面垂直于道路面方向或语义主轴。
+- 两个截面之间应铺满可通行道路面，路口面两侧横向扩展不得超过 `20m`。
+- 负向掩膜不得被越过，至少包括导流带、hard negative mask、forbidden domain、terminal cut 与不可通行区域。
+- Step5 不再执行 SWSD 相关道路召回判定；相关 SWSD road / arm / semantic-road 集合必须消费 Step3 的 `SWSDSemanticJunction` 实体派生。
+- RCSDRoad fallback 只能纳入与当前分歧 / 合流事实或当前 SWSD/RCSD section reference 相关的局部段，不得沿整条 RCSDRoad 远距离扩张。
+- 对同时具备主证据 Reference Point 与 required RCSDNode 的场景，可在 DriveZone 内按语义主轴构造 `junction_full_road_fill_domain`，并受 forbidden masks、terminal cuts 与横向 `20m` 限制硬约束；若无主证据，则只能记录 section reference 与支撑域来源。
+
+边界：
+
+- Step5 只定义约束，不直接生成最终面。
+- 不得用 review point 伪造几何真值；缺少正向 node 时必须退回已定义的道路末端约束或 fallback 支撑规则。
+- no_surface_reference 场景无 Reference Point、无 section reference，不生成实体路口面，只能进入当前正式状态机和审计规则允许的 rejected / no-effect 解释 / 空结果记录。
+
+## 7. Step6 Polygon Assembly
+
+业务目标：
+
+- 在 Step5 约束内生成 case 级单一连通最终面。
+- 保证结果不突破 `allowed_growth_domain`，不进入 `forbidden_domain`，不违反 terminal cut。
+
+主要输入：
+
+- Step5 Case 支撑域。
+- must-cover seeds、allowed / forbidden masks、terminal cut constraints。
+
+主要输出：
+
+- `step6_status.json`。
+- `step6_audit.json`。
+- `final_case_polygon`。
+
+实现策略：
+
+- 由 `polygon_assembly.py` 的 `build_step6_polygon_assembly(...)` 执行。
+- 采用 raster-first 单连通组装，再回到矢量 polygon 做连通性、洞、cut、forbidden overlap 检查。
+- complex / multi 场景先生成 unit surface，再按 Step3 / Step4 的 unit 邻接关系寻找相邻 unit 的两组临近截面边界，生成 inter-unit section bridge surface，最后合并为一个 case 级完整 `final_case_polygon`。
+- 对先合流再分歧或其他 multi-unit 场景，如果两个相邻 unit 的两组临近截面边界之间存在可通行道路面、且不与 forbidden / negative mask 冲突，Step6 必须将该截面边界间区域作为 inter-unit section bridge surface，并入有效 terminal window 与 hard seed，用于把相邻 unit surface 合并成单一 case surface；该桥接不得越过 allowed / forbidden / terminal cut 的后验复核。
+- 允许业务 hole；不允许算法 hole 或无审计 cleanup。
+
+边界：
+
+- Step6 不放宽 Step5 的硬边界。
+- 任何 polygon cleanup 都必须重新套用 allowed / forbidden / cut / 横向范围约束。
+- 最终 case surface 应保持单一连通，除非存在明确业务 hole；不得用 cleanup 静默修正拓扑不一致。
+
+## 8. Step7 Final Acceptance And Publishing
+
+业务目标：
+
+- 对 Step6 结果做最终业务验收，压缩为 `accepted / rejected` 二态，并发布正式 surface、rejected、summary、audit 与 review 工件。
+- 在 closeout 阶段补齐 downstream `nodes.gpkg` 状态回写。
+
+主要输入：
+
+- Step6 result。
+- Step1-6 status / audit。
+- case-package 或 full-input 的原始 nodes layer。
+
+主要输出：
+
+- case 级 `step7_status.json / step7_audit.json / final_review.png`。
+- batch / full-input 级 `divmerge_virtual_anchor_surface.gpkg`、rejected layer、summary、audit、`step7_rejected_index.*`、`step7_consistency_report.json`。
+- downstream `nodes.gpkg`、`nodes_anchor_update_audit.csv/json`。
+- final relation `intersection_match_t04.geojson`、`intersection_match_t04_summary.json`、`intersection_match_t04_cardinality_errors.csv/json`。
+
+实现策略：
+
+- 由 `final_publish.py` 的 Step7 artifact / batch outputs 逻辑发布 surface 主成果。
+- `divmerge_virtual_anchor_surface.gpkg` 只发布 `final_state = accepted` 的 surface candidate；rejected layer / reject stub 仅用于定位与审计。
+- 发布层与 summary 应保留或可追溯 `mainnodeid / kind_2 / junction_type / patch_id / final_state`，为后续 T05 映射做准备。
+- 对 `road_surface_fork` 主证据且 Step7 `swsd_relation_type = partial` 的场景，Step7 relation evidence 应把 Step4 已识别的局部 `local_rcsd_unit_id = *:node:<rcsdnode_id>` 作为面向 T05 的 relation handoff base，同时通过 `semantic_required_rcsd_node_ids` 保留原 `required_rcsd_node` 语义主点审计链，避免 downstream 使用远端语义主点导致 T06 Segment 有向走廊缺失。
+- 由 `nodes_publish.py` 在 Step7 closeout 后消费最终状态，基于输入 `nodes.gpkg` 做 copy-on-write，只更新当前 selected / effective case 的 representative node `is_anchor`。
+- 由 `intersection_match.py` 基于 T04 relation evidence 发布 `intersection_match_t04.geojson`，并与可选 T07 / T03 intersection match 做 SWSD/RCSD 1:1 cardinality 校验；启用 T07/T03 外部校验输入后，T04 自身 one-target-to-many 冲突必须从输出关系中压制，并把对应 representative node 回滚为 `is_anchor = no`。若可选外部校验文件存在但为空、非法 JSON 或不是 GeoJSON features list，T04 final closeout 必须在 summary 中审计不可消费状态，并按 0 条外部成功关系继续，不改变 Step1-7 构面算法。
+- nodes 写回固定为 `accepted -> yes`，Step8 fallback relation 成功 -> `fail4_fallback`，其余 `rejected / runtime_failed / formal result missing -> fail4`。
+
+边界：
+
+- `divmerge_virtual_anchor_surface.gpkg` 是 T04 几何真值；`nodes.gpkg` 是 downstream 状态索引层。
+- `intersection_match_t04.geojson` 是 T04 对下游发布的 SWSD-RCSD 语义路口关系层；它不改变 Step1-7 构面算法，只在 final closeout 做关系校验与必要回滚。
+- Step7 不新增最终 `review / review_required` 状态；不确定性只留在审计材料中。
+
+## 9. 工程编排层
+
+case-package batch：
+
+- `batch_runner.py` 负责 preflight、per-case orchestration、Step4 second-pass / postprocess、Step5-7 closeout、summary、failure doc、nodes 输出与 consistency report。
+- `outputs.py` 负责 case 级文件、flat mirror、index 与 summary 写出。
+
+internal full-input：
+
+- `internal_full_input_runner.py` 是 full-input 主 runner。
+- `full_input_bootstrap.py` 负责路径校验、preflight、candidate artifacts。
+- `full_input_shared_layers.py` 负责 full-layer preload、spatial index、candidate discovery 与 per-case feature collection。
+- `full_input_case_pipeline.py` 负责由 shared layers 直跑单 case Step1-7。
+- `full_input_observability.py`、`full_input_perf_audit.py`、`full_input_streamed_results.py` 负责进度、失败、性能、terminal records 与最终视觉审计。
+
+## 10. Source-of-truth 分工
+
+- `INTERFACE_CONTRACT.md`：稳定接口、输入输出、状态机、枚举和值域。
+- `architecture/03-solution-strategy.md`：Step1-7 业务目标和实现策略。
+- `architecture/02-data-and-domain-model.md`：业务对象、字段语义与上下游数据关系。
+- `architecture/04-evidence-and-audit.md`：运行证据、relation evidence、nodes 回写和 full-input 审计。
+- `architecture/05-quality-requirements.md`：正确性、可审计性、回归和 baseline gate。
+- `architecture/06-risks-and-technical-debt.md`：剩余风险与技术债。

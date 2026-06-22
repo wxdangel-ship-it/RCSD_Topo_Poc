@@ -1,27 +1,30 @@
-# 01 Introduction And Goals
+# 01 引言与目标
 
-## 目标
+## 1. 文档定位
 
-T06 当前目标是在 T01 SWSD Segment 与 T05 Phase 2 SWSD-RCSD 语义路口关系已经产出的前提下，完成 Segment 融合判断与融合输出：
+本文件说明 T06 的架构背景、业务目标和边界。模块需求以 `SPEC.md` 为准，稳定接口以 `INTERFACE_CONTRACT.md` 为准，Step1-Step3 实现策略见 `03-solution-strategy.md`。
 
-1. 识别具备 EVD 与 anchor/fallback 基础的 SWSD Segment。
-2. 基于 SWSD Segment buffer 在 copy-on-write RCSD 网络中构建 RCSDSegment 审查成果。
-3. 将 buffer 构建成功结果输出为 candidates，并在特殊路口组门控后输出最终 replaceable 集合。
-4. 消费 Step2 replaceable RCSDSegment，输出融合后的 F-RCSD Road / Node，并重建涉及的语义路口关系。
+## 2. 模块定位
 
-## 成功判据
+T06 位于项目从“路口 1:1 relation 建模”进入“数据替换执行”的承接位置。T01 提供 SWSD Segment，T05 提供 SWSD-RCSD 语义路口关系和 copy-on-write RCSD 网络。T06 基于这些输入构建 RCSDSegment、判断 replaceable、发布 replacement plan，并在 Step3 输出 F-RCSD Road / Node。
 
-- Step1 能输出 SWSD Segment 候选集、最终可融合集合、rejected、summary 与按 `sgrade` 分组的统计 CSV，且不重复输出相同业务成果；`pair_nodes` 两端相同的 self-pair fallback 只进入 Step1 rejected，不进入 Step2 替换分母。
-- Step2 能输出 buffer RCSDSegment、candidates、最终 replaceable、rejected、buffer-only probe、repair candidates、failure business audit、特殊路口组审计与 summary。
-- Step3 能输出 F-RCSD Road / Node、replacement unit 审计、junction C 重建审计与 summary。
-- `fail4_fallback` 作为可融合 anchor 被正确接受。
-- Step2 不执行 pair-to-pair 路径搜索或趋势硬筛；`swsd_directionality=single` 的 source/target 必须由 SWSDRoad `snodeid / enodeid / direction` 推导，`swsd_directionality=dual` 的 retained RCSD graph 必须通过 pair 两端双向可达审计。
-- Step2 required semantic nodes 只来自 `pair_nodes` relation；`junc_nodes` relation 成功时作为 optional junc 审计和 corridor 解释节点，缺失、无效或被剪除时必须输出 dropped / lost attach 审计。
-- 所有失败都有稳定 reason 与审计字段。
+T06 不是简单按 T05 relation 替换 Segment。真实 RCSD 数据存在裁剪窗口不足、方向不一致、路口内部短连接、提前右转、road-only split、surface 证据缺失和 SWSD/RCSD carrier 差异。T06 的业务价值是在不放松 Step2 硬审计、不回写上游 relation 的前提下，把可替换对象、已解决问题、待上游处理问题和最终 F-RCSD 拓扑质量清楚分流。
 
-## 当前非目标
+## 3. 目标
 
-- 不修改 T01 / T05 输出。
-- 不处理未满足安全门槛的 Step2 rejected Segment 替换。
-- 不通过几何猜测静默补救 Step2 未通过的 Segment；buffer-only probe 输出诊断、候选 pair 与 pair 锚定错误位置，不覆盖或回写 T05 relation。只有满足受限高置信安全门槛的 pair anchor 候选，才允许在 T06 当前 Segment 内构造 effective relation 并重新执行 Step2 硬审计，通过后进入 replaceable。
-- 不新增 repo 官方入口。
+- Step1 识别具备基础融合资格的 SWSD Segment。
+- Step2 构建 buffer-based RCSDSegment，执行硬审计、特殊路口组门控、受限高置信重试、replacement plan 和 problem registry 发布。
+- Step3 优先消费 replacement plan，执行标准 Segment、特殊路口组内部实体和 path-corridor group replacement。
+- 输出 F-RCSD Road / Node、SWSD-FRCSD Segment relation、topology connectivity audit 和可选 surface topology audit。
+
+## 4. 非目标
+
+- 不修改 T01 / T05 / Step2 输入成果。
+- 不把诊断文件当作 Step3 替换白名单。
+- 不用 Step3 重判 rejected Segment。
+- 不通过几何猜测回写 T05 relation 或新增上游 relation。
+- 不新增 repo 官方 CLI。
+
+## 5. 架构边界
+
+T06 的 Step1、Step2、Step3 均有模块内 callable。脚本只负责内网包装和运行组织。T06 允许在当前 Segment 内做受限高置信 effective relation 重试，但成功也只进入 T06 当前 replacement plan，不改变 T05 relation 主表。

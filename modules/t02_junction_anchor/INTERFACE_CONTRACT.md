@@ -2,17 +2,17 @@
 
 ## 定位
 
-- 本文件是 `t02_junction_anchor` 的稳定契约面。
-- 当前业务需求对齐与 accepted baseline 以 `architecture/06-accepted-baseline.md` 为准。
-- 模块目标、上下文、构件关系与风险说明以 `architecture/*` 为准。
+- 本文件是 Retired 模块 `t02_junction_anchor` 的历史稳定契约面，不代表当前主业务链的正式需求入口。
+- 历史业务需求对齐与 accepted baseline 以 `architecture/06-accepted-baseline.md` 为准；其中“正式 / 官方 / 当前”表述均按 T02 退役前历史口径理解。
+- 模块历史目标、上下文、构件关系与风险说明以 `architecture/*` 为准。
 - `README.md` 只承担操作者入口职责，不替代长期源事实。
 
 ## 1. 目标与范围
 
 - 模块 ID：`t02_junction_anchor`
-- 长期目标：
+- 历史目标：
   - 为双向 Segment 相关路口锚定提供稳定、可审计的下游模块基础
-- 当前正式范围：
+- 历史正式范围：
   - stage1 `DriveZone / has_evd gate`
   - stage2 anchor recognition / anchor existence 最小闭环
   - stage3 `virtual intersection anchoring` baseline
@@ -34,19 +34,19 @@
   - `RCSDRoad`
   - `RCSDNode`
   - 可选高优先级局部参考：`DivStripZone`
-- stage4 当前定位冻结为：
+- stage4 历史定位冻结为：
   - 面向分歧 / 合流事实事件的独立补充阶段
   - 当前不写回 `nodes.is_anchor`
   - 当前不并入统一锚定结果
   - 当前不承担主流程最终唯一锚定闭环
   - 当算法收敛到认可水平后，可与 stage3 合并进入同一锚定流程
-- stage4 当前处理对象冻结为：
+- stage4 历史处理对象冻结为：
   - `has_evd = yes`
   - `is_anchor = no`
   - 需要按真实分歧 / 合流事件解释的事实路口候选
   - 简单 div/merge 候选：`kind` 或 `kind_2` 落在 `{8, 16}`
   - 经连续分歧 / 合流聚合后的 complex 主节点：`kind = 128` 或 `kind_2 = 128`
-- stage4 当前语义归因冻结为：
+- stage4 历史语义归因冻结为：
   - `kind = 8` 或 `kind_2 = 8` 表示 merge（`2 in 1 out`）
   - `kind = 16` 或 `kind_2 = 16` 表示 diverge（`1 in 2 out`）
   - `kind / kind_2 = 128` 仅在“连续分歧 / 合流聚合后的 complex 主节点”语义下进入 stage4，不代表“所有 complex 128”
@@ -55,7 +55,7 @@
 - stage4 结果是独立并行成果：
   - 不写回 `nodes.is_anchor`
   - 不并入统一锚定结果
-- 当前不在正式范围：
+- 历史非目标：
   - 最终唯一锚定决策闭环
   - 正式产线级全量虚拟路口批处理
   - 候选生成 / 候选打分
@@ -322,7 +322,7 @@
   - `is_anchor`
   - `kind_2`
   - `grade_2`
-- `roads` 与 `RCSDRoad` 当前正式依赖：
+- `roads` 与 `RCSDRoad` 历史正式依赖：
   - `id`
   - `snodeid`
   - `enodeid`
@@ -330,12 +330,12 @@
 - `RCSDNode` 必须包含：
   - `id`
   - `mainnodeid`
-- case-package 是 stage3 唯一正式验收基线入口，不允许回退。
-- 当前唯一正式验收基线冻结为 `E:\TestData\POC_Data\T02\Anchor`（WSL：`/mnt/e/TestData/POC_Data/T02/Anchor`）下的 `61` 个 case-package。
+- case-package 是 T02 历史 stage3 唯一验收基线入口，不允许回退。
+- T02 历史唯一验收基线冻结为 `E:\TestData\POC_Data\T02\Anchor`（WSL：`/mnt/e/TestData/POC_Data/T02/Anchor`）下的 `61` 个 case-package。
 - full-input 当前保留为 fixture / dev-only / regression 入口，用于：
   - 完整数据 + 指定 `mainnodeid`
   - 完整数据 + 自动识别未锚定且有资料的路口
-- full-input 当前不是 stage3 正式交付基线，不得再表述为“当前正式 baseline 入口”。
+- full-input 不是 T02 历史 stage3 正式交付基线，不得再表述为“当前正式 baseline 入口”。
 - 代表 node 的 stage3 baseline 前提：
   - `has_evd = yes`
   - `kind_2 in {4, 2048}`
@@ -348,7 +348,7 @@
 - `full-input` 模式统一两类 regression 诉求：
   - 完整数据 + 指定 `mainnodeid`
   - 完整数据 + 自动识别候选
-- stage3 步骤2「模板分类」当前正式业务口径冻结为：
+- stage3 步骤2「模板分类」历史正式业务口径冻结为：
   - `kind_2 = 2048 -> single_sided_t_mouth`
   - `kind_2 = 4 -> center_junction`
 - 上述步骤2模板口径只冻结分类结果，不在本步骤内展开 polygon 几何、准出判定或失败归因。
@@ -359,7 +359,7 @@
   - 表示当前 case 在后续步骤中可先按中心型路口理解，并允许尝试铺满当前语义路口
   - 但该归类不豁免后续边界/入侵冲突检查
   - 若后续发现 foreign boundary roads、其他语义路口 roads / arms 入侵，或其它边界冲突，则该 case 应视为问题 case
-- stage3 步骤3「目标 corridor / 口门边界」当前正式业务口径冻结为：
+- stage3 步骤3「目标 corridor / 口门边界」历史正式业务口径冻结为：
   - 步骤3不生成 polygon；它只定义后续 polygon 唯一合法的活动空间
   - 合法活动空间以当前 `semantic_junction_set` 为中心，并且只能在当前模板允许占用的 `DriveZone` 内道路面中生长
   - 这里的“铺满道路面”只表示铺满当前 case 的合法道路面，不表示铺满整个连通 `DriveZone`
@@ -405,7 +405,7 @@
   - own-group nodes 必须被覆盖
   - `polygon-support` 中声明的 RCSDNode / RCSDRoad 必须被合理覆盖
 - 对 nodes 与 RCSD 拓扑无法同时满足的场景，必须明确失败或风险标记，不得 silent fix。
-- stage3 步骤4「RCSD 关联语义」当前正式业务口径冻结为：
+- stage3 步骤4「RCSD 关联语义」历史正式业务口径冻结为：
   - 步骤4只负责在步骤2模板和步骤3合法活动空间已经冻结的前提下，判断当前 SWSD 语义路口与 RCSD 的对应层级，并据此识别当前 case 的 `required RC`、`support RC` 与 `excluded RC`
   - 步骤4不是重新定义 SWSD 语义路口，不是重新定义步骤3 corridor，不是重新生成 polygon，也不是准出判定
 - 步骤4的 A / B / C 三类结果当前冻结为：
@@ -421,7 +421,7 @@
 - B 类（`RCSD` 不构成语义路口，但存在相关 `RCSDRoad`）：
   - 当前 case 不要求完整覆盖 `RCSDNode` 语义组
   - 但需要识别并覆盖对应 `RCSDRoad` 的挂接区域
-  - “挂接区域”当前正式理解为：以当前 `SWSD semantic_junction_set` 到目标 `RCSDRoad` 的最小连接区域附近为默认基线；若存在明确臂悬，可沿臂悬方向修正；它不等于整条 `RCSDRoad` 全段
+  - “挂接区域”历史正式理解为：以当前 case 的 `SWSD semantic_junction_set` 到目标 `RCSDRoad` 的最小连接区域附近为默认基线；若存在明确臂悬，可沿臂悬方向修正；它不等于整条 `RCSDRoad` 全段
 - C 类（无相关 `RCSDRoad`）：
   - 当前 case 不追加 `RC` 侧 `required semantics`
   - 若某个方向上不存在更早的语义边界或 foreign 边界，则该方向单向最大增长距离不超过 `50m`
@@ -430,7 +430,7 @@
   - 步骤4可以增加“必须纳入的 `RC` 语义对象”，但不能扩大步骤3已经冻结的合法活动空间
   - 若某个 `required RCSDNode / required RCSDRoad` 按步骤4语义应当纳入，但它落在步骤3合法空间之外，则当前定义为审计异常 / `stage3_rc_gap` 类问题
   - 该异常只用于暴露“步骤3是否漏包 required RC”，当前不允许步骤4直接反向扩大步骤3 corridor 或改写当前合法几何
-- stage3 步骤5「foreign SWSD / RCSD 排除规则」当前正式业务口径冻结为：
+- stage3 步骤5「foreign SWSD / RCSD 排除规则」历史正式业务口径冻结为：
   - 步骤5只负责定义哪些外部 `SWSD / RCSD` 元素一旦被纳入当前 case，就必须视为 `foreign / 错误对象`
   - 步骤5不是重新定义语义路口，不是重新定义模板，不是重新定义步骤3合法活动空间，不是重新定义步骤4 `required / support / excluded RC`，也不是准出判定
 - 步骤5的 foreign 对象分类当前冻结为：
@@ -513,7 +513,7 @@
   - `bounds`
 - full-input 模式不得用硬编码 `EPSG:3857` 覆盖全量输入 CRS；必须优先读取输入自带 CRS，multi-layer GeoPackage 不能静默猜层。
 
- - stage3 步骤6「几何生成与后处理」当前正式业务口径冻结为：
+ - stage3 步骤6「几何生成与后处理」历史正式业务口径冻结为：
   - 步骤6是受约束的几何生成步骤，不是结果导向的补面或补救步骤
   - 步骤6的硬约束优先级固定为：
     1. 不得突破步骤3合法活动空间
@@ -547,7 +547,7 @@
     - `foreign_reintroduced_by_cleanup`
     - `shape_artifact_failure`
   - 当前目视检查中唯一已明确确认的失败锚点是 `520394575`；除它之外，若其他 case 要进入步骤6失败归类，必须先完成根因分型，不得仅凭“看着不顺眼”直接判为失败
-- stage3 步骤7「准出判定」当前正式业务口径冻结为：
+- stage3 步骤7「准出判定」历史正式业务口径冻结为：
   - 步骤7是最终裁决层，只基于步骤1到步骤6已冻结结果做最终准出分类：`accepted / review_required / rejected`
   - 步骤7不重新定义语义路口、不重新定模板、不重新定 corridor、不重新解释 `required / support / excluded RC`、不重新解释 `foreign`、不重新生成 polygon，也不允许洗白步骤6失败
   - `accepted` 的最小前提固定为：
@@ -604,10 +604,10 @@
   - `roads.id / roads.snodeid / roads.enodeid / roads.direction`
   - `RCSDRoad.id / RCSDRoad.snodeid / RCSDRoad.enodeid / RCSDRoad.direction`
   - `RCSDNode.id / RCSDNode.mainnodeid`
-- stage4 当前处理对象冻结为：
+- stage4 历史处理对象冻结为：
   - 有证据、尚未完成正式锚定
   - 需要按真实分歧 / 合流事件解释的事实路口候选
-- 当前正式处理两类对象：
+- T02 历史正式处理两类对象：
   - 简单 div/merge 候选
   - 连续分歧 / 合流聚合后的 complex 128 主节点
 - `kind` 与 `kind_2` 在 stage4 候选识别语义上等价：
@@ -619,7 +619,7 @@
 - RCSD 缺失挂接但事实事件存在时：
   - 仍属于 stage4 处理对象
   - 不得因为缺少 RCSD 挂接就排除进入 stage4
-- 当前非目标冻结为：
+- T02 历史非目标冻结为：
   - 不写回 `nodes.is_anchor`
   - 不并入统一锚定结果
   - 不做最终唯一锚定决策闭环
@@ -627,7 +627,7 @@
   - 不做概率 / 置信度实现
   - 不做误伤捞回
   - 不做环岛新业务规则
-  - 当前可用于审计 / 验证批跑，但不承担正式产线级全量锚定闭环职责
+  - 可用于历史审计 / 验证批跑，但不承担当前正式产线级全量锚定闭环职责
 
 #### 2.10.3 七步正式业务定义
 
@@ -811,7 +811,7 @@ outputs/_work/t02_stage1_drivezone_gate
   - `rcsdnode_coverage_mode`
   - `rcsdnode_offset_m`
   - `rcsdnode_lateral_dist_m`
-- `acceptance_class` 与 `acceptance_reason` 为当前正式建议同步固化到 Stage4 最终成果路口面图层中的结果字段。
+- `acceptance_class` 与 `acceptance_reason` 为 T02 历史正式建议同步固化到 Stage4 最终成果路口面图层中的结果字段。
 - 上述 Stage4 字段不得只散落在 JSON 中；Stage4 最终成果 polygon 图层必须支持脱离 JSON 的基本独立复核。
 - 只要存在 full-input / batch / 全量运行，就必须同步输出该批次的最终全量路口面汇总图层；不得只保留单 case 目录产物而缺失汇总成果。
 
@@ -1144,7 +1144,7 @@ outputs/_work/t02_stage1_drivezone_gate
   - 人工目视先给 `V1~V5`
   - 机器审计补充根因层与根因类型
   - 若二者不一致，必须先完成根因分析，再进入后续修正
-- Stage4 当前正式复用同一套成果审计与目视复核模板；不得为 Stage4 单独发明另一套成功/风险/失败表达。
+- Stage4 历史正式复用同一套成果审计与目视复核模板；不得为 Stage4 单独发明另一套成功/风险/失败表达。
 
 #### Stage3 full-input 根目录输出
 
@@ -1238,7 +1238,7 @@ outputs/_work/t02_stage1_drivezone_gate
 - 若对应事实路口存在对应 RCSD 挂接而结果又无法满足 RCSD 覆盖 / 容差，则不得记为 `accepted`；无法形成合法局部结果时必须进入 `rejected`。
 - `review_required` 只适用于“已形成结果但仍需人工复核”；`rejected` 不得再只由异常 handler 语义承接。
 - Stage4 的 `status/progress/perf/perf_markers` 仍可输出为运行态工件，但不属于正式契约输出。
-- Stage4 的目视检查 PNG 当前正式复用 Stage3 的三态样式契约：
+- Stage4 的目视检查 PNG 历史正式复用 Stage3 的三态样式契约：
   - `accepted` 使用正常成功图样式
   - `review_required` 使用浅琥珀 / 橙黄色系风险样式，并带 `REVIEW` / `待复核` 标识
   - `rejected` 或 `success = false` 使用淡红 / 深红失败样式，并带 `REJECTED` / `失败` 标识
@@ -1268,8 +1268,8 @@ make doctor
 .venv/bin/python -m rcsd_topo_poc t02-decode-text-bundle --help
 ```
 
-- `t02-virtual-intersection-poc` 是当前 stage3 baseline 官方入口
-- 默认 `input_mode = case-package`，保持 Anchor61 case-package 正式验收基线不回退
+- `t02-virtual-intersection-poc` 是 T02 历史 stage3 baseline 官方入口
+- 默认 `input_mode = case-package`，保持 Anchor61 case-package 历史验收基线不回退
 - `--input-mode full-input` 打开统一全量输入 regression 入口：
   - 传 `--mainnodeid`：完整数据 + 指定路口
   - 不传 `--mainnodeid`：完整数据 + 自动识别候选
@@ -1551,8 +1551,8 @@ cd /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t02_text_bundle
 3. 缺字段、缺 CRS、代表 node 缺失、路口组缺失、空目标路口等情形都可被诊断。
 4. `summary` 已覆盖 `0-0双 / 0-1双 / 0-2双` 与 `all__d_sgrade`。
 5. `is_anchor`、`node_error_1`、`node_error_2` 与 `fail2 > fail1` 优先级已冻结并已落地最小闭环实现。
-6. stage2 当前仍未扩写为最终唯一锚定决策闭环，概率/置信度与环岛新规则未泄漏进当前正式契约。
-7. stage3 `virtual intersection anchoring` 已纳入当前 baseline，并具备 case-package 与 full-input 两种运行模式。
+6. stage2 历史上仍未扩写为最终唯一锚定决策闭环，概率/置信度与环岛新规则未泄漏进 T02 历史正式契约。
+7. stage3 `virtual intersection anchoring` 已纳入 T02 历史 baseline，并具备 case-package 与 full-input 两种运行模式。
 8. `polygon-support` 与最终 association 已允许解耦；own-group nodes must-cover 与 support validation 已进入契约。
 9. 单 / 多 `mainnodeid` 文本证据包已具备“导出 + 解包”最小闭环，当前作为 stage3 复核与外部复现支撑工具保留，且 bundle 体积受 `300KB` 上限约束。
 10. Stage3 准出遵循保守原则：允许“应成功的 case 被保守判为 `review_required` / `rejected`”作为待修问题，但不允许“业务上失败的 case 被判为 `accepted` / `success=true`”。凡已知存在语义漏收、错误分支跟踪、foreign `SWSD` 侵入、`T-mouth` 的 `RCSDRoad` / `RCSDNode` 不完整、或几何明显违背业务认知的结果，必须落入失败或复核通道，不得伪装为成功结果。

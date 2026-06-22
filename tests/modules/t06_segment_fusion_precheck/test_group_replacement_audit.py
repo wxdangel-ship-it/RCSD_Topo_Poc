@@ -64,6 +64,32 @@ def test_group_replacement_audit_separates_side_incident_from_path_corridor() ->
     assert props["side_incident_group_segment_ids"] == ["sx_s3"]
 
 
+def test_group_replacement_audit_blocks_source_when_not_path_corridor_carrier() -> None:
+    source_segment = _segment("s1_s2", ["s1", "s2"], [(0, 80), (100, 80)])
+    rows = build_group_replacement_audit_rows(
+        fusion_units=[source_segment],
+        segments=[source_segment],
+        relation_map={
+            "s1": RelationRecord("s1", 10, 0, {}),
+            "s2": RelationRecord("s2", 20, 0, {}),
+            "sx": RelationRecord("sx", 30, 0, {}),
+        },
+        rcsd_roads=[
+            _road("r1", "10", "30", [(0, 0), (50, 0)]),
+            _road("r2", "30", "20", [(50, 0), (100, 0)]),
+        ],
+        rcsd_node_canonicalizer=NodeCanonicalizer({}, frozenset({"10", "20", "30"})),
+        replaceable_rows=[],
+        rejected_rows=[],
+        failure_business_audit_rows=[_failure("s1_s2", ["s1", "s2"], ["10", "20"])],
+    )
+
+    props = rows[0]["properties"]
+    assert props["path_corridor_group_segment_ids"] == ["s1_s2"]
+    assert props["path_corridor_blocked_segment_ids"] == ["s1_s2"]
+    assert props["path_corridor_blocker_reasons"] == ["s1_s2:source_segment_not_path_corridor_carrier"]
+
+
 def test_group_replacement_audit_reports_directionality_when_group_probe_fails() -> None:
     rows = build_group_replacement_audit_rows(
         fusion_units=[_segment("s1_s2", ["s1", "s2"]), _segment("sx_s3", ["sx", "s3"])],
@@ -89,6 +115,37 @@ def test_group_replacement_audit_reports_directionality_when_group_probe_fails()
     assert props["group_probe_reason"] == "rcsd_not_bidirectional_for_swsd_dual"
     assert props["repair_recommendation"] == "upstream_anchor_or_rcsd_directionality_required"
     assert "bidirectional RCSD Segment" in props["notes"]
+
+
+def test_group_replacement_audit_augments_probe_with_replaceable_corridor_roads() -> None:
+    external_segment = _segment("sx_s3", ["sx", "s3"], [(50, 0), (150, 0)])
+    rows = build_group_replacement_audit_rows(
+        fusion_units=[_segment("s1_s2", ["s1", "s2"]), external_segment],
+        segments=[_segment("s1_s2", ["s1", "s2"]), external_segment],
+        relation_map={
+            "s1": RelationRecord("s1", 10, 0, {}),
+            "s2": RelationRecord("s2", 20, 0, {}),
+            "sx": RelationRecord("sx", 30, 0, {}),
+            "s3": RelationRecord("s3", 40, 0, {}),
+        },
+        rcsd_roads=[
+            _road("r1", "10", "30", [(0, 0), (50, 0)]),
+            _road("r2", "30", "20", [(50, 0), (100, 0)]),
+            _road("r3", "30", "40", [(50, 0), (150, 0)]),
+        ],
+        rcsd_nodes=[_node("10"), _node("20"), _node("30"), _node("40")],
+        rcsd_node_canonicalizer=NodeCanonicalizer({}, frozenset({"10", "20", "30", "40"})),
+        replaceable_rows=[_replaceable("sx_s3", ["r3"])],
+        rejected_rows=[],
+        failure_business_audit_rows=[_failure("s1_s2", ["s1", "s2"], ["10", "20"])],
+    )
+
+    props = rows[0]["properties"]
+    assert props["group_probe_status"] == "passed"
+    assert props["group_probe_reason"] == "passed"
+    assert props["group_probe_repair_owner"] == "T06_path_corridor_group_replacement"
+    assert props["path_corridor_probe_segment_ids"] == ["s1_s2", "sx_s3"]
+    assert props["group_probe_rcsd_road_ids"] == ["r1", "r2", "r3"]
 
 
 def _segment(segment_id: str, pair_nodes: list[str], coords: list[tuple[float, float]] | None = None) -> dict:
@@ -124,6 +181,17 @@ def _node(node_id: str) -> dict:
             "id": node_id,
             "mainnodeid": node_id,
             "kind": 4,
+        },
+        "geometry": None,
+    }
+
+
+def _replaceable(segment_id: str, road_ids: list[str]) -> dict:
+    return {
+        "type": "Feature",
+        "properties": {
+            "swsd_segment_id": segment_id,
+            "rcsd_road_ids": road_ids,
         },
         "geometry": None,
     }

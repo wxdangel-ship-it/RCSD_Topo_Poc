@@ -1,0 +1,39 @@
+# 02 数据与领域模型
+
+## 1. 上下游数据关系
+
+T08 输入是原始 SWSD / RCSD / patch / restriction / Laneinfo 数据。T08 输出被 T01、T03、T04、T05、T06、T09 使用；其中 Tool7 restriction 与 Tool8 arrow 是 T09 的重要证据，Tool9 RCSD 清理结果会影响 T05 relation 与 T06 替换质量。
+
+## 2. 工具域
+
+| 工具 | 数据域 | 下游意义 |
+|---|---|---|
+| Tool1 | 基础矢量格式转换 | 为后续工具和模块提供 GPKG / GeoJSON。 |
+| Tool2 | SWSD Road patch / kind | 补齐 `patch_id / kind`，剔出事件 Road。 |
+| Tool3 | SWSD Nodes 类型初始化 | 初始化 `kind_2 / grade_2`，聚合环岛。 |
+| Tool4 | 路口类型修复 | 修复错误 T 型、交叉、分歧 / 合流类型。 |
+| Tool5 | 复杂路口预处理 | 聚合复杂分合流链路，处理 RCSDIntersection 一对多错误。 |
+| Tool6 | Nodes 类型质检 | 输出人工确认候选，不直接修复。 |
+| Tool7 | SW restriction 显性化 | 将 C 表 restriction 转为 LineString 证据。 |
+| Tool8 | Laneinfo arrow 显性化 | 将车道箭头转为 Road 方向级 LineString 证据。 |
+| Tool9 | RCSD 清理 | 按道路面过滤 RCSDNode 语义组和 RCSDRoad。 |
+
+## 3. 关键字段语义
+
+- `kind_2 / grade_2` 是下游当前语义字段，Tool3 初始化后由 Tool4/5 进一步修正。
+- `mainnodeid` 表达 SWSD / RCSD 语义路口组，T08 修复必须保持组语义。
+- `formway bit7 = 128` 表示提前右转，Tool4/T06 均按 bit mask 语义使用。
+- Road `kind` token 后两位为 `17` 时，Tool2 将对应 Road 剔入事件 Road 输出。
+- Road `kind` token 后两位为 `0a` 时，可作为 Tool4 辅路豁免判断来源。
+- Tool7/8 输出的是显性证据，不是 T09 最终通行规则。
+
+## 4. 数据流
+
+1. Tool1 完成格式转换。
+2. Tool2/3/4/5/6 形成 SWSD Road/Node 字段显性化、修复和质检链。
+3. Tool7/8 将通行限制和车道箭头转为可空间定位证据。
+4. Tool9 清理 RCSDNode/RCSDRoad，输出下游可解释 RCSD 输入。
+
+## 5. 输出边界
+
+T08 所有工具采用 copy-on-write 输出，不原地修改输入。输出文件名必须符合 `_toolX` 约束，summary 必须能定位输入、参数、输出、CRS、计数和失败原因。

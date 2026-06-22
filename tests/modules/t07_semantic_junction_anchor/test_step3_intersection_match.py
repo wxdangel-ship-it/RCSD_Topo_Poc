@@ -245,6 +245,80 @@ def test_step3_anchors_candidates_with_successful_t05_relation_and_existing_rcsd
     assert audit_rows["9"]["reason"] == "rcsd_junction_already_linked"
 
 
+def test_step3_consumes_kind2048_step2_surface_relation(tmp_path: Path) -> None:
+    nodes_path = tmp_path / "nodes.geojson"
+    relations_path = tmp_path / "intersection_match_all.geojson"
+    rcsdnode_path = tmp_path / "rcsdnode.geojson"
+    _write_geojson(
+        nodes_path,
+        [
+            _feature({"id": 20, "mainnodeid": 20, "kind_2": 2048, "has_evd": "yes", "is_anchor": "yes"}, Point(0, 0)),
+            _feature({"id": 2001, "mainnodeid": 20, "kind_2": 0}, Point(2, 0)),
+        ],
+    )
+    _write_geojson(relations_path, [])
+    _write_geojson(rcsdnode_path, [_feature({"id": 900, "mainnodeid": None}, Point(1, 0))])
+    (tmp_path / "t07_swsd_rcsd_relation_evidence.json").write_text(
+        json.dumps(
+            {
+                "run_id": "step2",
+                "target_crs": "EPSG:3857",
+                "row_count": 1,
+                "fieldnames": [],
+                "rows": [
+                    {
+                        "target_id": "20",
+                        "representative_node_id": "20",
+                        "relation_source": "T07_STEP2",
+                        "relation_state": "existing_rcsdintersection_matched",
+                        "status_suggested": 0,
+                        "base_id_candidate": 900,
+                    }
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    _write_gpkg(
+        tmp_path / "t07_rcsdintersection_anchor_surface.gpkg",
+        [
+            _feature(
+                {
+                    "surface_candidate_id": "step2-surface-2048",
+                    "target_id": 20,
+                    "source_module": "T07_STEP2",
+                    "kind_2": 2048,
+                },
+                Polygon([(-5, -5), (5, -5), (5, 5), (-5, 5), (-5, -5)]),
+            )
+        ],
+    )
+
+    artifacts = run_t07_step3_intersection_match(
+        nodes_path=nodes_path,
+        intersection_match_all_path=relations_path,
+        rcsdnode_path=rcsdnode_path,
+        out_root=tmp_path / "out",
+        run_id="case",
+    )
+
+    props = _read_gpkg_properties_by_id(artifacts.nodes_path)
+    assert props["20"]["is_anchor"] == "yes"
+    assert _relation_targets(artifacts.intersection_match_t07_path) == {"20"}
+
+    summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
+    assert summary["step2_surface_1v1_relation_count"] == 1
+    assert summary["intersection_match_backfill_relation_count"] == 0
+    assert summary["step2_anchor_count"] == 1
+    assert summary["step3_anchor_count"] == 1
+
+    evidence_payload = json.loads(artifacts.relation_evidence_json_path.read_text(encoding="utf-8"))
+    evidence_rows = {str(row["target_id"]): row for row in evidence_payload["rows"]}
+    assert evidence_rows["20"]["relation_source"] == "T07_STEP3_STEP2_SURFACE"
+    assert evidence_rows["20"]["base_id_candidate"] == "900"
+
+
 def test_step3_canonicalizes_string_float_semantic_ids_in_handoff_outputs(tmp_path: Path) -> None:
     nodes_path = tmp_path / "nodes.geojson"
     relations_path = tmp_path / "intersection_match_all.geojson"

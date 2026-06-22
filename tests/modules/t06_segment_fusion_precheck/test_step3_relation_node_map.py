@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from shapely.geometry import Point
+
 from rcsd_topo_poc.modules.t06_segment_fusion_precheck.step3_relation_node_map import (
     backfill_relation_node_maps_from_attachment_audit,
     sync_retained_swsd_carrier_mainnodes,
@@ -307,3 +309,75 @@ def test_sync_retained_swsd_carrier_mainnodes_uses_mapped_rcsd_node_mainnode() -
         "retained_swsd_topology_supplement",
         "retained_swsd_carrier_mainnode_synced",
     ]
+
+
+def test_sync_retained_swsd_segment_endpoint_mainnodes_from_peer_replaced_segment() -> None:
+    relation_rows = [
+        {
+            "properties": {
+                "swsd_segment_id": "left_replaced",
+                "relation_status": "replaced",
+                "swsd_to_frcsd_node_map": [
+                    {
+                        "swsd_node_id": "j1",
+                        "frcsd_node_ids": ["r_j1"],
+                        "node_role": "junc_node",
+                        "mapping_status": "mapped",
+                    }
+                ],
+                "risk_flags": [],
+            }
+        },
+        {
+            "properties": {
+                "swsd_segment_id": "retained",
+                "relation_status": "retained_swsd",
+                "frcsd_road_ids": ["s_road"],
+                "swsd_to_frcsd_node_map": [
+                    {
+                        "swsd_node_id": "j1",
+                        "frcsd_node_ids": ["j1"],
+                        "node_role": "pair_node",
+                        "mapping_status": "identity",
+                    },
+                    {
+                        "swsd_node_id": "j2",
+                        "frcsd_node_ids": ["j2"],
+                        "node_role": "pair_node",
+                        "mapping_status": "identity",
+                    },
+                ],
+                "risk_flags": [],
+            }
+        },
+    ]
+    roads = [
+        {
+            "properties": {
+                "id": "s_road",
+                "snodeid": "j1",
+                "enodeid": "j2",
+                "source": 2,
+            }
+        }
+    ]
+    nodes = [
+        {"properties": {"id": "j1", "source": 2, "mainnodeid": "j1"}, "geometry": Point(0, 0)},
+        {"properties": {"id": "j2", "source": 2, "mainnodeid": "j2"}, "geometry": Point(10, 0)},
+        {"properties": {"id": "r_j1", "source": 1, "mainnodeid": "r_main"}, "geometry": Point(2, 0)},
+    ]
+
+    stats = sync_retained_swsd_carrier_mainnodes(relation_rows, roads, nodes)
+
+    retained_props = relation_rows[1]["properties"]
+    retained_entry = retained_props["swsd_to_frcsd_node_map"][0]
+    assert stats == {
+        "retained_swsd_carrier_mainnode_candidate_count": 1,
+        "retained_swsd_carrier_mainnode_synced_count": 1,
+        "retained_swsd_carrier_mainnode_row_count": 1,
+    }
+    assert nodes[0]["properties"]["mainnodeid"] == "r_main"
+    assert nodes[1]["properties"]["mainnodeid"] == "j2"
+    assert retained_entry["frcsd_node_ids"] == ["j1"]
+    assert retained_entry["mapping_status"] == "identity_semantic_mainnode_synced"
+    assert retained_props["risk_flags"] == ["retained_swsd_carrier_mainnode_synced"]

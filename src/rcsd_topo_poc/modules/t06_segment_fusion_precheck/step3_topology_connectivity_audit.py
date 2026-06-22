@@ -11,6 +11,7 @@ from shapely.ops import linemerge, unary_union
 
 from .graph_builders import NodeCanonicalizer
 from .parsing import ParseError, directionality_from_sgrade, normalize_id, parse_id_list, unique_preserve_order
+from .road_attributes import is_advance_right_turn_road
 from .schemas import feature
 from .step3_topology_supplement import TOPOLOGY_SUPPLEMENT_SPLIT_REASON
 
@@ -59,6 +60,7 @@ TOPOLOGY_CONNECTIVITY_AUDIT_LAYERS = [
     "segment_road_connectivity",
     "segment_junction_connectivity",
     "patch_road_attachment",
+    "advance_right_endpoint_connectivity",
 ]
 TOPOLOGY_CONNECTIVITY_AUDIT_STATUSES = ["pass", "warn", "fail"]
 
@@ -157,7 +159,123 @@ def build_topology_connectivity_audit_rows(
             rcsd_source_value=rcsd_source_value,
         )
     )
+    rows.extend(
+        _advance_right_endpoint_connectivity_rows(
+            frcsd_roads=frcsd_roads,
+            relation_props=relation_props,
+            canonicalizer=canonicalizer,
+            source_field_name=source_field_name,
+            swsd_source_value=swsd_source_value,
+        )
+    )
     return [row for row in rows if (row.get("properties") or {}).get("audit_status")]
+
+
+def _advance_right_endpoint_connectivity_rows(
+    *,
+    frcsd_roads: list[dict[str, Any]],
+    relation_props: list[dict[str, Any]],
+    canonicalizer: NodeCanonicalizer,
+    source_field_name: str,
+    swsd_source_value: int,
+) -> list[dict[str, Any]]:
+    selected_segment_ids_by_road = _selected_segment_ids_by_road(relation_props)
+    node_degree = _final_canonical_node_degrees(frcsd_roads, canonicalizer=canonicalizer)
+    rows: list[dict[str, Any]] = []
+    for road in frcsd_roads:
+        props = dict(road.get("properties") or {})
+        if not is_advance_right_turn_road(props):
+            continue
+        road_id = _feature_id(road)
+        endpoint_ids = _road_endpoint_node_id_pair(road)
+        endpoint_points = _road_endpoint_points(road)
+        if len(endpoint_ids) < 2:
+            continue
+        segment_ids = selected_segment_ids_by_road.get(road_id, [])
+        for index, node_id in enumerate(endpoint_ids[:2]):
+            canonical_id = _canonicalize_node(canonicalizer, node_id)
+            degree = node_degree.get(canonical_id, 0)
+            status = "pass"
+            reason = "advance_right_endpoint_connected_to_frcsd_network"
+            owner = ""
+            if degree <= 1:
+                status = "fail"
+                reason = "advance_right_leaf_endpoint_unattached"
+                owner = "T06_step3_advance_right_closure"
+            rows.append(
+                feature(
+                    {
+                        "audit_layer": "advance_right_endpoint_connectivity",
+                        "audit_status": status,
+                        "audit_reason": reason,
+                        "recommended_owner": owner,
+                        "swsd_segment_id": "",
+                        "swsd_segment_ids": segment_ids,
+                        "swsd_node_id": "",
+                        "swsd_road_id": road_id if _source_text(props.get(source_field_name)) == str(swsd_source_value) else "",
+                        "frcsd_road_id": road_id,
+                        "frcsd_node_ids": [node_id],
+                        "relation_status": "replaced" if segment_ids else "",
+                        "source_mix": f"source_{_source_text(props.get(source_field_name))}" if props.get(source_field_name) is not None else "",
+                        "directionality": f"road_direction_{_coerce_int(props.get('direction'))}",
+                        "pair_nodes": endpoint_ids[:2],
+                        "path_forward": None,
+                        "path_reverse": None,
+                        "undirected_connected": degree > 1,
+                        "mapped_node_count": degree,
+                        "missing_mapping_count": 0,
+                        "max_pairwise_distance_m": None,
+                        "coverage_buffer_m": None,
+                        "uncovered_ratio": None,
+                        "uncovered_length_m": None,
+                        "corridor_buffer_m": None,
+                        "corridor_uncovered_ratio": None,
+                        "corridor_uncovered_length_m": None,
+                        "final_path_forward": None,
+                        "final_path_reverse": None,
+                        "final_undirected_connected": degree > 1,
+                        "final_corridor_uncovered_ratio": None,
+                        "final_corridor_uncovered_length_m": None,
+                        "projected_gap_m": None,
+                        "action": "verify_final_advance_right_endpoint_connectivity",
+                        "action_reason": f"endpoint_index_{index}",
+                    },
+                    endpoint_points[index] if index < len(endpoint_points) else None,
+                )
+            )
+    return rows
+
+
+def _selected_segment_ids_by_road(relation_props: list[dict[str, Any]]) -> dict[str, list[str]]:
+    result: dict[str, list[str]] = defaultdict(list)
+    for props in relation_props:
+        if not str(props.get("relation_status") or "").startswith("replaced"):
+            continue
+        segment_id = str(props.get("swsd_segment_id") or "")
+        if not segment_id:
+            continue
+        for road_id in _as_id_list(props.get("frcsd_road_ids")):
+            result[road_id] = unique_preserve_order([*result[road_id], segment_id])
+    return dict(result)
+
+
+def _final_canonical_node_degrees(
+    frcsd_roads: list[dict[str, Any]],
+    *,
+    canonicalizer: NodeCanonicalizer,
+) -> dict[str, int]:
+    result: dict[str, int] = defaultdict(int)
+    for road in frcsd_roads:
+        for node_id in unique_preserve_order(_road_endpoint_node_id_pair(road)[:2]):
+            result[_canonicalize_node(canonicalizer, node_id)] += 1
+    return dict(result)
+
+
+def _canonicalize_node(canonicalizer: NodeCanonicalizer, node_id: str) -> str:
+    try:
+        return canonicalizer.canonicalize(node_id)
+    except ParseError:
+        return str(node_id)
 
 
 def _formal_replacement_source_rows(
@@ -780,6 +898,10 @@ def _segment_junction_rows(
             status = "warn"
             reason = "junction_incident_segment_mapped_points_not_coincident"
             owner = "T06_step3_attachment_contract"
+        elif "source_1" in source_mixes and "source_2" in source_mixes:
+            status = "warn"
+            reason = "junction_incident_semantic_mainnode_not_closed"
+            owner = "T06_step3_attachment_contract"
         rows.append(
             feature(
                 {
@@ -1257,7 +1379,15 @@ class _NodeIndex:
         return node
 
     def exact_node(self, source: str, node_id: str) -> dict[str, Any] | None:
-        return self.by_source_id.get((str(source), str(node_id)))
+        try:
+            normalized_node_id = normalize_id(node_id)
+        except ParseError:
+            normalized_node_id = str(node_id)
+        node = self.by_source_id.get((_source_text(source), normalized_node_id))
+        if node is not None:
+            return node
+        candidates = self.by_id.get(normalized_node_id, [])
+        return candidates[0] if len(candidates) == 1 else None
 
     def point_for_ref(self, ref: "_NodeRef") -> Point | None:
         node = self.node_for_ref(ref)

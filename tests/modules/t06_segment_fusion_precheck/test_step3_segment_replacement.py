@@ -491,12 +491,20 @@ def test_step3_retained_swsd_segment_can_attach_to_selected_rcsd_advance_road(tm
 
     roads = gpd.read_file(artifacts.frcsd_road_gpkg_path)
     retained = roads[roads.id.astype(str) == "sr_retained"].iloc[0]
-    retained_other = roads[roads.id.astype(str) == "sr_retained_other"].iloc[0]
+    retained_other_parts = roads[roads.id.astype(str).str.startswith("sr_retained_other__t06swsdadvsplit_")]
     assert Point(retained.geometry.coords[-1]).equals(Point(15, 5))
-    assert Point(retained_other.geometry.coords[-1]).equals(Point(15, 5))
+    assert len(retained_other_parts) == 2
+    assert set(retained_other_parts["t06_split_original_road_id"].astype(str)) == {"sr_retained_other"}
     relations = {item["swsd_segment_id"]: item for item in _props(artifacts.swsd_frcsd_segment_relation_gpkg_path)}
     assert relations["s_retained"]["swsd_to_frcsd_node_map"][1]["mapping_status"] == "identity"
     assert "rr_adv" not in relations["s_retained"]["frcsd_road_ids"]
+    closure = _props(artifacts.step_root / "t06_step3_rcsd_advance_right_closure_audit.gpkg")
+    assert any(
+        item["rcsd_advance_road_id"] == "rr_adv"
+        and item["action"] == "split_retained_swsd_road_for_rcsd_advance"
+        and item["target_swsd_road_id"] == "sr_retained_other"
+        for item in closure
+    )
 
 
 def test_step3_retained_swsd_boundary_uses_semantic_rcsd_node_when_projection_is_far(tmp_path: Path) -> None:

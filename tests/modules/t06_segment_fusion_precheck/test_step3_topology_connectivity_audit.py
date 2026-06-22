@@ -29,15 +29,27 @@ def _segment(
     }
 
 
-def _road(road_id: str, snode: str, enode: str, geometry: LineString, *, source: int = 1, direction: int = 2) -> dict:
+def _road(
+    road_id: str,
+    snode: str,
+    enode: str,
+    geometry: LineString,
+    *,
+    source: int = 1,
+    direction: int = 2,
+    formway: int | None = None,
+) -> dict:
+    props = {
+        "id": road_id,
+        "source": source,
+        "snodeid": snode,
+        "enodeid": enode,
+        "direction": direction,
+    }
+    if formway is not None:
+        props["formway"] = formway
     return {
-        "properties": {
-            "id": road_id,
-            "source": source,
-            "snodeid": snode,
-            "enodeid": enode,
-            "direction": direction,
-        },
+        "properties": props,
         "geometry": geometry,
     }
 
@@ -278,6 +290,30 @@ def test_topology_audit_fails_final_road_with_missing_endpoint_node() -> None:
     assert integrity["frcsd_node_ids"] == ["2"]
     summary = summarize_topology_connectivity_audit(rows)
     assert summary["topology_connectivity_final_road_node_integrity_fail_count"] == 1
+
+
+def test_topology_audit_uses_existing_endpoint_node_when_source_field_is_missing() -> None:
+    rows = build_topology_connectivity_audit_rows(
+        swsd_segments=[],
+        frcsd_roads=[_road("sr1", "1", "5415248413001429", LineString([(0, 0), (10, 0)]), source=2)],
+        frcsd_nodes=[
+            _node("1", Point(0, 0), source=2),
+            {"properties": {"id": 5415248413001429, "mainnodeid": "99"}, "geometry": Point(10, 0)},
+        ],
+        segment_relation_rows=[],
+        advance_right_audit_rows=[],
+        source_field_name="source",
+        swsd_source_value=2,
+        rcsd_source_value=1,
+    )
+
+    integrity = [
+        row["properties"]
+        for row in rows
+        if row["properties"]["audit_layer"] == "final_road_node_integrity"
+    ][0]
+    assert integrity["audit_status"] == "pass"
+    assert integrity["audit_reason"] == "final_road_node_integrity_passed"
 
 
 def test_topology_audit_warns_retained_swsd_road_endpoint_geometry_offset() -> None:
@@ -569,6 +605,61 @@ def test_topology_audit_accepts_junction_when_mainnode_is_closed() -> None:
     assert summary["topology_connectivity_segment_junction_connectivity_fail_count"] == 0
 
 
+def test_topology_audit_warns_mixed_source_junction_when_mainnode_is_not_closed() -> None:
+    rows = build_topology_connectivity_audit_rows(
+        swsd_segments=[
+            _segment("s1", ["1", "2"], LineString([(0, 0), (10, 0)]), sgrade="0-1单"),
+            _segment("s2", ["2", "3"], LineString([(10, 0), (20, 0)]), sgrade="0-1单"),
+        ],
+        frcsd_roads=[
+            _road("r1", "10", "20", LineString([(0, 0), (10, 0)])),
+            _road("sr2", "2", "3", LineString([(10, 0), (20, 0)]), source=2),
+        ],
+        frcsd_nodes=[
+            _node("10", Point(0, 0)),
+            _node("20", Point(10, 0), mainnodeid="20"),
+            _node("2", Point(10, 0), source=2, mainnodeid="2"),
+            _node("3", Point(20, 0), source=2),
+        ],
+        segment_relation_rows=[
+            _relation(
+                "s1",
+                ["1", "2"],
+                ["r1"],
+                [
+                    {"swsd_node_id": "1", "frcsd_node_ids": ["10"], "mapping_status": "mapped"},
+                    {"swsd_node_id": "2", "frcsd_node_ids": ["20"], "mapping_status": "mapped"},
+                ],
+            ),
+            _relation(
+                "s2",
+                ["2", "3"],
+                ["sr2"],
+                [
+                    {"swsd_node_id": "2", "frcsd_node_ids": ["2"], "mapping_status": "identity"},
+                    {"swsd_node_id": "3", "frcsd_node_ids": ["3"], "mapping_status": "identity"},
+                ],
+                status="retained_swsd",
+                source_values=[2],
+            ),
+        ],
+        advance_right_audit_rows=[],
+        source_field_name="source",
+        swsd_source_value=2,
+        rcsd_source_value=1,
+    )
+
+    junction = [
+        row["properties"]
+        for row in rows
+        if row["properties"]["audit_layer"] == "segment_junction_connectivity"
+        and row["properties"]["swsd_node_id"] == "2"
+    ][0]
+    assert junction["audit_status"] == "warn"
+    assert junction["audit_reason"] == "junction_incident_semantic_mainnode_not_closed"
+    assert junction["max_pairwise_distance_m"] == 0.0
+
+
 def test_topology_audit_fails_patch_attachment_with_isolated_rcsd_node() -> None:
     rows = build_topology_connectivity_audit_rows(
         swsd_segments=[],
@@ -603,6 +694,76 @@ def test_topology_audit_fails_patch_attachment_with_isolated_rcsd_node() -> None
     assert patch["audit_reason"] == "patch_attachment_rcsd_node_isolated"
     summary = summarize_topology_connectivity_audit(rows)
     assert summary["topology_connectivity_fail_count"] == 1
+
+
+def test_topology_audit_fails_final_advance_right_leaf_endpoint() -> None:
+    rows = build_topology_connectivity_audit_rows(
+        swsd_segments=[],
+        frcsd_roads=[
+            _road("adv", "10", "99", LineString([(0, 0), (10, 1)]), formway=128),
+            _road("main", "10", "20", LineString([(0, 0), (20, 0)])),
+        ],
+        frcsd_nodes=[
+            _node("10", Point(0, 0)),
+            _node("20", Point(20, 0)),
+            _node("99", Point(10, 1)),
+        ],
+        segment_relation_rows=[
+            _relation(
+                "s1",
+                ["1", "2"],
+                ["adv", "main"],
+                [],
+            )
+        ],
+        advance_right_audit_rows=[],
+        source_field_name="source",
+        swsd_source_value=2,
+        rcsd_source_value=1,
+    )
+
+    advance_rows = [
+        row["properties"]
+        for row in rows
+        if row["properties"]["audit_layer"] == "advance_right_endpoint_connectivity"
+    ]
+    assert [row["audit_status"] for row in advance_rows] == ["pass", "fail"]
+    assert advance_rows[1]["audit_reason"] == "advance_right_leaf_endpoint_unattached"
+    summary = summarize_topology_connectivity_audit(rows)
+    assert summary["topology_connectivity_advance_right_endpoint_connectivity_fail_count"] == 1
+
+
+def test_topology_audit_passes_advance_right_cross_source_mainnode_attachment() -> None:
+    rows = build_topology_connectivity_audit_rows(
+        swsd_segments=[],
+        frcsd_roads=[
+            _road("main", "10", "20", LineString([(0, 0), (-10, 0)])),
+            _road("adv", "10", "99", LineString([(0, 0), (10, 0)]), formway=128),
+            _road("sw1", "1", "sw_attach", LineString([(5, 0), (10, 0)]), source=2),
+            _road("sw2", "sw_attach", "2", LineString([(10, 0), (15, 0)]), source=2),
+        ],
+        frcsd_nodes=[
+            _node("10", Point(0, 0)),
+            _node("20", Point(-10, 0)),
+            _node("99", Point(10, 0), mainnodeid="99"),
+            _node("1", Point(5, 0), source=2),
+            _node("2", Point(15, 0), source=2),
+            _node("sw_attach", Point(10, 0), source=2, mainnodeid="99"),
+        ],
+        segment_relation_rows=[_relation("s1", ["1", "2"], ["adv"], [])],
+        advance_right_audit_rows=[],
+        source_field_name="source",
+        swsd_source_value=2,
+        rcsd_source_value=1,
+    )
+
+    advance_rows = [
+        row["properties"]
+        for row in rows
+        if row["properties"]["audit_layer"] == "advance_right_endpoint_connectivity"
+    ]
+    assert [row["audit_status"] for row in advance_rows] == ["pass", "pass"]
+    assert advance_rows[1]["mapped_node_count"] == 3
 
 
 def test_topology_audit_fails_patch_attachment_when_mainnode_is_not_merged() -> None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 from collections import defaultdict
 from typing import Any
 
@@ -10,8 +11,14 @@ from .schemas import feature
 
 MAX_FORMAL_REPLACEMENT_BUFFER_M = 75.0
 MIN_VISUAL_REPAIR_GEOMETRY_OVERLAP_RATIO = 0.65
+MAX_CONTROLLED_VISUAL_SWSD_UNCOVERED_RATIO = 0.1
+MAX_CONTROLLED_VISUAL_SWSD_UNCOVERED_LENGTH_M = 20.0
 MAX_RETAINED_JUNCTION_ATTACHMENT_GAP_M = 20.0
 MAX_REPLACED_JUNCTION_MAPPING_DIVERGENCE_M = 5.0
+VISUAL_CONSISTENCY_STRATEGIES = {
+    "visual_consistency_high_confidence_repair",
+    "visual_consistency_controlled_release",
+}
 
 
 def build_replacement_plan_rows(
@@ -63,6 +70,7 @@ def build_replacement_plan_rows(
         )
     )
     rows.extend(_special_group_plan_rows(special_group_rows))
+    _apply_visual_consistency_road_conflict_gate(rows)
     _apply_junction_alignment_plan_gate(
         rows,
         swsd_segments=swsd_segments or [],
@@ -182,7 +190,9 @@ def _standard_plan_rows(
         segment_id = _safe_id(props.get("swsd_segment_id"))
         if not segment_id:
             continue
-        strategy = str(props.get("replacement_strategy") or "buffer_segment_extraction")
+        source_strategy = str(props.get("replacement_strategy") or "buffer_segment_extraction")
+        controlled_visual_release = props.get("geometry_buffer_coverage_issue") == "retained_geometry_outside_swsd_visual_consistency_scope"
+        strategy = "visual_consistency_controlled_release" if controlled_visual_release else source_strategy
         pair_nodes = _parse_list(props.get("swsd_pair_nodes"))
         reverse_blocker = _blocker_for_pair(pair_nodes, reverse_blockers)
         bridge = pair_anchor_bridges.get(segment_id, {})
@@ -205,12 +215,19 @@ def _standard_plan_rows(
         elif buffer_distance_blocked:
             reason = "adaptive_buffer_exceeds_topology_connectivity_gate"
         else:
-            reason = strategy
+            reason = props.get("geometry_buffer_coverage_issue") if controlled_visual_release else strategy
         risk_flags = ["reverse_retained_swsd_pair_blocked"] if reverse_blocker else []
         if buffer_distance_blocked:
             risk_flags.append("adaptive_buffer_exceeds_topology_connectivity_gate")
         if pair_anchor_bridge_road_ids:
             risk_flags.append("pair_anchor_bridge_roads_added")
+        if controlled_visual_release:
+            risk_flags.extend(
+                [
+                    "visual_consistency_controlled_release",
+                    "retained_geometry_outside_swsd_visual_consistency_scope",
+                ]
+            )
         if reverse_blocker:
             notes = f"blocked by reverse retained SWSD segment {reverse_blocker['segment_id']}"
         elif buffer_distance_blocked:
@@ -219,11 +236,14 @@ def _standard_plan_rows(
                 "topology connectivity gate"
             )
         else:
-            notes = (
-                "standard Step2 replaceable segment with pair-anchor bridge roads"
-                if pair_anchor_bridge_road_ids
-                else "standard Step2 replaceable segment"
-            )
+            if controlled_visual_release:
+                notes = "standard Step2 replaceable segment with retained RCSD visual consistency mismatch accepted as controlled release audit risk"
+            else:
+                notes = (
+                    "standard Step2 replaceable segment with pair-anchor bridge roads"
+                    if pair_anchor_bridge_road_ids
+                    else "standard Step2 replaceable segment"
+                )
         rows.append(
             feature(
                 {
@@ -367,12 +387,20 @@ def _visual_consistency_repair_plan_rows(
             continue
         rejected_props = rejected_by_segment.get(segment_id, {})
         audit_props = audit_by_segment.get(segment_id, {})
-        if not _is_visual_consistency_repair_ready(props, rejected_props, audit_props):
+        release_mode = _visual_consistency_release_mode(props, rejected_props, audit_props)
+        if not release_mode:
             continue
         retained_road_ids = _parse_list(props.get("retained_rcsd_road_ids"))
         retained_node_ids = _parse_list(props.get("retained_node_ids"))
         if not retained_road_ids or not retained_node_ids:
             continue
+        controlled_release = release_mode == "controlled_release"
+        strategy = "visual_consistency_controlled_release" if controlled_release else "visual_consistency_high_confidence_repair"
+        risk_flags = [strategy]
+        if controlled_release:
+            risk_flags.append("retained_geometry_outside_swsd_visual_consistency_scope")
+            if audit_props.get("manual_review_required"):
+                risk_flags.append("manual_review_required")
         rows.append(
             feature(
                 {
@@ -385,7 +413,7 @@ def _visual_consistency_repair_plan_rows(
                     "upstream_owner": str(audit_props.get("upstream_issue_owner") or "T06_visual_consistency_repair"),
                     "source_artifact": "t06_rcsd_buffer_segment_rejected",
                     "source_reason": props.get("reject_reason"),
-                    "replacement_strategy": "visual_consistency_high_confidence_repair",
+                    "replacement_strategy": strategy,
                     "special_junction_id": "",
                     "special_junction_type": "",
                     "swsd_sgrade": rejected_props.get("swsd_sgrade"),
@@ -402,8 +430,12 @@ def _visual_consistency_repair_plan_rows(
                     "group_segment_ids": [segment_id],
                     "source_segment_ids": [segment_id],
                     "buffer_distances_m": [],
-                    "risk_flags": ["visual_consistency_high_confidence_repair"],
-                    "notes": "topology and directionality passed; visual consistency mismatch accepted by high-confidence T06 repair gate",
+                    "risk_flags": unique_preserve_order(risk_flags),
+                    "notes": (
+                        "topology and directionality passed; retained RCSD visual consistency mismatch accepted as controlled release audit risk"
+                        if controlled_release
+                        else "topology and directionality passed; visual consistency mismatch accepted by high-confidence T06 repair gate"
+                    ),
                 },
                 row.get("geometry") or next(
                     (audit.get("geometry") for audit in failure_business_audit_rows if _safe_id((audit.get("properties") or {}).get("swsd_segment_id")) == segment_id),
@@ -412,6 +444,37 @@ def _visual_consistency_repair_plan_rows(
             )
         )
     return rows
+
+
+def _apply_visual_consistency_road_conflict_gate(rows: list[dict[str, Any]]) -> None:
+    primary_road_owner: dict[str, str] = {}
+    for row in rows:
+        props = row.get("properties") or {}
+        if not _is_replace_ready_plan(props) or _is_visual_consistency_plan(props):
+            continue
+        if props.get("execution_scope") not in {"standard_segment", "path_corridor_group"}:
+            continue
+        plan_id = str(props.get("replacement_plan_id") or props.get("swsd_segment_id") or "")
+        for road_id in _parse_list(props.get("rcsd_road_ids")):
+            primary_road_owner.setdefault(road_id, plan_id)
+    if not primary_road_owner:
+        return
+
+    for row in rows:
+        props = row.get("properties") or {}
+        if not _is_replace_ready_plan(props) or not _is_visual_consistency_plan(props):
+            continue
+        conflict_road_ids = [road_id for road_id in _parse_list(props.get("rcsd_road_ids")) if road_id in primary_road_owner]
+        if not conflict_road_ids:
+            continue
+        _block_plan_row(
+            props,
+            reason="visual_consistency_road_conflict_with_primary_replacement_plan",
+            risk_flag="visual_consistency_road_conflict_with_primary_replacement_plan",
+        )
+        notes = str(props.get("notes") or "")
+        suffix = f"conflict_rcsd_road_ids={conflict_road_ids}"
+        props["notes"] = f"{notes}; {suffix}" if notes else suffix
 
 
 def _special_group_plan_rows(special_group_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -589,6 +652,10 @@ def _is_replace_ready_plan(props: dict[str, Any]) -> bool:
     return props.get("plan_status") == "ready" and props.get("execution_action") == "replace"
 
 
+def _is_visual_consistency_plan(props: dict[str, Any]) -> bool:
+    return str(props.get("replacement_strategy") or "") in VISUAL_CONSISTENCY_STRATEGIES
+
+
 def _block_plan_row(props: dict[str, Any], *, reason: str, risk_flag: str) -> None:
     if props.get("plan_status") != "ready":
         return
@@ -681,49 +748,89 @@ def _props_by_segment(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     return result
 
 
-def _is_visual_consistency_repair_ready(
+def _visual_consistency_release_mode(
     buffer_props: dict[str, Any],
     rejected_props: dict[str, Any],
     audit_props: dict[str, Any],
-) -> bool:
+) -> str:
     if buffer_props.get("reject_reason") not in {
         "retained_geometry_outside_swsd_visual_consistency_scope",
         "swsd_visual_continuity_not_covered_by_retained_rcsd",
     }:
-        return False
-    if rejected_props.get("swsd_directionality") != "single":
-        return False
+        return ""
     if buffer_props.get("full_graph_status") != "required_nodes_connected":
-        return False
+        return ""
     if buffer_props.get("candidate_graph_status") != "required_nodes_connected":
-        return False
+        return ""
     directional_status = str(buffer_props.get("directional_status") or "")
-    if "directed_path_present" not in directional_status:
-        return False
+    if "candidate=bidirectional" not in directional_status and "candidate=directed_path_present" not in directional_status:
+        return ""
     if _parse_list(buffer_props.get("missing_required_node_ids")):
-        return False
+        return ""
     if _parse_list(buffer_props.get("unexpected_endpoint_node_ids")):
-        return False
+        return ""
     if _parse_list(buffer_props.get("unexpected_mapped_semantic_node_ids")):
-        return False
+        return ""
+
+    if buffer_props.get("reject_reason") == "retained_geometry_outside_swsd_visual_consistency_scope":
+        if _coerce_float(buffer_props.get("retained_road_count")) < 1:
+            return ""
+        swsd_uncovered_length = _coverage_metric(
+            buffer_props,
+            rejected_props,
+            "swsd_uncovered_by_rcsd_length_m",
+        )
+        swsd_uncovered_ratio = _coverage_metric(
+            buffer_props,
+            rejected_props,
+            "swsd_uncovered_by_rcsd_ratio",
+        )
+        if swsd_uncovered_length is None or swsd_uncovered_ratio is None:
+            return ""
+        if (
+            swsd_uncovered_length > MAX_CONTROLLED_VISUAL_SWSD_UNCOVERED_LENGTH_M
+            or swsd_uncovered_ratio > MAX_CONTROLLED_VISUAL_SWSD_UNCOVERED_RATIO
+        ):
+            return ""
+        return "controlled_release"
+
+    if rejected_props.get("swsd_directionality") != "single":
+        return ""
     if _coerce_float(buffer_props.get("retained_road_count")) < 2:
-        return False
+        return ""
     if audit_props.get("manual_review_required"):
-        return False
+        return ""
     if audit_props.get("repair_recommendation") != "high_confidence_pair_anchor_candidate":
-        return False
+        return ""
     geometry_overlap_ratio = _coerce_optional_float(audit_props.get("geometry_overlap_ratio"))
     if geometry_overlap_ratio is not None and geometry_overlap_ratio < MIN_VISUAL_REPAIR_GEOMETRY_OVERLAP_RATIO:
-        return False
+        return ""
     if _coerce_float(audit_props.get("candidate_score")) < 0.88:
-        return False
+        return ""
     if _coerce_float(audit_props.get("directionality_score")) < 1.0:
-        return False
+        return ""
     if _coerce_float(audit_props.get("connectivity_score")) < 1.0:
-        return False
+        return ""
     if _coerce_float(audit_props.get("shape_similarity_score")) < 1.0:
-        return False
-    return True
+        return ""
+    return "high_confidence_repair"
+
+
+def _coverage_metric(buffer_props: dict[str, Any], rejected_props: dict[str, Any], name: str) -> float | None:
+    direct = _coerce_optional_float(buffer_props.get(name))
+    if direct is not None:
+        return direct
+    failed_metric_value = rejected_props.get("failed_metric_value")
+    if isinstance(failed_metric_value, dict):
+        return _coerce_optional_float(failed_metric_value.get(name))
+    if isinstance(failed_metric_value, str) and failed_metric_value.strip():
+        try:
+            parsed = ast.literal_eval(failed_metric_value)
+        except (SyntaxError, ValueError):
+            return None
+        if isinstance(parsed, dict):
+            return _coerce_optional_float(parsed.get(name))
+    return None
 
 
 def _reverse_pair_blockers(

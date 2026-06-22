@@ -41,7 +41,9 @@ class NodeCanonicalizer:
                 semantic_node_ids.add(canonical)
             for subnode_id in subnode_ids:
                 aliases.setdefault(subnode_id, canonical)
-        return cls(aliases=aliases, semantic_node_ids=frozenset(semantic_node_ids))
+        flattened = {node_id: _resolve_alias(node_id, aliases) for node_id in aliases}
+        semantic_node_ids = {_resolve_alias(node_id, flattened) for node_id in semantic_node_ids}
+        return cls(aliases=flattened, semantic_node_ids=frozenset(semantic_node_ids))
 
     def canonicalize(self, value: Any) -> str:
         node_id = normalize_id(value)
@@ -60,3 +62,15 @@ def _is_semantic_node_kind(props: dict[str, Any]) -> bool:
     if kind is None:
         kind = parse_positive_int(props.get("kind"))
     return kind is not None and kind > 0
+
+
+def _resolve_alias(node_id: str, aliases: dict[str, str]) -> str:
+    current = node_id
+    seen: set[str] = set()
+    while current in aliases and current not in seen:
+        seen.add(current)
+        nxt = aliases[current]
+        if not nxt or nxt == current:
+            break
+        current = nxt
+    return current

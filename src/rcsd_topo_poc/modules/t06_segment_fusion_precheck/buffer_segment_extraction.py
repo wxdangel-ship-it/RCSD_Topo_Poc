@@ -217,7 +217,7 @@ class BufferSegmentExtractor:
             min_mismatch_length_m=cfg.min_geometry_buffer_mismatch_length_m,
         )
         visual_buffer_distance = cfg.visual_consistency_buffer_distance_m
-        soft_visual_continuity_issue = False
+        soft_visual_consistency_issue = False
         if (
             ok
             and coverage_status.issue is None
@@ -234,10 +234,12 @@ class BufferSegmentExtractor:
             )
             if visual_status.issue is not None:
                 coverage_status = _visual_consistency_status(visual_status)
-                soft_visual_continuity_issue = (
-                    coverage_status.issue == "swsd_visual_continuity_not_covered_by_retained_rcsd"
+                soft_visual_consistency_issue = _is_soft_visual_consistency_issue(
+                    coverage_status,
+                    max_mismatch_ratio=cfg.max_visual_consistency_mismatch_ratio,
+                    min_mismatch_length_m=cfg.min_visual_consistency_mismatch_length_m,
                 )
-        if ok and coverage_status.issue is not None and not soft_visual_continuity_issue:
+        if ok and coverage_status.issue is not None and not soft_visual_consistency_issue:
             ok = False
             reason = coverage_status.issue
         return _result(
@@ -1143,6 +1145,24 @@ def _visual_consistency_status(status: _GeometryCoverageStatus) -> _GeometryCove
         rcsd_outside_ratio=status.rcsd_outside_ratio,
         swsd_uncovered_length_m=status.swsd_uncovered_length_m,
         swsd_uncovered_ratio=status.swsd_uncovered_ratio,
+    )
+
+
+def _is_soft_visual_consistency_issue(
+    status: _GeometryCoverageStatus,
+    *,
+    max_mismatch_ratio: float,
+    min_mismatch_length_m: float,
+) -> bool:
+    if status.issue == "swsd_visual_continuity_not_covered_by_retained_rcsd":
+        return True
+    if status.issue != "retained_geometry_outside_swsd_visual_consistency_scope":
+        return False
+    return not _mismatch_exceeds_threshold(
+        status.swsd_uncovered_length_m,
+        status.swsd_uncovered_ratio,
+        max_mismatch_ratio=max_mismatch_ratio,
+        min_mismatch_length_m=min_mismatch_length_m,
     )
 
 

@@ -7,6 +7,9 @@ from typing import Any
 from .parsing import ParseError, parse_id_list, unique_preserve_order
 
 
+RETAINED_SWSD_PEER_MAINNODE_MAX_GAP_M = 5.0
+
+
 def backfill_relation_node_maps_from_attachment_audit(
     segment_relation_rows: list[dict[str, Any]],
     attachment_audit_rows: list[dict[str, Any]],
@@ -129,12 +132,17 @@ def sync_retained_swsd_carrier_mainnodes(
     }
     swsd_source = str(swsd_source_value)
     rcsd_source = str(rcsd_source_value)
+    peer_rcsd_node_ids = _peer_rcsd_node_ids_by_swsd_node(segment_relation_rows, include_mixed=True)
     for row in segment_relation_rows:
         props = row.get("properties") or {}
-        if str(props.get("relation_status") or "") != "replaced+retained_swsd":
+        relation_status = str(props.get("relation_status") or "")
+        if relation_status not in {"replaced+retained_swsd", "retained_swsd"}:
             continue
         retained_endpoint_nodes: set[str] = set()
-        for road_id in _parse_id_list(props.get("retained_detached_swsd_road_ids")):
+        retained_road_ids = _parse_id_list(props.get("retained_detached_swsd_road_ids"))
+        if relation_status == "retained_swsd":
+            retained_road_ids = unique_preserve_order([*retained_road_ids, *_parse_id_list(props.get("frcsd_road_ids"))])
+        for road_id in retained_road_ids:
             road = road_by_key.get((swsd_source, road_id))
             if road is None:
                 continue
@@ -145,21 +153,43 @@ def sync_retained_swsd_carrier_mainnodes(
         if not retained_endpoint_nodes:
             continue
         row_changed = False
-        for entry in _node_map_entries(props.get("swsd_to_frcsd_node_map")):
+        node_map = _node_map_entries(props.get("swsd_to_frcsd_node_map"))
+        for entry in node_map:
             swsd_node_id = _safe_id(entry.get("swsd_node_id"))
             if swsd_node_id not in retained_endpoint_nodes:
                 continue
             mapping_status = str(entry.get("mapping_status") or "")
-            if mapping_status == "missing" or mapping_status.startswith("identity"):
+            if mapping_status == "missing":
                 continue
             rcsd_node_ids = _parse_id_list(entry.get("frcsd_node_ids"))
-            if len(rcsd_node_ids) != 1:
-                continue
+            if mapping_status.startswith("identity"):
+                rcsd_node_ids = peer_rcsd_node_ids.get(swsd_node_id, [])
             swsd_node = node_by_key.get((swsd_source, swsd_node_id))
-            rcsd_node = node_by_key.get((rcsd_source, rcsd_node_ids[0]))
-            if swsd_node is None or rcsd_node is None:
+            if swsd_node is None:
                 continue
-            target_mainnodeid = _mainnode_or_id(rcsd_node)
+            rcsd_nodes = [
+                rcsd_node
+                for rcsd_node_id in rcsd_node_ids
+                for rcsd_node in [node_by_key.get((rcsd_source, rcsd_node_id))]
+                if rcsd_node is not None
+            ]
+            if mapping_status.startswith("identity") and not _has_close_peer_node(
+                swsd_node,
+                rcsd_nodes,
+                max_gap_m=RETAINED_SWSD_PEER_MAINNODE_MAX_GAP_M,
+            ):
+                continue
+            target_mainnode_ids = unique_preserve_order(
+                [
+                    target
+                    for rcsd_node in rcsd_nodes
+                    for target in [_mainnode_or_id(rcsd_node) if rcsd_node is not None else ""]
+                    if target
+                ]
+            )
+            if len(target_mainnode_ids) != 1:
+                continue
+            target_mainnodeid = target_mainnode_ids[0]
             if not target_mainnodeid:
                 continue
             stats["retained_swsd_carrier_mainnode_candidate_count"] += 1
@@ -167,10 +197,13 @@ def sync_retained_swsd_carrier_mainnodes(
             if _safe_id(swsd_props.get("mainnodeid")) == target_mainnodeid:
                 continue
             swsd_props["mainnodeid"] = target_mainnodeid
+            if mapping_status.startswith("identity"):
+                entry["mapping_status"] = "identity_semantic_mainnode_synced"
             stats["retained_swsd_carrier_mainnode_synced_count"] += 1
             row_changed = True
         if not row_changed:
             continue
+        props["swsd_to_frcsd_node_map"] = node_map
         props["risk_flags"] = unique_preserve_order(
             [*_parse_id_list(props.get("risk_flags")), "retained_swsd_carrier_mainnode_synced"]
         )
@@ -178,11 +211,12 @@ def sync_retained_swsd_carrier_mainnodes(
     return stats
 
 
-def _peer_rcsd_node_ids_by_swsd_node(rows: list[dict[str, Any]]) -> dict[str, list[str]]:
+def _peer_rcsd_node_ids_by_swsd_node(rows: list[dict[str, Any]], *, include_mixed: bool = False) -> dict[str, list[str]]:
     result: dict[str, list[str]] = defaultdict(list)
     for row in rows:
         props = row.get("properties") or {}
-        if str(props.get("relation_status") or "") != "replaced":
+        relation_status = str(props.get("relation_status") or "")
+        if relation_status != "replaced" and not (include_mixed and "replaced" in relation_status):
             continue
         for entry in _node_map_entries(props.get("swsd_to_frcsd_node_map")):
             mapping_status = str(entry.get("mapping_status") or "")
@@ -262,3 +296,14 @@ def _source_text(value: Any) -> str:
 def _mainnode_or_id(node: dict[str, Any]) -> str:
     props = node.get("properties") or {}
     return _safe_id(props.get("mainnodeid")) or _safe_id(props.get("id"))
+
+
+def _has_close_peer_node(swsd_node: dict[str, Any], rcsd_nodes: list[dict[str, Any]], *, max_gap_m: float) -> bool:
+    swsd_geometry = swsd_node.get("geometry")
+    if swsd_geometry is None:
+        return False
+    for rcsd_node in rcsd_nodes:
+        rcsd_geometry = rcsd_node.get("geometry")
+        if rcsd_geometry is not None and swsd_geometry.distance(rcsd_geometry) <= max_gap_m:
+            return True
+    return False

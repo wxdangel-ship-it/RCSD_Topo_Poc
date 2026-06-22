@@ -12,7 +12,7 @@ from shapely.ops import linemerge, unary_union
 from .graph_builders import NodeCanonicalizer
 from .io import prepare_run_roots, read_features, write_feature_triplet, write_json
 from .parsing import ParseError, normalize_id, parse_id_list, parse_positive_int, unique_preserve_order
-from .road_attributes import is_advance_right_turn_road, is_near_advance_right_turn_duplicate as _is_adv_dup
+from .road_attributes import is_near_advance_right_turn_duplicate as _is_adv_dup
 from .schemas import (
     STEP2_GROUP_REPLACEMENT_AUDIT_STEM,
     STEP2_REPLACEMENT_PLAN_STEM,
@@ -43,6 +43,7 @@ from .step3_advance_right_contract import (
     RIGHT_ATTACH_AUDIT_FIELDS,
     RIGHT_ATTACH_AUDIT_STEM,
     _apply_post_advance_right_attachments,
+    _is_advance_right_rcsd_road,
     _retain_post_advance_right_swsd_carriers,
     apply_junction_advance_right_contract,
     apply_retained_swsd_segment_attachment_contract,
@@ -55,6 +56,13 @@ from .step3_group_replacement import (
     read_group_replacement_assignments_from_plan_rows,
 )
 from .step3_relation_node_map import backfill_relation_node_maps_from_attachment_audit, sync_retained_swsd_carrier_mainnodes
+from .step3_rcsd_advance_right_closure import (
+    apply_final_advance_right_endpoint_closure as _close_final_adv,
+    apply_native_rcsd_advance_right_closure,
+    append_advance_attachment_rcsd_nodes,
+    final_swsd_road_endpoint_ids as _swsd_ep,
+    write_rcsd_advance_right_closure_audit,
+)
 from .step3_topology_connectivity_audit import (
     STEP3_TOPOLOGY_CONNECTIVITY_AUDIT_FIELDS,
     STEP3_TOPOLOGY_CONNECTIVITY_AUDIT_STEM,
@@ -70,8 +78,6 @@ from .step3_topology_supplement import (
 
 
 INHERITED_NODE_FIELDS = ["kind", "grade", "kind_2", "grade_2", "closed_con"]
-ADVANCE_RIGHT_FORMWAY_BIT = 128
-TOPOLOGY_SUPPLEMENT_CORRIDOR_BUFFER_M = 2.0
 TOPOLOGY_SUPPLEMENT_MAX_UNCOVERED_RATIO = 0.05
 TOPOLOGY_SUPPLEMENT_MIN_UNCOVERED_LENGTH_M = 20.0
 
@@ -334,6 +340,12 @@ def run_t06_step3_segment_replacement(
         rcsd_node_by_id=rcsd_node_by_id,
         added_road_to_segments=added_road_to_segments,
     )
+    adv_closure_stats = apply_native_rcsd_advance_right_closure(
+        passed_units, rcsd_roads=rcsd_roads, rcsd_nodes=rcsd_nodes, rcsd_road_by_id=rcsd_road_by_id,
+        rcsd_node_by_id=rcsd_node_by_id, swsd_roads=swsd_roads, swsd_nodes=swsd_nodes,
+        swsd_road_by_id=swsd_road_by_id, swsd_node_by_id=swsd_node_by_id,
+        retained_swsd_roads=retained_swsd_roads, added_road_to_segments=added_road_to_segments,
+    )
 
     selected_rcsd_semantic_ids = _selected_rcsd_semantic_ids(passed_units)
     selected_rcsd_raw_node_ids = _selected_rcsd_raw_node_ids(added_road_to_segments, rcsd_road_by_id)
@@ -386,7 +398,7 @@ def run_t06_step3_segment_replacement(
     frcsd_nodes = _build_frcsd_nodes(
         swsd_nodes=swsd_nodes,
         rcsd_nodes=rcsd_nodes,
-        removed_node_ids=set(removed_node_to_segments),
+        removed_node_ids=set(removed_node_to_segments) - _swsd_ep(frcsd_roads, source_field_name, swsd_source_value),
         added_node_ids=set(added_node_to_segments),
         source_field_name=source_field_name,
         swsd_source_value=swsd_source_value,
@@ -413,6 +425,7 @@ def run_t06_step3_segment_replacement(
         source_field_name=source_field_name,
         rcsd_source_value=rcsd_source_value,
     )
+    _close_final_adv(frcsd_roads, frcsd_nodes, adv_closure_stats, passed_units, rcsd_roads, rcsd_road_by_id, added_road_to_segments, added_node_to_segments, source_field_name, rcsd_source_value)
     _stringify_final_road_id_fields(frcsd_roads)
 
     replacement_unit_rows = [feature(_replacement_unit_row(unit), unit.geometry) for unit in units]
@@ -508,6 +521,7 @@ def run_t06_step3_segment_replacement(
         features=right_attach_audit_rows,
         fieldnames=RIGHT_ATTACH_AUDIT_FIELDS,
     )
+    adv_closure_paths = write_rcsd_advance_right_closure_audit(step_root, adv_closure_stats["audit_rows"])
     topology_connectivity_audit_rows = build_topology_connectivity_audit_rows(
         swsd_segments=swsd_segments,
         swsd_roads=swsd_roads,
@@ -624,6 +638,15 @@ def run_t06_step3_segment_replacement(
                 "swsd_carrier_snapped_node_count"
             ],
             "generated_missing_rcsd_endpoint_node_count": generated_endpoint_node_stats["generated_node_count"],
+            "rcsd_advance_right_closure_candidate_road_count": adv_closure_stats[
+                "candidate_road_count"
+            ],
+            "rcsd_advance_right_closure_repaired_endpoint_count": adv_closure_stats[
+                "repaired_endpoint_count"
+            ],
+            "rcsd_advance_right_closure_failed_endpoint_count": adv_closure_stats[
+                "failed_endpoint_count"
+            ],
             "generated_rcsd_endpoint_node_geometry_synced_count": generated_endpoint_geometry_sync_stats[
                 "synced_node_count"
             ],
@@ -705,6 +728,10 @@ def run_t06_step3_segment_replacement(
                 **{f"unreplaced_rcsd_roads_{key}": str(value) for key, value in unreplaced_rcsd_road_paths.items()},
                 **{f"id_collision_audit_{key}": str(value) for key, value in collision_paths.items()},
                 **{f"advance_right_attachment_audit_{key}": str(value) for key, value in right_attach_paths.items()},
+                **{
+                    f"rcsd_advance_right_closure_audit_{key}": str(value)
+                    for key, value in adv_closure_paths.items()
+                },
                 **{f"topology_connectivity_audit_{key}": str(value) for key, value in topology_connectivity_paths.items()},
             },
             "gis_topology_checks": {
@@ -1204,7 +1231,7 @@ def _road_union_corridor(roads: list[dict[str, Any]]) -> Any:
     ]
     if not geometries:
         return None
-    return unary_union(geometries).buffer(TOPOLOGY_SUPPLEMENT_CORRIDOR_BUFFER_M)
+    return unary_union(geometries).buffer(2.0)
 
 
 def _road_corridor_coverage_failed(swsd_road: dict[str, Any] | None, selected_corridor: Any) -> bool:
@@ -1241,11 +1268,6 @@ def _coerce_int(value: Any) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
-
-
-def _is_advance_right_rcsd_road(road: dict[str, Any]) -> bool:
-    return is_advance_right_turn_road(dict(road.get("properties") or {}), formway_bit=ADVANCE_RIGHT_FORMWAY_BIT)
-
 
 
 def _build_junction_states(
@@ -1306,46 +1328,13 @@ def _build_junction_states(
                 state.added_rcsd_node_ids.append(node_id)
     for state in junctions.values():
         state.added_rcsd_node_ids = unique_preserve_order(state.added_rcsd_node_ids)
-    _append_advance_attachment_rcsd_nodes(
+    append_advance_attachment_rcsd_nodes(
         junctions=junctions,
         rcsd_roads=rcsd_roads,
         added_road_to_segments=added_road_to_segments,
         added_node_ids=added_node_ids,
     )
     return junctions
-
-
-def _append_advance_attachment_rcsd_nodes(
-    *,
-    junctions: dict[str, JunctionState],
-    rcsd_roads: list[dict[str, Any]],
-    added_road_to_segments: dict[str, list[str]],
-    added_node_ids: set[str],
-) -> None:
-    for road in rcsd_roads:
-        road_id = _feature_id(road)
-        segment_ids = set(added_road_to_segments.get(road_id, []))
-        if not segment_ids or not _is_advance_right_rcsd_road(road):
-            continue
-        endpoint_ids = _road_endpoint_node_ids(road)
-        if len(endpoint_ids) < 2:
-            continue
-        endpoint_set = set(endpoint_ids)
-        for state in junctions.values():
-            if not segment_ids.intersection(state.replacement_segment_ids):
-                continue
-            junction_node_ids = set(state.added_rcsd_node_ids)
-            if not endpoint_set.intersection(junction_node_ids):
-                continue
-            attachments = [
-                node_id
-                for node_id in endpoint_ids
-                if node_id not in junction_node_ids and node_id in added_node_ids
-            ]
-            if attachments:
-                state.advance_attachment_rcsd_node_ids = unique_preserve_order(
-                    [*state.advance_attachment_rcsd_node_ids, *attachments]
-                )
 
 
 def _apply_junction_rebuild(

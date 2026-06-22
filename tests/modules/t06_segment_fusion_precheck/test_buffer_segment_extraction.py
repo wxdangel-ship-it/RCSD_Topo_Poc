@@ -271,6 +271,58 @@ def test_visual_consistency_records_narrow_gap_without_rejecting() -> None:
     assert result.swsd_uncovered_by_rcsd_ratio > 0.1
 
 
+def test_visual_consistency_records_retained_outside_without_rejecting_when_swsd_is_covered() -> None:
+    extractor = BufferSegmentExtractor(
+        rcsd_road_features=[
+            _road("with_local_detour", 10, 20, [(0, 0), (45, 0), (45, 30), (45, 0), (100, 0)]),
+        ],
+        rcsd_node_features=[_node(10, 0, 0), _node(20, 100, 0)],
+    )
+
+    result = extractor.extract(
+        segment_geometry=LineString([(0, 0), (100, 0)]),
+        relation=RelationCheck(True, ["10", "20"], []),
+        optional_allowed_rcsd_nodes=[],
+        all_relation_base_ids={"10", "20"},
+        config=BufferExtractionConfig(
+            buffer_distance_m=50,
+            visual_consistency_buffer_distance_m=15,
+            min_road_overlap_ratio=0.2,
+        ),
+    )
+
+    assert result.ok
+    assert result.reason == "passed"
+    assert result.geometry_buffer_coverage_issue == "retained_geometry_outside_swsd_visual_consistency_scope"
+    assert result.rcsd_outside_swsd_buffer_ratio > 0.1
+    assert result.swsd_uncovered_by_rcsd_length_m == 0
+
+
+def test_visual_consistency_retained_outside_rejects_when_swsd_is_not_covered() -> None:
+    extractor = BufferSegmentExtractor(
+        rcsd_road_features=[
+            _road("offset", 10, 20, [(0, 30), (70, 30)]),
+        ],
+        rcsd_node_features=[_node(10, 0, 0), _node(20, 100, 0)],
+    )
+
+    result = extractor.extract(
+        segment_geometry=LineString([(0, 0), (100, 0)]),
+        relation=RelationCheck(True, ["10", "20"], []),
+        optional_allowed_rcsd_nodes=[],
+        all_relation_base_ids={"10", "20"},
+        config=BufferExtractionConfig(
+            buffer_distance_m=50,
+            visual_consistency_buffer_distance_m=15,
+            min_road_overlap_ratio=0.2,
+        ),
+    )
+
+    assert not result.ok
+    assert result.reason == "retained_geometry_outside_swsd_visual_consistency_scope"
+    assert result.swsd_uncovered_by_rcsd_length_m > 20
+
+
 def test_visual_consistency_failure_is_not_adaptive_retryable() -> None:
     plan = high_grade_adaptive_buffer_retry_plan(
         sgrade="0-1单",
@@ -527,6 +579,39 @@ def test_dual_pruning_protects_both_directed_pair_corridors() -> None:
     assert set(result.retained_road_ids) == {"forward_a", "forward_b", "reverse_a", "reverse_b"}
     assert result.inner_node_ids == ["30", "40"]
     assert result.out_node_ids == ["50"]
+
+
+def test_dual_corridor_flattens_chained_mainnode_aliases_before_pruning() -> None:
+    extractor = BufferSegmentExtractor(
+        rcsd_road_features=[
+            _road("forward", 10, 20, [(0, 0), (100, 0)], direction=2),
+            _road("reverse_a", 20, 30, [(100, 2), (60, 2)], direction=2),
+            _road("reverse_b", 30, 31, [(60, 2), (40, 2)], direction=2),
+            _road("reverse_c", 40, 10, [(40, 2), (0, 2)], direction=2),
+            _road("side", 30, 50, [(60, 2), (60, 20)], direction=2),
+        ],
+        rcsd_node_features=[
+            _node(10, 0, 0, mainnodeid=10),
+            _node(20, 100, 0, mainnodeid=20),
+            _node(30, 60, 2, kind=4),
+            _node(31, 40, 2, mainnodeid=40),
+            _node(40, 40, 2, mainnodeid=40, subnodeid=[31], kind=16),
+            _node(50, 60, 20, kind=4),
+        ],
+    )
+
+    result = extractor.extract(
+        segment_geometry=LineString([(0, 0), (100, 0)]),
+        relation=RelationCheck(True, ["10", "20"], ["30", "40"]),
+        optional_allowed_rcsd_nodes=[],
+        all_relation_base_ids={"10", "20", "30", "40", "50"},
+        require_bidirectional=True,
+        config=BufferExtractionConfig(buffer_distance_m=25),
+    )
+
+    assert result.ok
+    assert set(result.retained_road_ids) == {"forward", "reverse_a", "reverse_b", "reverse_c"}
+    assert "50" in result.out_node_ids
 
 
 def test_dual_corridor_retains_internal_uturn_between_retained_nodes() -> None:

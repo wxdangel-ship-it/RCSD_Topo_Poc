@@ -234,11 +234,7 @@ class BufferSegmentExtractor:
             )
             if visual_status.issue is not None:
                 coverage_status = _visual_consistency_status(visual_status)
-                soft_visual_consistency_issue = _is_soft_visual_consistency_issue(
-                    coverage_status,
-                    max_mismatch_ratio=cfg.max_visual_consistency_mismatch_ratio,
-                    min_mismatch_length_m=cfg.min_visual_consistency_mismatch_length_m,
-                )
+                soft_visual_consistency_issue = _is_soft_visual_consistency_issue(coverage_status)
         if ok and coverage_status.issue is not None and not soft_visual_consistency_issue:
             ok = False
             reason = coverage_status.issue
@@ -1148,22 +1144,11 @@ def _visual_consistency_status(status: _GeometryCoverageStatus) -> _GeometryCove
     )
 
 
-def _is_soft_visual_consistency_issue(
-    status: _GeometryCoverageStatus,
-    *,
-    max_mismatch_ratio: float,
-    min_mismatch_length_m: float,
-) -> bool:
-    if status.issue == "swsd_visual_continuity_not_covered_by_retained_rcsd":
-        return True
-    if status.issue != "retained_geometry_outside_swsd_visual_consistency_scope":
-        return False
-    return not _mismatch_exceeds_threshold(
-        status.swsd_uncovered_length_m,
-        status.swsd_uncovered_ratio,
-        max_mismatch_ratio=max_mismatch_ratio,
-        min_mismatch_length_m=min_mismatch_length_m,
-    )
+def _is_soft_visual_consistency_issue(status: _GeometryCoverageStatus) -> bool:
+    return status.issue in {
+        "retained_geometry_outside_swsd_visual_consistency_scope",
+        "swsd_visual_continuity_not_covered_by_retained_rcsd",
+    }
 
 
 def _unexpected_endpoint_nodes(edges: list[Edge], pair_nodes: list[str]) -> list[str]:

@@ -298,7 +298,7 @@ def test_visual_consistency_records_retained_outside_without_rejecting_when_swsd
     assert result.swsd_uncovered_by_rcsd_length_m == 0
 
 
-def test_visual_consistency_retained_outside_rejects_when_swsd_is_not_covered() -> None:
+def test_visual_consistency_retained_outside_is_audit_risk_when_base_scope_is_covered() -> None:
     extractor = BufferSegmentExtractor(
         rcsd_road_features=[
             _road("offset", 10, 20, [(0, 30), (70, 30)]),
@@ -318,8 +318,9 @@ def test_visual_consistency_retained_outside_rejects_when_swsd_is_not_covered() 
         ),
     )
 
-    assert not result.ok
-    assert result.reason == "retained_geometry_outside_swsd_visual_consistency_scope"
+    assert result.ok
+    assert result.reason == "passed"
+    assert result.geometry_buffer_coverage_issue == "retained_geometry_outside_swsd_visual_consistency_scope"
     assert result.swsd_uncovered_by_rcsd_length_m > 20
 
 

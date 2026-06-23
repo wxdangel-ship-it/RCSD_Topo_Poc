@@ -59,12 +59,18 @@ def apply_junction_advance_right_contract(
         return stats
 
     units_by_c = _units_by_junction(passed_units)
-    direct_node_contexts = _swsd_attachment_node_contexts(swsd_segments, set(units_by_c))
+    replacement_segment_ids = {str(getattr(unit, "segment_id", "")) for unit in passed_units}
+    direct_node_contexts = _swsd_attachment_node_contexts(
+        swsd_segments,
+        set(units_by_c),
+        replacement_segment_ids=replacement_segment_ids,
+    )
     node_contexts = _augment_swsd_attachment_node_contexts_from_incident_roads(
         direct_node_contexts,
         swsd_segments=swsd_segments,
         swsd_roads=swsd_roads,
         replacement_c_ids=set(units_by_c),
+        replacement_segment_ids=replacement_segment_ids,
     )
     if not node_contexts:
         return stats
@@ -792,9 +798,16 @@ def _detached_semantic_node_contexts(units: list[Any]) -> dict[str, list[str]]:
     return dict(result)
 
 
-def _swsd_attachment_node_contexts(swsd_segments: list[dict[str, Any]], replacement_c_ids: set[str]) -> dict[str, list[str]]:
+def _swsd_attachment_node_contexts(
+    swsd_segments: list[dict[str, Any]],
+    replacement_c_ids: set[str],
+    *,
+    replacement_segment_ids: set[str],
+) -> dict[str, list[str]]:
     result: dict[str, list[str]] = defaultdict(list)
     for segment in swsd_segments:
+        if _feature_id(segment) not in replacement_segment_ids:
+            continue
         props = dict(segment.get("properties") or {})
         segment_nodes = unique_preserve_order([*_parse_list(props.get("pair_nodes")), *_parse_list(props.get("junc_nodes"))])
         active_c_ids = [node_id for node_id in segment_nodes if node_id in replacement_c_ids]
@@ -811,6 +824,7 @@ def _augment_swsd_attachment_node_contexts_from_incident_roads(
     swsd_segments: list[dict[str, Any]],
     swsd_roads: list[dict[str, Any]],
     replacement_c_ids: set[str],
+    replacement_segment_ids: set[str],
 ) -> dict[str, list[str]]:
     result: dict[str, list[str]] = defaultdict(list)
     for node_id, c_ids in base_contexts.items():
@@ -818,11 +832,14 @@ def _augment_swsd_attachment_node_contexts_from_incident_roads(
 
     segment_contexts: dict[str, list[str]] = {}
     for segment in swsd_segments:
+        segment_id = _feature_id(segment)
+        if segment_id not in replacement_segment_ids:
+            continue
         props = dict(segment.get("properties") or {})
         segment_nodes = unique_preserve_order([*_parse_list(props.get("pair_nodes")), *_parse_list(props.get("junc_nodes"))])
         active_c_ids = [node_id for node_id in segment_nodes if node_id in replacement_c_ids]
         if active_c_ids:
-            segment_contexts[_feature_id(segment)] = unique_preserve_order(active_c_ids)
+            segment_contexts[segment_id] = unique_preserve_order(active_c_ids)
 
     for road in swsd_roads:
         props = dict(road.get("properties") or {})
@@ -1253,6 +1270,8 @@ def _retain_post_advance_right_swsd_carriers(
     rcsd_roads: list[dict[str, Any]],
 ) -> dict[str, int]:
     swsd_road_by_id = _index_by_id(swsd_roads)
+    replacement_segment_ids = {str(getattr(unit, "segment_id", "")) for unit in units if getattr(unit, "status", "") == "passed"}
+    incident_segments_by_node = _incident_segment_ids_by_node(swsd_roads)
     rcsd_advance_geometries = [
         geometry
         for road in rcsd_roads
@@ -1279,9 +1298,16 @@ def _retain_post_advance_right_swsd_carriers(
                 geometry is not None
                 and any(geometry.distance(rcsd_geometry) <= 5.0 for rcsd_geometry in rcsd_advance_geometries)
             )
-            if has_near_rcsd_advance:
+            is_mixed_carrier = _advance_right_touches_replaced_and_retained_segments(
+                road,
+                replacement_segment_ids=replacement_segment_ids,
+                incident_segments_by_node=incident_segments_by_node,
+            )
+            if has_near_rcsd_advance and not is_mixed_carrier:
                 removed.append(road_id)
                 continue
+            if is_mixed_carrier:
+                road.setdefault("properties", {})["t06_mixed_advance_right_carrier"] = 1
             retained.append(road_id)
         if retained:
             retained_count += len(retained)
@@ -1290,6 +1316,31 @@ def _retain_post_advance_right_swsd_carriers(
             )
             unit.swsd_road_ids = unique_preserve_order(removed)
     return {"retained_road_count": retained_count}
+
+
+def _incident_segment_ids_by_node(swsd_roads: list[dict[str, Any]]) -> dict[str, list[str]]:
+    result: dict[str, list[str]] = defaultdict(list)
+    for road in swsd_roads:
+        props = dict(road.get("properties") or {})
+        segment_ids = _parse_list(props.get("segmentid") or props.get("segment_id") or props.get("swsd_segment_id"))
+        for node_id in _road_endpoint_node_ids(road):
+            result[node_id] = unique_preserve_order([*result[node_id], *segment_ids])
+    return dict(result)
+
+
+def _advance_right_touches_replaced_and_retained_segments(
+    road: dict[str, Any],
+    *,
+    replacement_segment_ids: set[str],
+    incident_segments_by_node: dict[str, list[str]],
+) -> bool:
+    endpoint_segments = [
+        incident_segments_by_node.get(node_id, [])
+        for node_id in _road_endpoint_node_ids(road)
+    ]
+    touches_replaced = any(segment_id in replacement_segment_ids for segments in endpoint_segments for segment_id in segments)
+    touches_retained = any(segment_id not in replacement_segment_ids for segments in endpoint_segments for segment_id in segments)
+    return touches_replaced and touches_retained
 
 
 def _apply_post_advance_right_attachments(

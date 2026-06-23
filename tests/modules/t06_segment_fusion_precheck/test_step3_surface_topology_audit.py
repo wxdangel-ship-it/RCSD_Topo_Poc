@@ -404,6 +404,79 @@ def test_surface_topology_postprocess_uses_t04_patch_one_to_one_evidence(tmp_pat
     assert str(nodes["2"]["mainnodeid"]) == "20"
 
 
+def test_surface_topology_postprocess_does_not_close_distant_t04_patch_one_to_one(tmp_path: Path) -> None:
+    step_root = tmp_path / "step3_segment_replacement"
+    step_root.mkdir()
+    swsd_roads_path = tmp_path / "roads.gpkg"
+    swsd_segment_path = tmp_path / "segment.gpkg"
+    t04_surface_path = tmp_path / "divmerge_virtual_anchor_surface.gpkg"
+
+    write_feature_triplet(
+        step_root=step_root,
+        stem=STEP3_FRCSD_NODE_STEM,
+        fieldnames=["id", "mainnodeid", "source"],
+        features=[
+            _feature({"id": "20", "mainnodeid": "20", "source": 1}, Point(0, 0)),
+            _feature({"id": "2", "mainnodeid": "2", "source": 2}, Point(25, 0)),
+        ],
+    )
+    write_feature_triplet(
+        step_root=step_root,
+        stem=STEP3_TOPOLOGY_CONNECTIVITY_AUDIT_STEM,
+        fieldnames=STEP3_TOPOLOGY_CONNECTIVITY_AUDIT_FIELDS,
+        features=[
+            _feature(
+                {
+                    "audit_layer": "segment_junction_connectivity",
+                    "audit_status": "fail",
+                    "audit_reason": "junction_incident_segment_mapped_points_diverged",
+                    "swsd_node_id": "2",
+                    "swsd_segment_ids": '["s1", "s2"]',
+                    "frcsd_node_ids": '["20", "2"]',
+                    "max_pairwise_distance_m": 25.0,
+                },
+                Point(25, 0),
+            )
+        ],
+    )
+    _write_layer(
+        swsd_roads_path,
+        [
+            {"id": "sr1", "source": 2, "snodeid": "2", "enodeid": "3", "patch_id": "100"},
+            {"id": "sr2", "source": 2, "snodeid": "2", "enodeid": "4", "patch_id": "200"},
+        ],
+        [LineString([(25, 0), (35, 0)]), LineString([(25, 0), (35, 1)])],
+    )
+    _write_layer(swsd_segment_path, [], [])
+    _write_layer(
+        t04_surface_path,
+        [
+            {
+                "anchor_id": "2",
+                "case_id": "2",
+                "mainnodeid": "2",
+                "patch_id": "100",
+                "final_state": "accepted",
+            }
+        ],
+        [Polygon([(24, -1), (26, -1), (26, 1), (24, 1)])],
+    )
+    _write_empty_step3_dependencies(step_root)
+
+    summary = run_surface_topology_postprocess(
+        step_root=step_root,
+        swsd_segment_path=swsd_segment_path,
+        swsd_roads_path=swsd_roads_path,
+        t04_surface_path=t04_surface_path,
+        apply_closure=True,
+    )
+
+    assert summary["surface_topology_t04_patch_1v1_closed_count"] == 0
+    assert summary["surface_topology_fail_count"] == 1
+    nodes = {item["properties"]["id"]: item["properties"] for item in read_features(step_root / "t06_frcsd_node.gpkg")}
+    assert str(nodes["2"]["mainnodeid"]) == "2"
+
+
 def test_surface_topology_postprocess_uses_t04_rejected_node_one_to_one_evidence(tmp_path: Path) -> None:
     step_root = tmp_path / "step3_segment_replacement"
     step_root.mkdir()
@@ -533,7 +606,7 @@ def test_surface_topology_postprocess_closes_relation_mapped_retained_boundary(t
         stem=STEP3_FRCSD_NODE_STEM,
         fieldnames=["id", "mainnodeid", "source"],
         features=[
-            _feature({"id": "20", "mainnodeid": "200", "source": 1}, Point(25, 0)),
+            _feature({"id": "20", "mainnodeid": "200", "source": 1}, Point(10, 0)),
             _feature({"id": "2", "mainnodeid": "2", "source": 2}, Point(0, 0)),
         ],
     )
@@ -550,7 +623,7 @@ def test_surface_topology_postprocess_closes_relation_mapped_retained_boundary(t
                     "swsd_node_id": "2",
                     "swsd_segment_ids": '["s_replaced", "s_retained"]',
                     "frcsd_node_ids": '["20", "2"]',
-                    "max_pairwise_distance_m": 25.0,
+                    "max_pairwise_distance_m": 10.0,
                 },
                 Point(0, 0),
             )
@@ -568,7 +641,7 @@ def test_surface_topology_postprocess_closes_relation_mapped_retained_boundary(t
                     "swsd_to_frcsd_node_map": [{"swsd_node_id": "2", "frcsd_node_ids": ["20"], "mapping_status": "mapped"}],
                     "risk_flags": [],
                 },
-                LineString([(25, 0), (30, 0)]),
+                LineString([(10, 0), (15, 0)]),
             ),
             _feature(
                 {

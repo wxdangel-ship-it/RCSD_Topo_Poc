@@ -336,6 +336,35 @@ def test_t07_existing_rcsdintersection_rebases_missing_base_from_single_surface_
     assert graph_rows[0]["graph_consumability_status"] == "base_node_graph_incident"
 
 
+def test_t07_existing_rcsdintersection_rebases_zero_base_from_single_surface_node(tmp_path: Path) -> None:
+    artifacts = _run_phase2(
+        tmp_path,
+        surface_features=[_surface("172")],
+        swsd_nodes=[_node(172, 0, 0, mainnodeid="172", grade=2, closed_con=1)],
+        rcsd_roads=[_road(1, (0, 0), (10, 0), snodeid=701, enodeid=2)],
+        rcsd_nodes=[_node(701, 0, 0, mainnodeid="701"), _node(2, 10, 0)],
+        t07_rows=[
+            {
+                "target_id": "172",
+                "case_id": "172",
+                "junction_type": "center_junction",
+                "relation_source": "T07",
+                "relation_target_type": "RCSDIntersection",
+                "matched_rcsdintersection_ids": "701",
+                "relation_state": "existing_rcsdintersection_matched",
+                "status_suggested": 0,
+                "base_id_candidate": 0,
+            }
+        ],
+    )
+
+    relation = _relation_features(artifacts.relation_geojson_path)[0]
+    assert relation["properties"]["status"] == 0
+    assert relation["properties"]["base_id"] == 701
+    audit_rows = list(csv.DictReader(artifacts.rcsd_junctionization_audit_csv_path.open("r", encoding="utf-8")))
+    assert audit_rows[0]["reason"] == "existing_rcsdintersection_surface_1v1_rcsdnode_rebased"
+
+
 def test_t07_existing_rcsdintersection_missing_base_without_surface_node_fails(tmp_path: Path) -> None:
     artifacts = _run_phase2(
         tmp_path,

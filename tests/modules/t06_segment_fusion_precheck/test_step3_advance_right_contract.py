@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from shapely.geometry import LineString, Point
 
 from rcsd_topo_poc.modules.t06_segment_fusion_precheck.step3_advance_right_contract import (
+    _retain_post_advance_right_swsd_carriers,
     apply_junction_advance_right_contract,
     apply_retained_swsd_segment_attachment_contract,
 )
@@ -107,3 +108,39 @@ def test_retained_advance_endpoint_reuse_snaps_shared_swsd_node_and_roads() -> N
     assert list(advance_road["geometry"].coords)[0] == (0.0, 0.0)
     assert list(side_road["geometry"].coords)[0] == (0.0, 0.0)
     assert unit.retained_node_ids == ["10"]
+
+
+def test_mixed_advance_right_carrier_is_retained_near_rcsd_advance() -> None:
+    sw_replaced = {
+        "properties": {"id": "sw_repl", "snodeid": "1", "enodeid": "2", "segmentid": "s_repl"},
+        "geometry": LineString([(0, 0), (10, 0)]),
+    }
+    sw_retained = {
+        "properties": {"id": "sw_ret", "snodeid": "3", "enodeid": "4", "segmentid": "s_ret"},
+        "geometry": LineString([(20, 0), (30, 0)]),
+    }
+    sw_advance = {
+        "properties": {"id": "sw_adv", "snodeid": "2", "enodeid": "3", "formway": 128},
+        "geometry": LineString([(10, 0), (20, 0)]),
+    }
+    rcsd_advance = {
+        "properties": {"id": "rc_adv", "snodeid": "10", "enodeid": "20", "formway": 128},
+        "geometry": LineString([(10, 0.5), (20, 0.5)]),
+    }
+    unit = SimpleNamespace(
+        status="passed",
+        segment_id="s_repl",
+        swsd_road_ids=["sw_adv"],
+        retained_detached_swsd_road_ids=[],
+    )
+
+    stats = _retain_post_advance_right_swsd_carriers(
+        [unit],
+        swsd_roads=[sw_replaced, sw_retained, sw_advance],
+        rcsd_roads=[rcsd_advance],
+    )
+
+    assert stats["retained_road_count"] == 1
+    assert unit.swsd_road_ids == []
+    assert unit.retained_detached_swsd_road_ids == ["sw_adv"]
+    assert sw_advance["properties"]["t06_mixed_advance_right_carrier"] == 1

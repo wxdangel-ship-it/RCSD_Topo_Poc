@@ -5,7 +5,9 @@ from types import SimpleNamespace
 from shapely.geometry import LineString, Point
 
 from rcsd_topo_poc.modules.t06_segment_fusion_precheck.step3_topology_supplement import (
+    FORMAL_REPLACEMENT_CORRIDOR_UNAVAILABLE_REASON,
     TOPOLOGY_SUPPLEMENT_SPLIT_REASON,
+    exclude_retained_swsd_carriers_from_formal_replacements,
     materialize_topology_supplement_rcsd_roads,
 )
 
@@ -213,3 +215,614 @@ def test_materialize_retained_advance_reuses_existing_rcsd_advance_without_dupli
     assert unit.swsd_road_ids == ["sw_adv"]
     assert unit.rcsd_road_ids == ["rr_adv"]
     assert added_road_to_segments == {"rr_adv": ["s1"]}
+
+
+def test_materialize_mixed_advance_keeps_swsd_carrier_when_rcsd_only_partially_covers() -> None:
+    carrier = _road("sw_adv", "b", "c", [(10, 0), (20, 0)])
+    carrier["properties"]["formway"] = 128
+    swsd_road_by_id = {
+        "sw_repl": _road("sw_repl", "a", "b", [(0, 0), (10, 0)]),
+        "sw_ret": _road("sw_ret", "c", "d", [(20, 0), (30, 0)]),
+        "sw_adv": carrier,
+    }
+    swsd_road_by_id["sw_repl"]["properties"]["segmentid"] = "s1"
+    swsd_road_by_id["sw_ret"]["properties"]["segmentid"] = "s_ret"
+    rcsd_road = {
+        "properties": {"id": "rr_adv", "snodeid": "10", "enodeid": "20", "source": 1, "formway": 128},
+        "geometry": LineString([(10, 0.5), (14, 0.5)]),
+    }
+    unit = SimpleNamespace(
+        segment_id="s1",
+        retained_detached_swsd_road_ids=[],
+        detached_junc_nodes=[],
+        swsd_road_ids=[],
+        rcsd_road_ids=[],
+    )
+    added_road_to_segments: dict[str, list[str]] = {}
+
+    stats = materialize_topology_supplement_rcsd_roads(
+        [unit],
+        swsd_road_by_id=swsd_road_by_id,
+        swsd_node_by_id={},
+        rcsd_roads=[rcsd_road],
+        rcsd_nodes=[],
+        rcsd_road_by_id={"rr_adv": rcsd_road},
+        rcsd_node_by_id={},
+        attachment_audit_rows=[
+            _attachment_row("sw_adv", "b", "10", ["s1"]),
+            _attachment_row("sw_adv", "c", "20", ["s1"]),
+        ],
+        added_road_to_segments=added_road_to_segments,
+        source_field_name="source",
+        rcsd_source_value=1,
+        retained_swsd_roads=[carrier],
+    )
+
+    assert stats["materialized_road_count"] == 0
+    assert stats["reused_existing_rcsd_advance_count"] == 1
+    assert unit.swsd_road_ids == []
+    assert unit.retained_detached_swsd_road_ids == ["sw_adv"]
+    assert unit.rcsd_road_ids == ["rr_adv"]
+    assert carrier["properties"]["t06_mixed_advance_right_carrier"] == 1
+    assert added_road_to_segments == {"rr_adv": ["s1"]}
+
+
+def test_materialize_mixed_advance_splits_retained_swsd_side_at_rcsd_boundary() -> None:
+    carrier = _road("sw_adv", "b", "c", [(10, 0), (20, 0)])
+    carrier["properties"]["formway"] = 128
+    swsd_road_by_id = {
+        "sw_repl": _road("sw_repl", "a", "b", [(0, 0), (10, 0)]),
+        "sw_ret": _road("sw_ret", "c", "d", [(20, 0), (30, 0)]),
+        "sw_adv": carrier,
+    }
+    swsd_road_by_id["sw_repl"]["properties"]["segmentid"] = "s1"
+    swsd_road_by_id["sw_ret"]["properties"]["segmentid"] = "s_ret"
+    rcsd_nodes = [_node("10", 10, 0.5), _node("14", 14, 0.5), _node("22", 22, 0.5)]
+    rcsd_node_by_id = {node["properties"]["id"]: node for node in rcsd_nodes}
+    rcsd_road = {
+        "properties": {"id": "rr_adv", "snodeid": "10", "enodeid": "14", "source": 1, "formway": 128},
+        "geometry": LineString([(10, 0.5), (14, 0.5)]),
+    }
+    retained_side_rcsd_road = {
+        "properties": {"id": "rr_retained_side", "snodeid": "14", "enodeid": "22", "source": 1, "formway": 128},
+        "geometry": LineString([(14, 0.5), (22, 0.5)]),
+    }
+    unit = SimpleNamespace(
+        segment_id="s1",
+        retained_detached_swsd_road_ids=[],
+        detached_junc_nodes=[],
+        swsd_road_ids=[],
+        rcsd_road_ids=[],
+    )
+    added_road_to_segments: dict[str, list[str]] = {}
+
+    stats = materialize_topology_supplement_rcsd_roads(
+        [unit],
+        swsd_road_by_id=swsd_road_by_id,
+        swsd_node_by_id={},
+        rcsd_roads=[rcsd_road, retained_side_rcsd_road],
+        rcsd_nodes=rcsd_nodes,
+        rcsd_road_by_id={"rr_adv": rcsd_road, "rr_retained_side": retained_side_rcsd_road},
+        rcsd_node_by_id=rcsd_node_by_id,
+        attachment_audit_rows=[
+            _attachment_row("sw_adv", "b", "10", ["s1"]),
+            _attachment_row("sw_adv", "c", "14", ["s1"]),
+        ],
+        added_road_to_segments=added_road_to_segments,
+        source_field_name="source",
+        rcsd_source_value=1,
+        retained_swsd_roads=[carrier],
+    )
+
+    assert stats["mixed_advance_right_boundary_split_count"] == 1
+    assert stats["mixed_advance_right_retained_side_rcsd_excluded_count"] == 1
+    assert stats["materialized_road_count"] == 0
+    assert stats["reused_existing_rcsd_advance_count"] == 1
+    assert unit.swsd_road_ids == []
+    assert unit.retained_detached_swsd_road_ids == []
+    assert unit.rcsd_road_ids == ["rr_adv"]
+    assert carrier["properties"]["snodeid"] == "14"
+    assert carrier["properties"]["enodeid"] == "c"
+    assert carrier["properties"]["t06_mixed_advance_right_split_reason"] == "mixed_advance_right_retained_swsd_side"
+    assert carrier["properties"]["t06_mixed_advance_right_rcsd_road_ids"] == ["rr_adv"]
+    assert carrier["properties"]["t06_mixed_advance_right_excluded_rcsd_road_ids"] == ["rr_retained_side"]
+    assert list(carrier["geometry"].coords)[0][:2] == (14.0, 0.5)
+    assert list(carrier["geometry"].coords)[-1][:2] == (20.0, 0.0)
+    assert added_road_to_segments == {"rr_adv": ["s1"]}
+
+
+def test_materialize_attachment_advance_keeps_swsd_carrier_when_rcsd_only_partially_covers() -> None:
+    carrier = _road("sw_adv", "b", "c", [(10, 0), (20, 0)])
+    carrier["properties"]["formway"] = 128
+    swsd_road_by_id = {"sw_adv": carrier}
+    rcsd_road = {
+        "properties": {"id": "rr_adv", "snodeid": "10", "enodeid": "20", "source": 1, "formway": 128},
+        "geometry": LineString([(10, 0.5), (14, 0.5)]),
+    }
+    unit = SimpleNamespace(
+        segment_id="s1",
+        retained_detached_swsd_road_ids=[],
+        detached_junc_nodes=[],
+        swsd_road_ids=[],
+        rcsd_road_ids=[],
+    )
+    added_road_to_segments: dict[str, list[str]] = {}
+
+    stats = materialize_topology_supplement_rcsd_roads(
+        [unit],
+        swsd_road_by_id=swsd_road_by_id,
+        swsd_node_by_id={},
+        rcsd_roads=[rcsd_road],
+        rcsd_nodes=[],
+        rcsd_road_by_id={"rr_adv": rcsd_road},
+        rcsd_node_by_id={},
+        attachment_audit_rows=[
+            _attachment_row("sw_adv", "b", "10", ["s1"]),
+            _attachment_row("sw_adv", "c", "20", ["s1"]),
+        ],
+        added_road_to_segments=added_road_to_segments,
+        source_field_name="source",
+        rcsd_source_value=1,
+        retained_swsd_roads=[carrier],
+    )
+
+    assert stats["materialized_road_count"] == 0
+    assert stats["reused_existing_rcsd_advance_count"] == 1
+    assert unit.swsd_road_ids == []
+    assert unit.retained_detached_swsd_road_ids == ["sw_adv"]
+    assert unit.rcsd_road_ids == ["rr_adv"]
+    assert carrier["properties"]["t06_mixed_advance_right_carrier"] == 1
+    assert added_road_to_segments == {"rr_adv": ["s1"]}
+
+
+def test_materialize_attachment_advance_uses_rcsd_group_when_all_incident_segments_replaced() -> None:
+    carrier = _road("sw_adv", "b", "c", [(0, 0), (100, 0)])
+    carrier["properties"]["formway"] = 128
+    swsd_road_by_id = {
+        "sw_left": _road("sw_left", "a", "b", [(-10, 0), (0, 0)]),
+        "sw_adv": carrier,
+        "sw_right": _road("sw_right", "c", "d", [(100, 0), (110, 0)]),
+    }
+    swsd_road_by_id["sw_left"]["properties"]["segmentid"] = "s_left"
+    swsd_road_by_id["sw_right"]["properties"]["segmentid"] = "s_right"
+    rcsd_roads = [
+        {
+            "properties": {"id": "rr_adv_1", "snodeid": "10", "enodeid": "11", "source": 1, "formway": 128},
+            "geometry": LineString([(0, 0.5), (25, 0.5)]),
+        },
+        {
+            "properties": {"id": "rr_adv_2", "snodeid": "11", "enodeid": "12", "source": 1, "formway": 128},
+            "geometry": LineString([(25, 0.5), (50, 0.5)]),
+        },
+        {
+            "properties": {"id": "rr_adv_3", "snodeid": "12", "enodeid": "20", "source": 1, "formway": 128},
+            "geometry": LineString([(50, 0.5), (54, 0.5), (54, 20)]),
+        },
+    ]
+    rcsd_road_by_id = {road["properties"]["id"]: road for road in rcsd_roads}
+    left_unit = SimpleNamespace(
+        segment_id="s_left",
+        retained_detached_swsd_road_ids=[],
+        detached_junc_nodes=[],
+        swsd_road_ids=[],
+        rcsd_road_ids=[],
+    )
+    right_unit = SimpleNamespace(
+        segment_id="s_right",
+        retained_detached_swsd_road_ids=[],
+        detached_junc_nodes=[],
+        swsd_road_ids=[],
+        rcsd_road_ids=[],
+    )
+    added_road_to_segments: dict[str, list[str]] = {}
+
+    stats = materialize_topology_supplement_rcsd_roads(
+        [left_unit, right_unit],
+        swsd_road_by_id=swsd_road_by_id,
+        swsd_node_by_id={},
+        rcsd_roads=rcsd_roads,
+        rcsd_nodes=[],
+        rcsd_road_by_id=rcsd_road_by_id,
+        rcsd_node_by_id={},
+        attachment_audit_rows=[
+            _attachment_row("sw_adv", "b", "10", ["s_left", "s_right"]),
+            _attachment_row("sw_adv", "c", "20", ["s_left", "s_right"]),
+        ],
+        added_road_to_segments=added_road_to_segments,
+        source_field_name="source",
+        rcsd_source_value=1,
+        retained_swsd_roads=[carrier],
+    )
+
+    assert stats["materialized_road_count"] == 0
+    assert stats["reused_existing_rcsd_advance_count"] == 3
+    assert left_unit.swsd_road_ids == ["sw_adv"]
+    assert right_unit.swsd_road_ids == ["sw_adv"]
+    assert left_unit.retained_detached_swsd_road_ids == []
+    assert right_unit.retained_detached_swsd_road_ids == []
+    assert left_unit.rcsd_road_ids == ["rr_adv_1", "rr_adv_2", "rr_adv_3"]
+    assert right_unit.rcsd_road_ids == ["rr_adv_1", "rr_adv_2", "rr_adv_3"]
+    assert "t06_mixed_advance_right_carrier" not in carrier["properties"]
+    assert added_road_to_segments == {
+        "rr_adv_1": ["s_left", "s_right"],
+        "rr_adv_2": ["s_left", "s_right"],
+        "rr_adv_3": ["s_left", "s_right"],
+    }
+
+
+def test_materialize_mixed_advance_uses_rcsd_when_existing_corridor_covers() -> None:
+    carrier = _road("sw_adv", "b", "c", [(10, 0), (20, 0)])
+    carrier["properties"]["formway"] = 128
+    swsd_road_by_id = {
+        "sw_repl": _road("sw_repl", "a", "b", [(0, 0), (10, 0)]),
+        "sw_ret": _road("sw_ret", "c", "d", [(20, 0), (30, 0)]),
+        "sw_adv": carrier,
+    }
+    swsd_road_by_id["sw_repl"]["properties"]["segmentid"] = "s1"
+    swsd_road_by_id["sw_ret"]["properties"]["segmentid"] = "s_ret"
+    rcsd_roads = [
+        {
+            "properties": {"id": "rr_adv_1", "snodeid": "10", "enodeid": "11", "source": 1, "formway": 128},
+            "geometry": LineString([(10, 0.5), (15, 0.5)]),
+        },
+        {
+            "properties": {"id": "rr_adv_2", "snodeid": "11", "enodeid": "20", "source": 1, "formway": 128},
+            "geometry": LineString([(15, 0.5), (20, 0.5)]),
+        },
+    ]
+    rcsd_road_by_id = {road["properties"]["id"]: road for road in rcsd_roads}
+    unit = SimpleNamespace(
+        segment_id="s1",
+        retained_detached_swsd_road_ids=[],
+        detached_junc_nodes=[],
+        swsd_road_ids=[],
+        rcsd_road_ids=[],
+    )
+    added_road_to_segments: dict[str, list[str]] = {}
+
+    stats = materialize_topology_supplement_rcsd_roads(
+        [unit],
+        swsd_road_by_id=swsd_road_by_id,
+        swsd_node_by_id={},
+        rcsd_roads=rcsd_roads,
+        rcsd_nodes=[],
+        rcsd_road_by_id=rcsd_road_by_id,
+        rcsd_node_by_id={},
+        attachment_audit_rows=[
+            _attachment_row("sw_adv", "b", "10", ["s1"]),
+            _attachment_row("sw_adv", "c", "20", ["s1"]),
+        ],
+        added_road_to_segments=added_road_to_segments,
+        source_field_name="source",
+        rcsd_source_value=1,
+        retained_swsd_roads=[carrier],
+    )
+
+    assert stats["materialized_road_count"] == 0
+    assert stats["reused_existing_rcsd_advance_count"] == 2
+    assert unit.swsd_road_ids == ["sw_adv"]
+    assert unit.retained_detached_swsd_road_ids == []
+    assert unit.rcsd_road_ids == ["rr_adv_1", "rr_adv_2"]
+    assert "t06_mixed_advance_right_carrier" not in carrier["properties"]
+    assert added_road_to_segments == {"rr_adv_1": ["s1"], "rr_adv_2": ["s1"]}
+
+
+def test_materialize_recovers_removed_undercovered_mixed_advance_carrier() -> None:
+    carrier = _road("sw_adv", "b", "c", [(10, 0), (20, 0)])
+    carrier["properties"]["formway"] = 128
+    swsd_road_by_id = {"sw_adv": carrier}
+    rcsd_road = {
+        "properties": {"id": "rr_adv", "snodeid": "10", "enodeid": "20", "source": 1, "formway": 128},
+        "geometry": LineString([(10, 0.5), (14, 0.5)]),
+    }
+    unit = SimpleNamespace(
+        segment_id="s1",
+        retained_detached_swsd_road_ids=[],
+        detached_junc_nodes=[],
+        swsd_road_ids=["sw_adv"],
+        rcsd_road_ids=[],
+    )
+    added_road_to_segments: dict[str, list[str]] = {}
+
+    stats = materialize_topology_supplement_rcsd_roads(
+        [unit],
+        swsd_road_by_id=swsd_road_by_id,
+        swsd_node_by_id={},
+        rcsd_roads=[rcsd_road],
+        rcsd_nodes=[],
+        rcsd_road_by_id={"rr_adv": rcsd_road},
+        rcsd_node_by_id={},
+        attachment_audit_rows=[
+            _attachment_row("sw_adv", "b", "10", ["s1"]),
+            _attachment_row("sw_adv", "c", "20", ["s1"]),
+        ],
+        added_road_to_segments=added_road_to_segments,
+        source_field_name="source",
+        rcsd_source_value=1,
+    )
+
+    assert stats["recovered_undercovered_mixed_advance_right_count"] == 1
+    assert stats["reused_existing_rcsd_advance_count"] == 1
+    assert unit.swsd_road_ids == []
+    assert unit.retained_detached_swsd_road_ids == ["sw_adv"]
+    assert unit.rcsd_road_ids == ["rr_adv"]
+    assert carrier["properties"]["t06_mixed_advance_right_carrier"] == 1
+    assert added_road_to_segments == {"rr_adv": ["s1"]}
+
+
+def test_materialize_does_not_recover_removed_advance_when_rcsd_corridor_covers() -> None:
+    carrier = _road("sw_adv", "b", "c", [(10, 0), (20, 0)])
+    carrier["properties"]["formway"] = 128
+    swsd_road_by_id = {"sw_adv": carrier}
+    rcsd_roads = [
+        {
+            "properties": {"id": "rr_adv_1", "snodeid": "10", "enodeid": "11", "source": 1, "formway": 128},
+            "geometry": LineString([(10, 0.5), (15, 0.5)]),
+        },
+        {
+            "properties": {"id": "rr_adv_2", "snodeid": "11", "enodeid": "20", "source": 1, "formway": 128},
+            "geometry": LineString([(15, 0.5), (20, 0.5)]),
+        },
+    ]
+    rcsd_road_by_id = {road["properties"]["id"]: road for road in rcsd_roads}
+    unit = SimpleNamespace(
+        segment_id="s1",
+        retained_detached_swsd_road_ids=[],
+        detached_junc_nodes=[],
+        swsd_road_ids=["sw_adv"],
+        rcsd_road_ids=[],
+    )
+    added_road_to_segments: dict[str, list[str]] = {}
+
+    stats = materialize_topology_supplement_rcsd_roads(
+        [unit],
+        swsd_road_by_id=swsd_road_by_id,
+        swsd_node_by_id={},
+        rcsd_roads=rcsd_roads,
+        rcsd_nodes=[],
+        rcsd_road_by_id=rcsd_road_by_id,
+        rcsd_node_by_id={},
+        attachment_audit_rows=[
+            _attachment_row("sw_adv", "b", "10", ["s1"]),
+            _attachment_row("sw_adv", "c", "20", ["s1"]),
+        ],
+        added_road_to_segments=added_road_to_segments,
+        source_field_name="source",
+        rcsd_source_value=1,
+    )
+
+    assert stats["recovered_undercovered_mixed_advance_right_count"] == 0
+    assert unit.swsd_road_ids == ["sw_adv"]
+    assert unit.retained_detached_swsd_road_ids == []
+    assert "t06_mixed_advance_right_carrier" not in carrier["properties"]
+    assert added_road_to_segments == {}
+
+
+def test_materialize_retained_advance_reuses_existing_rcsd_advance_corridor_without_duplicate() -> None:
+    carrier = _road("sw_adv", "a", "b", [(0, 0), (50, 0), (100, 0)])
+    carrier["properties"]["formway"] = 128
+    swsd_road_by_id = {"sw_adv": carrier}
+    rcsd_roads = [
+        {
+            "properties": {"id": "rr_adv_1", "snodeid": "10", "enodeid": "11", "source": 1, "formway": 128},
+            "geometry": LineString([(0, 4), (50, 4)]),
+        },
+        {
+            "properties": {"id": "rr_adv_2", "snodeid": "11", "enodeid": "20", "source": 1, "formway": 128},
+            "geometry": LineString([(50, 4), (100, 4)]),
+        },
+    ]
+    rcsd_road_by_id = {road["properties"]["id"]: road for road in rcsd_roads}
+    added_road_to_segments: dict[str, list[str]] = {}
+    unit = SimpleNamespace(
+        segment_id="s1",
+        retained_detached_swsd_road_ids=[],
+        detached_junc_nodes=[],
+        swsd_road_ids=[],
+        rcsd_road_ids=[],
+    )
+
+    stats = materialize_topology_supplement_rcsd_roads(
+        [unit],
+        swsd_road_by_id=swsd_road_by_id,
+        swsd_node_by_id={},
+        rcsd_roads=rcsd_roads,
+        rcsd_nodes=[],
+        rcsd_road_by_id=rcsd_road_by_id,
+        rcsd_node_by_id={},
+        attachment_audit_rows=[
+            _attachment_row("sw_adv", "a", "10", ["s1"]),
+            _attachment_row("sw_adv", "b", "20", ["s1"]),
+        ],
+        added_road_to_segments=added_road_to_segments,
+        source_field_name="source",
+        rcsd_source_value=1,
+        retained_swsd_roads=[carrier],
+    )
+
+    assert stats["materialized_road_count"] == 0
+    assert stats["reused_existing_rcsd_advance_count"] == 2
+    assert unit.swsd_road_ids == ["sw_adv"]
+    assert unit.rcsd_road_ids == ["rr_adv_1", "rr_adv_2"]
+    assert "sw_adv__t06toposupp_1" not in rcsd_road_by_id
+    assert added_road_to_segments == {"rr_adv_1": ["s1"], "rr_adv_2": ["s1"]}
+
+
+def test_duplicate_advance_exclusion_skips_mixed_swsd_carrier_when_rcsd_only_partially_covers() -> None:
+    carrier = _road("sw_adv", "b", "c", [(10, 0), (20, 0)])
+    carrier["properties"]["formway"] = 128
+    swsd_road_by_id = {
+        "sw_repl": _road("sw_repl", "a", "b", [(0, 0), (10, 0)]),
+        "sw_ret": _road("sw_ret", "c", "d", [(20, 0), (30, 0)]),
+        "sw_adv": carrier,
+    }
+    swsd_road_by_id["sw_repl"]["properties"]["segmentid"] = "s1"
+    swsd_road_by_id["sw_ret"]["properties"]["segmentid"] = "s_ret"
+    rcsd_road = {
+        "properties": {"id": "rr_adv", "snodeid": "10", "enodeid": "20", "source": 1, "formway": 128},
+        "geometry": LineString([(10, 0.5), (14, 0.5)]),
+    }
+    unit = SimpleNamespace(
+        status="passed",
+        reason="",
+        segment_id="s1",
+        pair_nodes=["a", "b"],
+        junc_nodes=[],
+        detached_junc_nodes=[],
+        swsd_road_ids=[],
+        retained_detached_swsd_road_ids=[],
+        rcsd_road_ids=["rr_adv"],
+    )
+
+    stats = exclude_retained_swsd_carriers_from_formal_replacements(
+        [unit],
+        added_road_to_segments={"rr_adv": ["s1"]},
+        removed_road_to_segments={},
+        swsd_road_by_id=swsd_road_by_id,
+        rcsd_road_by_id={"rr_adv": rcsd_road},
+    )
+
+    assert stats["extra_removed_road_to_segments"] == {}
+    assert carrier["properties"]["t06_mixed_advance_right_carrier"] == 1
+
+
+def test_duplicate_advance_exclusion_skips_marked_swsd_carrier_when_rcsd_only_partially_covers() -> None:
+    carrier = _road("sw_adv", "b", "c", [(10, 0), (20, 0)])
+    carrier["properties"]["formway"] = 128
+    carrier["properties"]["t06_mixed_advance_right_carrier"] = 1
+    swsd_road_by_id = {"sw_adv": carrier}
+    rcsd_road = {
+        "properties": {"id": "rr_adv", "snodeid": "10", "enodeid": "20", "source": 1, "formway": 128},
+        "geometry": LineString([(10, 0.5), (14, 0.5)]),
+    }
+    unit = SimpleNamespace(
+        status="passed",
+        reason="",
+        segment_id="s1",
+        pair_nodes=["a", "b"],
+        junc_nodes=[],
+        detached_junc_nodes=[],
+        swsd_road_ids=[],
+        retained_detached_swsd_road_ids=["sw_adv"],
+        rcsd_road_ids=["rr_adv"],
+    )
+
+    stats = exclude_retained_swsd_carriers_from_formal_replacements(
+        [unit],
+        added_road_to_segments={"rr_adv": ["s1"]},
+        removed_road_to_segments={},
+        swsd_road_by_id=swsd_road_by_id,
+        rcsd_road_by_id={"rr_adv": rcsd_road},
+    )
+
+    assert stats["extra_removed_road_to_segments"] == {}
+
+
+def test_duplicate_advance_exclusion_removes_mixed_swsd_carrier_when_rcsd_corridor_covers() -> None:
+    carrier = _road("sw_adv", "b", "c", [(10, 0), (20, 0)])
+    carrier["properties"]["formway"] = 128
+    swsd_road_by_id = {
+        "sw_repl": _road("sw_repl", "a", "b", [(0, 0), (10, 0)]),
+        "sw_ret": _road("sw_ret", "c", "d", [(20, 0), (30, 0)]),
+        "sw_adv": carrier,
+    }
+    swsd_road_by_id["sw_repl"]["properties"]["segmentid"] = "s1"
+    swsd_road_by_id["sw_ret"]["properties"]["segmentid"] = "s_ret"
+    rcsd_roads = {
+        "rr_adv_1": {
+            "properties": {"id": "rr_adv_1", "snodeid": "10", "enodeid": "11", "source": 1, "formway": 128},
+            "geometry": LineString([(10, 0.5), (15, 0.5)]),
+        },
+        "rr_adv_2": {
+            "properties": {"id": "rr_adv_2", "snodeid": "11", "enodeid": "20", "source": 1, "formway": 128},
+            "geometry": LineString([(15, 0.5), (20, 0.5)]),
+        },
+    }
+    unit = SimpleNamespace(
+        status="passed",
+        reason="",
+        segment_id="s1",
+        pair_nodes=["a", "b"],
+        junc_nodes=[],
+        detached_junc_nodes=[],
+        swsd_road_ids=[],
+        retained_detached_swsd_road_ids=[],
+        rcsd_road_ids=["rr_adv_1", "rr_adv_2"],
+    )
+
+    stats = exclude_retained_swsd_carriers_from_formal_replacements(
+        [unit],
+        added_road_to_segments={"rr_adv_1": ["s1"], "rr_adv_2": ["s1"]},
+        removed_road_to_segments={},
+        swsd_road_by_id=swsd_road_by_id,
+        rcsd_road_by_id=rcsd_roads,
+    )
+
+    assert stats["extra_removed_road_to_segments"] == {"sw_adv": ["t06_duplicate_unsegmented_advance_right"]}
+    assert "t06_mixed_advance_right_carrier" not in carrier["properties"]
+
+
+def test_exclude_retained_body_carrier_blocks_formal_replacement() -> None:
+    retained_body = _road("body", "a", "d", [(0, 0), (100, 0)])
+    rcsd_road = {
+        "properties": {"id": "rr", "snodeid": "10", "enodeid": "20", "source": 1},
+        "geometry": LineString([(0, 100), (100, 100)]),
+    }
+    unit = SimpleNamespace(
+        status="passed",
+        reason="",
+        segment_id="s1",
+        pair_nodes=["a", "b"],
+        junc_nodes=[],
+        detached_junc_nodes=["d"],
+        swsd_road_ids=[],
+        retained_detached_swsd_road_ids=["body"],
+        rcsd_road_ids=["rr"],
+    )
+    added_road_to_segments = {"rr": ["s1"]}
+
+    stats = exclude_retained_swsd_carriers_from_formal_replacements(
+        [unit],
+        added_road_to_segments=added_road_to_segments,
+        removed_road_to_segments={},
+        swsd_road_by_id={"body": retained_body},
+        rcsd_road_by_id={"rr": rcsd_road},
+    )
+
+    assert stats["deactivated_segment_count"] == 1
+    assert unit.status == "failed"
+    assert unit.reason == FORMAL_REPLACEMENT_CORRIDOR_UNAVAILABLE_REASON
+    assert added_road_to_segments == {}
+
+
+def test_exclude_retained_carrier_allows_side_attachment_merge() -> None:
+    retained_side = _road("side", "a", "d", [(0, 0), (100, 0)])
+    retained_side["properties"]["segment_build_source"] = "side_attachment_merge"
+    rcsd_road = {
+        "properties": {"id": "rr", "snodeid": "10", "enodeid": "20", "source": 1},
+        "geometry": LineString([(0, 100), (100, 100)]),
+    }
+    unit = SimpleNamespace(
+        status="passed",
+        reason="",
+        segment_id="s1",
+        pair_nodes=["a", "b"],
+        junc_nodes=[],
+        detached_junc_nodes=["d"],
+        swsd_road_ids=[],
+        retained_detached_swsd_road_ids=["side"],
+        rcsd_road_ids=["rr"],
+    )
+    added_road_to_segments = {"rr": ["s1"]}
+
+    stats = exclude_retained_swsd_carriers_from_formal_replacements(
+        [unit],
+        added_road_to_segments=added_road_to_segments,
+        removed_road_to_segments={},
+        swsd_road_by_id={"side": retained_side},
+        rcsd_road_by_id={"rr": rcsd_road},
+    )
+
+    assert stats["deactivated_segment_count"] == 0
+    assert unit.status == "passed"
+    assert added_road_to_segments == {"rr": ["s1"]}

@@ -13,6 +13,7 @@ MAX_FORMAL_REPLACEMENT_BUFFER_M = 75.0
 MIN_VISUAL_REPAIR_GEOMETRY_OVERLAP_RATIO = 0.65
 MAX_CONTROLLED_VISUAL_SWSD_UNCOVERED_RATIO = 0.1
 MAX_CONTROLLED_VISUAL_SWSD_UNCOVERED_LENGTH_M = 20.0
+MAX_CONTROLLED_VISUAL_HIGH_DEVIATION_RATIO = 0.5
 MAX_RETAINED_JUNCTION_ATTACHMENT_GAP_M = 20.0
 MAX_REPLACED_JUNCTION_MAPPING_DIVERGENCE_M = 5.0
 VISUAL_CONSISTENCY_STRATEGIES = {
@@ -71,13 +72,17 @@ def build_replacement_plan_rows(
     )
     rows.extend(_special_group_plan_rows(special_group_rows))
     _apply_visual_consistency_road_conflict_gate(rows)
-    _apply_junction_alignment_plan_gate(
-        rows,
-        swsd_segments=swsd_segments or [],
-        swsd_nodes=swsd_nodes or [],
-        rcsd_node_by_id=rcsd_node_by_id,
-        rcsd_road_by_id=rcsd_road_by_id,
-    )
+    _apply_visual_consistency_high_deviation_gate(rows)
+    _apply_visual_consistency_coverage_gate(rows)
+    for _ in range(2):
+        _apply_junction_alignment_plan_gate(
+            rows,
+            swsd_segments=swsd_segments or [],
+            swsd_nodes=swsd_nodes or [],
+            rcsd_node_by_id=rcsd_node_by_id,
+            rcsd_road_by_id=rcsd_road_by_id,
+        )
+        _apply_group_member_plan_gate(rows)
     return rows
 
 
@@ -192,6 +197,7 @@ def _standard_plan_rows(
             continue
         source_strategy = str(props.get("replacement_strategy") or "buffer_segment_extraction")
         controlled_visual_release = props.get("geometry_buffer_coverage_issue") == "retained_geometry_outside_swsd_visual_consistency_scope"
+        high_visual_deviation = controlled_visual_release and _has_high_visual_consistency_deviation(props)
         strategy = "visual_consistency_controlled_release" if controlled_visual_release else source_strategy
         pair_nodes = _parse_list(props.get("swsd_pair_nodes"))
         reverse_blocker = _blocker_for_pair(pair_nodes, reverse_blockers)
@@ -202,23 +208,28 @@ def _standard_plan_rows(
         rcsd_road_ids = unique_preserve_order([*_parse_list(props.get("rcsd_road_ids")), *pair_anchor_bridge_road_ids])
         buffer_distances = _parse_float_list(props.get("adaptive_buffer_distance_m"))
         buffer_distance_blocked = bool(buffer_distances and max(buffer_distances) > MAX_FORMAL_REPLACEMENT_BUFFER_M)
+        visual_coverage_blocked = controlled_visual_release and _visual_consistency_coverage_gate_failed(props)
         retained_node_ids = unique_preserve_order(
             [
                 *_parse_list(props.get("retained_node_ids")),
                 *_canonical_road_endpoint_ids(pair_anchor_bridge_road_ids, rcsd_road_by_id, rcsd_node_canonicalizer),
             ]
         )
-        plan_status = "blocked" if reverse_blocker or buffer_distance_blocked else "ready"
+        plan_status = "blocked" if reverse_blocker or buffer_distance_blocked or visual_coverage_blocked else "ready"
         action = "hold" if plan_status == "blocked" else "replace"
         if reverse_blocker:
             reason = reverse_blocker.get("reason", strategy)
         elif buffer_distance_blocked:
             reason = "adaptive_buffer_exceeds_topology_connectivity_gate"
+        elif visual_coverage_blocked:
+            reason = "visual_consistency_release_exceeds_formal_replacement_corridor_gate"
         else:
             reason = props.get("geometry_buffer_coverage_issue") if controlled_visual_release else strategy
         risk_flags = ["reverse_retained_swsd_pair_blocked"] if reverse_blocker else []
         if buffer_distance_blocked:
             risk_flags.append("adaptive_buffer_exceeds_topology_connectivity_gate")
+        if visual_coverage_blocked:
+            risk_flags.append("visual_consistency_release_exceeds_formal_replacement_corridor_gate")
         if pair_anchor_bridge_road_ids:
             risk_flags.append("pair_anchor_bridge_roads_added")
         if controlled_visual_release:
@@ -228,6 +239,8 @@ def _standard_plan_rows(
                     "retained_geometry_outside_swsd_visual_consistency_scope",
                 ]
             )
+            if high_visual_deviation:
+                risk_flags.append("visual_consistency_high_deviation")
         if reverse_blocker:
             notes = f"blocked by reverse retained SWSD segment {reverse_blocker['segment_id']}"
         elif buffer_distance_blocked:
@@ -235,9 +248,16 @@ def _standard_plan_rows(
                 f"blocked because adaptive buffer exceeds {MAX_FORMAL_REPLACEMENT_BUFFER_M:g}m "
                 "topology connectivity gate"
             )
+        elif visual_coverage_blocked:
+            notes = (
+                "blocked because controlled visual release exceeds formal replacement corridor "
+                "coverage gate"
+            )
         else:
             if controlled_visual_release:
                 notes = "standard Step2 replaceable segment with retained RCSD visual consistency mismatch accepted as controlled release audit risk"
+                if high_visual_deviation:
+                    notes = f"{notes}; high visual deviation requires manual review unless blocked by primary RCSDRoad conflict"
             else:
                 notes = (
                     "standard Step2 replaceable segment with pair-anchor bridge roads"
@@ -399,6 +419,8 @@ def _visual_consistency_repair_plan_rows(
         risk_flags = [strategy]
         if controlled_release:
             risk_flags.append("retained_geometry_outside_swsd_visual_consistency_scope")
+            if _has_high_visual_consistency_deviation(props):
+                risk_flags.append("visual_consistency_high_deviation")
             if audit_props.get("manual_review_required"):
                 risk_flags.append("manual_review_required")
         rows.append(
@@ -475,6 +497,41 @@ def _apply_visual_consistency_road_conflict_gate(rows: list[dict[str, Any]]) -> 
         notes = str(props.get("notes") or "")
         suffix = f"conflict_rcsd_road_ids={conflict_road_ids}"
         props["notes"] = f"{notes}; {suffix}" if notes else suffix
+
+
+def _apply_visual_consistency_high_deviation_gate(rows: list[dict[str, Any]]) -> None:
+    for row in rows:
+        props = row.get("properties") or {}
+        if not _is_replace_ready_plan(props) or not _is_visual_consistency_plan(props):
+            continue
+        if "visual_consistency_high_deviation" not in _parse_list(props.get("risk_flags")):
+            continue
+        _block_plan_row(
+            props,
+            reason="visual_consistency_high_deviation_requires_manual_review",
+            risk_flag="visual_consistency_high_deviation_requires_manual_review",
+        )
+
+
+def _apply_visual_consistency_coverage_gate(rows: list[dict[str, Any]]) -> None:
+    for row in rows:
+        props = row.get("properties") or {}
+        if not _is_replace_ready_plan(props) or props.get("replacement_strategy") != "visual_consistency_controlled_release":
+            continue
+        swsd_uncovered_length = _coverage_metric(props, {}, "swsd_uncovered_by_rcsd_length_m")
+        swsd_uncovered_ratio = _coverage_metric(props, {}, "swsd_uncovered_by_rcsd_ratio")
+        if swsd_uncovered_length is None or swsd_uncovered_ratio is None:
+            continue
+        if (
+            swsd_uncovered_length <= MAX_CONTROLLED_VISUAL_SWSD_UNCOVERED_LENGTH_M
+            and swsd_uncovered_ratio <= MAX_CONTROLLED_VISUAL_SWSD_UNCOVERED_RATIO
+        ):
+            continue
+        _block_plan_row(
+            props,
+            reason="visual_consistency_release_exceeds_formal_replacement_corridor_gate",
+            risk_flag="visual_consistency_release_exceeds_formal_replacement_corridor_gate",
+        )
 
 
 def _special_group_plan_rows(special_group_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -572,7 +629,7 @@ def _apply_junction_alignment_plan_gate(
                     if rcsd_point is None:
                         continue
                     if float(swsd_point.distance(rcsd_point)) > MAX_RETAINED_JUNCTION_ATTACHMENT_GAP_M:
-                        _mark_plan_row_risk(
+                        _block_plan_row(
                             props,
                             reason="junction_alignment_to_retained_swsd_exceeds_topology_gate",
                             risk_flag="junction_alignment_to_retained_swsd_exceeds_topology_gate",
@@ -618,6 +675,43 @@ def _apply_junction_alignment_plan_gate(
                     reason="junction_alignment_between_replacement_plans_diverged",
                     risk_flag="junction_alignment_between_replacement_plans_diverged",
                 )
+
+
+def _apply_group_member_plan_gate(rows: list[dict[str, Any]]) -> None:
+    standard_props_by_segment: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        props = row.get("properties") or {}
+        if props.get("execution_scope") != "standard_segment":
+            continue
+        segment_id = _safe_id(props.get("swsd_segment_id"))
+        if segment_id:
+            standard_props_by_segment.setdefault(segment_id, props)
+    if not standard_props_by_segment:
+        return
+
+    for row in rows:
+        props = row.get("properties") or {}
+        if props.get("execution_scope") != "path_corridor_group" or not _is_replace_ready_plan(props):
+            continue
+        blocked_members: list[str] = []
+        inherited_risks: list[str] = []
+        for segment_id in _parse_list(props.get("group_segment_ids")):
+            standard_props = standard_props_by_segment.get(segment_id)
+            if standard_props is None or _is_replace_ready_plan(standard_props):
+                continue
+            blocked_members.append(segment_id)
+            inherited_risks.extend(_parse_list(standard_props.get("risk_flags")))
+        if not blocked_members:
+            continue
+        _block_plan_row(
+            props,
+            reason="group_member_replacement_plan_blocked",
+            risk_flag="group_member_replacement_plan_blocked",
+        )
+        props["risk_flags"] = unique_preserve_order([*_parse_list(props.get("risk_flags")), *inherited_risks])
+        notes = str(props.get("notes") or "")
+        suffix = f"blocked_group_member_segments={blocked_members}"
+        props["notes"] = f"{notes}; {suffix}" if notes else suffix
 
 
 def _mappings_connected_by_pair_anchor_bridge(
@@ -814,6 +908,24 @@ def _visual_consistency_release_mode(
     if _coerce_float(audit_props.get("shape_similarity_score")) < 1.0:
         return ""
     return "high_confidence_repair"
+
+
+def _has_high_visual_consistency_deviation(props: dict[str, Any]) -> bool:
+    return (
+        _coerce_float(props.get("rcsd_outside_swsd_buffer_ratio")) >= MAX_CONTROLLED_VISUAL_HIGH_DEVIATION_RATIO
+        or _coerce_float(props.get("swsd_uncovered_by_rcsd_ratio")) >= MAX_CONTROLLED_VISUAL_HIGH_DEVIATION_RATIO
+    )
+
+
+def _visual_consistency_coverage_gate_failed(props: dict[str, Any]) -> bool:
+    swsd_uncovered_length = _coverage_metric(props, {}, "swsd_uncovered_by_rcsd_length_m")
+    swsd_uncovered_ratio = _coverage_metric(props, {}, "swsd_uncovered_by_rcsd_ratio")
+    if swsd_uncovered_length is None or swsd_uncovered_ratio is None:
+        return False
+    return (
+        swsd_uncovered_length > MAX_CONTROLLED_VISUAL_SWSD_UNCOVERED_LENGTH_M
+        or swsd_uncovered_ratio > MAX_CONTROLLED_VISUAL_SWSD_UNCOVERED_RATIO
+    )
 
 
 def _coverage_metric(buffer_props: dict[str, Any], rejected_props: dict[str, Any], name: str) -> float | None:

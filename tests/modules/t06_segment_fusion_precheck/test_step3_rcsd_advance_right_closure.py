@@ -141,6 +141,36 @@ def test_native_rcsd_advance_leaf_endpoint_splits_retained_swsd_road() -> None:
     assert all(road["properties"]["id"].startswith("sw_main__t06swsdadvsplit_") for road in swsd_roads)
 
 
+def test_native_rcsd_advance_keeps_mixed_retained_swsd_boundary_connected() -> None:
+    main = _road("main", "0", "10", [(-10, 0), (0, 0)])
+    advance = _road("adv", "10", "20", [(0, 0), (10, 0)], formway=128)
+    retained_advance = _swsd_road("sw_adv", "20", "2", [(10, 0), (20, 0)], formway=128)
+    retained_advance["properties"]["segmentid"] = ""
+    retained_advance["properties"]["t06_mixed_advance_right_split_reason"] = "mixed_advance_right_retained_swsd_side"
+    rcsd_roads = [main, advance]
+    rcsd_nodes = [_node("0", -10, 0), _node("10", 0, 0), _node("20", 10, 0)]
+    rcsd_road_by_id = {road["properties"]["id"]: road for road in rcsd_roads}
+    rcsd_node_by_id = {node["properties"]["id"]: node for node in rcsd_nodes}
+    unit = SimpleNamespace(status="passed", segment_id="s1", rcsd_road_ids=["main", "adv"], retained_node_ids=[])
+
+    stats = apply_native_rcsd_advance_right_closure(
+        [unit],
+        rcsd_roads=rcsd_roads,
+        rcsd_nodes=rcsd_nodes,
+        rcsd_road_by_id=rcsd_road_by_id,
+        rcsd_node_by_id=rcsd_node_by_id,
+        retained_swsd_roads=[retained_advance],
+        added_road_to_segments={"main": ["s1"], "adv": ["s1"]},
+    )
+
+    assert stats["repaired_endpoint_count"] == 0
+    assert stats["failed_endpoint_count"] == 0
+    assert stats["retained_swsd_split_original_road_count"] == 0
+    assert Point(list(advance["geometry"].coords)[-1]).equals(Point(10, 0))
+    assert rcsd_node_by_id["20"]["geometry"].equals(Point(10, 0))
+    assert all(row["properties"]["action"] == "verify_existing_rcsd_advance_endpoint" for row in stats["audit_rows"])
+
+
 def test_final_advance_endpoint_closure_repairs_retained_swsd_advance_leaf() -> None:
     main = _swsd_road("sw_main", "1", "2", [(0, 0), (20, 0)])
     advance = _swsd_road("sw_adv", "1", "9", [(0, 0), (10, 1)], formway=128)
@@ -185,5 +215,140 @@ def test_final_advance_endpoint_closure_repairs_retained_swsd_advance_leaf() -> 
         row
         for row in audit_rows
         if (row["properties"].get("audit_layer") == "advance_right_endpoint_connectivity")
+        and row["properties"].get("audit_status") == "fail"
+    ]
+
+
+def test_final_advance_endpoint_closure_does_not_split_retained_only_swsd_target() -> None:
+    retained_main = _swsd_road("sw_main", "1", "2", [(0, 0), (20, 0)])
+    rcsd_main = _road("rc_main", "10", "20", [(-10, 0), (0, 0)])
+    rcsd_advance = _road("rc_adv", "10", "99", [(0, 0), (10, 1)], formway=128)
+    frcsd_roads = [retained_main, rcsd_main, rcsd_advance]
+    frcsd_nodes = [
+        _swsd_node("1", 0, 0),
+        _swsd_node("2", 20, 0),
+        _node("10", 0, 0),
+        _node("20", -10, 0),
+        _node("99", 10, 1),
+    ]
+    stats = {"audit_rows": [], "repaired_endpoint_count": 0, "failed_endpoint_count": 0}
+    unit = SimpleNamespace(status="passed", segment_id="s1", rcsd_road_ids=["rc_adv"], retained_node_ids=[])
+
+    apply_final_advance_right_endpoint_closure(
+        frcsd_roads,
+        frcsd_nodes,
+        stats,
+        [unit],
+        [],
+        {},
+        {},
+        {},
+        "source",
+        1,
+    )
+
+    assert stats["final_repaired_endpoint_count"] == 0
+    assert stats["final_failed_endpoint_count"] >= 1
+    assert Point(list(rcsd_advance["geometry"].coords)[-1]).equals(Point(10, 1))
+    assert not any(road["properties"]["id"].startswith("sw_main__t06finaladvsplit_") for road in frcsd_roads)
+    assert any(
+        row["properties"].get("action") == "audit_retained_swsd_non_advance_target"
+        for row in stats["audit_rows"]
+    )
+
+
+def test_final_advance_endpoint_closure_does_not_split_retained_non_advance_target_for_added_rcsd_advance() -> None:
+    retained_main = _swsd_road("sw_main", "1", "2", [(0, 0), (20, 0)])
+    rcsd_main = _road("rc_main", "10", "20", [(-10, 0), (0, 0)])
+    rcsd_advance = _road("rc_adv", "10", "99", [(0, 0), (10, 1)], formway=128)
+    frcsd_roads = [retained_main, rcsd_main, rcsd_advance]
+    frcsd_nodes = [
+        _swsd_node("1", 0, 0),
+        _swsd_node("2", 20, 0),
+        _node("10", 0, 0),
+        _node("20", -10, 0),
+        _node("99", 10, 1),
+    ]
+    stats = {"audit_rows": [], "repaired_endpoint_count": 0, "failed_endpoint_count": 0}
+    unit = SimpleNamespace(status="passed", segment_id="s1", rcsd_road_ids=["rc_adv"], retained_node_ids=[])
+    added_road_to_segments = {"rc_adv": ["s1"]}
+
+    apply_final_advance_right_endpoint_closure(
+        frcsd_roads,
+        frcsd_nodes,
+        stats,
+        [unit],
+        [],
+        {},
+        added_road_to_segments,
+        {},
+        "source",
+        1,
+    )
+
+    assert stats["final_repaired_endpoint_count"] == 0
+    assert stats["final_failed_endpoint_count"] >= 1
+    assert "rc_adv" in added_road_to_segments
+    assert any(road["properties"]["id"] == "rc_adv" for road in frcsd_roads)
+    assert not any(road["properties"]["id"].startswith("sw_main__t06finaladvsplit_") for road in frcsd_roads)
+    assert Point(list(rcsd_advance["geometry"].coords)[-1]).equals(Point(10, 1))
+    assert any(
+        row["properties"].get("action") == "audit_retained_swsd_non_advance_target"
+        and row["properties"].get("audit_status") == "fail"
+        for row in stats["audit_rows"]
+    )
+
+
+def test_final_advance_endpoint_closure_can_split_retained_swsd_advance_target() -> None:
+    retained_advance = _swsd_road("sw_adv", "1", "2", [(0, 0), (20, 0)], formway=128)
+    rcsd_main = _road("rc_main", "10", "20", [(-10, 0), (0, 0)])
+    rcsd_advance = _road("rc_adv", "10", "99", [(0, 0), (10, 1)], formway=128)
+    frcsd_roads = [retained_advance, rcsd_main, rcsd_advance]
+    frcsd_nodes = [
+        _swsd_node("1", 0, 0),
+        _swsd_node("2", 20, 0),
+        _node("10", 0, 0),
+        _node("20", -10, 0),
+        _node("99", 10, 1),
+    ]
+    stats = {"audit_rows": [], "repaired_endpoint_count": 0, "failed_endpoint_count": 0}
+
+    apply_final_advance_right_endpoint_closure(
+        frcsd_roads,
+        frcsd_nodes,
+        stats,
+        [SimpleNamespace(status="passed", segment_id="s1", rcsd_road_ids=["rc_adv"], retained_node_ids=[])],
+        [],
+        {},
+        {"rc_adv": ["s1"]},
+        {},
+        "source",
+        1,
+    )
+
+    assert stats["final_repaired_endpoint_count"] >= 1
+    assert stats["final_failed_endpoint_count"] == 0
+    assert any(
+        row["properties"].get("rcsd_advance_road_id") == "rc_adv"
+        and row["properties"].get("target_swsd_road_id") == "sw_adv"
+        and row["properties"].get("audit_status") == "repaired"
+        for row in stats["audit_rows"]
+    )
+
+    audit_rows = build_topology_connectivity_audit_rows(
+        swsd_segments=[],
+        swsd_roads=[],
+        frcsd_roads=frcsd_roads,
+        frcsd_nodes=frcsd_nodes,
+        segment_relation_rows=[],
+        advance_right_audit_rows=[],
+        source_field_name="source",
+        swsd_source_value=2,
+        rcsd_source_value=1,
+    )
+    assert not [
+        row
+        for row in audit_rows
+        if row["properties"].get("audit_layer") == "advance_right_endpoint_connectivity"
         and row["properties"].get("audit_status") == "fail"
     ]

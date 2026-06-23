@@ -26,6 +26,7 @@ RCSD_ADVANCE_RIGHT_ENDPOINT_REUSE_MAX_GAP_M = 1.0
 RCSD_ADVANCE_RIGHT_RETAINED_SWSD_MAX_GAP_M = 20.0
 RCSD_ADVANCE_RIGHT_RETAINED_SWSD_SPLIT_REASON = "rcsd_advance_right_retained_swsd_attachment"
 FINAL_ADVANCE_RIGHT_CLOSURE_SPLIT_REASON = "final_advance_right_endpoint_attachment"
+MIXED_ADVANCE_RIGHT_RETAINED_SPLIT_REASON = "mixed_advance_right_retained_swsd_side"
 RCSD_ADVANCE_RIGHT_CLOSURE_AUDIT_STEM = "t06_step3_rcsd_advance_right_closure_audit"
 RCSD_ADVANCE_RIGHT_CLOSURE_AUDIT_FIELDS = [
     "rcsd_advance_road_id",
@@ -89,6 +90,11 @@ def apply_native_rcsd_advance_right_closure(
     node_degree = _selected_canonical_node_degrees(
         selected_ids=selected_ids,
         rcsd_road_by_id=rcsd_road_by_id,
+        canonicalizer=canonicalizer,
+    )
+    _add_mixed_retained_swsd_endpoint_degrees(
+        node_degree,
+        retained_swsd_roads=retained_swsd_roads or [],
         canonicalizer=canonicalizer,
     )
     split_points_by_road: dict[str, dict[str, tuple[float, str]]] = defaultdict(dict)
@@ -415,6 +421,32 @@ def apply_final_advance_right_endpoint_closure(
             target_road = road_by_id.get(target_road_id)
             target_props = dict(target_road.get("properties") or {}) if target_road else {}
             target_source = str(target_props.get(source_field_name) or "")
+            replacement_segment_ids = added_road_to_segments.get(target_road_id, [])
+            advance_source = str(props.get(source_field_name) or "")
+            if (
+                advance_source == str(rcsd_source_value)
+                and target_source
+                and target_source != str(rcsd_source_value)
+                and not is_advance_right_turn_road(target_props)
+            ):
+                failed += 1
+                audit_rows.append(
+                    _audit_row(
+                        road_id=road_id,
+                        node_id=node_id,
+                        endpoint_index=endpoint_index,
+                        status="fail",
+                        action="audit_retained_swsd_non_advance_target",
+                        reason="final_rcsd_advance_right_endpoint_target_is_retained_swsd_non_advance_road",
+                        degree=degree,
+                        target_road_source=f"source_{target_source}",
+                        target_swsd_road_id=target_road_id,
+                        gap_m=round(float(point.distance(projected)), 3),
+                        replacement_segment_ids=[],
+                        geometry=point,
+                    )
+                )
+                continue
             if target_endpoint_node_id:
                 _set_final_mainnode(node_id, target_endpoint_node_id, node_by_id)
                 split_node_id = target_endpoint_node_id
@@ -467,7 +499,7 @@ def apply_final_advance_right_endpoint_closure(
                     target_swsd_road_id=target_road_id if target_source and target_source != str(rcsd_source_value) else None,
                     target_node_id=target_endpoint_node_id,
                     gap_m=round(float(point.distance(projected)), 3),
-                    replacement_segment_ids=added_road_to_segments.get(target_road_id, []),
+                    replacement_segment_ids=replacement_segment_ids,
                     geometry=projected,
                 )
             )
@@ -586,6 +618,21 @@ def _selected_canonical_node_degrees(
     return dict(degree)
 
 
+def _add_mixed_retained_swsd_endpoint_degrees(
+    degree: dict[str, int],
+    *,
+    retained_swsd_roads: list[dict[str, Any]],
+    canonicalizer: NodeCanonicalizer,
+) -> None:
+    for road in retained_swsd_roads:
+        props = dict(road.get("properties") or {})
+        if props.get("t06_mixed_advance_right_split_reason") != MIXED_ADVANCE_RIGHT_RETAINED_SPLIT_REASON:
+            continue
+        for node_id in unique_preserve_order(_road_endpoint_node_ids(road)[:2]):
+            canonical_id = _canonicalize(canonicalizer, node_id)
+            degree[canonical_id] = int(degree.get(canonical_id) or 0) + 1
+
+
 def _final_canonical_node_degrees(
     frcsd_roads: list[dict[str, Any]],
     *,
@@ -643,7 +690,7 @@ def _nearest_final_projection(
             target_endpoint_node_id = endpoint_ids[1]
         elif distance_m <= 1.0 or line.length - distance_m <= 1.0:
             continue
-        priority = 1 if is_advance_right_turn_road(dict(road.get("properties") or {})) else 0
+        priority = 0 if is_advance_right_turn_road(dict(road.get("properties") or {})) else 1
         candidate = (priority, gap_m, road_id, distance_m, projected, target_endpoint_node_id)
         if best is None or candidate[:2] < best[:2]:
             best = candidate
@@ -791,7 +838,7 @@ def _nearest_retained_swsd_projection(
     retained_swsd_road_by_id: dict[str, dict[str, Any]],
     max_gap_m: float,
 ) -> tuple[str, float, Point] | None:
-    best: tuple[float, str, float, Point] | None = None
+    best: tuple[int, float, str, float, Point] | None = None
     for road_id, road in retained_swsd_road_by_id.items():
         line = _feature_line(road)
         if line is None or line.length <= 0:
@@ -803,11 +850,13 @@ def _nearest_retained_swsd_projection(
         gap_m = float(point.distance(projected))
         if gap_m > max_gap_m:
             continue
-        if best is None or gap_m < best[0]:
-            best = (gap_m, road_id, distance_m, projected)
+        priority = 0 if is_advance_right_turn_road(dict(road.get("properties") or {})) else 1
+        candidate = (priority, gap_m, road_id, distance_m, projected)
+        if best is None or candidate[:2] < best[:2]:
+            best = candidate
     if best is None:
         return None
-    return best[1], best[2], best[3]
+    return best[2], best[3], best[4]
 
 
 def _ensure_swsd_attachment_node(

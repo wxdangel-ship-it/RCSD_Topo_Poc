@@ -301,6 +301,7 @@ def test_sync_retained_swsd_carrier_mainnodes_uses_mapped_rcsd_node_mainnode() -
     assert stats == {
         "retained_swsd_carrier_mainnode_candidate_count": 1,
         "retained_swsd_carrier_mainnode_synced_count": 1,
+        "retained_swsd_carrier_rcsd_mainnode_filled_count": 0,
         "retained_swsd_carrier_mainnode_row_count": 1,
     }
     assert nodes[0]["properties"]["mainnodeid"] == "r_main"
@@ -374,6 +375,7 @@ def test_sync_retained_swsd_segment_endpoint_mainnodes_from_peer_replaced_segmen
     assert stats == {
         "retained_swsd_carrier_mainnode_candidate_count": 1,
         "retained_swsd_carrier_mainnode_synced_count": 1,
+        "retained_swsd_carrier_rcsd_mainnode_filled_count": 0,
         "retained_swsd_carrier_mainnode_row_count": 1,
     }
     assert nodes[0]["properties"]["mainnodeid"] == "r_main"
@@ -381,3 +383,71 @@ def test_sync_retained_swsd_segment_endpoint_mainnodes_from_peer_replaced_segmen
     assert retained_entry["frcsd_node_ids"] == ["j1"]
     assert retained_entry["mapping_status"] == "identity_semantic_mainnode_synced"
     assert retained_props["risk_flags"] == ["retained_swsd_carrier_mainnode_synced"]
+
+
+def test_sync_retained_swsd_segment_fills_missing_peer_rcsd_mainnode() -> None:
+    relation_rows = [
+        {
+            "properties": {
+                "swsd_segment_id": "left_replaced",
+                "relation_status": "replaced",
+                "swsd_to_frcsd_node_map": [
+                    {
+                        "swsd_node_id": "j1",
+                        "frcsd_node_ids": ["r_j1"],
+                        "node_role": "junc_node",
+                        "mapping_status": "mapped",
+                    }
+                ],
+                "risk_flags": [],
+            }
+        },
+        {
+            "properties": {
+                "swsd_segment_id": "retained",
+                "relation_status": "retained_swsd",
+                "frcsd_road_ids": ["s_road"],
+                "swsd_to_frcsd_node_map": [
+                    {
+                        "swsd_node_id": "j1",
+                        "frcsd_node_ids": ["j1"],
+                        "node_role": "pair_node",
+                        "mapping_status": "identity",
+                    }
+                ],
+                "risk_flags": [],
+            }
+        },
+    ]
+    roads = [
+        {
+            "properties": {
+                "id": "s_road",
+                "snodeid": "j1",
+                "enodeid": "j2",
+                "source": 2,
+            }
+        }
+    ]
+    nodes = [
+        {"properties": {"id": "j1", "source": 2, "mainnodeid": "j1"}, "geometry": Point(0, 0)},
+        {"properties": {"id": "r_j1", "source": 1, "mainnodeid": ""}, "geometry": Point(2, 0)},
+    ]
+
+    stats = sync_retained_swsd_carrier_mainnodes(relation_rows, roads, nodes)
+
+    retained_props = relation_rows[1]["properties"]
+    retained_entry = retained_props["swsd_to_frcsd_node_map"][0]
+    assert stats == {
+        "retained_swsd_carrier_mainnode_candidate_count": 1,
+        "retained_swsd_carrier_mainnode_synced_count": 1,
+        "retained_swsd_carrier_rcsd_mainnode_filled_count": 1,
+        "retained_swsd_carrier_mainnode_row_count": 1,
+    }
+    assert nodes[0]["properties"]["mainnodeid"] == "r_j1"
+    assert nodes[1]["properties"]["mainnodeid"] == "r_j1"
+    assert retained_entry["mapping_status"] == "identity_semantic_mainnode_synced"
+    assert retained_props["risk_flags"] == [
+        "retained_swsd_carrier_mainnode_synced",
+        "retained_swsd_carrier_rcsd_mainnode_filled",
+    ]

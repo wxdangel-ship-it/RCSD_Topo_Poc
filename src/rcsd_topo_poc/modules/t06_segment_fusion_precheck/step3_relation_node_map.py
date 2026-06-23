@@ -128,6 +128,7 @@ def sync_retained_swsd_carrier_mainnodes(
     stats = {
         "retained_swsd_carrier_mainnode_candidate_count": 0,
         "retained_swsd_carrier_mainnode_synced_count": 0,
+        "retained_swsd_carrier_rcsd_mainnode_filled_count": 0,
         "retained_swsd_carrier_mainnode_row_count": 0,
     }
     swsd_source = str(swsd_source_value)
@@ -153,6 +154,8 @@ def sync_retained_swsd_carrier_mainnodes(
         if not retained_endpoint_nodes:
             continue
         row_changed = False
+        row_mainnode_synced = False
+        row_rcsd_mainnode_filled = False
         node_map = _node_map_entries(props.get("swsd_to_frcsd_node_map"))
         for entry in node_map:
             swsd_node_id = _safe_id(entry.get("swsd_node_id"))
@@ -179,17 +182,19 @@ def sync_retained_swsd_carrier_mainnodes(
                 max_gap_m=RETAINED_SWSD_PEER_MAINNODE_MAX_GAP_M,
             ):
                 continue
-            target_mainnode_ids = unique_preserve_order(
-                [
-                    target
-                    for rcsd_node in rcsd_nodes
-                    for target in [_mainnode_or_id(rcsd_node) if rcsd_node is not None else ""]
-                    if target
-                ]
-            )
+            target_mainnode_ids: list[str] = []
+            for rcsd_node in rcsd_nodes:
+                target, _ = _mainnode_or_id(rcsd_node)
+                if target:
+                    target_mainnode_ids.append(target)
+            target_mainnode_ids = unique_preserve_order(target_mainnode_ids)
             if len(target_mainnode_ids) != 1:
                 continue
             target_mainnodeid = target_mainnode_ids[0]
+            for rcsd_node in rcsd_nodes:
+                if _fill_missing_mainnode_id(rcsd_node, target_mainnodeid):
+                    stats["retained_swsd_carrier_rcsd_mainnode_filled_count"] += 1
+                    row_rcsd_mainnode_filled = True
             if not target_mainnodeid:
                 continue
             stats["retained_swsd_carrier_mainnode_candidate_count"] += 1
@@ -200,13 +205,19 @@ def sync_retained_swsd_carrier_mainnodes(
             if mapping_status.startswith("identity"):
                 entry["mapping_status"] = "identity_semantic_mainnode_synced"
             stats["retained_swsd_carrier_mainnode_synced_count"] += 1
+            row_mainnode_synced = True
+            row_changed = True
+        if row_rcsd_mainnode_filled:
             row_changed = True
         if not row_changed:
             continue
         props["swsd_to_frcsd_node_map"] = node_map
-        props["risk_flags"] = unique_preserve_order(
-            [*_parse_id_list(props.get("risk_flags")), "retained_swsd_carrier_mainnode_synced"]
-        )
+        risk_flags = _parse_id_list(props.get("risk_flags"))
+        if row_mainnode_synced:
+            risk_flags.append("retained_swsd_carrier_mainnode_synced")
+        if row_rcsd_mainnode_filled:
+            risk_flags.append("retained_swsd_carrier_rcsd_mainnode_filled")
+        props["risk_flags"] = unique_preserve_order(risk_flags)
         stats["retained_swsd_carrier_mainnode_row_count"] += 1
     return stats
 
@@ -293,9 +304,30 @@ def _source_text(value: Any) -> str:
     return str(value or "")
 
 
-def _mainnode_or_id(node: dict[str, Any]) -> str:
+def _mainnode_or_id(node: dict[str, Any]) -> tuple[str, bool]:
     props = node.get("properties") or {}
-    return _safe_id(props.get("mainnodeid")) or _safe_id(props.get("id"))
+    mainnode_id = _safe_id(props.get("mainnodeid"))
+    if mainnode_id and mainnode_id != "0":
+        return mainnode_id, False
+    node_id = _safe_id(props.get("id"))
+    if not node_id:
+        return "", False
+    return node_id, True
+
+
+def _fill_missing_mainnode_id(node: dict[str, Any], target_mainnodeid: str) -> bool:
+    target = _safe_id(target_mainnodeid)
+    if not target:
+        return False
+    props = node.setdefault("properties", {})
+    current = _safe_id(props.get("mainnodeid"))
+    if current and current != "0":
+        return False
+    node_id = _safe_id(props.get("id"))
+    if node_id != target:
+        return False
+    props["mainnodeid"] = target
+    return True
 
 
 def _has_close_peer_node(swsd_node: dict[str, Any], rcsd_nodes: list[dict[str, Any]], *, max_gap_m: float) -> bool:

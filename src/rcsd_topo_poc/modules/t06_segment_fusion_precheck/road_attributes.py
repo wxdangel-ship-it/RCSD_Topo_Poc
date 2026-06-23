@@ -24,6 +24,8 @@ def is_near_advance_right_turn_duplicate(
 ) -> bool:
     if not is_advance_right_turn_road(props, formway_bit=formway_bit):
         return False
+    if str(props.get("t06_mixed_advance_right_carrier") or "").lower() in {"1", "true", "yes"}:
+        return False
     if geometry is None or geometry.is_empty or not candidate_geometries:
         return False
     length = float(geometry.length or 0.0)

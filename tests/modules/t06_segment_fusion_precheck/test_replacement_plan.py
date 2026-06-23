@@ -171,6 +171,52 @@ def test_replacement_plan_blocks_group_when_probe_buffer_is_too_wide() -> None:
     ]
 
 
+def test_replacement_plan_blocks_group_when_member_standard_plan_is_blocked() -> None:
+    rows = build_replacement_plan_rows(
+        replaceable_rows=[
+            _feature(
+                {
+                    "swsd_segment_id": "s_member",
+                    "replacement_strategy": "buffer_segment_extraction",
+                    "swsd_pair_nodes": ["a", "b"],
+                    "rcsd_pair_nodes": [1, 2],
+                    "rcsd_road_ids": ["rr_member"],
+                    "adaptive_buffer_distance_m": [100.0],
+                }
+            )
+        ],
+        special_group_rows=[],
+        group_replacement_audit_rows=[
+            _feature(
+                {
+                    "swsd_segment_id": "s_group",
+                    "group_probe_status": "passed",
+                    "group_probe_repair_owner": "T06_path_corridor_group_replacement",
+                    "group_probe_reason": "passed",
+                    "group_probe_buffer_distance_m": 50.0,
+                    "path_corridor_group_segment_ids": ["s_member", "s_group"],
+                    "group_probe_rcsd_road_ids": ["rr_group"],
+                    "swsd_pair_nodes": ["a", "c"],
+                    "rcsd_pair_nodes": [1, 3],
+                }
+            )
+        ],
+        rcsd_roads=[_road("rr_member", 1, 2), _road("rr_group", 1, 3)],
+        rcsd_node_canonicalizer=NodeCanonicalizer({}, frozenset({"1", "2", "3"})),
+    )
+
+    by_id = {row["properties"]["replacement_plan_id"]: row["properties"] for row in rows}
+    standard = by_id["standard:s_member"]
+    group = by_id["group_path_corridor:s_group"]
+    assert standard["plan_status"] == "blocked"
+    assert group["plan_status"] == "blocked"
+    assert group["execution_action"] == "hold"
+    assert group["source_reason"] == "group_member_replacement_plan_blocked"
+    assert "group_member_replacement_plan_blocked" in group["risk_flags"]
+    assert "adaptive_buffer_exceeds_topology_connectivity_gate" in group["risk_flags"]
+    assert "blocked_group_member_segments=['s_member']" in group["notes"]
+
+
 def test_replacement_plan_adds_high_confidence_single_visual_repair() -> None:
     rows = build_replacement_plan_rows(
         replaceable_rows=[],
@@ -485,6 +531,77 @@ def test_visual_consistency_controlled_release_does_not_compete_with_primary_roa
     assert "conflict_rcsd_road_ids=['rr_shared']" in by_segment["s_visual"]["notes"]
 
 
+def test_standard_visual_consistency_high_deviation_requires_manual_review() -> None:
+    rows = build_replacement_plan_rows(
+        replaceable_rows=[
+            _feature(
+                {
+                    "swsd_segment_id": "s_visual_high",
+                    "replacement_strategy": "buffer_segment_extraction",
+                    "geometry_buffer_coverage_issue": "retained_geometry_outside_swsd_visual_consistency_scope",
+                    "rcsd_outside_swsd_buffer_ratio": 0.62,
+                    "swsd_uncovered_by_rcsd_ratio": 0.7,
+                    "swsd_pair_nodes": ["a", "b"],
+                    "rcsd_pair_nodes": ["r1", "r2"],
+                    "rcsd_road_ids": ["rr_visual"],
+                    "retained_node_ids": ["r1", "r2"],
+                }
+            )
+        ],
+        rejected_rows=[],
+        buffer_rejected_rows=[],
+        failure_business_audit_rows=[],
+        special_group_rows=[],
+        group_replacement_audit_rows=[],
+        rcsd_roads=[],
+        rcsd_node_canonicalizer=NodeCanonicalizer({}, frozenset()),
+    )
+
+    props = rows[0]["properties"]
+    assert props["plan_status"] == "blocked"
+    assert props["execution_action"] == "hold"
+    assert props["source_reason"] == "visual_consistency_high_deviation_requires_manual_review"
+    assert props["replacement_strategy"] == "visual_consistency_controlled_release"
+    assert "visual_consistency_high_deviation" in props["risk_flags"]
+    assert "visual_consistency_high_deviation_requires_manual_review" in props["risk_flags"]
+
+
+def test_standard_visual_consistency_release_blocks_when_swsd_coverage_gap_exceeds_gate() -> None:
+    rows = build_replacement_plan_rows(
+        replaceable_rows=[
+            _feature(
+                {
+                    "swsd_segment_id": "s_visual_gap",
+                    "replacement_strategy": "buffer_segment_extraction",
+                    "geometry_buffer_coverage_issue": "retained_geometry_outside_swsd_visual_consistency_scope",
+                    "rcsd_outside_swsd_buffer_ratio": 0.05,
+                    "swsd_uncovered_by_rcsd_length_m": 25.0,
+                    "swsd_uncovered_by_rcsd_ratio": 0.2,
+                    "swsd_pair_nodes": ["a", "b"],
+                    "rcsd_pair_nodes": ["r1", "r2"],
+                    "rcsd_road_ids": ["rr_visual"],
+                    "retained_node_ids": ["r1", "r2"],
+                }
+            )
+        ],
+        rejected_rows=[],
+        buffer_rejected_rows=[],
+        failure_business_audit_rows=[],
+        special_group_rows=[],
+        group_replacement_audit_rows=[],
+        rcsd_roads=[],
+        rcsd_node_canonicalizer=NodeCanonicalizer({}, frozenset()),
+    )
+
+    props = rows[0]["properties"]
+    assert props["plan_status"] == "blocked"
+    assert props["execution_action"] == "hold"
+    assert props["source_reason"] == "visual_consistency_release_exceeds_formal_replacement_corridor_gate"
+    assert props["replacement_strategy"] == "visual_consistency_controlled_release"
+    assert "retained_geometry_outside_swsd_visual_consistency_scope" in props["risk_flags"]
+    assert "visual_consistency_release_exceeds_formal_replacement_corridor_gate" in props["risk_flags"]
+
+
 def test_replacement_plan_blocks_reverse_of_rejected_swsd_pair() -> None:
     rows = build_replacement_plan_rows(
         replaceable_rows=[
@@ -631,10 +748,11 @@ def test_replacement_plan_marks_mapping_far_from_retained_incident_segment() -> 
     )
 
     props = rows[0]["properties"]
-    assert props["plan_status"] == "ready"
-    assert props["execution_action"] == "replace"
+    assert props["plan_status"] == "blocked"
+    assert props["execution_action"] == "hold"
+    assert props["source_reason"] == "junction_alignment_to_retained_swsd_exceeds_topology_gate"
     assert props["risk_flags"] == ["junction_alignment_to_retained_swsd_exceeds_topology_gate"]
-    assert "risk: junction_alignment_to_retained_swsd_exceeds_topology_gate" in props["notes"]
+    assert "blocked by junction_alignment_to_retained_swsd_exceeds_topology_gate" in props["notes"]
 
 
 def test_replacement_plan_blocks_replacement_plans_mapping_same_junction_to_diverged_rcsd_nodes() -> None:

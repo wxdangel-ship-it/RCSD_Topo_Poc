@@ -1996,30 +1996,28 @@ def test_step3_contract_handles_retained_segment_advance_right_shared_node(tmp_p
     )
 
     summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
-    assert summary["advance_right_contract_retained_candidate_road_count"] == 1
-    assert summary["advance_right_contract_swsd_mainnode_normalized_node_count"] == 1
-    assert summary["advance_right_contract_swsd_node_snapped_count"] == 1
-    assert summary["advance_right_contract_rcsd_node_generated_count"] == 1
-    assert summary["advance_right_contract_rcsd_split_original_road_count"] == 1
-    assert summary["advance_right_contract_rcsd_split_road_count"] == 2
-    assert summary["advance_right_attachment_swsd_mainnode_synced_count"] == 1
+    assert summary["advance_right_contract_retained_candidate_road_count"] == 0
+    assert summary["advance_right_contract_swsd_mainnode_normalized_node_count"] == 0
+    assert summary["advance_right_contract_swsd_node_snapped_count"] == 0
+    assert summary["advance_right_contract_rcsd_node_generated_count"] == 0
+    assert summary["advance_right_contract_rcsd_split_original_road_count"] == 0
+    assert summary["advance_right_contract_rcsd_split_road_count"] == 0
+    assert summary["advance_right_attachment_swsd_mainnode_synced_count"] == 0
 
     nodes = {(str(item["id"]), item["source"]): item for item in _props(artifacts.frcsd_node_gpkg_path)}
-    assert str(nodes[("50", 2)]["mainnodeid"]) == "10"
-    assert ("21", 1) in nodes
+    assert str(nodes[("50", 2)]["mainnodeid"]) in {"50", "None", ""}
+    assert ("21", 1) not in nodes
 
     roads = {str(item["id"]): item for item in _props(artifacts.frcsd_road_gpkg_path)}
-    assert "rr_main" not in roads
-    assert {"rr_main__t06advsplit_1", "rr_main__t06advsplit_2", "sw_adv", "sw_side"}.issubset(roads)
+    assert "rr_main" in roads
+    assert {"sw_ret", "sw_adv", "sw_side"}.issubset(roads)
+    assert not {"rr_main__t06advsplit_1", "rr_main__t06advsplit_2"}.intersection(roads)
     road_gdf = gpd.read_file(artifacts.frcsd_road_gpkg_path)
     sw_side_geom = road_gdf.loc[road_gdf["id"].astype(str) == "sw_side"].geometry.iloc[0]
-    assert list(sw_side_geom.coords) == [(5.0, 0.0), (8.0, 4.0)]
+    assert list(sw_side_geom.coords) == [(5.0, 1.0), (8.0, 4.0)]
 
     audit_rows = _props(artifacts.step_root / "t06_step3_advance_right_attachment_audit.gpkg")
-    assert {row["action"] for row in audit_rows} >= {
-        "normalize_swsd_singleton_mainnode",
-        "split_rcsd_road_for_swsd_advance",
-    }
+    assert "split_rcsd_road_for_swsd_advance" not in {row["action"] for row in audit_rows}
 
 
 def test_step3_adds_paired_advance_right_even_when_swsd_advance_duplicate_is_retained(tmp_path: Path) -> None:

@@ -5,7 +5,7 @@ from copy import deepcopy
 from typing import Any
 
 from shapely.geometry import LineString, Point
-from shapely.ops import unary_union
+from shapely.ops import substring, unary_union
 
 from .parsing import ParseError, normalize_id, parse_id_list, unique_preserve_order
 from .road_attributes import is_advance_right_turn_road
@@ -13,10 +13,13 @@ from .road_attributes import is_advance_right_turn_road
 
 TOPOLOGY_SUPPLEMENT_SPLIT_REASON = "topology_supplement_from_swsd"
 MIXED_REPLACEMENT_REQUIRES_SWSD_CARRIER_REASON = "mixed_replacement_requires_swsd_carrier"
+MIXED_ADVANCE_RIGHT_RETAINED_SPLIT_REASON = "mixed_advance_right_retained_swsd_side"
 FORMAL_REPLACEMENT_CORRIDOR_UNAVAILABLE_REASON = "formal_replacement_corridor_coverage_unavailable"
 SEGMENT_CORRIDOR_BUFFER_M = 15.0
 SEGMENT_MAX_UNCOVERED_RATIO = 0.05
 SEGMENT_MIN_UNCOVERED_LENGTH_M = 20.0
+EXISTING_ADVANCE_CORRIDOR_BUFFER_M = 5.0
+EXISTING_ADVANCE_CORRIDOR_MIN_COVERAGE_RATIO = 0.85
 
 
 def exclude_retained_swsd_carriers_from_formal_replacements(
@@ -89,10 +92,25 @@ def _exclude_duplicate_unsegmented_advance_right_roads(
         if road_id in removed_road_to_segments or not _is_advance_right_road(road):
             continue
         props = dict(road.get("properties") or {})
-        if parse_id_list(props.get("segmentid") or props.get("segment_id") or props.get("swsd_segment_id"), allow_empty=True):
+        if _road_segment_ids(road):
             continue
         line = _feature_line(road)
         if line is None or line.length <= 0:
+            continue
+        if _is_marked_mixed_advance_right_carrier(road):
+            continue
+        matching_rcsd_advance_ids = _matching_existing_rcsd_advance_road_ids(
+            road,
+            rcsd_road_by_id=rcsd_road_by_id,
+        )
+        matching_rcsd_covers = bool(matching_rcsd_advance_ids) and _is_covered_by_existing_rcsd_advance_corridor(
+            road,
+            rcsd_road_by_id=rcsd_road_by_id,
+            selected_road_ids=matching_rcsd_advance_ids,
+        )
+        if not matching_rcsd_covers:
+            props["t06_mixed_advance_right_carrier"] = 1
+            road["properties"] = props
             continue
         if float(line.intersection(selected_corridor).length) / float(line.length) < overlap_ratio_threshold:
             continue
@@ -107,7 +125,6 @@ def _unit_corridor_coverage_unavailable(
     rcsd_road_by_id: dict[str, dict[str, Any]],
 ) -> bool:
     unit_roads = [rcsd_road_by_id[road_id] for road_id in getattr(unit, "rcsd_road_ids", []) if road_id in rcsd_road_by_id]
-    all_rcsd_roads = list(rcsd_road_by_id.values())
     semantic_nodes = set(
         unique_preserve_order(
             [
@@ -119,15 +136,20 @@ def _unit_corridor_coverage_unavailable(
     )
     if not unit_roads or not semantic_nodes:
         return False
-    for road_id in getattr(unit, "swsd_road_ids", []) or []:
+    swsd_road_ids = [
+        *(getattr(unit, "swsd_road_ids", []) or []),
+        *(getattr(unit, "retained_detached_swsd_road_ids", []) or []),
+    ]
+    for road_id in swsd_road_ids:
         swsd_road = swsd_road_by_id.get(str(road_id))
+        if _is_side_attachment_swsd_road(swsd_road):
+            continue
         endpoints = _road_endpoint_node_ids(swsd_road)
         if len(endpoints) < 2 or not all(endpoint in semantic_nodes for endpoint in endpoints[:2]):
             continue
         if not _corridor_coverage_failed(swsd_road, unit_roads):
             continue
-        if _corridor_coverage_failed(swsd_road, all_rcsd_roads):
-            return True
+        return True
     return False
 
 
@@ -166,6 +188,9 @@ def materialize_topology_supplement_rcsd_roads(
 ) -> dict[str, int]:
     attachment_nodes = _attachment_nodes_by_swsd_road_endpoint(attachment_audit_rows)
     attachment_segment_ids = _replacement_segment_ids_by_swsd_road(attachment_audit_rows)
+    units_by_segment = {str(getattr(unit, "segment_id", "")): unit for unit in units}
+    incident_segments_by_node = _incident_segment_ids_by_node(swsd_road_by_id.values())
+    replacement_segment_ids = set(units_by_segment)
     used_road_ids = set(swsd_road_by_id) | set(rcsd_road_by_id)
     stats = {
         "candidate_road_count": 0,
@@ -174,8 +199,19 @@ def materialize_topology_supplement_rcsd_roads(
         "detached_carrier_preserved_count": 0,
         "non_advance_carrier_preserved_count": 0,
         "reused_existing_rcsd_advance_count": 0,
+        "recovered_undercovered_mixed_advance_right_count": 0,
+        "mixed_advance_right_boundary_split_count": 0,
+        "mixed_advance_right_retained_side_rcsd_excluded_count": 0,
     }
     materialized_source_road_ids: set[str] = set()
+    mixed_boundary_split_source_road_ids: set[str] = set()
+    recovered_count = _recover_undercovered_mixed_advance_right_carriers(
+        units,
+        swsd_road_by_id=swsd_road_by_id,
+        rcsd_road_by_id=rcsd_road_by_id,
+        attachment_segment_ids=attachment_segment_ids,
+    )
+    stats["recovered_undercovered_mixed_advance_right_count"] = recovered_count
     for unit in units:
         retained_ids = list(getattr(unit, "retained_detached_swsd_road_ids", []) or [])
         if not retained_ids:
@@ -201,7 +237,51 @@ def materialize_topology_supplement_rcsd_roads(
                 road,
                 rcsd_road_by_id=rcsd_road_by_id,
             )
+            use_replaced_rcsd_group = _can_use_existing_rcsd_advance_group_for_replaced_carrier(
+                road,
+                rcsd_advance_road_ids=existing_rcsd_advance_ids,
+                replacement_segment_ids=replacement_segment_ids,
+                incident_segments_by_node=incident_segments_by_node,
+            )
             if existing_rcsd_advance_ids:
+                split_rcsd_advance_ids = _split_mixed_advance_right_retained_side(
+                    road,
+                    rcsd_advance_road_ids=existing_rcsd_advance_ids,
+                    replacement_segment_ids=replacement_segment_ids,
+                    incident_segments_by_node=incident_segments_by_node,
+                    rcsd_road_by_id=rcsd_road_by_id,
+                    rcsd_node_by_id=rcsd_node_by_id,
+                )
+                if split_rcsd_advance_ids:
+                    for rcsd_road_id in split_rcsd_advance_ids:
+                        added_road_to_segments[rcsd_road_id] = unique_preserve_order(
+                            [*added_road_to_segments.get(rcsd_road_id, []), getattr(unit, "segment_id", "")]
+                        )
+                    unit.rcsd_road_ids = unique_preserve_order([*unit.rcsd_road_ids, *split_rcsd_advance_ids])
+                    if str(road_id) not in mixed_boundary_split_source_road_ids:
+                        mixed_boundary_split_source_road_ids.add(str(road_id))
+                        stats["mixed_advance_right_boundary_split_count"] += 1
+                        stats["mixed_advance_right_retained_side_rcsd_excluded_count"] += max(
+                            0, len(existing_rcsd_advance_ids) - len(split_rcsd_advance_ids)
+                        )
+                    stats["reused_existing_rcsd_advance_count"] += len(split_rcsd_advance_ids)
+                    continue
+                if _is_undercovered_mixed_advance_right_carrier(
+                    road,
+                    rcsd_road_by_id=rcsd_road_by_id,
+                    selected_road_ids=unit.rcsd_road_ids,
+                ) and not use_replaced_rcsd_group:
+                    still_retained.append(road_id)
+                    road.setdefault("properties", {})["t06_mixed_advance_right_carrier"] = 1
+                    unit.rcsd_road_ids = unique_preserve_order([*unit.rcsd_road_ids, *existing_rcsd_advance_ids])
+                    for rcsd_road_id in existing_rcsd_advance_ids:
+                        added_road_to_segments[rcsd_road_id] = unique_preserve_order(
+                            [*added_road_to_segments.get(rcsd_road_id, []), getattr(unit, "segment_id", "")]
+                        )
+                    stats["reused_existing_rcsd_advance_count"] += len(existing_rcsd_advance_ids)
+                    continue
+                if use_replaced_rcsd_group:
+                    road.setdefault("properties", {}).pop("t06_mixed_advance_right_carrier", None)
                 _reuse_existing_rcsd_advance_roads(
                     unit,
                     road_id=road_id,
@@ -211,6 +291,13 @@ def materialize_topology_supplement_rcsd_roads(
                 materialized_original_ids.append(road_id)
                 materialized_source_road_ids.add(str(road_id))
                 stats["reused_existing_rcsd_advance_count"] += len(existing_rcsd_advance_ids)
+                continue
+            if _is_undercovered_mixed_advance_right_carrier(
+                road,
+                rcsd_road_by_id=rcsd_road_by_id,
+                selected_road_ids=unit.rcsd_road_ids,
+            ) and not use_replaced_rcsd_group:
+                still_retained.append(road_id)
                 continue
             mapped_nodes = [
                 _mapped_rcsd_node_id(road_id, endpoint, attachment_nodes, swsd_node_by_id, rcsd_node_by_id)
@@ -248,7 +335,6 @@ def materialize_topology_supplement_rcsd_roads(
             stats["materialized_road_count"] += len(materialized_rcsd_ids)
         unit.retained_detached_swsd_road_ids = unique_preserve_order(still_retained)
     if retained_swsd_roads:
-        units_by_segment = {str(getattr(unit, "segment_id", "")): unit for unit in units}
         for road in retained_swsd_roads:
             road_id = _safe_id((road.get("properties") or {}).get("id"))
             if not road_id or road_id in materialized_source_road_ids or not _is_advance_right_road(road):
@@ -257,21 +343,108 @@ def materialize_topology_supplement_rcsd_roads(
             if not segment_ids:
                 continue
             endpoints = _road_endpoint_node_ids(road)
-            stats["candidate_road_count"] += 1
+            is_attachment_carrier = not _road_segment_ids(road)
+            is_mixed_carrier = _is_mixed_advance_right_carrier(
+                road,
+                replacement_segment_ids=replacement_segment_ids,
+                incident_segments_by_node=incident_segments_by_node,
+            )
             existing_rcsd_advance_ids = _matching_existing_rcsd_advance_road_ids(
                 road,
                 rcsd_road_by_id=rcsd_road_by_id,
             )
+            use_replaced_rcsd_group = _can_use_existing_rcsd_advance_group_for_replaced_carrier(
+                road,
+                rcsd_advance_road_ids=existing_rcsd_advance_ids,
+                replacement_segment_ids=replacement_segment_ids,
+                incident_segments_by_node=incident_segments_by_node,
+            )
+            selected_unit_rcsd_road_ids = unique_preserve_order(
+                road_id
+                for segment_id in segment_ids
+                for road_id in getattr(units_by_segment[segment_id], "rcsd_road_ids", [])
+            )
+            selected_existing_rcsd_advance_ids = [
+                road_id
+                for road_id in existing_rcsd_advance_ids
+                if road_id in selected_unit_rcsd_road_ids
+            ]
+            coverage_rcsd_advance_ids = (
+                selected_existing_rcsd_advance_ids
+                if selected_existing_rcsd_advance_ids
+                else existing_rcsd_advance_ids
+            )
+            attachment_endpoint_count = len(
+                {
+                    endpoint
+                    for endpoint in endpoints[:2]
+                    if attachment_nodes.get((road_id, endpoint))
+                }
+            )
+            preserve_multi_endpoint_carrier = (
+                is_attachment_carrier
+                and attachment_endpoint_count >= 2
+                and len(segment_ids) > 1
+            )
+            keep_mixed_carrier = (
+                not use_replaced_rcsd_group
+                and bool(coverage_rcsd_advance_ids)
+                and (is_mixed_carrier or is_attachment_carrier)
+                and (
+                    preserve_multi_endpoint_carrier
+                    or not _is_covered_by_existing_rcsd_advance_corridor(
+                        road,
+                        rcsd_road_by_id=rcsd_road_by_id,
+                        selected_road_ids=coverage_rcsd_advance_ids,
+                    )
+                )
+            )
+            split_mixed_rcsd_advance_ids: list[str] = []
+            if is_mixed_carrier and existing_rcsd_advance_ids:
+                split_mixed_rcsd_advance_ids = _split_mixed_advance_right_retained_side(
+                    road,
+                    rcsd_advance_road_ids=existing_rcsd_advance_ids,
+                    replacement_segment_ids=replacement_segment_ids,
+                    incident_segments_by_node=incident_segments_by_node,
+                    rcsd_road_by_id=rcsd_road_by_id,
+                    rcsd_node_by_id=rcsd_node_by_id,
+                )
+            if keep_mixed_carrier:
+                road.setdefault("properties", {})["t06_mixed_advance_right_carrier"] = 1
+            elif use_replaced_rcsd_group:
+                road.setdefault("properties", {}).pop("t06_mixed_advance_right_carrier", None)
+            stats["candidate_road_count"] += 1
             if existing_rcsd_advance_ids:
+                selected_rcsd_ids = split_mixed_rcsd_advance_ids or existing_rcsd_advance_ids
                 for segment_id in segment_ids:
                     unit = units_by_segment[segment_id]
-                    unit.swsd_road_ids = unique_preserve_order([*unit.swsd_road_ids, road_id])
-                    unit.rcsd_road_ids = unique_preserve_order([*unit.rcsd_road_ids, *existing_rcsd_advance_ids])
-                for rcsd_road_id in existing_rcsd_advance_ids:
+                    if split_mixed_rcsd_advance_ids:
+                        pass
+                    elif keep_mixed_carrier:
+                        unit.retained_detached_swsd_road_ids = unique_preserve_order(
+                            [*unit.retained_detached_swsd_road_ids, road_id]
+                        )
+                    else:
+                        unit.swsd_road_ids = unique_preserve_order([*unit.swsd_road_ids, road_id])
+                    unit.rcsd_road_ids = unique_preserve_order([*unit.rcsd_road_ids, *selected_rcsd_ids])
+                for rcsd_road_id in selected_rcsd_ids:
                     added_road_to_segments[rcsd_road_id] = unique_preserve_order(
                         [*added_road_to_segments.get(rcsd_road_id, []), *segment_ids]
                     )
-                stats["reused_existing_rcsd_advance_count"] += len(existing_rcsd_advance_ids)
+                if split_mixed_rcsd_advance_ids and str(road_id) not in mixed_boundary_split_source_road_ids:
+                    mixed_boundary_split_source_road_ids.add(str(road_id))
+                    stats["mixed_advance_right_boundary_split_count"] += 1
+                    stats["mixed_advance_right_retained_side_rcsd_excluded_count"] += max(
+                        0, len(existing_rcsd_advance_ids) - len(split_mixed_rcsd_advance_ids)
+                    )
+                stats["reused_existing_rcsd_advance_count"] += len(selected_rcsd_ids)
+                continue
+            if keep_mixed_carrier:
+                for segment_id in segment_ids:
+                    unit = units_by_segment[segment_id]
+                    unit.retained_detached_swsd_road_ids = unique_preserve_order(
+                        [*unit.retained_detached_swsd_road_ids, road_id]
+                    )
                 continue
             mapped_nodes = [
                 _mapped_rcsd_node_id(road_id, endpoint, attachment_nodes, swsd_node_by_id, rcsd_node_by_id)
@@ -305,6 +478,264 @@ def materialize_topology_supplement_rcsd_roads(
     return stats
 
 
+def _recover_undercovered_mixed_advance_right_carriers(
+    units: list[Any],
+    *,
+    swsd_road_by_id: dict[str, dict[str, Any]],
+    rcsd_road_by_id: dict[str, dict[str, Any]],
+    attachment_segment_ids: dict[str, list[str]],
+) -> int:
+    recovered_count = 0
+    for unit in units:
+        kept_swsd_road_ids: list[str] = []
+        recovered_road_ids: list[str] = []
+        unit_segment_id = str(getattr(unit, "segment_id", ""))
+        for road_id in getattr(unit, "swsd_road_ids", []) or []:
+            road = swsd_road_by_id.get(str(road_id))
+            if (
+                road is None
+                or not _is_advance_right_road(road)
+                or _road_segment_ids(road)
+                or unit_segment_id not in attachment_segment_ids.get(str(road_id), [])
+                or _is_covered_by_existing_rcsd_advance_corridor(
+                    road,
+                    rcsd_road_by_id=rcsd_road_by_id,
+                    selected_road_ids=getattr(unit, "rcsd_road_ids", []),
+                )
+            ):
+                kept_swsd_road_ids.append(road_id)
+                continue
+            road.setdefault("properties", {})["t06_mixed_advance_right_carrier"] = 1
+            recovered_road_ids.append(str(road_id))
+        if not recovered_road_ids:
+            continue
+        unit.swsd_road_ids = unique_preserve_order(kept_swsd_road_ids)
+        unit.retained_detached_swsd_road_ids = unique_preserve_order(
+            [*getattr(unit, "retained_detached_swsd_road_ids", []), *recovered_road_ids]
+        )
+        recovered_count += len(recovered_road_ids)
+    return recovered_count
+
+
+def _is_undercovered_mixed_advance_right_carrier(
+    road: dict[str, Any],
+    *,
+    rcsd_road_by_id: dict[str, dict[str, Any]],
+    selected_road_ids: list[str] | None = None,
+) -> bool:
+    return _is_marked_mixed_advance_right_carrier(road) and not _is_covered_by_existing_rcsd_advance_corridor(
+        road,
+        rcsd_road_by_id=rcsd_road_by_id,
+        selected_road_ids=selected_road_ids,
+    )
+
+
+def _is_marked_mixed_advance_right_carrier(road: dict[str, Any]) -> bool:
+    props = dict(road.get("properties") or {})
+    return str(props.get("t06_mixed_advance_right_carrier") or "").lower() in {"1", "true", "yes"}
+
+
+def _split_mixed_advance_right_retained_side(
+    road: dict[str, Any],
+    *,
+    rcsd_advance_road_ids: list[str],
+    replacement_segment_ids: set[str],
+    incident_segments_by_node: dict[str, list[str]],
+    rcsd_road_by_id: dict[str, dict[str, Any]],
+    rcsd_node_by_id: dict[str, dict[str, Any]],
+) -> list[str]:
+    props = road.setdefault("properties", {})
+    if props.get("t06_mixed_advance_right_split_reason") == MIXED_ADVANCE_RIGHT_RETAINED_SPLIT_REASON:
+        return _safe_id_list(props.get("t06_mixed_advance_right_rcsd_road_ids"))
+    if (
+        not rcsd_advance_road_ids
+        or _road_segment_ids(road)
+        or not _is_mixed_advance_right_carrier(
+            road,
+            replacement_segment_ids=replacement_segment_ids,
+            incident_segments_by_node=incident_segments_by_node,
+        )
+    ):
+        return []
+    line = _feature_line(road)
+    endpoints = _road_endpoint_node_ids(road)
+    if line is None or line.length <= 0 or len(endpoints) < 2:
+        return []
+    retained_endpoint_indexes = [
+        index
+        for index, node_id in enumerate(endpoints[:2])
+        if _endpoint_replacement_role(
+            node_id,
+            replacement_segment_ids=replacement_segment_ids,
+            incident_segments_by_node=incident_segments_by_node,
+        )
+        == "retained"
+    ]
+    if len(retained_endpoint_indexes) != 1:
+        return []
+    retained_index = retained_endpoint_indexes[0]
+    other_endpoint = endpoints[1 - retained_index]
+    if _endpoint_replacement_role(
+        other_endpoint,
+        replacement_segment_ids=replacement_segment_ids,
+        incident_segments_by_node=incident_segments_by_node,
+    ) not in {"replaced", "mixed"}:
+        return []
+    boundary_node_id, boundary_point, boundary_measure = _nearest_rcsd_advance_boundary_node(
+        line,
+        retained_index=retained_index,
+        rcsd_advance_road_ids=rcsd_advance_road_ids,
+        rcsd_road_by_id=rcsd_road_by_id,
+        rcsd_node_by_id=rcsd_node_by_id,
+    )
+    if boundary_node_id is None or boundary_point is None or boundary_measure is None:
+        return []
+    replaced_side_rcsd_ids = _filter_replaced_side_rcsd_advance_ids(
+        line,
+        retained_index=retained_index,
+        boundary_measure=boundary_measure,
+        rcsd_advance_road_ids=rcsd_advance_road_ids,
+        rcsd_road_by_id=rcsd_road_by_id,
+        rcsd_node_by_id=rcsd_node_by_id,
+    )
+    if not replaced_side_rcsd_ids:
+        return []
+    retained_line = _retained_side_subline(line, retained_index=retained_index, boundary_measure=boundary_measure)
+    if retained_line is None or retained_line.length <= 0:
+        return []
+    retained_line = _snap_retained_side_boundary(retained_line, retained_index=retained_index, boundary_point=boundary_point)
+    if retained_index == 0:
+        props["enodeid"] = boundary_node_id
+    else:
+        props["snodeid"] = boundary_node_id
+    props["t06_mixed_advance_right_carrier"] = 1
+    props["t06_mixed_advance_right_split_reason"] = MIXED_ADVANCE_RIGHT_RETAINED_SPLIT_REASON
+    props["t06_mixed_advance_right_boundary_node_id"] = boundary_node_id
+    props["t06_mixed_advance_right_retained_endpoint_id"] = endpoints[retained_index]
+    props["t06_mixed_advance_right_replaced_endpoint_id"] = other_endpoint
+    props["t06_mixed_advance_right_rcsd_road_ids"] = replaced_side_rcsd_ids
+    props["t06_mixed_advance_right_excluded_rcsd_road_ids"] = [
+        road_id for road_id in unique_preserve_order(rcsd_advance_road_ids) if road_id not in set(replaced_side_rcsd_ids)
+    ]
+    road["geometry"] = retained_line
+    return replaced_side_rcsd_ids
+
+
+def _filter_replaced_side_rcsd_advance_ids(
+    line: LineString,
+    *,
+    retained_index: int,
+    boundary_measure: float,
+    rcsd_advance_road_ids: list[str],
+    rcsd_road_by_id: dict[str, dict[str, Any]],
+    rcsd_node_by_id: dict[str, dict[str, Any]],
+) -> list[str]:
+    result: list[str] = []
+    epsilon = 0.01
+    for road_id in unique_preserve_order(rcsd_advance_road_ids):
+        measures = _rcsd_road_endpoint_measures_on_line(
+            line,
+            road_id=road_id,
+            rcsd_road_by_id=rcsd_road_by_id,
+            rcsd_node_by_id=rcsd_node_by_id,
+        )
+        if not measures:
+            continue
+        if retained_index == 0:
+            if max(measures) > boundary_measure + epsilon:
+                result.append(road_id)
+        elif min(measures) < boundary_measure - epsilon:
+            result.append(road_id)
+    return result
+
+
+def _rcsd_road_endpoint_measures_on_line(
+    line: LineString,
+    *,
+    road_id: str,
+    rcsd_road_by_id: dict[str, dict[str, Any]],
+    rcsd_node_by_id: dict[str, dict[str, Any]],
+) -> list[float]:
+    road = rcsd_road_by_id.get(str(road_id))
+    candidate_line = _feature_line(road) if road is not None else None
+    points = [
+        point
+        for node_id in _road_endpoint_node_ids(road)
+        for point in [_node_point(rcsd_node_by_id.get(node_id))]
+        if point is not None
+    ]
+    if not points and candidate_line is not None and len(candidate_line.coords) >= 2:
+        points = [Point(candidate_line.coords[0][:2]), Point(candidate_line.coords[-1][:2])]
+    return [float(line.project(point)) for point in points]
+
+
+def _endpoint_replacement_role(
+    node_id: str,
+    *,
+    replacement_segment_ids: set[str],
+    incident_segments_by_node: dict[str, list[str]],
+) -> str:
+    segment_ids = incident_segments_by_node.get(node_id, [])
+    touches_replaced = any(segment_id in replacement_segment_ids for segment_id in segment_ids)
+    touches_retained = any(segment_id not in replacement_segment_ids for segment_id in segment_ids)
+    if touches_replaced and touches_retained:
+        return "mixed"
+    if touches_replaced:
+        return "replaced"
+    if touches_retained:
+        return "retained"
+    return "none"
+
+
+def _nearest_rcsd_advance_boundary_node(
+    line: LineString,
+    *,
+    retained_index: int,
+    rcsd_advance_road_ids: list[str],
+    rcsd_road_by_id: dict[str, dict[str, Any]],
+    rcsd_node_by_id: dict[str, dict[str, Any]],
+) -> tuple[str | None, Point | None, float | None]:
+    retained_measure = 0.0 if retained_index == 0 else float(line.length)
+    candidates: list[tuple[float, str, Point, float]] = []
+    for road_id in rcsd_advance_road_ids:
+        rcsd_road = rcsd_road_by_id.get(str(road_id))
+        for node_id in _road_endpoint_node_ids(rcsd_road):
+            point = _node_point(rcsd_node_by_id.get(node_id))
+            if point is None:
+                continue
+            measure = float(line.project(point))
+            if measure <= 0.0 or measure >= float(line.length):
+                continue
+            candidates.append((abs(measure - retained_measure), node_id, point, measure))
+    if not candidates:
+        return None, None, None
+    _distance, node_id, point, measure = min(candidates, key=lambda item: item[0])
+    return node_id, point, measure
+
+
+def _retained_side_subline(line: LineString, *, retained_index: int, boundary_measure: float) -> LineString | None:
+    try:
+        retained_line = (
+            substring(line, 0.0, boundary_measure)
+            if retained_index == 0
+            else substring(line, boundary_measure, float(line.length))
+        )
+    except Exception:
+        return None
+    return retained_line if isinstance(retained_line, LineString) else None
+
+
+def _snap_retained_side_boundary(line: LineString, *, retained_index: int, boundary_point: Point) -> LineString:
+    coords = list(line.coords)
+    if not coords:
+        return line
+    if retained_index == 0:
+        coords[-1] = _coord_with_xy(coords[-1], boundary_point)
+    else:
+        coords[0] = _coord_with_xy(coords[0], boundary_point)
+    return LineString(coords)
+
+
 def _reuse_existing_rcsd_advance_roads(
     unit: Any,
     *,
@@ -332,6 +763,7 @@ def _matching_existing_rcsd_advance_road_ids(
     if line is None or line.length <= 0:
         return []
     result: list[str] = []
+    corridor_candidates: list[tuple[str, LineString]] = []
     for rcsd_road_id, rcsd_road in rcsd_road_by_id.items():
         props = dict(rcsd_road.get("properties") or {})
         if props.get("t06_split_reason") == TOPOLOGY_SUPPLEMENT_SPLIT_REASON:
@@ -339,13 +771,109 @@ def _matching_existing_rcsd_advance_road_ids(
         if not _is_advance_right_road(rcsd_road):
             continue
         rcsd_line = _feature_line(rcsd_road)
-        if rcsd_line is None or rcsd_line.length <= 0 or line.distance(rcsd_line) > buffer_m:
+        if rcsd_line is None or rcsd_line.length <= 0:
             continue
-        swsd_overlap = line.intersection(rcsd_line.buffer(buffer_m, cap_style=2)).length / line.length
-        rcsd_overlap = rcsd_line.intersection(line.buffer(buffer_m, cap_style=2)).length / rcsd_line.length
-        if max(float(swsd_overlap), float(rcsd_overlap)) >= overlap_ratio_threshold:
-            result.append(str(rcsd_road_id))
+        if line.distance(rcsd_line) <= EXISTING_ADVANCE_CORRIDOR_BUFFER_M:
+            corridor_candidates.append((str(rcsd_road_id), rcsd_line))
+        if line.distance(rcsd_line) <= buffer_m:
+            swsd_overlap = line.intersection(rcsd_line.buffer(buffer_m, cap_style=2)).length / line.length
+            rcsd_overlap = rcsd_line.intersection(line.buffer(buffer_m, cap_style=2)).length / rcsd_line.length
+            if max(float(swsd_overlap), float(rcsd_overlap)) >= overlap_ratio_threshold:
+                result.append(str(rcsd_road_id))
+    if result:
+        return _expand_connected_existing_rcsd_advance_road_ids(
+            swsd_road,
+            rcsd_road_by_id=rcsd_road_by_id,
+            seed_road_ids=unique_preserve_order(result),
+        )
+    if not corridor_candidates:
+        return []
+    corridor = unary_union([candidate_line for _, candidate_line in corridor_candidates])
+    covered_ratio = line.intersection(
+        corridor.buffer(EXISTING_ADVANCE_CORRIDOR_BUFFER_M, cap_style=2)
+    ).length / line.length
+    if float(covered_ratio) < EXISTING_ADVANCE_CORRIDOR_MIN_COVERAGE_RATIO:
+        return []
+    return _expand_connected_existing_rcsd_advance_road_ids(
+        swsd_road,
+        rcsd_road_by_id=rcsd_road_by_id,
+        seed_road_ids=unique_preserve_order(
+            road_id
+            for road_id, candidate_line in corridor_candidates
+            if candidate_line.intersection(line.buffer(EXISTING_ADVANCE_CORRIDOR_BUFFER_M, cap_style=2)).length > 0
+        ),
+    )
+
+
+def _expand_connected_existing_rcsd_advance_road_ids(
+    swsd_road: dict[str, Any],
+    *,
+    rcsd_road_by_id: dict[str, dict[str, Any]],
+    seed_road_ids: list[str],
+) -> list[str]:
+    line = _feature_line(swsd_road)
+    if line is None or not seed_road_ids:
+        return unique_preserve_order(seed_road_ids)
+    node_to_roads: dict[str, list[str]] = defaultdict(list)
+    for road_id, road in rcsd_road_by_id.items():
+        props = dict(road.get("properties") or {})
+        if props.get("t06_split_reason") == TOPOLOGY_SUPPLEMENT_SPLIT_REASON:
+            continue
+        if not _is_advance_right_road(road):
+            continue
+        for node_id in _road_endpoint_node_ids(road):
+            node_to_roads[node_id].append(str(road_id))
+    result = unique_preserve_order(seed_road_ids)
+    visited = set(result)
+    queue = list(result)
+    while queue:
+        road_id = queue.pop(0)
+        road = rcsd_road_by_id.get(road_id)
+        if road is None:
+            continue
+        for node_id in _road_endpoint_node_ids(road):
+            for candidate_id in node_to_roads.get(node_id, []):
+                if candidate_id in visited:
+                    continue
+                candidate = rcsd_road_by_id.get(candidate_id)
+                candidate_line = _feature_line(candidate) if candidate is not None else None
+                if candidate_line is None or line.distance(candidate_line) > EXISTING_ADVANCE_CORRIDOR_BUFFER_M:
+                    continue
+                visited.add(candidate_id)
+                result.append(candidate_id)
+                queue.append(candidate_id)
     return result
+
+
+def _is_covered_by_existing_rcsd_advance_corridor(
+    swsd_road: dict[str, Any],
+    *,
+    rcsd_road_by_id: dict[str, dict[str, Any]],
+    selected_road_ids: list[str] | None = None,
+) -> bool:
+    line = _feature_line(swsd_road)
+    if line is None or line.length <= 0:
+        return False
+    selected = {str(road_id) for road_id in selected_road_ids or []}
+    candidates: list[LineString] = []
+    for rcsd_road_id, rcsd_road in rcsd_road_by_id.items():
+        if selected and str(rcsd_road_id) not in selected:
+            continue
+        props = dict(rcsd_road.get("properties") or {})
+        if props.get("t06_split_reason") == TOPOLOGY_SUPPLEMENT_SPLIT_REASON:
+            continue
+        if not _is_advance_right_road(rcsd_road):
+            continue
+        candidate = _feature_line(rcsd_road)
+        if candidate is None or candidate.length <= 0:
+            continue
+        if line.distance(candidate) <= EXISTING_ADVANCE_CORRIDOR_BUFFER_M:
+            candidates.append(candidate)
+    if not candidates:
+        return False
+    corridor = unary_union(candidates).buffer(EXISTING_ADVANCE_CORRIDOR_BUFFER_M, cap_style=2)
+    covered_ratio = float(line.intersection(corridor).length) / float(line.length)
+    return covered_ratio >= EXISTING_ADVANCE_CORRIDOR_MIN_COVERAGE_RATIO
 
 
 def _attachment_nodes_by_swsd_road_endpoint(rows: list[dict[str, Any]]) -> dict[tuple[str, str], list[str]]:
@@ -445,6 +973,55 @@ def _road_endpoint_node_ids(road: dict[str, Any] | None) -> list[str]:
     return [_safe_id(value) for value in (props.get("snodeid"), props.get("enodeid")) if _safe_id(value)]
 
 
+def _road_segment_ids(road: dict[str, Any] | None) -> list[str]:
+    props = dict((road or {}).get("properties") or {})
+    return parse_id_list(
+        props.get("segmentid") or props.get("segment_id") or props.get("swsd_segment_id"),
+        allow_empty=True,
+    )
+
+
+def _incident_segment_ids_by_node(roads: Any) -> dict[str, list[str]]:
+    result: dict[str, list[str]] = defaultdict(list)
+    for road in roads:
+        segment_ids = _road_segment_ids(road)
+        for node_id in _road_endpoint_node_ids(road):
+            result[node_id] = unique_preserve_order([*result[node_id], *segment_ids])
+    return dict(result)
+
+
+def _is_mixed_advance_right_carrier(
+    road: dict[str, Any],
+    *,
+    replacement_segment_ids: set[str],
+    incident_segments_by_node: dict[str, list[str]],
+) -> bool:
+    endpoint_segments = [
+        incident_segments_by_node.get(node_id, [])
+        for node_id in _road_endpoint_node_ids(road)
+    ]
+    touches_replaced = any(segment_id in replacement_segment_ids for segments in endpoint_segments for segment_id in segments)
+    touches_retained = any(segment_id not in replacement_segment_ids for segments in endpoint_segments for segment_id in segments)
+    return touches_replaced and touches_retained
+
+
+def _can_use_existing_rcsd_advance_group_for_replaced_carrier(
+    road: dict[str, Any],
+    *,
+    rcsd_advance_road_ids: list[str],
+    replacement_segment_ids: set[str],
+    incident_segments_by_node: dict[str, list[str]],
+) -> bool:
+    if not rcsd_advance_road_ids or _road_segment_ids(road):
+        return False
+    endpoint_segments = unique_preserve_order(
+        segment_id
+        for node_id in _road_endpoint_node_ids(road)
+        for segment_id in incident_segments_by_node.get(node_id, [])
+    )
+    return bool(endpoint_segments) and all(segment_id in replacement_segment_ids for segment_id in endpoint_segments)
+
+
 def _touches_detached_node(endpoints: list[str], detached_nodes: set[str]) -> bool:
     return bool(detached_nodes.intersection(endpoints))
 
@@ -456,6 +1033,11 @@ def _feature_line(feature: dict[str, Any]) -> LineString | None:
 
 def _is_advance_right_road(road: dict[str, Any]) -> bool:
     return is_advance_right_turn_road(dict(road.get("properties") or {}))
+
+
+def _is_side_attachment_swsd_road(road: dict[str, Any] | None) -> bool:
+    props = dict((road or {}).get("properties") or {})
+    return str(props.get("segment_build_source") or "") == "side_attachment_merge"
 
 
 def _node_point(node: dict[str, Any] | None) -> Point | None:

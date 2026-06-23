@@ -170,6 +170,17 @@ def classify_evidence(evidence: Phase2Evidence, *, junction_type: str) -> SceneD
             )
         return _failure_or_no_rcsd(evidence, "t07_multiple_intersections_missing_base_ids")
 
+    if source == SOURCE_T07 and relation_state == "existing_rcsdintersection_matched" and status_suggested == "0":
+        return SceneDecision(
+            scene=SCENE_DIRECT,
+            action="direct_relation",
+            reason=relation_state,
+            source_module=source,
+            source_case_id=case_id,
+            base_id_candidates=base_ids,
+            multi_base_relation=len(base_ids) > 1,
+        )
+
     if base_ids and status_suggested == "0":
         return SceneDecision(
             scene=SCENE_DIRECT,

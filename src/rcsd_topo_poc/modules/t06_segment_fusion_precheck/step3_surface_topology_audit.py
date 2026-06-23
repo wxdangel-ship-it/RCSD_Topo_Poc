@@ -29,7 +29,8 @@ from .step3_topology_connectivity_audit import (
 SURFACE_TOPOLOGY_AUDIT_STEM = "t06_step3_surface_topology_audit"
 SURFACE_TOPOLOGY_SUMMARY = "t06_step3_surface_topology_summary.json"
 MAX_EXISTING_CROSS_SOURCE_1V1_DISTANCE_M = 20.0
-MAX_RELATION_MAPPED_BOUNDARY_1V1_DISTANCE_M = 30.0
+MAX_T04_PATCH_1V1_DISTANCE_M = 20.0
+MAX_RELATION_MAPPED_BOUNDARY_1V1_DISTANCE_M = 20.0
 MAX_SURFACE_NEAREST_MULTI_CANDIDATE_DISTANCE_M = 5.0
 MIN_SURFACE_NEAREST_MULTI_CANDIDATE_SEPARATION_M = 10.0
 SURFACE_NEAREST_MULTI_CANDIDATE_LAYERS = {"t03", "t05"}
@@ -292,7 +293,7 @@ def _build_surface_audit_rows(
             swsd_node_id=swsd_node_id,
             swsd_patch_ids=swsd_patch_ids,
             surface_hits=surface_hits,
-        )
+        ) and _distance_within(row.get("max_pairwise_distance_m"), MAX_T04_PATCH_1V1_DISTANCE_M)
         existing_cross_source_1v1_evidence = (
             bool(surface_hits)
             and len(source1_nodes) == 1

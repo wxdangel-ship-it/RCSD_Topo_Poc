@@ -6,7 +6,7 @@
 
 ## 0. 成果输出命名约束
 
-除输入文件本身外，T08 所有成果输出文件名必须在扩展名前以 `_toolX` 结尾，`X` 为工具编号。例如 Tool2 的事件 Road 输出为 `event_road_0a_tool2.gpkg`。
+除输入文件本身外，T08 成果输出文件名默认必须在扩展名前以 `_toolX` 结尾，`X` 为工具编号。例如 Tool2 的事件 Road 输出为 `event_road_0a_tool2.gpkg`。Tool1 是格式转换特例：转换成果使用输入文件同 stem、不同格式后缀；Tool1 summary 仍按 `_tool1` 命名。
 
 ## 1. 当前工具
 
@@ -14,10 +14,10 @@
 
 - 输入：一个或多个 `.shp / .geojson / .json / .gpkg` 文件，全部通过参数提供。
 - 支持转换：
-  - `.shp -> <input_dir>/<input_stem>_tool1.gpkg`
-  - `.geojson / .json -> <input_dir>/<input_stem>_tool1.gpkg`
-  - `.gpkg -> <input_dir>/<input_stem>_tool1.geojson`
-- 输出边界：所有输出均写回输入文件所在目录下，并在输入 stem 后追加 `_tool1`；不合并多个输入，不提供输出目录参数，不提供逐文件自定义输出路径参数；若同一轮输入会导致重复输出或输出覆盖本轮任一输入，必须报错停止。
+  - `.shp -> <input_dir>/<input_stem>.gpkg`
+  - `.geojson / .json -> <input_dir>/<input_stem>.gpkg`
+  - `.gpkg -> <input_dir>/<input_stem>.geojson`
+- 输出边界：所有转换成果均写回输入文件所在目录下，使用输入文件同 stem、不同格式后缀；不合并多个输入，不提供输出目录参数，不提供逐文件自定义输出路径参数；若同一轮输入会导致重复输出或输出覆盖本轮任一输入，必须报错停止。
 - CRS：
   - 默认保留输入 CRS。
   - 如传入 `--target-epsg`，则输出投影到该 EPSG。
@@ -317,9 +317,9 @@ Tool9：
 
 ## 3. Tool1 Params
 
-- `--input-shp`：可重复传入多个 Shapefile，输出为输入目录下 `<input_stem>_tool1.gpkg`。
-- `--input-geojson`：可重复传入多个 GeoJSON，输出为输入目录下 `<input_stem>_tool1.gpkg`。
-- `--input-gpkg`：可重复传入多个 GPKG，输出为输入目录下 `<input_stem>_tool1.geojson`。
+- `--input-shp`：可重复传入多个 Shapefile，输出为输入目录下 `<input_stem>.gpkg`。
+- `--input-geojson`：可重复传入多个 GeoJSON，输出为输入目录下 `<input_stem>.gpkg`。
+- `--input-gpkg`：可重复传入多个 GPKG，输出为输入目录下 `<input_stem>.geojson`。
 - `--summary-output`：可选 summary JSON 输出路径；默认写入首个输入文件所在目录，文件名以 `_tool1` 结尾。
 - `--target-epsg`：可选输出 EPSG；不提供时保留输入 CRS。
 - `--default-crs`：当输入缺失 CRS 时使用。
@@ -448,7 +448,7 @@ Tool9：
 
 ## 12. Acceptance
 
-1. Tool1 支持 SHP / GeoJSON 转 GPKG 与 GPKG 转 GeoJSON，所有输出均为输入目录下追加 `_tool1` 的目标格式文件。
+1. Tool1 支持 SHP / GeoJSON 转 GPKG 与 GPKG 转 GeoJSON，转换成果均为输入目录下同 stem、不同格式后缀的目标格式文件；summary 仍按 `_tool1` 命名。
 2. Tool2 只接受 GPKG 输入。
 3. Tool2 主输出与 `event_road_0a_tool2.gpkg` 均为 GPKG 且 CRS 为 `EPSG:3857`。
 4. Tool2 `patch_id` 多值按逗号拼接。

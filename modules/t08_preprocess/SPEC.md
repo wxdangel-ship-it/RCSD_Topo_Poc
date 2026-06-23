@@ -60,7 +60,7 @@ T08 是项目正式预处理模块，负责 SWSD / RCSD 输入数据的格式转
 
 | 输出 | 用途 |
 |---|---|
-| `*_tool1.gpkg / *_tool1.geojson` | 基础格式转换成果。 |
+| `*.gpkg / *.geojson`（Tool1 同 stem 换后缀） | 基础格式转换成果。 |
 | `*_tool2.gpkg/json` | Road patch、kind enrich、事件 Road 输出。 |
 | `*_tool3.gpkg/json` | 初始化并聚合后的 Nodes。 |
 | `*_tool4.gpkg/json` | 路口类型修复后的 Nodes/Roads/audit。 |
@@ -86,7 +86,7 @@ T08 是项目正式预处理模块，负责 SWSD / RCSD 输入数据的格式转
 
 ## 8. 什么是对
 
-- 所有 T08 输出文件名在扩展名前以 `_toolX` 结尾。
+- 除 Tool1 转换成果外，所有 T08 输出文件名在扩展名前以 `_toolX` 结尾；Tool1 转换成果允许同 stem 换后缀。
 - Tool3 不把单 node 环岛组误写为 `kind_2=64`。
 - Tool4/Tool5/Tool9 均使用 copy-on-write，不回写输入。
 - Tool6 只输出质检候选，不直接修复数据。

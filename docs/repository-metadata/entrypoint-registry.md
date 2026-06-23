@@ -108,7 +108,7 @@
 | `t00_tool9_divstripzone_merge.py` | `scripts/t00_tool9_divstripzone_merge.py` | repo 级 | T00 Tool9 DivStripZone 预处理与汇总 | `active` | 否 |
 | `t00_tool10_json_point_export.py` | `scripts/t00_tool10_json_point_export.py` | repo 级 | T00 Tool10 指定 JSON 上车点导出双图层 GPKG | `active` | 否 |
 | `t00_tool11_mif_to_vector.py` | `scripts/t00_tool11_mif_to_vector.py` | repo 级 | T00 Tool11 MIF 批量 / 单文件转 GeoJSON 与 GPKG | `active` | 否 |
-| `t08_tool1_vector_convert.py` | `scripts/t08_tool1_vector_convert.py` | repo 级 | T08 Tool1 基础矢量格式转换，支持 SHP / GeoJSON 转 GPKG 与 GPKG 转 GeoJSON，输出写回输入目录下并在 stem 后追加 `_tool1`，采用流式转换并输出进度，支持可选目标 EPSG 与 summary 输出 | `active` | 否 |
+| `t08_tool1_vector_convert.py` | `scripts/t08_tool1_vector_convert.py` | repo 级 | T08 Tool1 基础矢量格式转换，支持 SHP / GeoJSON 转 GPKG 与 GPKG 转 GeoJSON，转换成果写回输入目录下并使用同 stem、不同格式后缀，采用流式转换并输出进度，支持可选目标 EPSG 与 summary 输出 | `active` | 否 |
 | `t08_tool2_road_preprocess.py` | `scripts/t08_tool2_road_preprocess.py` | repo 级 | T08 Tool2 Road GPKG 预处理，补充 `patch_id` 与原始 `kind`，删除 `kind` 具有 `17` 主辅路出入口属性的 Road 并输出 `event_road_0a_tool2.gpkg`，成果输出文件名以 `_tool2` 结尾 | `active` | 否 |
 | `t08_tool3_nodes_type_aggregation.py` | `scripts/t08_tool3_nodes_type_aggregation.py` | repo 级 | T08 Tool3 Nodes 类型聚合，补充 `kind_2 / grade_2` 并处理环岛 mainnode，输出 `EPSG:3857` Nodes GPKG，成果输出文件名以 `_tool3` 结尾 | `active` | 否 |
 | `t08_tool4_junction_type_repair.py` | `scripts/t08_tool4_junction_type_repair.py` | repo 级 | T08 Tool4 路口类型修复，校验 `kind_2=2048` T 型语义路口、分合流一入一出类型，并可消费 Tool6 人工确认成果，copy-on-write 输出完整 Nodes、可选 Roads、audit Nodes GPKG 与 summary，不改写输入 Nodes/Roads，成果输出文件名以 `_tool4` 结尾 | `active` | 否 |

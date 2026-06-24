@@ -1057,6 +1057,53 @@ def test_surface_aware_release_accepts_original_pair_endpoint_without_surface_ro
     ]
 
 
+def test_surface_aware_release_accepts_optional_junc_anchor_mapping_without_surface_row() -> None:
+    props = {
+        "swsd_pair_nodes": ["n1", "n2"],
+        "rcsd_pair_nodes": ["r1", "r2"],
+        "optional_junc_nodes": ["j1"],
+        "optional_junc_rcsd_nodes": ["rj1"],
+        "risk_flags": ["junction_alignment_to_retained_swsd_exceeds_topology_gate"],
+    }
+    swsd_points = {"n1": Point(0, 0), "n2": Point(10, 0), "j1": Point(4, 0)}
+    rcsd_points = {"r1": Point(0, 0), "r2": Point(10, 0), "rj1": Point(30, 0)}
+    incident = {"j1": ["s_replace", "s_retained"], "n1": ["s_replace"], "n2": ["s_replace"]}
+
+    allowed, triggers = _release_allowed(
+        props,
+        {},
+        swsd_points,
+        rcsd_points,
+        incident,
+        {"s_replace"},
+        {"j1"},
+    )
+
+    assert allowed
+    assert triggers == [
+        {
+            "swsd_node_id": "j1",
+            "rcsd_node_id": "rj1",
+            "distance_m": 26.0,
+            "surface_status": ["pass", "auto_closed_step2_optional_junc_anchor", 26.0],
+            "ok": True,
+        }
+    ]
+
+    blocked, blocked_triggers = _release_allowed(
+        props,
+        {},
+        swsd_points,
+        rcsd_points,
+        incident,
+        {"s_replace"},
+        set(),
+    )
+
+    assert not blocked
+    assert blocked_triggers[0]["ok"] is False
+
+
 def test_surface_aware_point_index_uses_mainnodeid() -> None:
     points = _points_by_id(
         [

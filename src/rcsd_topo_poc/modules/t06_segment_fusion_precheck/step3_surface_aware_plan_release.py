@@ -17,12 +17,15 @@ SURFACE_RELEASE_ROLLBACK_REASON = "junction_alignment_surface_release_failed_top
 SURFACE_RELEASE_PLAN_STEM = "t06_step3_surface_aware_replacement_plan"
 SURFACE_RELEASE_AUDIT = "t06_step3_surface_aware_plan_release_audit.json"
 RETAINED_JUNCTION_ATTACHMENT_GAP_M = 20.0
+OPTIONAL_JUNCTION_ANCHOR_RELEASE_MAX_GAP_M = 50.0
+OPTIONAL_JUNCTION_ANCHOR_RELEASE_REASON = "auto_closed_step2_optional_junc_anchor"
 SURFACE_RELEASE_REASONS = {
     "auto_closed_surface_1v1",
     "auto_closed_t04_patch_1v1",
     "auto_closed_step2_junc_1v1",
     "auto_closed_relation_mapped_boundary_1v1",
     "auto_closed_selected_replacement_endpoint",
+    OPTIONAL_JUNCTION_ANCHOR_RELEASE_REASON,
 }
 
 
@@ -201,7 +204,9 @@ def _surface_release_plan_rows(
     rcsdnode_path: str | Path,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     surface_status = _surface_status_by_node(step_root)
-    swsd_points = _points_by_id(read_features(swsd_nodes_path))
+    swsd_node_rows = read_features(swsd_nodes_path)
+    swsd_points = _points_by_id(swsd_node_rows)
+    swsd_anchor_nodes = _anchor_node_ids(swsd_node_rows)
     rcsd_points = _points_by_id(read_features(rcsdnode_path))
     incident = _incident_segments_by_node(read_features(swsd_segment_path))
     ready_segments = _ready_segment_ids(plan_rows)
@@ -211,7 +216,15 @@ def _surface_release_plan_rows(
         props = row["properties"]
         if props.get("source_reason") != RETAINED_JUNCTION_GATE_REASON:
             continue
-        allow, triggers = _release_allowed(props, surface_status, swsd_points, rcsd_points, incident, ready_segments)
+        allow, triggers = _release_allowed(
+            props,
+            surface_status,
+            swsd_points,
+            rcsd_points,
+            incident,
+            ready_segments,
+            swsd_anchor_nodes,
+        )
         if not allow:
             continue
         _release_plan_row(props)
@@ -234,9 +247,11 @@ def _release_allowed(
     rcsd_points: dict[str, Any],
     incident: dict[str, list[str]],
     ready_segments: set[str],
+    swsd_anchor_nodes: set[str] | None = None,
 ) -> tuple[bool, list[dict[str, Any]]]:
     if not _is_retained_junction_gate_plan(props):
         return False, []
+    swsd_anchor_nodes = swsd_anchor_nodes or set()
     triggers: list[dict[str, Any]] = []
     for swsd_node_id, rcsd_node_id in _plan_mappings(props):
         if swsd_node_id not in swsd_points or rcsd_node_id not in rcsd_points:
@@ -253,6 +268,9 @@ def _release_allowed(
         elif _is_original_pair_endpoint_mapping(props, swsd_node_id, rcsd_node_id):
             ok = True
             release_status = ["pass", "auto_closed_selected_replacement_endpoint", round(distance_m, 3)]
+        elif _is_optional_junc_anchor_mapping(props, swsd_node_id, rcsd_node_id, swsd_anchor_nodes, distance_m):
+            ok = True
+            release_status = ["pass", OPTIONAL_JUNCTION_ANCHOR_RELEASE_REASON, round(distance_m, 3)]
         else:
             ok = False
             release_status = None
@@ -278,6 +296,20 @@ def _is_original_pair_endpoint_mapping(props: dict[str, Any], swsd_node_id: str,
     if len(swsd_pair_nodes) != len(original_rcsd_pair_nodes):
         return False
     return any(swsd_node_id == swsd and rcsd_node_id == rcsd for swsd, rcsd in zip(swsd_pair_nodes, original_rcsd_pair_nodes))
+
+
+def _is_optional_junc_anchor_mapping(
+    props: dict[str, Any],
+    swsd_node_id: str,
+    rcsd_node_id: str,
+    swsd_anchor_nodes: set[str],
+    distance_m: float,
+) -> bool:
+    if swsd_node_id not in swsd_anchor_nodes or distance_m > OPTIONAL_JUNCTION_ANCHOR_RELEASE_MAX_GAP_M:
+        return False
+    swsd_junc = _ids(props.get("optional_junc_nodes")) or _ids(props.get("swsd_junc_nodes"))
+    rcsd_junc = _ids(props.get("optional_junc_rcsd_nodes")) or _ids(props.get("rcsd_junc_nodes"))
+    return any(swsd_node_id == swsd and rcsd_node_id == rcsd for swsd, rcsd in zip(swsd_junc, rcsd_junc))
 
 
 def _release_plan_row(props: dict[str, Any]) -> None:
@@ -476,6 +508,25 @@ def _feature_ids(feature: dict[str, Any]) -> list[str]:
         for value in (props.get("id"), props.get("node_id"), props.get("mainnodeid"), props.get("swsd_segment_id"))
         if value not in (None, "")
     )
+
+
+def _anchor_node_ids(rows: list[dict[str, Any]]) -> set[str]:
+    result: set[str] = set()
+    for row in rows:
+        props = row.get("properties") or {}
+        if not _truthy_anchor(props.get("is_anchor")):
+            continue
+        result.update(_feature_ids(row))
+    result.discard("")
+    return result
+
+
+def _truthy_anchor(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return value != 0
+    return str(value or "").strip().lower() in {"1", "true", "yes", "y"}
 
 
 def _ids(value: Any) -> list[str]:

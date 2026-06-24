@@ -71,6 +71,7 @@ SEGMENT_COVERAGE_BUFFER_M = 5.0
 SEGMENT_ROAD_COVERAGE_BUFFER_M = 2.0
 SEGMENT_CORRIDOR_BUFFER_M = 15.0
 SEGMENT_MAX_UNCOVERED_RATIO = 0.05
+SEGMENT_CORRIDOR_MANUAL_REVIEW_MAX_UNCOVERED_RATIO = 0.2
 SEGMENT_MIN_UNCOVERED_LENGTH_M = 20.0
 
 
@@ -574,19 +575,24 @@ def _segment_internal_rows(
                 reason = "segment_relation_road_scope_incomplete_but_final_graph_connected"
                 owner = "T06_step3_segment_relation"
         elif corridor_coverage_failed and relation_status != "retained_swsd":
-            status = "warn" if is_group_path_corridor else "fail"
-            reason = (
-                "group_path_corridor_segment_local_coverage_review"
-                if is_group_path_corridor
-                else "segment_corridor_coverage_dropped_after_replacement"
-            )
-            owner = "T06_step3_group_replacement_manual_audit" if is_group_path_corridor else "T06_step2_replacement_plan_or_group_selection"
             final_corridor_uncovered_ratio, final_corridor_uncovered_length = _segment_nearby_uncovered_metrics(
                 segment,
                 final_roads,
                 buffer_m=SEGMENT_CORRIDOR_BUFFER_M,
             )
-            if not _coverage_failed(final_corridor_uncovered_ratio, final_corridor_uncovered_length):
+            if is_group_path_corridor:
+                status = "warn"
+                reason = "group_path_corridor_segment_local_coverage_review"
+                owner = "T06_step3_group_replacement_manual_audit"
+            elif _coverage_manual_review(final_corridor_uncovered_ratio, final_corridor_uncovered_length):
+                status = "warn"
+                reason = "segment_corridor_coverage_manual_review_after_replacement"
+                owner = "T06_step2_visual_consistency_review"
+            else:
+                status = "fail"
+                reason = "segment_corridor_coverage_dropped_after_replacement"
+                owner = "T06_step2_replacement_plan_or_group_selection"
+            if status == "fail" and not _coverage_failed(final_corridor_uncovered_ratio, final_corridor_uncovered_length):
                 status = "warn"
                 reason = "segment_relation_road_scope_incomplete_but_final_corridor_preserved"
                 owner = "T06_step3_segment_relation"
@@ -1544,6 +1550,15 @@ def _coverage_failed(ratio: float | None, length: float | None) -> bool:
     if ratio is None or length is None:
         return False
     return ratio > SEGMENT_MAX_UNCOVERED_RATIO and length > SEGMENT_MIN_UNCOVERED_LENGTH_M
+
+
+def _coverage_manual_review(ratio: float | None, length: float | None) -> bool:
+    if ratio is None or length is None:
+        return False
+    return (
+        ratio <= SEGMENT_CORRIDOR_MANUAL_REVIEW_MAX_UNCOVERED_RATIO
+        and length > SEGMENT_MIN_UNCOVERED_LENGTH_M
+    )
 
 
 def _bounds_intersect(a: tuple[float, float, float, float], b: tuple[float, float, float, float]) -> bool:

@@ -293,6 +293,34 @@ def test_topology_audit_treats_retained_detached_swsd_road_as_carrier() -> None:
     assert road["final_undirected_connected"] is True
 
 
+def test_topology_audit_warns_when_corridor_gap_is_manual_review_scale() -> None:
+    rows = build_topology_connectivity_audit_rows(
+        swsd_segments=[_segment("s1", ["1", "2"], LineString([(0, 0), (200, 0)]), sgrade="0-1单")],
+        frcsd_roads=[_road("r1", "10", "20", LineString([(0, 0), (150, 0)]), direction=2)],
+        frcsd_nodes=[_node("10", Point(0, 0)), _node("20", Point(200, 0))],
+        segment_relation_rows=[
+            _relation(
+                "s1",
+                ["1", "2"],
+                ["r1"],
+                [
+                    {"swsd_node_id": "1", "frcsd_node_ids": ["10"], "mapping_status": "mapped"},
+                    {"swsd_node_id": "2", "frcsd_node_ids": ["20"], "mapping_status": "mapped"},
+                ],
+            )
+        ],
+        advance_right_audit_rows=[],
+        source_field_name="source",
+        swsd_source_value=2,
+        rcsd_source_value=1,
+    )
+
+    internal = [row["properties"] for row in rows if row["properties"]["audit_layer"] == "segment_internal_connectivity"][0]
+    assert internal["audit_status"] == "warn"
+    assert internal["audit_reason"] == "segment_corridor_coverage_manual_review_after_replacement"
+    assert internal["final_corridor_uncovered_ratio"] == 0.175
+
+
 def test_topology_audit_keeps_fail_when_final_corridor_is_still_uncovered() -> None:
     rows = build_topology_connectivity_audit_rows(
         swsd_segments=[_segment("s1", ["1", "2"], LineString([(0, 0), (100, 0)]), sgrade="0-1单")],

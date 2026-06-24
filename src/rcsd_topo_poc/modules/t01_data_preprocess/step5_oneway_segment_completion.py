@@ -58,6 +58,8 @@ FINAL_FALLBACK_PHASE_ID = "oneway-single-road-fallback"
 FINAL_FALLBACK_SEGMENT_GRADE = "0-2单"
 FINAL_FALLBACK_BIDIRECTIONAL_SEGMENT_GRADE = "0-2双"
 FINAL_FALLBACK_BUILD_SOURCE = "oneway_single_road_fallback"
+RESIDUAL_CORRIDOR_FALLBACK_PHASE_ID = "oneway-residual-corridor-fallback"
+RESIDUAL_CORRIDOR_FALLBACK_BUILD_SOURCE = "oneway_residual_corridor_fallback"
 SIDE_ATTACHMENT_MERGE_PHASE_ID = "side-attachment-merge"
 SIDE_ATTACHMENT_MERGE_BUILD_SOURCE = "side_attachment_merge"
 SIDE_ATTACHMENT_MAIN_SEGMENT_GRADE = "0-0双"
@@ -699,6 +701,228 @@ def _single_road_fallback_sgrade(road: RoadFeatureRecord) -> str:
     if road.direction in {0, 1}:
         return FINAL_FALLBACK_BIDIRECTIONAL_SEGMENT_GRADE
     return FINAL_FALLBACK_SEGMENT_GRADE
+
+
+def _build_candidate_incident_road_ids_by_node(
+    *,
+    roads: list[RoadFeatureRecord],
+    candidate_road_ids: set[str],
+    physical_to_semantic: dict[str, str],
+) -> dict[str, set[str]]:
+    incident_road_ids_by_node: dict[str, set[str]] = {}
+    for road in roads:
+        if road.road_id not in candidate_road_ids:
+            continue
+        endpoints = _road_semantic_endpoints(road, physical_to_semantic)
+        if endpoints is None:
+            continue
+        for node_id in endpoints:
+            incident_road_ids_by_node.setdefault(node_id, set()).add(road.road_id)
+    return incident_road_ids_by_node
+
+
+def _fallback_corridor_sgrade(
+    *,
+    road_ids: tuple[str, ...],
+    road_by_id: dict[str, RoadFeatureRecord],
+) -> str:
+    if all(road_by_id[road_id].direction in {0, 1} for road_id in road_ids):
+        return FINAL_FALLBACK_BIDIRECTIONAL_SEGMENT_GRADE
+    return FINAL_FALLBACK_SEGMENT_GRADE
+
+
+def _semantic_representative_kind_2(
+    *,
+    semantic_node_id: str,
+    mainnode_groups: dict[str, MainnodeGroup],
+    node_properties_map: dict[str, dict[str, Any]],
+) -> Optional[int]:
+    group = mainnode_groups.get(semantic_node_id)
+    if group is None:
+        return _coerce_int(node_properties_map.get(semantic_node_id, {}).get("kind_2"))
+    props = node_properties_map.get(group.representative_node_id, {})
+    return _coerce_int(props.get("kind_2"))
+
+
+def _trace_residual_corridor_from_seed(
+    *,
+    start_node_id: str,
+    first_edge: OnewayTraversalEdge,
+    outgoing_adjacency: dict[str, tuple[OnewayTraversalEdge, ...]],
+    incident_road_ids_by_node: dict[str, set[str]],
+    available_road_ids: set[str],
+    road_by_id: dict[str, RoadFeatureRecord],
+) -> Optional[_TraceResult]:
+    if first_edge.road_id not in available_road_ids:
+        return None
+
+    road_ids: list[str] = []
+    through_node_ids: list[str] = []
+    visited_nodes = {start_node_id}
+    visited_road_ids: set[str] = set()
+    current_edge = first_edge
+    current_node_id = first_edge.to_node_id
+
+    while True:
+        if current_edge.road_id not in available_road_ids or current_edge.road_id in visited_road_ids:
+            return None
+        if current_node_id in visited_nodes:
+            return None
+
+        road_ids.append(current_edge.road_id)
+        visited_road_ids.add(current_edge.road_id)
+        visited_nodes.add(current_node_id)
+
+        incident_road_ids = incident_road_ids_by_node.get(current_node_id, set())
+        if len(incident_road_ids) != 2:
+            return _TraceResult(
+                start_node_id=start_node_id,
+                end_node_id=current_node_id,
+                road_ids=tuple(road_ids),
+                through_node_ids=tuple(through_node_ids),
+            )
+
+        candidate_edges = tuple(
+            edge
+            for edge in outgoing_adjacency.get(current_node_id, ())
+            if edge.road_id in available_road_ids
+            and edge.road_id not in visited_road_ids
+            and edge.road_id != current_edge.road_id
+            and edge.to_node_id not in visited_nodes
+        )
+        if not candidate_edges:
+            return None
+
+        through_node_ids.append(current_node_id)
+        if len(candidate_edges) == 1:
+            current_edge = candidate_edges[0]
+        else:
+            current_edge = _select_min_angle_successor(
+                current_edge=current_edge,
+                candidate_edges=candidate_edges,
+                road_by_id=road_by_id,
+            )
+        current_node_id = current_edge.to_node_id
+
+
+def _run_residual_corridor_fallback(
+    *,
+    roads: list[RoadFeatureRecord],
+    node_properties_map: dict[str, dict[str, Any]],
+    road_properties_map: dict[str, dict[str, Any]],
+    mainnode_groups: dict[str, MainnodeGroup],
+    physical_to_semantic: dict[str, str],
+    used_segmentids: set[str],
+) -> tuple[list[OnewayBuiltSegment], dict[str, Any]]:
+    candidate_road_ids = _collect_final_fallback_candidate_road_ids(
+        roads=roads,
+        road_properties_map=road_properties_map,
+    )
+    incident_road_ids_by_node = _build_candidate_incident_road_ids_by_node(
+        roads=roads,
+        candidate_road_ids=candidate_road_ids,
+        physical_to_semantic=physical_to_semantic,
+    )
+    terminal_node_ids = {
+        node_id
+        for node_id, road_ids in incident_road_ids_by_node.items()
+        if len(road_ids) != 2
+    }
+    protected_seed_node_ids = {
+        node_id
+        for node_id in terminal_node_ids
+        if _semantic_representative_kind_2(
+            semantic_node_id=node_id,
+            mainnode_groups=mainnode_groups,
+            node_properties_map=node_properties_map,
+        )
+        == 128
+    }
+    outgoing_adjacency = _build_directed_adjacency(
+        roads=roads,
+        candidate_road_ids=candidate_road_ids,
+        physical_to_semantic=physical_to_semantic,
+    )
+    road_by_id = {road.road_id: road for road in roads}
+
+    seeds: list[tuple[str, OnewayTraversalEdge]] = []
+    for node_id in sorted(terminal_node_ids - protected_seed_node_ids, key=_sort_key):
+        for edge in outgoing_adjacency.get(node_id, ()):
+            seeds.append((node_id, edge))
+
+    assigned_road_ids: set[str] = set()
+    built_segments: list[OnewayBuiltSegment] = []
+    trace_fail_count = 0
+    single_road_trace_count = 0
+    for start_node_id, first_edge in seeds:
+        available_road_ids = candidate_road_ids - assigned_road_ids
+        if first_edge.road_id not in available_road_ids:
+            continue
+        trace = _trace_residual_corridor_from_seed(
+            start_node_id=start_node_id,
+            first_edge=first_edge,
+            outgoing_adjacency=outgoing_adjacency,
+            incident_road_ids_by_node=incident_road_ids_by_node,
+            available_road_ids=available_road_ids,
+            road_by_id=road_by_id,
+        )
+        if trace is None:
+            trace_fail_count += 1
+            continue
+        if len(trace.road_ids) < 2:
+            single_road_trace_count += 1
+            continue
+
+        sgrade = _fallback_corridor_sgrade(road_ids=trace.road_ids, road_by_id=road_by_id)
+        segmentid = _allocate_unique_segmentid(
+            a_node_id=trace.start_node_id,
+            b_node_id=trace.end_node_id,
+            used_segmentids=used_segmentids,
+            force_suffix=False,
+        )
+        for road_id in trace.road_ids:
+            props = road_properties_map[road_id]
+            set_road_segmentid(props, segmentid)
+            set_road_sgrade(props, sgrade)
+            props["segment_build_source"] = RESIDUAL_CORRIDOR_FALLBACK_BUILD_SOURCE
+            assigned_road_ids.add(road_id)
+        built_segments.append(
+            OnewayBuiltSegment(
+                phase_id=RESIDUAL_CORRIDOR_FALLBACK_PHASE_ID,
+                sgrade=sgrade,
+                start_node_id=trace.start_node_id,
+                end_node_id=trace.end_node_id,
+                segmentid=segmentid,
+                road_ids=trace.road_ids,
+                through_node_ids=trace.through_node_ids,
+                segment_build_source=RESIDUAL_CORRIDOR_FALLBACK_BUILD_SOURCE,
+            )
+        )
+
+    return built_segments, {
+        "phase_id": RESIDUAL_CORRIDOR_FALLBACK_PHASE_ID,
+        "sgrade": FINAL_FALLBACK_SEGMENT_GRADE,
+        "bidirectional_sgrade": FINAL_FALLBACK_BIDIRECTIONAL_SEGMENT_GRADE,
+        "candidate_road_count": len(candidate_road_ids),
+        "terminal_node_count": len(terminal_node_ids),
+        "protected_seed_node_count": len(protected_seed_node_ids),
+        "seed_count": len(seeds),
+        "built_segment_count": len(built_segments),
+        "new_segment_road_count": len(assigned_road_ids),
+        "oneway_built_road_count": sum(
+            1 for road_id in assigned_road_ids if road_by_id[road_id].direction in {2, 3}
+        ),
+        "bidirectional_built_road_count": sum(
+            1 for road_id in assigned_road_ids if road_by_id[road_id].direction in {0, 1}
+        ),
+        "road_kind_1_built_road_count": sum(
+            1
+            for road_id in assigned_road_ids
+            if _coerce_int(road_properties_map[road_id].get("road_kind")) == 1
+        ),
+        "trace_fail_count": trace_fail_count,
+        "single_road_trace_count": single_road_trace_count,
+    }
 
 
 def _parse_segment_pair_nodes(segmentid: str) -> Optional[tuple[str, str]]:
@@ -1574,6 +1798,16 @@ def run_step5_oneway_segment_completion(
     )
     all_built_segments.extend(dead_end_segments)
 
+    residual_corridor_segments, residual_corridor_summary = _run_residual_corridor_fallback(
+        roads=roads,
+        node_properties_map=node_properties_map,
+        road_properties_map=road_properties_map,
+        mainnode_groups=mainnode_groups,
+        physical_to_semantic=physical_to_semantic,
+        used_segmentids=used_segmentids,
+    )
+    all_built_segments.extend(residual_corridor_segments)
+
     final_fallback_segments, final_fallback_summary = _run_final_oneway_fallback(
         roads=roads,
         road_properties_map=road_properties_map,
@@ -1670,6 +1904,7 @@ def run_step5_oneway_segment_completion(
         "input_road_path": str(Path(step5_artifacts.refreshed_roads_path).resolve()),
         "phase_summaries": phase_summaries,
         "dead_end_summary": dead_end_summary,
+        "residual_corridor_fallback_summary": residual_corridor_summary,
         "final_fallback_summary": final_fallback_summary,
         "side_attachment_merge_summary": side_attachment_merge_summary,
         "built_segment_count": len(all_built_segments),
@@ -1678,12 +1913,15 @@ def run_step5_oneway_segment_completion(
             phase_summary["road_kind_1_built_road_count"] for phase_summary in phase_summaries
         )
         + dead_end_summary["road_kind_1_built_road_count"]
+        + residual_corridor_summary["road_kind_1_built_road_count"]
         + final_fallback_summary["road_kind_1_built_road_count"],
         "kind_2_128_terminate_count": len(kind_2_128_terminate_node_ids),
         "dead_end_segment_count": dead_end_summary["built_segment_count"],
         "dead_end_road_count": dead_end_summary["new_segment_road_count"],
         "dead_end_bidirectional_segment_count": dead_end_summary["bidirectional_segment_count"],
         "dead_end_oneway_pair_segment_count": dead_end_summary["oneway_pair_segment_count"],
+        "residual_corridor_fallback_segment_count": residual_corridor_summary["built_segment_count"],
+        "residual_corridor_fallback_road_count": residual_corridor_summary["new_segment_road_count"],
         "final_fallback_segment_count": final_fallback_summary["built_segment_count"],
         "final_fallback_road_count": final_fallback_summary["new_segment_road_count"],
         "side_attachment_merged_segment_count": side_attachment_merge_summary["merged_segment_count"],

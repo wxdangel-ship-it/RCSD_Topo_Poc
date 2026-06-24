@@ -45,6 +45,7 @@ from .replacement_plan import (
     build_replacement_plan_rows as _build_replacement_plan_rows,
 )
 from .single_graph_connectivity_retry import SingleGraphConnectivityRetry as _SGR
+from .single_direction_semantic_retry import semantic_endpoint_local_undirected_single_retry as _semantic_endpoint_local_single_retry
 from .step2_special_junctions import (
     annotate_special_junction_gate as _annotate_special_junction_gate,
     rcsd_graph_edges as _rcsd_graph_edges,
@@ -748,6 +749,27 @@ def run_t06_step2_extract_rcsd_segments(
             require_bidirectional=directionality == "dual",
             config=buffer_config,
         )
+        semantic_endpoint_source_reason = ""
+        semantic_endpoint_guarded = False
+        if directionality == "single" and not buffer_result.ok and buffer_result.reason == "rcsd_directed_path_missing":
+            semantic_endpoint_guarded, semantic_retry_result, semantic_endpoint_source_reason = _semantic_endpoint_local_single_retry(
+                buffer_extractor=buffer_extractor,
+                segment_geometry=segment.get("geometry"),
+                relation=relation,
+                optional_allowed_rcsd_nodes=optional_allowed_rcsd_nodes,
+                all_relation_base_ids=all_base_ids_for_segment,
+                unexpected_relation_base_ids=unexpected_base_ids_for_segment,
+                directed_swsd_pair_nodes=directed_swsd_pair_nodes,
+                directed_rcsd_pair_nodes=directed_rcsd_pair_nodes,
+                pair_nodes=pair_nodes,
+                road_ids=_roads,
+                swsd_roads=swsd_roads,
+                swsd_node_canonicalizer=swsd_node_canonicalizer,
+                special_swsd_junction_types=special_swsd_junction_types,
+                config=buffer_config,
+            )
+            if semantic_retry_result is not None:
+                buffer_result = semantic_retry_result
         junc_audit = _junc_attach_audit(
             junc_nodes=relation_junc_nodes,
             relation=relation,
@@ -758,6 +780,12 @@ def run_t06_step2_extract_rcsd_segments(
         )
         if buffer_result.ok:
             buffer_feature = feature(_buffer_segment_row(segment_id, buffer_result), buffer_result.geometry)
+            if semantic_endpoint_source_reason:
+                _annotate_adaptive_buffer_metadata(
+                    buffer_feature,
+                    distance_m=buffer_config.buffer_distance_m,
+                    source_reason=semantic_endpoint_source_reason,
+                )
             buffer_segment_rows.append(buffer_feature)
             candidate_feature = feature(
                 _buffer_candidate_row(
@@ -776,6 +804,12 @@ def run_t06_step2_extract_rcsd_segments(
                 ),
                 buffer_result.geometry,
             )
+            if semantic_endpoint_source_reason:
+                _annotate_adaptive_buffer_metadata(
+                    candidate_feature,
+                    distance_m=buffer_config.buffer_distance_m,
+                    source_reason=semantic_endpoint_source_reason,
+                )
             candidate_rows.append(candidate_feature)
             replaceable_rows.append(_buffer_replaceable_row(candidate_feature))
             if auto_pair_anchor_probe_result is not None and auto_pair_anchor_original_relation is not None:
@@ -846,7 +880,7 @@ def run_t06_step2_extract_rcsd_segments(
                 rcsd_roads=rcsd_roads,
                 rcsd_node_canonicalizer=rcsd_node_canonicalizer,
             )
-            auto_relation = _high_confidence_pair_anchor_relation(
+            auto_relation = None if semantic_endpoint_guarded else _high_confidence_pair_anchor_relation(
                 probe_result=probe_result,
                 relation=relation,
                 pair_anchor_diagnostic=pair_anchor_diagnostic,

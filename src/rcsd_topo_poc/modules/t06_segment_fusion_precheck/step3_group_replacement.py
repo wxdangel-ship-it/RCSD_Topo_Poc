@@ -203,6 +203,8 @@ def _member_scoped_assignment_road_ids(
     segment: dict[str, Any] | None,
     rcsd_road_by_id: dict[str, dict[str, Any]],
 ) -> list[str]:
+    if str(getattr(unit, "segment_id", "")) in set(assignment.source_segment_ids):
+        return assignment.rcsd_road_ids
     if unit.rcsd_road_ids:
         return []
     if segment is None:

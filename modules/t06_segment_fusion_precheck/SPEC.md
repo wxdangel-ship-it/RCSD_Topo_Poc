@@ -98,7 +98,7 @@ T06 消费 T01 SWSD Segment 与 T05 SWSD-RCSD 语义路口关系，构建 RCSDSe
 - Step1 final fusion units 只包含 `pair_nodes` 两端不同的 SWSD Segment；T01 `oneway_single_road_fallback` 生成的同一语义路口内部 self-pair fallback 必须进入 Step1 rejected 审计，不进入 Step2 替换分母。高等级 `0-0* / 0-1*` Segment 中，`has_evd=yes` 且 `is_anchor` 明确不可用的 `pair_nodes.kind_2=2048`、`junc_nodes.kind_2 in {16,2048}` 可被放行到 Step2 probe；`sgrade=0-2双` 且两个 `pair_nodes.kind_2` 均为 `2048` 的虚拟 T 型 pair 也可仅对 pair 主通道放行到 Step2 probe。上述放行都不被视为 anchor 成功，不回写 T05 relation。
 - `pair_nodes` 是 hard required，`junc_nodes` 是 optional 内部通过 + 侧向阻断。
 - retained RCSD graph 的叶子端点只能是 pair 对应 RCSD semantic nodes。
-- 单向 Segment 的 source/target 只能由 SWSDRoad directed graph 推导。
+- 单向 Segment 的 source/target 只能由 SWSDRoad directed graph 推导。若 Segment 物理端点落在 `kind_2 in {64,128}` 特殊语义路口的 subnode 上，不能把 `mainnodeid` 折叠后的 pair 顺序当成唯一方向事实；初始 RCSD 有向 corridor 失败时，不能翻转 Segment 方向，只允许在原方向本地 corridor 存在、且方向缺口全部落在 `formway & 128 != 0` 的短 connector / 提前右转 Road 上时受限释放。
 - 高等级受限重审不能修改 T05 pair anchor，且通过后必须记录 `adaptive_buffer_status / adaptive_buffer_distance_m / adaptive_buffer_source_reason`；single 的 `adaptive_buffer_source_reason` 以 `single_graph_first_longitudinal_retry:` 前缀标识。
 - buffer-only probe 若给出非 ambiguous、非人工复核的 `high_confidence_pair_anchor_candidate`，即使 T05 两端已有 anchor 但一端或两端被诊断为 `candidate_anchor_mismatch`，或 T05 两端 pair relation 均缺失但候选 pair 满足高置信安全门槛，也只允许在 T06 当前 Segment 内构造候选 effective relation 并重新执行正式 extractor；重试失败仍保持 rejected，不回写 T05 relation。
 - 单向 `multi_anchor_ambiguous` 只能在 probe 高置信、oriented RCSD pair 与 SWSD Segment 轴向端点侧位一致、且正式试算恰好一个 oriented candidate 通过时自动替换；多个候选通过、无候选通过或硬审计失败必须保持 rejected / 人工复核。
@@ -115,6 +115,7 @@ T06 消费 T01 SWSD Segment 与 T05 SWSD-RCSD 语义路口关系，构建 RCSDSe
 - 将 `candidate_anchor_mismatch` 直接视为 T05 relation 修正并绕过 Step2 buffer / direction / geometry / 叶子端点 / 特殊组硬审计。
 - 用高等级受限重审绕过 direction、geometry、叶子端点、额外 mapped semantic node 或特殊组硬审计。
 - 用 `pair_nodes` 字段顺序或 `segmentid A_B` 顺序推断单向 direction。
+- 在特殊语义路口 subnode 端点场景中，只按 `mainnodeid` 折叠后的语义节点方向判定单向 corridor，而不复核 Segment 内物理端点方向。
 - 绕过 Step2 replacement plan 对 rejected Segment 执行 Step3 替换。
 - 将 detached junc 的 `identity_retained_swsd` node map 解释成 RCSD 锚定成功，或因此回写 T05 relation。
 - 因 SWSD/RCSD 原始 `id` 冲突而重写 ID；应依赖 `source` 区分并输出 collision audit。

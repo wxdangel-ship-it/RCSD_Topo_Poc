@@ -15,9 +15,12 @@ TOPOLOGY_SUPPLEMENT_SPLIT_REASON = "topology_supplement_from_swsd"
 MIXED_REPLACEMENT_REQUIRES_SWSD_CARRIER_REASON = "mixed_replacement_requires_swsd_carrier"
 MIXED_ADVANCE_RIGHT_RETAINED_SPLIT_REASON = "mixed_advance_right_retained_swsd_side"
 FORMAL_REPLACEMENT_CORRIDOR_UNAVAILABLE_REASON = "formal_replacement_corridor_coverage_unavailable"
+GROUP_FORMAL_REPLACEMENT_CORRIDOR_UNAVAILABLE_REASON = "group_formal_replacement_corridor_coverage_unavailable"
 SEGMENT_CORRIDOR_BUFFER_M = 15.0
 SEGMENT_MAX_UNCOVERED_RATIO = 0.05
 SEGMENT_MIN_UNCOVERED_LENGTH_M = 20.0
+GROUP_SEGMENT_MAX_UNCOVERED_RATIO = 0.50
+GROUP_SEGMENT_MIN_UNCOVERED_LENGTH_M = 20.0
 EXISTING_ADVANCE_CORRIDOR_BUFFER_M = 5.0
 EXISTING_ADVANCE_CORRIDOR_MIN_COVERAGE_RATIO = 0.85
 
@@ -35,10 +38,34 @@ def exclude_retained_swsd_carriers_from_formal_replacements(
         "deactivated_segment_count": 0,
         "deactivated_swsd_road_count": 0,
         "corridor_unavailable_segment_count": 0,
+        "group_corridor_unavailable_group_count": 0,
+        "group_corridor_unavailable_segment_count": 0,
         "duplicate_unsegmented_advance_right_road_count": 0,
     }
     deactivated_segment_ids: set[str] = set()
+    group_unit_ids: set[str] = set()
+    for group_units in _path_corridor_group_units(units).values():
+        group_unit_ids.update(str(getattr(unit, "segment_id", "")) for unit in group_units)
+        if not _group_corridor_coverage_unavailable(
+            group_units,
+            swsd_road_by_id=swsd_road_by_id,
+            rcsd_road_by_id=rcsd_road_by_id,
+        ):
+            continue
+        stats["group_corridor_unavailable_group_count"] += 1
+        for unit in group_units:
+            segment_id = str(getattr(unit, "segment_id", ""))
+            if not segment_id or segment_id in deactivated_segment_ids:
+                continue
+            stats["deactivated_segment_count"] += 1
+            stats["corridor_unavailable_segment_count"] += 1
+            stats["group_corridor_unavailable_segment_count"] += 1
+            unit.status = "failed"
+            unit.reason = GROUP_FORMAL_REPLACEMENT_CORRIDOR_UNAVAILABLE_REASON
+            deactivated_segment_ids.add(segment_id)
     for unit in units:
+        if str(getattr(unit, "segment_id", "")) in group_unit_ids:
+            continue
         corridor_unavailable = _unit_corridor_coverage_unavailable(
             unit,
             swsd_road_by_id=swsd_road_by_id,
@@ -68,6 +95,55 @@ def exclude_retained_swsd_carriers_from_formal_replacements(
     stats["extra_removed_road_to_segments"] = extra_removed
     removed_road_to_segments.update(extra_removed)
     return stats
+
+
+def _path_corridor_group_units(units: list[Any]) -> dict[str, list[Any]]:
+    result: dict[str, list[Any]] = defaultdict(list)
+    for unit in units:
+        for plan_id in getattr(unit, "group_replacement_plan_ids", []) or []:
+            segment_id = str(getattr(unit, "segment_id", ""))
+            if segment_id and segment_id not in {str(getattr(item, "segment_id", "")) for item in result[str(plan_id)]}:
+                result[str(plan_id)].append(unit)
+    return dict(result)
+
+
+def _group_corridor_coverage_unavailable(
+    units: list[Any],
+    *,
+    swsd_road_by_id: dict[str, dict[str, Any]],
+    rcsd_road_by_id: dict[str, dict[str, Any]],
+) -> bool:
+    swsd_lines = [
+        line
+        for unit in units
+        for road_id in unique_preserve_order(
+            [
+                *(getattr(unit, "swsd_road_ids", []) or []),
+                *(getattr(unit, "retained_detached_swsd_road_ids", []) or []),
+            ]
+        )
+        for swsd_road in [swsd_road_by_id.get(str(road_id))]
+        for line in [_feature_line(swsd_road) if not _is_side_attachment_swsd_road(swsd_road) else None]
+        if line is not None and line.length > 0
+    ]
+    rcsd_lines = [
+        line
+        for road_id in unique_preserve_order(
+            road_id
+            for unit in units
+            for road_id in getattr(unit, "rcsd_road_ids", []) or []
+        )
+        for line in [_feature_line(rcsd_road_by_id.get(road_id)) if road_id in rcsd_road_by_id else None]
+        if line is not None and line.length > 0
+    ]
+    if not swsd_lines or not rcsd_lines:
+        return False
+    swsd_union = unary_union(swsd_lines)
+    uncovered_length = float(swsd_union.difference(unary_union(rcsd_lines).buffer(SEGMENT_CORRIDOR_BUFFER_M)).length)
+    return (
+        uncovered_length / float(swsd_union.length) > GROUP_SEGMENT_MAX_UNCOVERED_RATIO
+        and uncovered_length > GROUP_SEGMENT_MIN_UNCOVERED_LENGTH_M
+    )
 
 
 def _exclude_duplicate_unsegmented_advance_right_roads(

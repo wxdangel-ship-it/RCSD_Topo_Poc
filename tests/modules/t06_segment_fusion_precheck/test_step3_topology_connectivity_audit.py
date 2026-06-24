@@ -38,6 +38,7 @@ def _road(
     source: int = 1,
     direction: int = 2,
     formway: int | None = None,
+    extra_props: dict | None = None,
 ) -> dict:
     props = {
         "id": road_id,
@@ -48,6 +49,8 @@ def _road(
     }
     if formway is not None:
         props["formway"] = formway
+    if extra_props:
+        props.update(extra_props)
     return {
         "properties": props,
         "geometry": geometry,
@@ -191,6 +194,56 @@ def test_topology_audit_warns_when_relation_scope_misses_final_road_path() -> No
     assert road["final_undirected_connected"] is True
 
 
+def test_topology_audit_accepts_surface_split_original_rcsd_road() -> None:
+    rows = build_topology_connectivity_audit_rows(
+        swsd_segments=[_segment("s1", ["1", "2"], LineString([(0, 0), (20, 0)]))],
+        frcsd_roads=[
+            _road(
+                "r1__t06surfmid_1",
+                "10",
+                "30",
+                LineString([(0, 0), (10, 0)]),
+                extra_props={"t06_split_original_road_id": "r1"},
+            ),
+            _road(
+                "r1__t06surfmid_2",
+                "30",
+                "20",
+                LineString([(10, 0), (20, 0)]),
+                extra_props={"t06_split_original_road_id": "r1"},
+            ),
+        ],
+        frcsd_nodes=[
+            _node("10", Point(0, 0)),
+            _node("20", Point(20, 0)),
+            _node("30", Point(10, 0)),
+        ],
+        segment_relation_rows=[
+            _relation(
+                "s1",
+                ["1", "2"],
+                ["r1"],
+                [
+                    {"swsd_node_id": "1", "frcsd_node_ids": ["10"], "mapping_status": "mapped"},
+                    {"swsd_node_id": "2", "frcsd_node_ids": ["20"], "mapping_status": "mapped"},
+                ],
+            )
+        ],
+        advance_right_audit_rows=[],
+        source_field_name="source",
+        swsd_source_value=2,
+        rcsd_source_value=1,
+    )
+
+    formal = [
+        row["properties"]
+        for row in rows
+        if row["properties"]["audit_layer"] == "formal_replacement_source_consistency"
+    ][0]
+    assert formal["audit_status"] == "pass"
+    assert formal["audit_reason"] == "formal_replacement_uses_rcsd_source_only"
+
+
 def test_topology_audit_treats_retained_detached_swsd_road_as_carrier() -> None:
     rows = build_topology_connectivity_audit_rows(
         swsd_segments=[
@@ -266,6 +319,39 @@ def test_topology_audit_keeps_fail_when_final_corridor_is_still_uncovered() -> N
     assert internal["audit_status"] == "fail"
     assert internal["audit_reason"] == "segment_corridor_coverage_dropped_after_replacement"
     assert internal["final_corridor_uncovered_ratio"] == 1.0
+
+
+def test_topology_audit_warns_group_path_corridor_local_coverage_gap() -> None:
+    relation = _relation(
+        "s1",
+        ["1", "2"],
+        ["r1"],
+        [
+            {"swsd_node_id": "1", "frcsd_node_ids": ["10"], "mapping_status": "mapped"},
+            {"swsd_node_id": "2", "frcsd_node_ids": ["20"], "mapping_status": "mapped"},
+        ],
+    )
+    relation["properties"]["relation_reason"] = "group_path_corridor_replacement"
+    relation["properties"]["risk_flags"] = ["group_path_corridor_replacement"]
+
+    rows = build_topology_connectivity_audit_rows(
+        swsd_segments=[_segment("s1", ["1", "2"], LineString([(0, 0), (100, 0)]), sgrade="0-1单", roads=["sr1"])],
+        swsd_roads=[_road("sr1", "1", "2", LineString([(0, 0), (100, 0)]), source=2, direction=2)],
+        frcsd_roads=[_road("r1", "10", "20", LineString([(0, 0), (30, 0)]), direction=2)],
+        frcsd_nodes=[_node("10", Point(0, 0)), _node("20", Point(30, 0))],
+        segment_relation_rows=[relation],
+        advance_right_audit_rows=[],
+        source_field_name="source",
+        swsd_source_value=2,
+        rcsd_source_value=1,
+    )
+
+    internal = [row["properties"] for row in rows if row["properties"]["audit_layer"] == "segment_internal_connectivity"][0]
+    road = [row["properties"] for row in rows if row["properties"]["audit_layer"] == "segment_road_connectivity"][0]
+    assert internal["audit_status"] == "warn"
+    assert internal["audit_reason"] == "group_path_corridor_segment_local_coverage_review"
+    assert road["audit_status"] == "warn"
+    assert road["audit_reason"] == "group_path_corridor_road_local_coverage_review"
 
 
 def test_topology_audit_fails_final_road_with_missing_endpoint_node() -> None:

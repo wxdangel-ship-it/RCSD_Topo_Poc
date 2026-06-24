@@ -23,6 +23,7 @@
 | `architecture/04-evidence-and-audit.md` | manifest、summary、logs、T06 funnel、visual check、feedback 和 text bundle 审计。 |
 | `architecture/05-quality-requirements.md` | 质量要求、GIS / 拓扑 / 性能检查和回归要求。 |
 | `architecture/06-risks-and-technical-debt.md` | 当前风险、技术债和治理缺口。 |
+| `architecture/statistical-baseline.md` | 补充材料：2026-06-24 四 Case 端到端统计基线、冻结路径、T06 漏斗和后续复用边界。 |
 | `history/` | 历史阶段材料，只用于追溯。 |
 
 ## 3. 当前入口位置
@@ -46,6 +47,7 @@ bash scripts/t10_run_innernet_full_pipeline.sh
 5. `architecture/04-evidence-and-audit.md`
 6. `architecture/05-quality-requirements.md`
 7. `architecture/06-risks-and-technical-debt.md`
+8. 如需对照当前四 Case 冻结基线，再读 `architecture/statistical-baseline.md`
 
 ## 5. 边界提示
 

@@ -62,6 +62,40 @@ def test_buffer_extraction_keeps_intersecting_roads_and_excludes_advance_right()
     assert result.optional_allowed_rcsd_nodes == ["30"]
 
 
+def test_buffer_extraction_restores_advance_right_bridge_component() -> None:
+    extractor = BufferSegmentExtractor(
+        rcsd_road_features=[
+            _road("start_side", 10, 30, [(0, 0), (40, 0)], direction=2),
+            _road("terminal_bridge", 30, 31, [(40, 0), (60, 0)], direction=3, formway=128),
+            _road("terminal_side", 31, 20, [(60, 0), (100, 0)], direction=2),
+            _road("isolated_advance", 40, 41, [(40, 20), (50, 20)], formway=128),
+        ],
+        rcsd_node_features=[
+            _node(10, 0, 0),
+            _node(20, 100, 0),
+            _node(30, 40, 0),
+            _node(31, 60, 0),
+            _node(40, 40, 20),
+            _node(41, 50, 20),
+        ],
+    )
+
+    result = extractor.extract(
+        segment_geometry=LineString([(0, 0), (100, 0)]),
+        relation=RelationCheck(True, ["10", "20"], []),
+        optional_allowed_rcsd_nodes=[],
+        all_relation_base_ids={"10", "20"},
+        directed_pair_nodes=["10", "20"],
+        require_directed_pair=True,
+        config=BufferExtractionConfig(buffer_distance_m=25, min_road_overlap_ratio=0.2),
+    )
+
+    assert not result.ok
+    assert result.reason == "rcsd_directed_path_missing"
+    assert "terminal_bridge" in result.candidate_road_ids
+    assert result.excluded_advance_right_turn_road_ids == ["isolated_advance"]
+
+
 def test_buffer_extraction_prefers_reference_corridor_over_shortcut() -> None:
     extractor = BufferSegmentExtractor(
         rcsd_road_features=[

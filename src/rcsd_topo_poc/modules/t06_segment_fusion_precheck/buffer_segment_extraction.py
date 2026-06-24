@@ -375,6 +375,8 @@ def _restore_required_corridor_advance_roads(
             reference_geometry=reference_geometry,
         )
         corridor_edge_ids = set(corridor_path or [])
+        if corridor_path is None:
+            corridor_edge_ids = {edge.edge_id for edge in component_edges}
     else:
         corridor_edge_ids = {
             edge_id

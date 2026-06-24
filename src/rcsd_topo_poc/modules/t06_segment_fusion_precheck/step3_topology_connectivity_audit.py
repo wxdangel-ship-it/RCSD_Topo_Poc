@@ -298,6 +298,8 @@ def _formal_replacement_source_rows(
         for road_id in road_ids:
             matches = road_index.roads_for_id(road_id)
             if not matches:
+                if road_index.has_materialized_source_road(rcsd_source, road_id):
+                    continue
                 missing_ids.append(road_id)
                 continue
             rcsd_matches = [road for source, road in matches if source == rcsd_source]
@@ -494,6 +496,7 @@ def _segment_internal_rows(
             continue
         segment = segment_by_id.get(segment_id)
         relation_status = str(props.get("relation_status") or "")
+        is_group_path_corridor = _is_group_path_corridor_relation(props)
         directionality = directionality_from_sgrade((segment or {}).get("properties", {}).get("sgrade")) or "unknown"
         pair_nodes = _as_id_list(props.get("swsd_pair_nodes"))
         internal_attachment_refs = attachment_refs_by_node if relation_status != "retained_swsd" else {}
@@ -571,9 +574,13 @@ def _segment_internal_rows(
                 reason = "segment_relation_road_scope_incomplete_but_final_graph_connected"
                 owner = "T06_step3_segment_relation"
         elif corridor_coverage_failed and relation_status != "retained_swsd":
-            status = "fail"
-            reason = "segment_corridor_coverage_dropped_after_replacement"
-            owner = "T06_step2_replacement_plan_or_group_selection"
+            status = "warn" if is_group_path_corridor else "fail"
+            reason = (
+                "group_path_corridor_segment_local_coverage_review"
+                if is_group_path_corridor
+                else "segment_corridor_coverage_dropped_after_replacement"
+            )
+            owner = "T06_step3_group_replacement_manual_audit" if is_group_path_corridor else "T06_step2_replacement_plan_or_group_selection"
             final_corridor_uncovered_ratio, final_corridor_uncovered_length = _segment_nearby_uncovered_metrics(
                 segment,
                 final_roads,
@@ -664,6 +671,7 @@ def _segment_road_rows(
         if not segment_id or relation_status in {"", "failed", "retained_swsd"}:
             continue
         segment_props = dict((segment or {}).get("properties") or {})
+        is_group_path_corridor = _is_group_path_corridor_relation(props)
         semantic_node_ids = set(unique_preserve_order([*_as_id_list(segment_props.get("pair_nodes")), *_as_id_list(segment_props.get("junc_nodes"))]))
         pair_node_ids = set(_as_id_list(props.get("swsd_pair_nodes")))
         selected_roads = _relation_roads(props, road_index)
@@ -727,9 +735,13 @@ def _segment_road_rows(
             reason = "segment_road_connectivity_passed"
             owner = ""
             if missing_mapping_count:
-                status = "fail"
-                reason = "segment_road_endpoint_mapping_missing"
-                owner = "T06_step3_segment_relation"
+                status = "warn" if is_group_path_corridor else "fail"
+                reason = (
+                    "group_path_corridor_road_endpoint_mapping_review"
+                    if is_group_path_corridor
+                    else "segment_road_endpoint_mapping_missing"
+                )
+                owner = "T06_step3_group_replacement_manual_audit" if is_group_path_corridor else "T06_step3_segment_relation"
             elif not undirected_connected:
                 status = "fail"
                 reason = "segment_road_endpoints_not_connected"
@@ -753,9 +765,13 @@ def _segment_road_rows(
                     reason = "segment_road_relation_scope_incomplete_but_final_graph_connected"
                     owner = "T06_step3_segment_relation"
             elif corridor_coverage_failed:
-                status = "fail"
-                reason = "segment_road_corridor_coverage_dropped_after_replacement"
-                owner = "T06_step2_replacement_plan_or_group_selection"
+                status = "warn" if is_group_path_corridor else "fail"
+                reason = (
+                    "group_path_corridor_road_local_coverage_review"
+                    if is_group_path_corridor
+                    else "segment_road_corridor_coverage_dropped_after_replacement"
+                )
+                owner = "T06_step3_group_replacement_manual_audit" if is_group_path_corridor else "T06_step2_replacement_plan_or_group_selection"
                 final_corridor_uncovered_ratio, final_corridor_uncovered_length = _segment_nearby_uncovered_metrics(
                     swsd_road,
                     final_roads,
@@ -1633,6 +1649,13 @@ def _is_replaced_relation(props: dict[str, Any] | None) -> bool:
     if props is None:
         return False
     return str(props.get("relation_status") or "") != "retained_swsd"
+
+
+def _is_group_path_corridor_relation(props: dict[str, Any]) -> bool:
+    return (
+        props.get("relation_reason") == "group_path_corridor_replacement"
+        or "group_path_corridor_replacement" in _as_id_list(props.get("risk_flags"))
+    )
 
 
 def _max_pairwise_distance(points: list[Point]) -> float | None:

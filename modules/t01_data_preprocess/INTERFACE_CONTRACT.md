@@ -351,7 +351,7 @@
     - `leaf_node_id = <leaf semantic node id>`
     - `dead_end_bundle_type in {bidirectional, reciprocal_oneway}`
 - final single-road fallback：
-  - 在常规单向 terminate-to-terminate 与 dead-end leaf 补段之后、`Step6` 之前执行
+  - 在常规单向 terminate-to-terminate、dead-end leaf 与 residual corridor fallback 之后、`Step6` 之前执行
   - 处理仍未构段、`direction in {0,1,2,3}`、非 `formway = 128`、非右转专用道，且两端可解析到 semantic endpoint 的 road
   - 不放宽前序 phase terminate 规则；phase 不闭合、端点 phase 不一致、同 semantic group residual road，或未满足 dead-end leaf 的双向 residual road，只在本阶段兜底
   - 每条 road 形成一个单 road Segment
@@ -360,6 +360,14 @@
   - 新构成 road 写入审计 / 发布保护字段：
     - `segment_build_source = oneway_single_road_fallback`
   - `oneway_segment_summary.json` 必须输出 `final_fallback_segment_count`、`final_fallback_road_count`、`oneway_built_road_count` 与 `bidirectional_built_road_count`
+- residual corridor fallback：
+  - 在 dead-end leaf 之后、final single-road fallback 之前执行
+  - 处理仍未构段、`direction in {0,1,2,3}`、非 `formway = 128`、非右转专用道，且两端可解析到 semantic endpoint 的 residual road
+  - 只穿越当前 residual candidate 图中 incident road 数为 2 的 semantic node；遇到真实多度点、叶子点、不可解析端点或已构段 road 即停止
+  - 只使用当前 working roads 的有效 incident 关系判定度数，不使用 `node_lid / cross_lid` 历史字符串
+  - 新构成 road 写入审计 / 发布保护字段：
+    - `segment_build_source = oneway_residual_corridor_fallback`
+  - `oneway_segment_summary.json` 必须输出 `residual_corridor_fallback_summary`、`residual_corridor_fallback_segment_count` 与 `residual_corridor_fallback_road_count`
 - final side-attachment merge：
   - 在 final single-road fallback 之后、`Step6` 之前执行
   - 主 Segment 必须为当前已构成的 `sgrade = 0-0双`

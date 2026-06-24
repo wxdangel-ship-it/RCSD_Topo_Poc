@@ -1051,6 +1051,8 @@ def _retain_topology_supplement_swsd_roads(
     retained_count = 0
     affected_unit_count = 0
     for unit in units:
+        if unit.group_replacement_plan_ids and unit.segment_id in set(unit.group_replacement_source_segment_ids):
+            continue
         semantic_nodes = set(unique_preserve_order([*unit.pair_nodes, *unit.junc_nodes]))
         if not semantic_nodes:
             continue

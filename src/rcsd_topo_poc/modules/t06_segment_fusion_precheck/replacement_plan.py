@@ -8,6 +8,7 @@ from shapely.ops import unary_union
 
 from .graph_builders import NodeCanonicalizer
 from .parsing import ParseError, normalize_id, parse_id_list, unique_preserve_order
+from .road_attributes import is_advance_right_turn_road
 from .schemas import feature
 
 
@@ -946,7 +947,14 @@ def _is_junction_local_conflict_road(
         ]
     }
     mapped_semantic_nodes.discard("")
-    return bool(endpoints & mapped_semantic_nodes)
+    if endpoints & mapped_semantic_nodes:
+        return True
+    retained_nodes = {
+        _canonicalize_node_id(rcsd_node_canonicalizer, node_id)
+        for node_id in _parse_list(props.get("retained_node_ids"))
+    }
+    retained_nodes.discard("")
+    return is_advance_right_turn_road(road_props) and bool(endpoints & retained_nodes)
 
 
 def _canonicalize_node_id(canonicalizer: NodeCanonicalizer, value: Any) -> str:

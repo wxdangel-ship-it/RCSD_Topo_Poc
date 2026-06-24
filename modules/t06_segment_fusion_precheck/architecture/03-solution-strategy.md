@@ -201,7 +201,9 @@ T06 采用三步链路：
 
 - Step3 优先消费 replacement plan，只执行 `plan_status=ready` 的 action，不处理 rejected，也不重新搜索 RCSD Segment。
 - 以 `swsd_segment_id` 建立替换单元，记录 SWSD `pair_nodes / junc_nodes / roads` 与 retained RCSD road/node。
-- `execution_scope=standard_segment` 执行普通 Segment 替换；`execution_scope=special_junction_group_internal` 引入特殊路口组内部 RCSD Road/Node；`execution_scope=path_corridor_group` 按 Step2 已验证的 group path corridor 合并生成组级替换单元。
+- `execution_scope=standard_segment` 执行普通 Segment 替换；`execution_scope=special_junction_group_internal` 引入特殊路口组内部 RCSD Road/Node；`execution_scope=path_corridor_group` 按 Step2 已验证的 group path corridor 合并生成组级原子替换单元。
+- `path_corridor_group` 的 source carrier 使用 Step2 group probe / replacement plan 发布的完整 group `rcsd_road_ids`；非 source member 可继续按成员几何做作用域过滤，避免远距离 RCSD Road 误挂到成员 relation。
+- Step3 不重新判定 Step2 ready group plan 的可替换性。若后续 topology / coverage 兜底仍发现问题，必须按整组 SWSD corridor 与整组 RCSD road union 聚合审计；失败时整组失败或整组回退，并写明 group 级原因，不能让 source carrier 失败而同组其它 member 成功替换。
 - 删除被替换 SWSDRoad；若 Step1/Step2 replaceable 的 final `junc_nodes` 少于 T01 原始 `junc_nodes`，detached junc 触达的原 SWSDRoad 以 `source=2` 保留为局部 restriction carrier，并在 Segment relation 中记录 `replaced+retained_swsd`。
 - Segment relation 中的 `frcsd_road_ids` 只表达正式 RCSD 替换道路。保留 SWSD carrier、SWSD 派生 topology supplement 和提前右转挂接补丁必须通过 `relation_status`、`retained_detached_swsd_road_ids`、风险标记和审计层表达，不能混入正式替换道路清单。
 - SWSDNode 只删除被替换 SWSDRoad 的端点 Node，不删除整个 SWSD 语义路口组。

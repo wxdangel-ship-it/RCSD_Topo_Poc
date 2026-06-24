@@ -9,10 +9,15 @@ from shapely.geometry import LineString, Point, Polygon
 from rcsd_topo_poc.modules.t06_segment_fusion_precheck.io import read_features, write_feature_triplet
 from rcsd_topo_poc.modules.t06_segment_fusion_precheck.schemas import (
     STEP2_FAILURE_BUSINESS_AUDIT_STEM,
+    STEP2_REPLACEMENT_PLAN_STEM,
     STEP3_FRCSD_NODE_STEM,
+    STEP3_SWSD_FRCSD_SEGMENT_RELATION_STEM,
 )
 from rcsd_topo_poc.modules.t06_segment_fusion_precheck.step3_surface_topology_audit import (
     SURFACE_TOPOLOGY_AUDIT_STEM,
+    _apply_step2_plan_relation_node_map_updates,
+    _load_step2_dropped_junc_nodes,
+    _load_step2_optional_junc_mappings,
     run_surface_topology_postprocess,
 )
 from rcsd_topo_poc.modules.t06_segment_fusion_precheck.step3_topology_connectivity_audit import (
@@ -770,14 +775,78 @@ def test_surface_topology_postprocess_uses_step2_optional_junc_one_to_one_mappin
         apply_closure=True,
     )
 
-    assert summary["surface_topology_step2_junc_1v1_closed_count"] == 1
+    assert summary["surface_topology_step2_junc_1v1_closed_count"] == 0
     assert summary["surface_topology_relation_node_map_update_count"] == 1
-    nodes = {item["properties"]["id"]: item["properties"] for item in read_features(step_root / "t06_frcsd_node.gpkg")}
-    assert str(nodes["3"]["mainnodeid"]) == "300"
     relation = read_features(step_root / "t06_step3_swsd_frcsd_segment_relation.gpkg")[0]["properties"]
     node_map = json.loads(relation["swsd_to_frcsd_node_map"])
     assert node_map[0]["frcsd_node_ids"] == ["30"]
-    assert node_map[0]["mapping_status"] == "step2_junc_1v1_fallback"
+    assert node_map[0]["mapping_status"] == "step2_optional_junc_plan_map"
+
+
+def test_step2_plan_relation_preprocess_realigns_optional_and_dropped_junctions(tmp_path: Path) -> None:
+    step_root = tmp_path / "step3_segment_replacement"
+    step_root.mkdir()
+    step2_root = tmp_path / "step2_extract_rcsd_segments"
+    step2_root.mkdir()
+
+    write_feature_triplet(
+        step_root=step_root,
+        stem=STEP3_SWSD_FRCSD_SEGMENT_RELATION_STEM,
+        fieldnames=["swsd_segment_id", "relation_status", "swsd_to_frcsd_node_map", "risk_flags"],
+        features=[
+            _feature(
+                {
+                    "swsd_segment_id": "s1",
+                    "relation_status": "replaced",
+                    "swsd_to_frcsd_node_map": [
+                        {"swsd_node_id": "drop", "frcsd_node_ids": ["r1"], "node_role": "junc_node", "mapping_status": "mapped"},
+                        {"swsd_node_id": "a", "frcsd_node_ids": ["r2"], "node_role": "junc_node", "mapping_status": "mapped"},
+                        {"swsd_node_id": "b", "frcsd_node_ids": ["r3"], "node_role": "junc_node", "mapping_status": "mapped"},
+                    ],
+                    "risk_flags": [],
+                },
+                LineString([(0, 0), (1, 0)]),
+            )
+        ],
+    )
+    write_feature_triplet(
+        step_root=step2_root,
+        stem=STEP2_REPLACEMENT_PLAN_STEM,
+        fieldnames=[
+            "swsd_segment_id",
+            "optional_junc_nodes",
+            "optional_junc_rcsd_nodes",
+            "dropped_junc_nodes",
+        ],
+        features=[
+            _feature(
+                {
+                    "swsd_segment_id": "s1",
+                    "optional_junc_nodes": ["a", "b"],
+                    "optional_junc_rcsd_nodes": ["r1", "r2"],
+                    "dropped_junc_nodes": ["drop"],
+                },
+                LineString([(0, 0), (1, 0)]),
+            )
+        ],
+    )
+
+    updated = _apply_step2_plan_relation_node_map_updates(
+        step_root=step_root,
+        step2_junc_mappings=_load_step2_optional_junc_mappings(step_root),
+        step2_dropped_junc_nodes=_load_step2_dropped_junc_nodes(step_root),
+    )
+
+    assert updated == 1
+    relation = read_features(step_root / "t06_step3_swsd_frcsd_segment_relation.gpkg")[0]["properties"]
+    node_map = {item["swsd_node_id"]: item for item in json.loads(relation["swsd_to_frcsd_node_map"])}
+    assert node_map["drop"]["frcsd_node_ids"] == ["drop"]
+    assert node_map["drop"]["mapping_status"] == "identity_dropped_junc_not_consumed"
+    assert node_map["a"]["frcsd_node_ids"] == ["r1"]
+    assert node_map["a"]["mapping_status"] == "step2_optional_junc_plan_map"
+    assert node_map["b"]["frcsd_node_ids"] == ["r2"]
+    assert "dropped_junc_retained_swsd_node_map" in json.loads(relation["risk_flags"])
+    assert "step2_optional_junc_plan_node_map" in json.loads(relation["risk_flags"])
 
 
 def test_surface_topology_postprocess_remaps_surface_nearest_multi_candidate(tmp_path: Path) -> None:

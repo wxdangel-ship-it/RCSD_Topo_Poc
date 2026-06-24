@@ -531,6 +531,49 @@ def test_visual_consistency_controlled_release_does_not_compete_with_primary_roa
     assert "conflict_rcsd_road_ids=['rr_shared']" in by_segment["s_visual"]["notes"]
 
 
+def test_visual_consistency_prunes_junction_local_connector_conflict() -> None:
+    rows = build_replacement_plan_rows(
+        replaceable_rows=[
+            _feature(
+                {
+                    "swsd_segment_id": "primary",
+                    "replacement_strategy": "buffer_segment_extraction",
+                    "swsd_pair_nodes": ["p1", "p2"],
+                    "rcsd_pair_nodes": ["10", "11"],
+                    "rcsd_road_ids": ["rr_connector"],
+                    "retained_node_ids": ["10", "11"],
+                }
+            ),
+            _feature(
+                {
+                    "swsd_segment_id": "visual",
+                    "replacement_strategy": "buffer_segment_extraction",
+                    "geometry_buffer_coverage_issue": "retained_geometry_outside_swsd_visual_consistency_scope",
+                    "swsd_uncovered_by_rcsd_length_m": 0.0,
+                    "swsd_uncovered_by_rcsd_ratio": 0.0,
+                    "swsd_pair_nodes": ["a", "b"],
+                    "swsd_junc_nodes": ["j1"],
+                    "rcsd_pair_nodes": ["20", "21"],
+                    "rcsd_junc_nodes": ["10"],
+                    "rcsd_road_ids": ["rr_body", "rr_connector"],
+                    "retained_node_ids": ["20", "21", "10"],
+                }
+            ),
+        ],
+        special_group_rows=[],
+        group_replacement_audit_rows=[],
+        rcsd_roads=[_road("rr_connector", 10, 11), _road("rr_body", 20, 21)],
+        rcsd_node_canonicalizer=NodeCanonicalizer({}, frozenset({"10", "11", "20", "21"})),
+        swsd_segments=[_feature({"id": "visual", "pair_nodes": ["a", "b"], "junc_nodes": ["j1"]})],
+    )
+
+    by_segment = {row["properties"]["swsd_segment_id"]: row["properties"] for row in rows}
+    assert by_segment["visual"]["plan_status"] == "ready"
+    assert by_segment["visual"]["rcsd_road_ids"] == ["rr_body"]
+    assert "visual_consistency_junction_connector_conflict_pruned" in by_segment["visual"]["risk_flags"]
+    assert "pruned_junction_local_conflict_rcsd_road_ids=['rr_connector']" in by_segment["visual"]["notes"]
+
+
 def test_standard_visual_consistency_high_deviation_requires_manual_review() -> None:
     rows = build_replacement_plan_rows(
         replaceable_rows=[
@@ -794,6 +837,65 @@ def test_replacement_plan_blocks_replacement_plans_mapping_same_junction_to_dive
     assert by_segment["s2"]["plan_status"] == "blocked"
     assert by_segment["s1"]["source_reason"] == "junction_alignment_between_replacement_plans_diverged"
     assert by_segment["s2"]["source_reason"] == "junction_alignment_between_replacement_plans_diverged"
+
+
+def test_replacement_plan_uses_optional_junction_nodes_after_dropped_junction() -> None:
+    rows = build_replacement_plan_rows(
+        replaceable_rows=[
+            _feature(
+                {
+                    "swsd_segment_id": "cross_segment",
+                    "replacement_strategy": "buffer_segment_extraction",
+                    "swsd_pair_nodes": ["n_shared", "n2"],
+                    "rcsd_pair_nodes": ["r_shared", "r2"],
+                    "rcsd_road_ids": ["rr1"],
+                }
+            ),
+            _feature(
+                {
+                    "swsd_segment_id": "main_segment",
+                    "replacement_strategy": "buffer_segment_extraction",
+                    "swsd_pair_nodes": ["m1", "m2"],
+                    "swsd_junc_nodes": ["dropped", "n_shared", "n_other"],
+                    "optional_junc_nodes": ["n_shared", "n_other"],
+                    "dropped_junc_nodes": ["dropped"],
+                    "rcsd_pair_nodes": ["rm1", "rm2"],
+                    "rcsd_junc_nodes": ["r_shared", "r_other"],
+                    "optional_junc_rcsd_nodes": ["r_shared", "r_other"],
+                    "rcsd_road_ids": ["rr2"],
+                }
+            ),
+        ],
+        special_group_rows=[],
+        group_replacement_audit_rows=[],
+        rcsd_roads=[],
+        rcsd_node_canonicalizer=NodeCanonicalizer({}, frozenset()),
+        swsd_segments=[
+            _feature({"id": "cross_segment", "pair_nodes": ["n_shared", "n2"]}),
+            _feature({"id": "main_segment", "pair_nodes": ["m1", "m2"], "junc_nodes": ["dropped", "n_shared", "n_other"]}),
+        ],
+        swsd_nodes=[
+            _node("n_shared", 0, 0),
+            _node("n2", 0, 10),
+            _node("m1", 20, 0),
+            _node("m2", 20, 10),
+            _node("dropped", 50, 0),
+            _node("n_other", 100, 0),
+        ],
+        rcsd_nodes=[
+            _node("r_shared", 0, 0),
+            _node("r2", 0, 10),
+            _node("rm1", 20, 0),
+            _node("rm2", 20, 10),
+            _node("r_other", 100, 0),
+        ],
+    )
+
+    by_segment = {row["properties"]["swsd_segment_id"]: row["properties"] for row in rows}
+    assert by_segment["cross_segment"]["plan_status"] == "ready"
+    assert by_segment["main_segment"]["plan_status"] == "ready"
+    assert "junction_alignment_between_replacement_plans_diverged" not in by_segment["cross_segment"]["risk_flags"]
+    assert "junction_alignment_between_replacement_plans_diverged" not in by_segment["main_segment"]["risk_flags"]
 
 
 def test_replacement_plan_keeps_diverged_junction_ready_when_pair_anchor_bridge_connects_nodes() -> None:

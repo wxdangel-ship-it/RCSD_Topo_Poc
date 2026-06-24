@@ -16,6 +16,9 @@ MAX_CONTROLLED_VISUAL_SWSD_UNCOVERED_LENGTH_M = 20.0
 MAX_CONTROLLED_VISUAL_HIGH_DEVIATION_RATIO = 0.5
 MAX_RETAINED_JUNCTION_ATTACHMENT_GAP_M = 20.0
 MAX_REPLACED_JUNCTION_MAPPING_DIVERGENCE_M = 5.0
+MAX_JUNCTION_LOCAL_CONFLICT_ROAD_M = 30.0
+VISUAL_CONFLICT_SWSD_BUFFER_M = 5.0
+MIN_VISUAL_CONFLICT_PRUNE_OUTSIDE_RATIO = 0.5
 VISUAL_CONSISTENCY_STRATEGIES = {
     "visual_consistency_high_confidence_repair",
     "visual_consistency_controlled_release",
@@ -71,7 +74,12 @@ def build_replacement_plan_rows(
         )
     )
     rows.extend(_special_group_plan_rows(special_group_rows))
-    _apply_visual_consistency_road_conflict_gate(rows)
+    _apply_visual_consistency_road_conflict_gate(
+        rows,
+        rcsd_road_by_id=rcsd_road_by_id,
+        rcsd_node_canonicalizer=rcsd_node_canonicalizer,
+        swsd_segments=swsd_segments or [],
+    )
     _apply_visual_consistency_high_deviation_gate(rows)
     _apply_visual_consistency_coverage_gate(rows)
     for _ in range(2):
@@ -293,6 +301,10 @@ def _standard_plan_rows(
                     "swsd_junc_nodes": _parse_list(props.get("swsd_junc_nodes")),
                     "junc_kind2_exempt_nodes": _parse_list(props.get("junc_kind2_exempt_nodes")),
                     "detached_junc_nodes": _parse_list(props.get("detached_junc_nodes")),
+                    "optional_junc_nodes": _parse_list(props.get("optional_junc_nodes")),
+                    "optional_junc_rcsd_nodes": _parse_list(props.get("optional_junc_rcsd_nodes")),
+                    "dropped_junc_nodes": _parse_list(props.get("dropped_junc_nodes")),
+                    "dropped_junc_relation_nodes": _parse_list(props.get("dropped_junc_relation_nodes")),
                     "rcsd_pair_nodes": _parse_list(props.get("rcsd_pair_nodes")),
                     "rcsd_junc_nodes": _parse_list(props.get("rcsd_junc_nodes")),
                     "rcsd_road_ids": rcsd_road_ids,
@@ -444,6 +456,10 @@ def _visual_consistency_repair_plan_rows(
                     "swsd_junc_nodes": _parse_list(audit_props.get("swsd_junc_nodes")),
                     "junc_kind2_exempt_nodes": _parse_list(rejected_props.get("junc_kind2_exempt_nodes")),
                     "detached_junc_nodes": [],
+                    "optional_junc_nodes": _parse_list(audit_props.get("optional_junc_nodes")),
+                    "optional_junc_rcsd_nodes": _parse_list(audit_props.get("optional_junc_rcsd_nodes")),
+                    "dropped_junc_nodes": _parse_list(audit_props.get("dropped_junc_nodes")),
+                    "dropped_junc_relation_nodes": _parse_list(audit_props.get("dropped_junc_relation_nodes")),
                     "rcsd_pair_nodes": _parse_list(audit_props.get("rcsd_pair_nodes"))
                     or _parse_list(props.get("required_rcsd_nodes")),
                     "rcsd_junc_nodes": _parse_list(audit_props.get("rcsd_junc_nodes")),
@@ -468,7 +484,13 @@ def _visual_consistency_repair_plan_rows(
     return rows
 
 
-def _apply_visual_consistency_road_conflict_gate(rows: list[dict[str, Any]]) -> None:
+def _apply_visual_consistency_road_conflict_gate(
+    rows: list[dict[str, Any]],
+    *,
+    rcsd_road_by_id: dict[str, dict[str, Any]],
+    rcsd_node_canonicalizer: NodeCanonicalizer,
+    swsd_segments: list[dict[str, Any]],
+) -> None:
     primary_road_owner: dict[str, str] = {}
     for row in rows:
         props = row.get("properties") or {}
@@ -482,12 +504,61 @@ def _apply_visual_consistency_road_conflict_gate(rows: list[dict[str, Any]]) -> 
     if not primary_road_owner:
         return
 
+    swsd_geometry_by_segment = _geometry_by_segment_id(swsd_segments)
     for row in rows:
         props = row.get("properties") or {}
         if not _is_replace_ready_plan(props) or not _is_visual_consistency_plan(props):
             continue
-        conflict_road_ids = [road_id for road_id in _parse_list(props.get("rcsd_road_ids")) if road_id in primary_road_owner]
+        rcsd_road_ids = _parse_list(props.get("rcsd_road_ids"))
+        conflict_road_ids = [road_id for road_id in rcsd_road_ids if road_id in primary_road_owner]
         if not conflict_road_ids:
+            continue
+        swsd_geometry = swsd_geometry_by_segment.get(_safe_id(props.get("swsd_segment_id")))
+        pruned_road_ids = [
+            road_id
+            for road_id in conflict_road_ids
+            if _is_prunable_junction_local_conflict(
+                props,
+                road_id,
+                swsd_geometry=swsd_geometry,
+                rcsd_road_by_id=rcsd_road_by_id,
+                rcsd_node_canonicalizer=rcsd_node_canonicalizer,
+            )
+        ]
+        if pruned_road_ids:
+            props["rcsd_road_ids"] = [road_id for road_id in rcsd_road_ids if road_id not in set(pruned_road_ids)]
+            props["risk_flags"] = unique_preserve_order(
+                [
+                    *_parse_list(props.get("risk_flags")),
+                    "visual_consistency_junction_connector_conflict_pruned",
+                ]
+            )
+            notes = str(props.get("notes") or "")
+            suffix = f"pruned_junction_local_conflict_rcsd_road_ids={pruned_road_ids}"
+            props["notes"] = f"{notes}; {suffix}" if notes else suffix
+        remaining_conflict_road_ids = [road_id for road_id in conflict_road_ids if road_id not in set(pruned_road_ids)]
+        blocking_conflict_road_ids = [
+            road_id
+            for road_id in remaining_conflict_road_ids
+            if not _is_junction_local_conflict_road(
+                props,
+                road_id,
+                rcsd_road_by_id=rcsd_road_by_id,
+                rcsd_node_canonicalizer=rcsd_node_canonicalizer,
+            )
+        ]
+        if remaining_conflict_road_ids and not blocking_conflict_road_ids:
+            props["risk_flags"] = unique_preserve_order(
+                [
+                    *_parse_list(props.get("risk_flags")),
+                    "visual_consistency_shared_junction_connector_conflict",
+                ]
+            )
+            notes = str(props.get("notes") or "")
+            suffix = f"accepted_shared_junction_connector_rcsd_road_ids={remaining_conflict_road_ids}"
+            props["notes"] = f"{notes}; {suffix}" if notes else suffix
+            continue
+        if pruned_road_ids and not blocking_conflict_road_ids:
             continue
         _block_plan_row(
             props,
@@ -495,8 +566,87 @@ def _apply_visual_consistency_road_conflict_gate(rows: list[dict[str, Any]]) -> 
             risk_flag="visual_consistency_road_conflict_with_primary_replacement_plan",
         )
         notes = str(props.get("notes") or "")
-        suffix = f"conflict_rcsd_road_ids={conflict_road_ids}"
+        suffix = f"conflict_rcsd_road_ids={blocking_conflict_road_ids or conflict_road_ids}"
         props["notes"] = f"{notes}; {suffix}" if notes else suffix
+
+
+def _geometry_by_segment_id(swsd_segments: list[dict[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for segment in swsd_segments:
+        props = dict(segment.get("properties") or {})
+        segment_id = _safe_id(props.get("id") or props.get("swsd_segment_id"))
+        geometry = segment.get("geometry")
+        if segment_id and geometry is not None and not getattr(geometry, "is_empty", False):
+            result.setdefault(segment_id, geometry)
+    return result
+
+
+def _is_prunable_junction_local_conflict(
+    props: dict[str, Any],
+    road_id: str,
+    *,
+    swsd_geometry: Any,
+    rcsd_road_by_id: dict[str, dict[str, Any]],
+    rcsd_node_canonicalizer: NodeCanonicalizer,
+) -> bool:
+    if swsd_geometry is None:
+        return False
+    if not _is_junction_local_conflict_road(
+        props,
+        road_id,
+        rcsd_road_by_id=rcsd_road_by_id,
+        rcsd_node_canonicalizer=rcsd_node_canonicalizer,
+    ):
+        return False
+    road = rcsd_road_by_id.get(road_id)
+    geometry = (road or {}).get("geometry")
+    length = float(getattr(geometry, "length", 0.0) or 0.0)
+    if geometry is None or length <= 0.0:
+        return False
+    outside_length = float(geometry.difference(swsd_geometry.buffer(VISUAL_CONFLICT_SWSD_BUFFER_M)).length)
+    return outside_length / length >= MIN_VISUAL_CONFLICT_PRUNE_OUTSIDE_RATIO
+
+
+def _is_junction_local_conflict_road(
+    props: dict[str, Any],
+    road_id: str,
+    *,
+    rcsd_road_by_id: dict[str, dict[str, Any]],
+    rcsd_node_canonicalizer: NodeCanonicalizer,
+) -> bool:
+    road = rcsd_road_by_id.get(road_id)
+    if road is None:
+        return False
+    geometry = road.get("geometry")
+    if geometry is None or float(getattr(geometry, "length", 0.0) or 0.0) > MAX_JUNCTION_LOCAL_CONFLICT_ROAD_M:
+        return False
+    road_props = dict(road.get("properties") or {})
+    endpoints = {
+        _canonicalize_node_id(rcsd_node_canonicalizer, road_props.get("snodeid")),
+        _canonicalize_node_id(rcsd_node_canonicalizer, road_props.get("enodeid")),
+    }
+    endpoints.discard("")
+    if not endpoints:
+        return False
+    mapped_semantic_nodes = {
+        _canonicalize_node_id(rcsd_node_canonicalizer, node_id)
+        for node_id in [
+            *_parse_list(props.get("rcsd_pair_nodes")),
+            *_parse_list(props.get("rcsd_junc_nodes")),
+            *_parse_list(props.get("optional_junc_rcsd_nodes")),
+        ]
+    }
+    mapped_semantic_nodes.discard("")
+    return bool(endpoints & mapped_semantic_nodes)
+
+
+def _canonicalize_node_id(canonicalizer: NodeCanonicalizer, value: Any) -> str:
+    if value in (None, ""):
+        return ""
+    try:
+        return canonicalizer.canonicalize(value)
+    except ParseError:
+        return _safe_id(value)
 
 
 def _apply_visual_consistency_high_deviation_gate(rows: list[dict[str, Any]]) -> None:
@@ -790,8 +940,18 @@ def _plan_node_mappings(props: dict[str, Any]) -> dict[str, list[str]]:
         if swsd_node_id and rcsd_node_id:
             result[swsd_node_id] = unique_preserve_order([*result[swsd_node_id], rcsd_node_id])
     exempt_nodes = set(_parse_list(props.get("junc_kind2_exempt_nodes")))
-    swsd_junc_nodes = [node_id for node_id in _parse_list(props.get("swsd_junc_nodes")) if node_id not in exempt_nodes]
-    for swsd_node_id, rcsd_node_id in zip(swsd_junc_nodes, _parse_list(props.get("rcsd_junc_nodes"))):
+    optional_junc_nodes = _parse_list(props.get("optional_junc_nodes"))
+    dropped_junc_nodes = set(_parse_list(props.get("dropped_junc_nodes")))
+    if optional_junc_nodes:
+        swsd_junc_nodes = [node_id for node_id in optional_junc_nodes if node_id not in exempt_nodes and node_id not in dropped_junc_nodes]
+    else:
+        swsd_junc_nodes = [
+            node_id
+            for node_id in _parse_list(props.get("swsd_junc_nodes"))
+            if node_id not in exempt_nodes and node_id not in dropped_junc_nodes
+        ]
+    rcsd_junc_nodes = _parse_list(props.get("optional_junc_rcsd_nodes")) or _parse_list(props.get("rcsd_junc_nodes"))
+    for swsd_node_id, rcsd_node_id in zip(swsd_junc_nodes, rcsd_junc_nodes):
         if swsd_node_id and rcsd_node_id:
             result[swsd_node_id] = unique_preserve_order([*result[swsd_node_id], rcsd_node_id])
     return dict(result)

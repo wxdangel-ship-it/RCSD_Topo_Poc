@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -13,6 +14,7 @@ from .io import read_features, write_feature_triplet, write_json
 from .parsing import normalize_id, unique_preserve_order
 from .schemas import (
     STEP2_FAILURE_BUSINESS_AUDIT_STEM,
+    STEP2_REPLACEMENT_PLAN_STEM,
     STEP3_FRCSD_NODE_STEM,
     STEP3_FRCSD_ROAD_STEM,
     STEP3_SWSD_FRCSD_SEGMENT_RELATION_FIELDS,
@@ -100,11 +102,25 @@ def run_surface_topology_postprocess(
     )
     t04_rejects = _load_t04_rejects(t04_audit_path)
     step2_junc_mappings = _load_step2_optional_junc_mappings(resolved_step_root)
+    step2_dropped_junc_nodes = _load_step2_dropped_junc_nodes(resolved_step_root)
 
     audit_rows: list[dict[str, Any]] = []
     action_audit_rows: list[dict[str, Any]] = []
     closure_updates: list[str] = []
-    relation_update_count = 0
+    relation_update_count = _apply_step2_plan_relation_node_map_updates(
+        step_root=resolved_step_root,
+        step2_junc_mappings=step2_junc_mappings,
+        step2_dropped_junc_nodes=step2_dropped_junc_nodes,
+    )
+    if relation_update_count:
+        _rebuild_topology_connectivity_audit(
+            step_root=resolved_step_root,
+            swsd_segment_path=swsd_segment_path,
+            swsd_roads_path=swsd_roads_path,
+            source_field_name=source_field_name,
+            swsd_source_value=swsd_source_value,
+            rcsd_source_value=rcsd_source_value,
+        )
     materialized_updates: list[str] = []
     surface_paths: dict[str, Path] = {}
     for _iteration in range(3):
@@ -1503,13 +1519,105 @@ def _load_t04_rejects(path: str | Path | None) -> dict[str, list[dict[str, str]]
     return dict(result)
 
 
+def _apply_step2_plan_relation_node_map_updates(
+    *,
+    step_root: Path,
+    step2_junc_mappings: dict[tuple[str, str], list[str]],
+    step2_dropped_junc_nodes: dict[str, list[str]],
+) -> int:
+    if not step2_junc_mappings and not step2_dropped_junc_nodes:
+        return 0
+    relation_path = step_root / f"{STEP3_SWSD_FRCSD_SEGMENT_RELATION_STEM}.gpkg"
+    if not relation_path.is_file():
+        return 0
+    rows = read_features(relation_path)
+    updated = 0
+    for row in rows:
+        props = row.setdefault("properties", {})
+        if str(props.get("relation_status") or "") == "retained_swsd":
+            continue
+        segment_id = _safe_id(props.get("swsd_segment_id"))
+        if not segment_id:
+            continue
+        entries = _node_map_entries(props.get("swsd_to_frcsd_node_map"))
+        changed = False
+        for dropped_node_id in step2_dropped_junc_nodes.get(segment_id, []):
+            changed = _set_relation_node_map_entry(
+                entries,
+                swsd_node_id=dropped_node_id,
+                frcsd_node_ids=[dropped_node_id],
+                node_role="dropped_junc_node",
+                mapping_status="identity_dropped_junc_not_consumed",
+            ) or changed
+        for (mapping_segment_id, swsd_node_id), rcsd_node_ids in step2_junc_mappings.items():
+            if mapping_segment_id != segment_id:
+                continue
+            changed = _set_relation_node_map_entry(
+                entries,
+                swsd_node_id=swsd_node_id,
+                frcsd_node_ids=rcsd_node_ids,
+                node_role="junc_node",
+                mapping_status="step2_optional_junc_plan_map",
+            ) or changed
+        if not changed:
+            continue
+        props["swsd_to_frcsd_node_map"] = entries
+        risk_flags = _parse_id_list(props.get("risk_flags"))
+        if any(node_id in step2_dropped_junc_nodes.get(segment_id, []) for node_id in [e["swsd_node_id"] for e in entries]):
+            risk_flags.append("dropped_junc_retained_swsd_node_map")
+        if any(mapping_segment_id == segment_id for mapping_segment_id, _node_id in step2_junc_mappings):
+            risk_flags.append("step2_optional_junc_plan_node_map")
+        props["risk_flags"] = unique_preserve_order(risk_flags)
+        updated += 1
+    if updated:
+        write_feature_triplet(
+            step_root=step_root,
+            stem=STEP3_SWSD_FRCSD_SEGMENT_RELATION_STEM,
+            features=rows,
+            fieldnames=STEP3_SWSD_FRCSD_SEGMENT_RELATION_FIELDS,
+        )
+    return updated
+
+
+def _set_relation_node_map_entry(
+    entries: list[dict[str, Any]],
+    *,
+    swsd_node_id: str,
+    frcsd_node_ids: list[str],
+    node_role: str,
+    mapping_status: str,
+) -> bool:
+    swsd_node_id = _safe_id(swsd_node_id)
+    frcsd_node_ids = unique_preserve_order(_safe_id(node_id) for node_id in frcsd_node_ids if _safe_id(node_id))
+    if not swsd_node_id or not frcsd_node_ids:
+        return False
+    for entry in entries:
+        if _safe_id(entry.get("swsd_node_id")) != swsd_node_id:
+            continue
+        if (
+            _parse_id_list(entry.get("frcsd_node_ids")) == frcsd_node_ids
+            and str(entry.get("mapping_status") or "") == mapping_status
+            and str(entry.get("node_role") or "") == node_role
+        ):
+            return False
+        entry["frcsd_node_ids"] = frcsd_node_ids
+        entry["node_role"] = node_role
+        entry["mapping_status"] = mapping_status
+        return True
+    entries.append(
+        {
+            "swsd_node_id": swsd_node_id,
+            "frcsd_node_ids": frcsd_node_ids,
+            "node_role": node_role,
+            "mapping_status": mapping_status,
+        }
+    )
+    return True
+
+
 def _load_step2_optional_junc_mappings(step_root: Path) -> dict[tuple[str, str], list[str]]:
-    path = step_root.parent / "step2_extract_rcsd_segments" / f"{STEP2_FAILURE_BUSINESS_AUDIT_STEM}.gpkg"
-    if not path.is_file():
-        return {}
     result: dict[tuple[str, str], list[str]] = defaultdict(list)
-    rows = gpd.read_file(path)
-    for _, row in rows.iterrows():
+    for row in _iter_step2_junc_rows(step_root):
         segment_id = _safe_id(row.get("swsd_segment_id"))
         if not segment_id:
             continue
@@ -1524,6 +1632,35 @@ def _load_step2_optional_junc_mappings(step_root: Path) -> dict[tuple[str, str],
             key = (segment_id, swsd_node_id)
             result[key] = unique_preserve_order([*result[key], rcsd_node_id])
     return dict(result)
+
+
+def _load_step2_dropped_junc_nodes(step_root: Path) -> dict[str, list[str]]:
+    result: dict[str, list[str]] = defaultdict(list)
+    for row in _iter_step2_junc_rows(step_root):
+        segment_id = _safe_id(row.get("swsd_segment_id"))
+        if not segment_id:
+            continue
+        dropped_nodes = _parse_id_list(row.get("dropped_junc_nodes"))
+        if dropped_nodes:
+            result[segment_id] = unique_preserve_order([*result[segment_id], *dropped_nodes])
+    return dict(result)
+
+
+def _iter_step2_junc_rows(step_root: Path) -> list[dict[str, Any]]:
+    step2_root = step_root.parent / "step2_extract_rcsd_segments"
+    for stem in (STEP2_REPLACEMENT_PLAN_STEM, STEP2_FAILURE_BUSINESS_AUDIT_STEM):
+        for suffix in (".gpkg", ".csv"):
+            path = step2_root / f"{stem}{suffix}"
+            if path.is_file():
+                return _read_step2_junc_rows(path)
+    return []
+
+
+def _read_step2_junc_rows(path: Path) -> list[dict[str, Any]]:
+    if path.suffix.lower() == ".gpkg":
+        return [dict(row) for _, row in gpd.read_file(path).iterrows()]
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        return [dict(row) for row in csv.DictReader(handle)]
 
 
 def _road_features_by_id(path: Path) -> dict[str, list[dict[str, Any]]]:

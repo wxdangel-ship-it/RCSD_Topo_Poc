@@ -34,9 +34,13 @@ T08 的预处理、质检与修复能力作为 T10 外部输入准备前提。T1
 
 ## 5. Case Runner 策略
 
-T10 Case runner 从 Case package 启动，优先使用 package 内局部切片，按 `T01 -> T07 Step1/2 -> T03 -> T04 -> T05 -> T07 Step3 -> T06 -> T09` 调用既有脚本或模块 callable。
+T10 Case runner 从 Case package 启动，优先使用 package 内局部切片，按 `T01 -> T07 Step1/2 -> T03 -> T04 -> T05 -> T06 -> T09` 调用既有脚本或模块 callable。
 
 runner 不修改 T01-T09 算法，也不把目录型结果隐式传给下游。每个阶段都记录显式文件输入、输出、命令、stdout log、耗时和状态。
+
+节点状态 handoff 必须连续传递：`t07_nodes` 只表示 T07 Step2 既有路口面锚定结果；T03 运行后发布 `t03_nodes`，T04 必须消费它；T04 运行后发布 `t04_nodes / final_swsd_nodes`，T05 / T06 / T09 必须消费 `final_swsd_nodes`。Relation handoff 则由 T07/T03/T04 evidence 进入 T05，最终由 T05 `intersection_match_all` 统一发布。
+
+T07 Step3 保留为可选兼容 relation 补锚能力，只有在明确提供早期或外部 `intersection_match_all` 兼容 relation 输入时才应运行。它不能被 T10 解释成 T05 之后的默认重锚阶段，也不能替代 T07/T03/T04/T05 的正式 relation 主业务链。
 
 T03 / T04 当前仍基于输入切片自动发现候选 Case，T10 不在本层强行改写候选发现规则，只把发现结果和失败状态作为审计事实记录。
 

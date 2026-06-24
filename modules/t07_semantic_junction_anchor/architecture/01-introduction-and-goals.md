@@ -6,14 +6,14 @@
 
 ## 2. 模块定位
 
-T07 是项目路口 1:1 关系层中的已有路口面锚定模块。它迁移 T02 Step1/2 的语义路口级锚定能力，并增加独立 Step3 relation backfill，让已有 RCSDIntersection 或 T05 已发布成功 relation 的 SWSD 语义路口先进入 T05 handoff，避免 T03/T04 对已可锚定路口重复生成虚拟面。
+T07 是项目路口 1:1 关系层中的已有路口面锚定模块。它迁移 T02 Step1/2 的语义路口级锚定能力，让已有 RCSDIntersection 可解释的 SWSD 语义路口先进入 T05 handoff，避免 T03/T04 对已可锚定路口重复生成虚拟面。Step3 是保留的可选兼容补锚能力，只在显式提供早期或外部方案产出的 `intersection_match_all` 兼容 relation 文件时运行，不是 T05 之后的默认回灌阶段。
 
 ## 3. 目标
 
 - Step1 基于 `DriveZone ∪ RCSDIntersection` 判定代表 node 的 `has_evd`。
 - Step2 基于 `RCSDIntersection` 和可选 `RCSDNode` 判定 `is_anchor / anchor_reason`。
 - Step2 输出 T07 版 surface handoff 与 relation evidence。
-- Step3 基于 T05 `intersection_match_all.geojson` 对符合条件的 existing surface 路口补写 relation anchor。
+- Step3 在显式提供兼容 relation 文件时，对符合条件且仍未锚定的 existing-surface 候选补写 relation anchor。
 - 对 Step3 relation 做 T05 同口径 cardinality QC。
 
 ## 4. 非目标

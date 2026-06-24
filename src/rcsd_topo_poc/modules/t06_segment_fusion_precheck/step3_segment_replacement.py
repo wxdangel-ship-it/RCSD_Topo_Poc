@@ -51,7 +51,7 @@ from .step3_advance_right_contract import (
 from .step3_endpoint_nodes import ensure_added_rcsd_road_endpoint_nodes, ensure_retained_swsd_road_endpoint_nodes
 from .step3_detached_carriers import retain_detached_junc_swsd_roads
 from .step3_group_replacement import (
-    GroupReplacementAssignment,
+    apply_group_replacement_assignments,
     read_group_replacement_assignments,
     read_group_replacement_assignments_from_plan_rows,
 )
@@ -191,10 +191,13 @@ def run_t06_step3_segment_replacement(
             rcsd_road_by_id=rcsd_road_by_id,
             canonicalizer=canonicalizer,
         )
-    group_replacement_created_unit_count = _apply_group_replacement_assignments(
+    group_replacement_created_unit_count = apply_group_replacement_assignments(
         units,
         group_replacement_assignments,
         segment_by_id=segment_by_id,
+        rcsd_road_by_id=rcsd_road_by_id,
+        canonicalizer=canonicalizer,
+        make_unit=_replacement_unit_from_segment,
     )
     passed_units = [unit for unit in units if unit.status == "passed"]
     retain_detached_junc_swsd_roads(passed_units, swsd_road_by_id)
@@ -954,47 +957,6 @@ def _build_replacement_units(replaceable: list[dict[str, Any]], segment_by_id: d
             unit.reason = "missing_rcsd_road_ids"
         units.append(unit)
     return units
-
-
-def _apply_group_replacement_assignments(
-    units: list[ReplacementUnit],
-    assignments: dict[str, GroupReplacementAssignment],
-    *,
-    segment_by_id: dict[str, dict[str, Any]],
-) -> int:
-    unit_by_segment_id = {unit.segment_id: unit for unit in units}
-    created_count = 0
-    for segment_id in sorted(assignments, key=_id_sort_key):
-        assignment = assignments[segment_id]
-        unit = unit_by_segment_id.get(segment_id)
-        if unit is None:
-            segment = segment_by_id.get(segment_id)
-            if segment is None:
-                continue
-            unit = _replacement_unit_from_segment(segment)
-            units.append(unit)
-            unit_by_segment_id[segment_id] = unit
-            created_count += 1
-
-        unit.rcsd_road_ids = unique_preserve_order([*unit.rcsd_road_ids, *assignment.rcsd_road_ids])
-        unit.retained_node_ids = unique_preserve_order([*unit.retained_node_ids, *assignment.retained_node_ids])
-        if not unit.rcsd_pair_nodes and assignment.rcsd_pair_nodes:
-            unit.rcsd_pair_nodes = assignment.rcsd_pair_nodes
-        unit.group_replacement_plan_ids = unique_preserve_order([*unit.group_replacement_plan_ids, *assignment.plan_ids])
-        unit.group_replacement_source_segment_ids = unique_preserve_order(
-            [*unit.group_replacement_source_segment_ids, *assignment.source_segment_ids]
-        )
-        unit.group_replacement_segment_ids = unique_preserve_order(
-            [*unit.group_replacement_segment_ids, *assignment.group_segment_ids]
-        )
-        unit.group_replacement_buffer_distances_m = sorted(
-            {*unit.group_replacement_buffer_distances_m, *assignment.buffer_distances_m}
-        )
-        if unit.status == "failed" and unit.reason == "missing_rcsd_road_ids":
-            unit.status = "passed"
-        if unit.status == "passed":
-            unit.reason = "group_path_corridor_replacement"
-    return created_count
 
 
 def _replacement_unit_from_segment(segment: dict[str, Any]) -> ReplacementUnit:

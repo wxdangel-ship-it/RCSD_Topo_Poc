@@ -15,8 +15,8 @@ if str(SRC_ROOT) not in sys.path:
 from rcsd_topo_poc.modules.t06_segment_fusion_precheck import (  # noqa: E402
     run_t06_step3_segment_replacement,
 )
-from rcsd_topo_poc.modules.t06_segment_fusion_precheck.step3_surface_topology_audit import (  # noqa: E402
-    run_surface_topology_postprocess,
+from rcsd_topo_poc.modules.t06_segment_fusion_precheck.step3_surface_aware_plan_release import (  # noqa: E402
+    run_surface_aware_step3_segment_replacement,
 )
 
 
@@ -64,36 +64,41 @@ def main() -> int:
     }
 
     print("[T06 Step3] run segment replacement from Step2 replaceable outputs", flush=True)
-    artifacts = run_t06_step3_segment_replacement(
-        step2_replaceable_path=inputs["step2_replaceable_path"],
-        step2_special_junction_group_audit_path=inputs["step2_special_junction_group_audit_path"],
-        step2_group_replacement_audit_path=inputs["step2_group_replacement_audit_path"],
-        swsd_segment_path=inputs["swsd_segment_path"],
-        swsd_roads_path=inputs["swsd_roads_path"],
-        swsd_nodes_path=inputs["swsd_nodes_path"],
-        rcsdroad_path=inputs["rcsdroad_path"],
-        rcsdnode_path=inputs["rcsdnode_path"],
-        out_root=out_root,
-        run_id=run_id,
-        progress=args.progress,
-    )
     surface_inputs = {
         key: inputs[key]
         for key in ("t07_surface_path", "t03_surface_path", "t04_surface_path", "t04_audit_path", "t05_surface_path")
     }
-    surface_topology = None
     if any(surface_inputs.values()):
-        surface_topology = run_surface_topology_postprocess(
-            step_root=artifacts.step_root,
+        artifacts, surface_topology = run_surface_aware_step3_segment_replacement(
+            step2_replaceable_path=inputs["step2_replaceable_path"],
+            step2_special_junction_group_audit_path=inputs["step2_special_junction_group_audit_path"],
+            step2_group_replacement_audit_path=inputs["step2_group_replacement_audit_path"],
             swsd_segment_path=inputs["swsd_segment_path"],
             swsd_roads_path=inputs["swsd_roads_path"],
-            t07_surface_path=inputs["t07_surface_path"],
-            t03_surface_path=inputs["t03_surface_path"],
-            t04_surface_path=inputs["t04_surface_path"],
-            t04_audit_path=inputs["t04_audit_path"],
-            t05_surface_path=inputs["t05_surface_path"],
-            apply_closure=args.surface_topology_closure,
+            swsd_nodes_path=inputs["swsd_nodes_path"],
+            rcsdroad_path=inputs["rcsdroad_path"],
+            rcsdnode_path=inputs["rcsdnode_path"],
+            out_root=out_root,
+            run_id=run_id,
+            surface_inputs=surface_inputs,
+            surface_topology_closure=args.surface_topology_closure,
+            progress=args.progress,
         )
+    else:
+        artifacts = run_t06_step3_segment_replacement(
+            step2_replaceable_path=inputs["step2_replaceable_path"],
+            step2_special_junction_group_audit_path=inputs["step2_special_junction_group_audit_path"],
+            step2_group_replacement_audit_path=inputs["step2_group_replacement_audit_path"],
+            swsd_segment_path=inputs["swsd_segment_path"],
+            swsd_roads_path=inputs["swsd_roads_path"],
+            swsd_nodes_path=inputs["swsd_nodes_path"],
+            rcsdroad_path=inputs["rcsdroad_path"],
+            rcsdnode_path=inputs["rcsdnode_path"],
+            out_root=out_root,
+            run_id=run_id,
+            progress=args.progress,
+        )
+        surface_topology = None
     summary = _read_json(artifacts.summary_path)
     print(
         json.dumps(

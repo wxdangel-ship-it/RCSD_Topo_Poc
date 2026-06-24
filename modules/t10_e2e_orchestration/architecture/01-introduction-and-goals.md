@@ -10,7 +10,8 @@ T10 是端到端业务流程编排与 Case 级证据组织模块。它不定义 
 
 ## 3. 目标
 
-- 固化 T10 v1 Case runner 编排范围：`T01 -> T07 Step1/2 -> T03 -> T04 -> T05 -> T07 Step3 -> T06 -> T09`。
+- 固化 T10 v1 Case runner 编排范围：`T01 -> T07 Step1/2 -> T03 -> T04 -> T05 -> T06 -> T09`。
+- 明确 T07 Step3 只作为可选兼容 relation 补锚阶段，不纳入 Case runner 默认主链。
 - 以 SWSD semantic junction id 组织 Case package 和本地 replay。
 - 为每个阶段记录显式输入、输出、命令、日志、状态和耗时。
 - 输出 T06 funnel、visual check summary 和 upstream feedback package。

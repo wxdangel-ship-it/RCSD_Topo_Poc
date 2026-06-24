@@ -2,7 +2,7 @@
 
 ## 1. 审计目标
 
-T07 必须解释代表 node 为什么有 evidence、为什么能或不能 existing-surface anchor，以及 Step3 relation backfill 是否来自 T05 成功 relation 且 RCSD base 可消费。
+T07 必须解释代表 node 为什么有 evidence、为什么能或不能 existing-surface anchor，以及 Step3 relation backfill 是否来自显式提供的兼容成功 relation 且 RCSD base 可消费。
 
 ## 2. Step1/2 证据
 
@@ -22,7 +22,7 @@ T07 必须解释代表 node 为什么有 evidence、为什么能或不能 existi
 | `intersection_match_t07.geojson` | Step3 发布的 T07 relation。 |
 | `relation_cardinality_errors.csv/json` | 1:N、N:1、重复 target 审计。 |
 | `t07_step3_audit.csv/json` | relation missing、relation failed、base missing、duplicate 等补锚失败原因。 |
-| `t07_step3_summary.json` | Step2 surface relation、T05 backfill relation、anchor counts 和 CRS。 |
+| `t07_step3_summary.json` | Step2 surface relation、兼容 relation backfill、anchor counts 和 CRS。 |
 
 ## 4. Cardinality 审计
 

@@ -10,7 +10,7 @@
 
 - `mainnodeid` 组装依赖代表 node 存在；上游 nodes 结构异常必须显式审计。
 - RCSDIntersection 面存在但无 RCSDNode 可消费时，应交回 T03/T04 虚拟锚定链路，不可强行发布 T07 relation。
-- T05 `intersection_match_all` 字段契约变化会影响 Step3 补锚。
+- Step3 兼容 relation 字段契约变化会影响补锚；T05 Phase2 产物只有在被显式指定为兼容输入时才影响 T07 Step3。
 
 ## 3. 结构债
 

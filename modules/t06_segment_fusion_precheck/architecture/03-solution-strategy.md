@@ -23,7 +23,7 @@ T06 采用三步链路：
 ### 2.2 输入与前提
 
 - T01 `segment.gpkg`，依赖 `pair_nodes / junc_nodes / roads / sgrade` 等字段。
-- SWSD `nodes.gpkg`，用于读取 `has_evd / is_anchor / kind_2`。
+- T04 downstream `final_swsd_nodes`，用于读取 `has_evd / is_anchor / kind_2`；这是 T06 Step1 漏斗分母的节点状态来源。
 
 ### 2.3 落地策略
 
@@ -211,6 +211,7 @@ T06 采用三步链路：
 - C 内 Node 继承原 main node 的 `kind / grade / kind_2 / grade_2 / closed_con`。
 - 对提前右转，Step3 可在不重判 Segment 可替换性的前提下执行挂接后处理：已选 RCSD 提前右转 corridor 可以吸附到保留 SWSD carrier；仅 SWSD 存在的提前右转 carrier 可在已选 RCSD Road 上复用或生成挂接节点；普通 RCSD road 挂在已选提前右转 road 中部时，可拆分该提前右转 road 并纳入同一 replacement unit。该后处理只补齐已选/已保留 carrier 的道路、节点和几何一致性。
 - 调用方提供 T03/T04/T05/T07 surface 或 T04 audit 时，Step3 可执行 surface-assisted closure。该 closure 只在唯一候选、T04 未 reject、Patch 无冲突、距离条件可解释时补写节点 `mainnodeid` 或非 `retained_swsd` relation 的 node map；它不新增正式替换道路，不修改原始道路几何，也不把 rejected Segment 改判为 replaceable。
+- 对 `junction_alignment_to_retained_swsd_exceeds_topology_gate` 阻断的 plan 行，Step3 wrapper 可用 surface 1:1 pass 或原始 pair endpoint 映射将该 gate 降级为人工审计风险并重跑替换；候选释放引入新增 topology hard fail 时必须回退对应 plan，相对传入 baseline 的新增 fail 必须在 summary 中暴露。
 - Step3 结束时必须输出拓扑连通审计，覆盖 final road-node integrity、正式替换 source 一致性、Segment 内连通、junction mapping 和挂接质量，确保 T09 消费的是可解释的 F-RCSD carrier。
 
 ### 8.4 输出与审计
@@ -222,17 +223,19 @@ T06 采用三步链路：
 - `t06_step3_swsd_frcsd_segment_relation.*`，用于 T09 和 T10 理解每个 SWSD Segment 的 F-RCSD carrier。
 - `t06_step3_topology_connectivity_audit.*`，用于批量检查最终拓扑连通与 source 边界。
 - `t06_step3_surface_topology_audit.*` 与 summary，用于解释 surface-assisted closure 的使用和阻断。
-- summary 必须记录 `replacement_plan_source`、输入 plan 行数、按 `execution_scope` 的执行计数、path-corridor group 计数和 detached junc 保留计数。
+- `t06_step3_surface_aware_plan_release_audit.json`，用于解释 retained-junction gate 条件释放、topology 回退和外部 baseline 新增 fail 对照。
+- summary 必须记录 `replacement_plan_source`、输入 plan 行数、按 `execution_scope` 的执行计数、path-corridor group 计数、detached junc 保留计数和 `surface_aware_plan_release` 审计摘要。
 
 ### 8.5 对错边界
 
 - 对：F-RCSD Road/Node 使用 `source=1` 表示 RCSD，`source=2` 表示 SWSD。
 - 对：detached junc 的 `identity_retained_swsd` node map 只表达局部 SWSD carrier 原样保留，不表达 RCSD 锚定成功。
 - 对：Step3 只执行 replacement plan 或 legacy fallback 产物已明确通过的对象，不用诊断文件补造新的替换对象。
-- 对：surface、提前右转和 topology supplement 只补齐已选承载的可用性，不扩大 Step2 可替换范围。
+- 对：surface、提前右转和 topology supplement 只补齐已选承载的可用性；retained-junction gate 释放只能把已存在 plan 的单一距离 gate 降级为风险项，不能扩大 Step2 可替换范围。
 - 对：最终 relation、topology audit 和 surface audit 能解释正式替换道路、保留 SWSD carrier、节点闭合和挂接风险。
 - 错：因 SWSD/RCSD 原始 id 冲突而重写 id；应保留原 id 并依赖 `source` 区分。
 - 错：把保留 SWSD carrier、surface fallback 或提前右转补丁混入正式 RCSD 替换道路清单。
+- 错：surface-aware gate 释放后只看候选 plan 成功，不看最终 topology hard fail 和外部 baseline 新增 fail。
 - 错：用 surface evidence 绕过 T04 reject、Patch 冲突、多候选冲突或 Step2 replacement plan。
 
 ## 9. 端到端修复后的业务收口

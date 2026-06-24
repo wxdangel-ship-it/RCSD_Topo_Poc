@@ -81,7 +81,7 @@ def _write_t07_match(path: Path) -> None:
     )
 
 
-def test_intersection_match_t03_validates_t07_and_rolls_back_one_to_many(tmp_path: Path) -> None:
+def test_intersection_match_t03_suppresses_conflict_without_node_rollback(tmp_path: Path) -> None:
     run_root = tmp_path / "run"
     run_root.mkdir()
     (run_root / "summary.json").write_text(json.dumps({"total_case_count": 3}), encoding="utf-8")
@@ -126,13 +126,12 @@ def test_intersection_match_t03_validates_t07_and_rolls_back_one_to_many(tmp_pat
     assert summary["relation_cardinality_passed"] is False
     assert summary["one_target_to_many_base_count"] == 1
     assert summary["many_target_to_one_base_count"] == 1
-    assert summary["rollback_target_ids"] == ["100001"]
+    assert summary["rollback_target_ids"] == []
     assert {row["error_type"] for row in errors["rows"]} == {"one_target_to_many_base", "many_target_to_one_base"}
-    assert updated_node_map["100001"] == "no"
+    assert updated_node_map["100001"] == "yes"
     assert updated_node_map["100002"] == "yes"
     assert updated_node_map["100004"] == "yes"
-    assert audit["updated_to_no_count"] == 1
-    assert audit["rows"][-1]["reason"] == "intersection_match_t03_one_target_to_many_base"
+    assert audit["updated_to_no_count"] == 0
 
 
 def test_t03_relation_evidence_reads_step6_status_without_legacy_association_status(tmp_path: Path) -> None:
@@ -241,8 +240,8 @@ def test_intersection_match_t03_accepts_optional_intersection_match_all(tmp_path
     assert summary["t07_validation_enabled"] is False
     assert summary["external_validation_relation_count"] == 1
     assert summary["one_target_to_many_base_count"] == 1
-    assert summary["rollback_target_ids"] == ["100001"]
-    assert updated_node_map["100001"] == "no"
+    assert summary["rollback_target_ids"] == []
+    assert updated_node_map["100001"] == "yes"
     assert updated_node_map["100002"] == "yes"
 
 

@@ -25,16 +25,16 @@
 | `t04_divmerge_virtual_polygon` | Active | 面向分歧、合流与复杂路口构建 `Step1-7` 虚拟锚定。消费道路面、导流带、SWSD、RCSD，输出 accepted/rejected 发布层与 relation evidence，是路口 1:1 relation 层的复杂路口补锚模块，复杂属性修正逐步移交 T08。 |
 | `t05_junction_surface_fusion` | Active | 汇总 T07 / T03 / T04 的锚定与构面成果，正式生产统一 SWSD-RCSD 语义路口关系。负责 RCSD junctionization、复杂路口归组、环岛预处理与 copy-on-write RCSD 输出，是 T06 替换前的 relation 发布层。 |
 | `t06_segment_fusion_precheck` | Active | 基于 T01 Segment 与 T05 语义路口关系构建 RCSDSegment，处理 RCSD 数据质量和 SWSD/RCSD 工艺差异下的替换可行性。通过 replacement plan、problem registry、source 边界、提前右转后处理、surface topology closure 与 topology audit 输出 F-RCSD Road / Node 和下游 T09 稳定承载关系。 |
-| `t07_semantic_junction_anchor` | Active | 迁移 T02 语义路口级 1:1 锚定能力，并通过 T05 relation 做无路口面特征补锚。它是路口 1:1 relation 层的已有路口面锚定模块，用于提高当前替换率，未来 RCSD 滚动构图方案下不作为长期依赖。 |
+| `t07_semantic_junction_anchor` | Active | 迁移 T02 语义路口级 1:1 锚定能力，并保留显式兼容 relation 补锚。它是路口 1:1 relation 层的已有路口面锚定模块，用于提高当前替换率，未来 RCSD 滚动构图方案下不作为长期依赖。 |
 | `t08_preprocess` | Active | SWSD / RCSD 正式预处理模块，提供格式转换、Road/Node 类型聚合、质检修复、restriction / Laneinfo 显性化与 RCSD 清理。为 T01、T03、T04、T05、T06、T09 提供规范输入。 |
 | `t09_swsd_field_rule_restoration` | Active | 基于 SWSD Laneinfo、restriction 与 T06 F-RCSD 混合承载关系，还原现场路口级通行规则。当前缺少 RCSD Laneinfo 与轨迹通行证据，需后续迭代完善。 |
-| `t10_e2e_orchestration` | Active | 端到端业务流程编排与 Case 级证据组织模块。v1 Case runner 编排 T01 / T07 Step1/2 / T03 / T04 / T05 / T07 Step3 / T06 / T09，T08 保持独立前置预处理、质检与修复定位；当前已支持空间切片 Case 包、Case 级 replay、T06 上游反馈包、反馈迭代防回退与内网全量总控。 |
+| `t10_e2e_orchestration` | Active | 端到端业务流程编排与 Case 级证据组织模块。v1 Case runner 编排 T01 / T07 Step1/2 / T03 / T04 / T05 / T06 / T09，T08 保持独立前置预处理、质检与修复定位；当前已支持空间切片 Case 包、Case 级 replay、T06 上游反馈包、反馈迭代防回退与内网全量总控。 |
 | `p01_arm_build` | Active POC / 成果模块 | 当前仓库中用户历史 `P10` 口径统一改称为 `P01`。P01 面向异构路口通行能力 / RoadNextRoad POC，不作为 T09 正式契约。 |
 
 ## 当前业务关系
 
 - 输入准备：T08 负责 SWSD / RCSD 预处理和显性化，T01 基于 SWSD 构建 Segment。
-- 路口 1:1 关系构建：T07 处理已有路口面 1:1 和补锚，T03 处理交叉 / T 型虚拟锚定，T04 处理分歧 / 合流 / 复杂路口虚拟锚定，T05 统一发布 SWSD-RCSD 语义路口关系。
+- 路口 1:1 关系构建：T07 处理已有路口面 1:1 并保留可选兼容 relation 补锚，T03 处理交叉 / T 型虚拟锚定，T04 处理分歧 / 合流 / 复杂路口虚拟锚定，T05 统一发布 SWSD-RCSD 语义路口关系。
 - Segment 替换：T06 基于 T01 Segment 与 T05 relation 构建 RCSDSegment，并在 RCSD 数据质量、方向性、端点、提右和 surface 证据存在差异时执行受控诊断、补强、replacement plan 执行和最终拓扑审计，输出 F-RCSD 承载关系。
 - 通行恢复：T09 基于 SWSD 通行规则证据和 T06 F-RCSD 承载关系还原融合后路口通行能力。
 - 端到端编排：T10 v1 以文件级 handoff 方式组织 Case package、空间切片、Case 级 replay、T06 反馈闭环和内网全量总控；Case runner 不调用 T08，全量总控可把 T08 作为独立前置阶段串联。

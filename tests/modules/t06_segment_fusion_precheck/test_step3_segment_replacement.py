@@ -1012,7 +1012,7 @@ def test_step3_consumes_path_corridor_group_replacement_audit(tmp_path: Path) ->
     relations = {item["swsd_segment_id"]: item for item in _props(artifacts.swsd_frcsd_segment_relation_gpkg_path)}
     assert relations["s1"]["relation_status"] == "replaced"
     assert relations["s1"]["relation_reason"] == "group_path_corridor_replacement"
-    assert relations["s1"]["frcsd_road_ids"] == ["rr1", "rr2"]
+    assert relations["s1"]["frcsd_road_ids"] == ["rr1"]
     assert relations["s2"]["relation_status"] == "replaced"
     assert relations["s2"]["rcsd_pair_nodes"] == ["20", "30"]
     assert relations["s2"]["frcsd_road_ids"] == ["rr1", "rr2"]
@@ -1197,9 +1197,118 @@ def test_step3_consumes_path_corridor_group_from_replacement_plan(tmp_path: Path
     assert summary["group_replacement_created_unit_count"] == 1
 
     relations = {item["swsd_segment_id"]: item for item in _props(artifacts.swsd_frcsd_segment_relation_gpkg_path)}
-    assert relations["s1"]["frcsd_road_ids"] == ["rr1", "rr2"]
+    assert relations["s1"]["frcsd_road_ids"] == ["rr1"]
     assert relations["s2"]["relation_status"] == "replaced"
     assert relations["s2"]["relation_reason"] == "group_path_corridor_replacement"
+
+
+def test_step3_group_created_member_filters_distant_group_roads(tmp_path: Path) -> None:
+    segment = _write(
+        tmp_path / "segment.gpkg",
+        [
+            {
+                "properties": {"id": "s1", "sgrade": "0-0双", "pair_nodes": [1, 2], "junc_nodes": [], "roads": ["sw1"]},
+                "geometry": LineString([(0, 0), (10, 0)]),
+            },
+            {
+                "properties": {"id": "s2", "sgrade": "0-0双", "pair_nodes": [3, 4], "junc_nodes": [], "roads": ["sw2"]},
+                "geometry": LineString([(100, 0), (110, 0)]),
+            },
+        ],
+    )
+    swsd_roads = _write(
+        tmp_path / "swsd_roads.gpkg",
+        [
+            {"properties": {"id": "sw1", "snodeid": 1, "enodeid": 2, "direction": 0}, "geometry": LineString([(0, 0), (10, 0)])},
+            {"properties": {"id": "sw2", "snodeid": 3, "enodeid": 4, "direction": 0}, "geometry": LineString([(100, 0), (110, 0)])},
+        ],
+    )
+    swsd_nodes = _write(
+        tmp_path / "swsd_nodes.gpkg",
+        [_node(1, 0, mainnodeid=1), _node(2, 10, mainnodeid=2), _node(3, 100, mainnodeid=3), _node(4, 110, mainnodeid=4)],
+    )
+    rcsd_roads = _write(
+        tmp_path / "rcsdroad_out.gpkg",
+        [
+            {"properties": {"id": "rr1", "snodeid": 10, "enodeid": 20, "direction": 0}, "geometry": LineString([(0, 0), (10, 0)])},
+            {"properties": {"id": "rr2", "snodeid": 30, "enodeid": 40, "direction": 0}, "geometry": LineString([(100, 0), (110, 0)])},
+        ],
+    )
+    rcsd_nodes = _write(
+        tmp_path / "rcsdnode_out.gpkg",
+        [_node(10, 0, mainnodeid=10), _node(20, 10, mainnodeid=20), _node(30, 100, mainnodeid=30), _node(40, 110, mainnodeid=40)],
+    )
+    replaceable = _write(
+        tmp_path / "t06_rcsd_segment_replaceable.gpkg",
+        [
+            {
+                "properties": {
+                    "swsd_segment_id": "s1",
+                    "swsd_pair_nodes": [1, 2],
+                    "swsd_junc_nodes": [],
+                    "rcsd_pair_nodes": [10, 20],
+                    "rcsd_junc_nodes": [],
+                    "rcsd_road_ids": ["rr1"],
+                    "retained_node_ids": [10, 20],
+                    "hard_filter_passed": True,
+                },
+                "geometry": LineString([(0, 0), (10, 0)]),
+            }
+        ],
+    )
+    _write(
+        tmp_path / "t06_segment_replacement_plan.gpkg",
+        [
+            {
+                "properties": {
+                    "replacement_plan_id": "standard:s1",
+                    "swsd_segment_id": "s1",
+                    "plan_status": "ready",
+                    "execution_action": "replace",
+                    "execution_scope": "standard_segment",
+                    "swsd_pair_nodes": [1, 2],
+                    "swsd_junc_nodes": [],
+                    "rcsd_pair_nodes": [10, 20],
+                    "rcsd_junc_nodes": [],
+                    "rcsd_road_ids": ["rr1"],
+                    "retained_node_ids": [10, 20],
+                },
+                "geometry": LineString([(0, 0), (10, 0)]),
+            },
+            {
+                "properties": {
+                    "replacement_plan_id": "group_path_corridor:s2",
+                    "swsd_segment_id": "s2",
+                    "plan_status": "ready",
+                    "execution_action": "replace",
+                    "execution_scope": "path_corridor_group",
+                    "group_segment_ids": ["s1", "s2"],
+                    "source_segment_ids": ["s2"],
+                    "rcsd_road_ids": ["rr1", "rr2"],
+                    "retained_node_ids": [10, 20, 30, 40],
+                    "rcsd_pair_nodes": [30, 40],
+                    "buffer_distances_m": [20.0],
+                },
+                "geometry": LineString([(0, 0), (110, 0)]),
+            },
+        ],
+    )
+
+    artifacts = run_t06_step3_segment_replacement(
+        step2_replaceable_path=replaceable,
+        swsd_segment_path=segment,
+        swsd_roads_path=swsd_roads,
+        swsd_nodes_path=swsd_nodes,
+        rcsdroad_path=rcsd_roads,
+        rcsdnode_path=rcsd_nodes,
+        out_root=tmp_path / "out",
+        run_id="run",
+    )
+
+    relations = {item["swsd_segment_id"]: item for item in _props(artifacts.swsd_frcsd_segment_relation_gpkg_path)}
+    assert relations["s1"]["frcsd_road_ids"] == ["rr1"]
+    assert relations["s2"]["relation_status"] == "replaced"
+    assert relations["s2"]["frcsd_road_ids"] == ["rr2"]
 
 
 def test_step3_prefers_replacement_plan_json_to_keep_geometryless_special_rows(tmp_path: Path) -> None:
@@ -1922,9 +2031,9 @@ def test_step3_projects_swsd_only_advance_right_carrier_to_split_rcsd_road(tmp_p
     nodes = {(str(item["id"]), item["source"]): item for item in _props(artifacts.frcsd_node_gpkg_path)}
     assert ("21", 1) in nodes
     relations = _props(artifacts.swsd_frcsd_segment_relation_gpkg_path)
-    assert relations[0]["relation_status"] == "replaced+retained_swsd"
+    assert relations[0]["relation_status"] == "replaced"
     assert relations[0]["frcsd_road_source_values"] == [1]
-    assert relations[0]["retained_detached_swsd_road_ids"] == ["sw_adv"]
+    assert relations[0]["retained_detached_swsd_road_ids"] == []
 
 
 def test_step3_contract_handles_retained_segment_advance_right_shared_node(tmp_path: Path) -> None:

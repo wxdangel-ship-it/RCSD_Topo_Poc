@@ -273,6 +273,7 @@ def write_t04_nodes_outputs(
         "updated_to_fail4_fallback_count": sum(
             1 for row in audit_rows if row["new_is_anchor"] == T04_NODES_FALLBACK_VALUE
         ),
+        "updated_to_no_count": 0,
         "nodes_update_result": nodes_update_result,
         "rows": audit_rows,
     }

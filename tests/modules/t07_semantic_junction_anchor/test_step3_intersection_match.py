@@ -89,7 +89,7 @@ def _relation_targets(path: Path) -> set[str]:
     return {str(feature["properties"]["target_id"]) for feature in payload["features"]}
 
 
-def test_step3_anchors_candidates_with_successful_t05_relation_and_existing_rcsdnode(tmp_path: Path) -> None:
+def test_step3_anchors_candidates_with_successful_compatible_relation_and_existing_rcsdnode(tmp_path: Path) -> None:
     nodes_path = tmp_path / "nodes.geojson"
     relations_path = tmp_path / "intersection_match_all.geojson"
     rcsdnode_path = tmp_path / "rcsdnode.geojson"

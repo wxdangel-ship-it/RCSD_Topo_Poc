@@ -13,15 +13,18 @@ T08 -> T01 -> T07 -> T03 -> T04 -> T05 -> T06 -> T09
 T10 v1 Case runner 编排：
 
 ```text
-T01 -> T07 Step1/2 -> T03 -> T04 -> T05 -> T07 Step3 -> T06 -> T09
+T01 -> T07 Step1/2 -> T03 -> T04 -> T05 -> T06 -> T09
 ```
 
 T08 是独立前置预处理、质检和修复模块，不由 T10 Case runner 调用；内网全量总控可把 T08 作为独立阶段串入全量链路。
+T07 Step3 是 T07 模块保留的可选兼容 relation 补锚能力，不属于 T10 v1 Case runner 默认主链；全量总控只有在显式配置兼容 relation 输入时才运行该阶段。
+T10 必须保持连续 nodes handoff：T07 Step2 nodes 进入 T03，T03 downstream nodes 进入 T04，T04 downstream nodes 作为 `final_swsd_nodes` 进入 T05 / T06 / T09。
 
 ## 2. 业务目标
 
 - 以 SWSD 语义路口 ID 组织端到端 Case 证据包，支持本地复现和内外网协作。
 - 将每个模块的输入、输出、日志、状态和耗时显式记录到文件级 handoff，避免下游根据目录猜测产物。
+- 区分节点状态 handoff 与 relation handoff：SWSD 侧最终锚定状态来自 T04 downstream nodes，T05 只发布最终 relation 与 RCSD copy-on-write 成果。
 - 支持 Case 级 replay，复现 `T01 -> T09` 的关键链路并输出每阶段状态。
 - 输出 T06 数据漏斗，解释从 SWSD Segment 到 F-RCSD 替换结果的数量流转、拒绝原因和替换质量。
 - 将 T06 problem registry 中可回流上游的问题整理为 T03/T04/T05/T07/T08/T06 可消费的反馈包。

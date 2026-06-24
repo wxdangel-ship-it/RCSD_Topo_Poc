@@ -145,6 +145,13 @@ def _unit_corridor_coverage_unavailable(
         if _is_side_attachment_swsd_road(swsd_road):
             continue
         endpoints = _road_endpoint_node_ids(swsd_road)
+        if (
+            road_id in getattr(unit, "retained_detached_swsd_road_ids", [])
+            and _is_formal_unit_body_swsd_road(unit, swsd_road)
+        ):
+            if _corridor_coverage_failed(swsd_road, unit_roads):
+                return True
+            continue
         if len(endpoints) < 2 or not all(endpoint in semantic_nodes for endpoint in endpoints[:2]):
             continue
         if not _corridor_coverage_failed(swsd_road, unit_roads):
@@ -202,6 +209,8 @@ def materialize_topology_supplement_rcsd_roads(
         "recovered_undercovered_mixed_advance_right_count": 0,
         "mixed_advance_right_boundary_split_count": 0,
         "mixed_advance_right_retained_side_rcsd_excluded_count": 0,
+        "mixed_advance_right_externalized_count": 0,
+        "formal_body_retained_restored_count": 0,
     }
     materialized_source_road_ids: set[str] = set()
     mixed_boundary_split_source_road_ids: set[str] = set()
@@ -334,6 +343,17 @@ def materialize_topology_supplement_rcsd_roads(
             unit.swsd_road_ids = unique_preserve_order([*unit.swsd_road_ids, *materialized_original_ids])
             stats["materialized_road_count"] += len(materialized_rcsd_ids)
         unit.retained_detached_swsd_road_ids = unique_preserve_order(still_retained)
+        stats["formal_body_retained_restored_count"] = stats.get(
+            "formal_body_retained_restored_count", 0
+        ) + _restore_covered_formal_body_retained_roads(
+            unit,
+            swsd_road_by_id=swsd_road_by_id,
+            rcsd_road_by_id=rcsd_road_by_id,
+        )
+        stats["mixed_advance_right_externalized_count"] += _externalize_unsegmented_advance_right_retained_roads(
+            unit,
+            swsd_road_by_id=swsd_road_by_id,
+        )
     if retained_swsd_roads:
         for road in retained_swsd_roads:
             road_id = _safe_id((road.get("properties") or {}).get("id"))
@@ -475,7 +495,84 @@ def materialize_topology_supplement_rcsd_roads(
             stats["materialized_road_count"] += 1
             materialized_source_road_ids.add(road_id)
             used_road_ids.add(new_id)
+    stats["formal_body_retained_restored_count"] = stats.get(
+        "formal_body_retained_restored_count", 0
+    ) + sum(
+        _restore_covered_formal_body_retained_roads(
+            unit,
+            swsd_road_by_id=swsd_road_by_id,
+            rcsd_road_by_id=rcsd_road_by_id,
+        )
+        for unit in units
+    )
+    stats["mixed_advance_right_externalized_count"] += sum(
+        _externalize_unsegmented_advance_right_retained_roads(
+            unit,
+            swsd_road_by_id=swsd_road_by_id,
+        )
+        for unit in units
+    )
     return stats
+
+
+def _externalize_unsegmented_advance_right_retained_roads(
+    unit: Any,
+    *,
+    swsd_road_by_id: dict[str, dict[str, Any]],
+) -> int:
+    retained_ids = list(getattr(unit, "retained_detached_swsd_road_ids", []) or [])
+    if not retained_ids:
+        return 0
+    kept: list[str] = []
+    externalized: list[str] = []
+    for road_id in retained_ids:
+        road = swsd_road_by_id.get(str(road_id))
+        if (
+            road is not None
+            and _is_advance_right_road(road)
+            and not _road_segment_ids(road)
+            and not _is_side_attachment_swsd_road(road)
+        ):
+            externalized.append(str(road_id))
+            continue
+        kept.append(str(road_id))
+    if not externalized:
+        return 0
+    unit.retained_detached_swsd_road_ids = unique_preserve_order(kept)
+    return len(externalized)
+
+
+def _restore_covered_formal_body_retained_roads(
+    unit: Any,
+    *,
+    swsd_road_by_id: dict[str, dict[str, Any]],
+    rcsd_road_by_id: dict[str, dict[str, Any]],
+) -> int:
+    retained_ids = list(getattr(unit, "retained_detached_swsd_road_ids", []) or [])
+    if not retained_ids or not getattr(unit, "rcsd_road_ids", []):
+        return 0
+    unit_roads = [
+        rcsd_road_by_id[road_id]
+        for road_id in getattr(unit, "rcsd_road_ids", [])
+        if road_id in rcsd_road_by_id
+    ]
+    restored: list[str] = []
+    kept: list[str] = []
+    for road_id in retained_ids:
+        road = swsd_road_by_id.get(str(road_id))
+        if (
+            _is_formal_unit_body_swsd_road(unit, road)
+            and not _is_side_attachment_swsd_road(road)
+            and not _corridor_coverage_failed(road, unit_roads)
+        ):
+            restored.append(str(road_id))
+            continue
+        kept.append(str(road_id))
+    if not restored:
+        return 0
+    unit.swsd_road_ids = unique_preserve_order([*getattr(unit, "swsd_road_ids", []), *restored])
+    unit.retained_detached_swsd_road_ids = unique_preserve_order(kept)
+    return len(restored)
 
 
 def _recover_undercovered_mixed_advance_right_carriers(
@@ -979,6 +1076,11 @@ def _road_segment_ids(road: dict[str, Any] | None) -> list[str]:
         props.get("segmentid") or props.get("segment_id") or props.get("swsd_segment_id"),
         allow_empty=True,
     )
+
+
+def _is_formal_unit_body_swsd_road(unit: Any, road: dict[str, Any] | None) -> bool:
+    unit_segment_id = str(getattr(unit, "segment_id", "") or getattr(unit, "swsd_segment_id", ""))
+    return bool(unit_segment_id and unit_segment_id in _road_segment_ids(road))
 
 
 def _incident_segment_ids_by_node(roads: Any) -> dict[str, list[str]]:

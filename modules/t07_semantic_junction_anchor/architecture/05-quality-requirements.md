@@ -4,8 +4,8 @@
 
 - 代表 node 缺失是数据结构问题，不得 fallback 到其它 member node。
 - 非处理 `kind_2` 写 `NULL`，不得写业务 `no`。
-- Step3 不能用 T05 失败 relation 或不存在的 `base_id` 写锚定成功。
-- `kind_2=128` 的补锚只能来自 T05 成功 relation；`kind_2=2048` 允许来自 Step2 strict surface 或 T05 成功 relation，两者都必须可追溯到唯一 RCSD 语义路口。
+- Step3 不能用失败 relation 或不存在的 `base_id` 写锚定成功。
+- `kind_2=128` 的补锚只能来自兼容 relation 成功关系；`kind_2=2048` 允许来自 Step2 strict surface 或兼容 relation 成功关系，两者都必须可追溯到唯一 RCSD 语义路口。
 
 ## 2. GIS 与拓扑要求
 

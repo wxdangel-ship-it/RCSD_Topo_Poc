@@ -7,7 +7,7 @@ t03_virtual_junction_anchor,modules/t03_virtual_junction_anchor,active,standard-
 t04_divmerge_virtual_polygon,modules/t04_divmerge_virtual_polygon,active,standard-01-06-module-surface,keep-in-sync-with-step1-step7-implementation,complex-divmerge-step1-step7-relation-evidence
 t05_junction_surface_fusion,modules/t05_junction_surface_fusion,active,standard-01-06-module-surface,keep-in-sync-with-phase1-phase2-implementation,relation-main-table-and-copy-on-write-rcsd-network
 t06_segment_fusion_precheck,modules/t06_segment_fusion_precheck,active,standard-01-06-module-surface,keep-in-sync-with-step1-step2-step3-implementation,replacement-plan-problem-registry-topology-audit
-t07_semantic_junction_anchor,modules/t07_semantic_junction_anchor,active,standard-01-06-module-surface,keep-in-sync-with-step1-step2-step3-implementation,existing-surface-anchor-and-t05-relation-backfill
+t07_semantic_junction_anchor,modules/t07_semantic_junction_anchor,active,standard-01-06-module-surface,keep-in-sync-with-step1-step2-step3-implementation,existing-surface-anchor-and-optional-compatible-relation-backfill
 t08_preprocess,modules/t08_preprocess,active,standard-01-06-module-surface,keep-in-sync-with-tool1-tool9-implementation,independent-preprocess-qc-repair-toolchain
 t09_swsd_field_rule_restoration,modules/t09_swsd_field_rule_restoration,active,standard-01-06-module-surface,keep-in-sync-with-step1-step2-step3-implementation,restriction-led-field-rule-restoration-and-frcsd-projection
 t10_e2e_orchestration,modules/t10_e2e_orchestration,active,standard-01-06-module-surface,keep-in-sync-with-orchestration-contract,case-runner-feedback-visual-check-full-pipeline

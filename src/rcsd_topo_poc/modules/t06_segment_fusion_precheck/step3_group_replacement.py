@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from .graph_builders import NodeCanonicalizer
 from .io import read_features
@@ -111,6 +111,57 @@ def read_group_replacement_assignments_from_plan_rows(
     return assignments, stats
 
 
+def apply_group_replacement_assignments(
+    units: list[Any],
+    assignments: dict[str, GroupReplacementAssignment],
+    *,
+    segment_by_id: dict[str, dict[str, Any]],
+    rcsd_road_by_id: dict[str, dict[str, Any]],
+    canonicalizer: NodeCanonicalizer,
+    make_unit: Callable[[dict[str, Any]], Any],
+) -> int:
+    unit_by_segment_id = {unit.segment_id: unit for unit in units}
+    created_count = 0
+    for segment_id in sorted(assignments, key=_id_sort_key):
+        assignment = assignments[segment_id]
+        unit = unit_by_segment_id.get(segment_id)
+        if unit is None:
+            segment = segment_by_id.get(segment_id)
+            if segment is None:
+                continue
+            unit = make_unit(segment)
+            units.append(unit)
+            unit_by_segment_id[segment_id] = unit
+            created_count += 1
+
+        scoped_road_ids = _member_scoped_assignment_road_ids(
+            unit,
+            assignment,
+            segment=segment_by_id.get(segment_id),
+            rcsd_road_by_id=rcsd_road_by_id,
+        )
+        unit.rcsd_road_ids = unique_preserve_order([*unit.rcsd_road_ids, *scoped_road_ids])
+        scoped_node_ids = _canonical_road_endpoint_ids(scoped_road_ids, rcsd_road_by_id, canonicalizer)
+        unit.retained_node_ids = unique_preserve_order([*unit.retained_node_ids, *scoped_node_ids])
+        if not unit.rcsd_pair_nodes and assignment.rcsd_pair_nodes:
+            unit.rcsd_pair_nodes = assignment.rcsd_pair_nodes
+        unit.group_replacement_plan_ids = unique_preserve_order([*unit.group_replacement_plan_ids, *assignment.plan_ids])
+        unit.group_replacement_source_segment_ids = unique_preserve_order(
+            [*unit.group_replacement_source_segment_ids, *assignment.source_segment_ids]
+        )
+        unit.group_replacement_segment_ids = unique_preserve_order(
+            [*unit.group_replacement_segment_ids, *assignment.group_segment_ids]
+        )
+        unit.group_replacement_buffer_distances_m = sorted(
+            {*unit.group_replacement_buffer_distances_m, *assignment.buffer_distances_m}
+        )
+        if unit.status == "failed" and unit.reason == "missing_rcsd_road_ids" and unit.rcsd_road_ids:
+            unit.status = "passed"
+        if unit.status == "passed":
+            unit.reason = "group_path_corridor_replacement"
+    return created_count
+
+
 def _candidate_from_row(
     props: dict[str, Any],
     *,
@@ -143,6 +194,41 @@ def _candidate_from_row(
         rcsd_pair_nodes=rcsd_pair_nodes,
         buffer_distance_m=_float_or_zero(props.get("group_probe_buffer_distance_m")),
     )
+
+
+def _member_scoped_assignment_road_ids(
+    unit: Any,
+    assignment: GroupReplacementAssignment,
+    *,
+    segment: dict[str, Any] | None,
+    rcsd_road_by_id: dict[str, dict[str, Any]],
+) -> list[str]:
+    if unit.rcsd_road_ids:
+        return []
+    if segment is None:
+        return assignment.rcsd_road_ids
+    segment_geometry = segment.get("geometry")
+    if segment_geometry is None or segment_geometry.is_empty:
+        return assignment.rcsd_road_ids
+    max_distance = min(max(assignment.buffer_distances_m or [50.0]), 50.0)
+    scoped = [
+        road_id
+        for road_id in assignment.rcsd_road_ids
+        if _road_within_member_corridor(rcsd_road_by_id.get(road_id), segment_geometry, max_distance=max_distance)
+    ]
+    return scoped or assignment.rcsd_road_ids
+
+
+def _road_within_member_corridor(road: dict[str, Any] | None, segment_geometry: Any, *, max_distance: float) -> bool:
+    if road is None:
+        return False
+    road_geometry = road.get("geometry")
+    if road_geometry is None or road_geometry.is_empty:
+        return True
+    try:
+        return road_geometry.distance(segment_geometry) <= max_distance
+    except Exception:
+        return True
 
 
 def _candidate_from_plan_row(
@@ -259,6 +345,14 @@ def _canonical_road_endpoint_ids(
             except ParseError:
                 continue
     return unique_preserve_order(result)
+
+
+def _id_sort_key(value: Any) -> tuple[int, str]:
+    text = str(value)
+    try:
+        return 0, f"{int(text):020d}"
+    except ValueError:
+        return 1, text
 
 
 def _parse_list(value: Any) -> list[str]:

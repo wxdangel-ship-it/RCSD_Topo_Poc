@@ -177,7 +177,7 @@ Release / `DEBUG_VISUAL != 1` 默认不生成最终审计图片；Debug / `DEBUG
 
 ### 5.2 `nodes.gpkg`
 
-基于 full-input 输入整层 `nodes.gpkg` copy-on-write 生成；不得重写 geometry、丢 CRS 或改变非目标字段。只允许更新当前批次 selected / effective case 的代表 node `is_anchor`：`accepted -> yes`，`rejected / runtime_failed / formal result missing -> fail3`，relation 基数冲突时回退为 `no`。`fail3` 只属于 T03 downstream output 语义，不回写输入原始 nodes。
+基于 full-input 输入整层 `nodes.gpkg` copy-on-write 生成；不得重写 geometry、丢 CRS 或改变非目标字段。只允许更新当前批次 selected / effective case 的代表 node `is_anchor`：`accepted -> yes`，`rejected / runtime_failed / formal result missing -> fail3`。Relation 基数冲突、road-only 或 T05 前无法发布 1:1 relation 只影响 `intersection_match_t03` / relation evidence / T05 审计，不得把已 accepted 的代表 node 回退为 `no`。`fail3` 只属于 T03 downstream output 语义，不回写输入原始 nodes。
 
 ### 5.3 `nodes_anchor_update_audit.*`
 

@@ -7,6 +7,11 @@ from rcsd_topo_poc.modules.t06_segment_fusion_precheck.replacement_plan import (
     build_problem_registry_rows,
     build_replacement_plan_rows,
 )
+from rcsd_topo_poc.modules.t06_segment_fusion_precheck.step3_surface_aware_plan_release import (
+    _points_by_id,
+    _release_allowed,
+    _rollback_plan_ids_for_failed_segments,
+)
 
 
 def test_replacement_plan_combines_standard_group_and_special_rows() -> None:
@@ -296,8 +301,9 @@ def test_replacement_plan_adds_high_confidence_single_visual_repair() -> None:
         ],
         special_group_rows=[],
         group_replacement_audit_rows=[],
-        rcsd_roads=[],
+        rcsd_roads=[_road("rr_visual", 1, 2, [(0, 30), (100, 30)])],
         rcsd_node_canonicalizer=NodeCanonicalizer({}, frozenset()),
+        swsd_segments=[_feature({"id": "s_visual_gap"}, LineString([(0, 0), (100, 0)]))],
     )
 
     assert len(rows) == 1
@@ -466,6 +472,63 @@ def test_replacement_plan_does_not_control_release_when_swsd_remains_uncovered()
     assert rows == []
 
 
+def test_replacement_plan_releases_visual_outside_when_anchors_and_connectivity_pass() -> None:
+    rows = build_replacement_plan_rows(
+        replaceable_rows=[],
+        rejected_rows=[
+            _feature(
+                {
+                    "swsd_segment_id": "s_gap_release",
+                    "swsd_directionality": "dual",
+                }
+            )
+        ],
+        buffer_rejected_rows=[
+            _feature(
+                {
+                    "swsd_segment_id": "s_gap_release",
+                    "reject_reason": "retained_geometry_outside_swsd_visual_consistency_scope",
+                    "full_graph_status": "required_nodes_connected",
+                    "candidate_graph_status": "required_nodes_connected",
+                    "directional_status": "full=bidirectional;candidate=bidirectional",
+                    "missing_required_node_ids": [],
+                    "unexpected_endpoint_node_ids": [],
+                    "unexpected_mapped_semantic_node_ids": [],
+                    "retained_road_count": 2,
+                    "retained_rcsd_road_ids": ["rr1", "rr2"],
+                    "retained_node_ids": ["r1", "r2"],
+                    "required_rcsd_nodes": ["r1", "r2"],
+                    "swsd_uncovered_by_rcsd_length_m": 25.0,
+                    "swsd_uncovered_by_rcsd_ratio": 0.25,
+                }
+            )
+        ],
+        failure_business_audit_rows=[
+            _feature(
+                {
+                    "swsd_segment_id": "s_gap_release",
+                    "swsd_pair_nodes": ["a", "b"],
+                    "rcsd_pair_nodes": ["r1", "r2"],
+                    "manual_review_required": False,
+                }
+            )
+        ],
+        special_group_rows=[],
+        group_replacement_audit_rows=[],
+        rcsd_roads=[],
+        rcsd_node_canonicalizer=NodeCanonicalizer({}, frozenset()),
+    )
+
+    assert len(rows) == 1
+    props = rows[0]["properties"]
+    assert props["plan_status"] == "ready"
+    assert props["execution_action"] == "replace"
+    assert props["source_reason"] == "visual_consistency_manual_audit_release"
+    assert "visual_consistency_outside_manual_audit" in props["risk_flags"]
+    assert "manual_review_required" in props["risk_flags"]
+    assert "no_formal_trunk_road_conflict" in props["risk_flags"]
+
+
 def test_visual_consistency_controlled_release_does_not_compete_with_primary_road_plan() -> None:
     rows = build_replacement_plan_rows(
         replaceable_rows=[
@@ -518,8 +581,9 @@ def test_visual_consistency_controlled_release_does_not_compete_with_primary_roa
         ],
         special_group_rows=[],
         group_replacement_audit_rows=[],
-        rcsd_roads=[],
+        rcsd_roads=[_road("rr_visual", 1, 2, [(0, 30), (100, 30)])],
         rcsd_node_canonicalizer=NodeCanonicalizer({}, frozenset()),
+        swsd_segments=[_feature({"id": "s_visual_gap"}, LineString([(0, 0), (100, 0)]))],
     )
 
     by_segment = {row["properties"]["swsd_segment_id"]: row["properties"] for row in rows}
@@ -529,6 +593,53 @@ def test_visual_consistency_controlled_release_does_not_compete_with_primary_roa
     assert by_segment["s_visual"]["source_reason"] == "visual_consistency_road_conflict_with_primary_replacement_plan"
     assert "visual_consistency_road_conflict_with_primary_replacement_plan" in by_segment["s_visual"]["risk_flags"]
     assert "conflict_rcsd_road_ids=['rr_shared']" in by_segment["s_visual"]["notes"]
+
+
+def test_visual_consistency_member_does_not_conflict_with_own_path_group_plan() -> None:
+    rows = build_replacement_plan_rows(
+        replaceable_rows=[
+            _feature(
+                {
+                    "swsd_segment_id": "s_member",
+                    "replacement_strategy": "buffer_segment_extraction",
+                    "geometry_buffer_coverage_issue": "retained_geometry_outside_swsd_visual_consistency_scope",
+                    "swsd_uncovered_by_rcsd_length_m": 0.0,
+                    "swsd_uncovered_by_rcsd_ratio": 0.0,
+                    "swsd_pair_nodes": ["a", "b"],
+                    "rcsd_pair_nodes": ["10", "20"],
+                    "rcsd_road_ids": ["rr_member"],
+                    "retained_node_ids": ["10", "20"],
+                }
+            )
+        ],
+        special_group_rows=[],
+        group_replacement_audit_rows=[
+            _feature(
+                {
+                    "swsd_segment_id": "s_group",
+                    "group_probe_status": "passed",
+                    "group_probe_repair_owner": "T06_path_corridor_group_replacement",
+                    "group_probe_reason": "passed",
+                    "group_probe_buffer_distance_m": 50.0,
+                    "path_corridor_group_segment_ids": ["s_group", "s_member"],
+                    "group_probe_rcsd_road_ids": ["rr_member"],
+                    "swsd_pair_nodes": ["g1", "g2"],
+                    "rcsd_pair_nodes": ["10", "20"],
+                }
+            )
+        ],
+        rcsd_roads=[_road("rr_member", 10, 20, [(0, 0), (100, 0)])],
+        rcsd_node_canonicalizer=NodeCanonicalizer({}, frozenset({"10", "20"})),
+        swsd_segments=[_feature({"id": "s_member"}, LineString([(0, 0), (100, 0)]))],
+    )
+
+    by_segment = {row["properties"]["swsd_segment_id"]: row["properties"] for row in rows}
+    assert by_segment["s_member"]["plan_status"] == "ready"
+    assert by_segment["s_member"]["execution_action"] == "replace"
+    assert by_segment["s_group"]["plan_status"] == "ready"
+    assert "visual_consistency_same_path_group_member_conflict_accepted" in by_segment["s_member"]["risk_flags"]
+    assert "accepted_same_path_group_member_rcsd_road_ids=['rr_member']" in by_segment["s_member"]["notes"]
+    assert "visual_consistency_road_conflict_with_primary_replacement_plan" not in by_segment["s_member"]["risk_flags"]
 
 
 def test_visual_consistency_prunes_junction_local_connector_conflict() -> None:
@@ -574,6 +685,61 @@ def test_visual_consistency_prunes_junction_local_connector_conflict() -> None:
     assert "pruned_junction_local_conflict_rcsd_road_ids=['rr_connector']" in by_segment["visual"]["notes"]
 
 
+def test_visual_consistency_prunes_primary_body_conflict_when_junction_context_still_connected() -> None:
+    rows = build_replacement_plan_rows(
+        replaceable_rows=[
+            _feature(
+                {
+                    "swsd_segment_id": "primary",
+                    "replacement_strategy": "buffer_segment_extraction",
+                    "swsd_pair_nodes": ["p1", "p2"],
+                    "rcsd_pair_nodes": ["301", "302"],
+                    "rcsd_road_ids": ["rr_primary_body"],
+                    "retained_node_ids": ["301", "302"],
+                },
+                LineString([(60, 20), (100, 20)]),
+            ),
+            _feature(
+                {
+                    "swsd_segment_id": "visual",
+                    "replacement_strategy": "buffer_segment_extraction",
+                    "geometry_buffer_coverage_issue": "retained_geometry_outside_swsd_visual_consistency_scope",
+                    "swsd_uncovered_by_rcsd_length_m": 0.0,
+                    "swsd_uncovered_by_rcsd_ratio": 0.0,
+                    "swsd_pair_nodes": ["a", "b"],
+                    "rcsd_pair_nodes": ["101", "102"],
+                    "rcsd_road_ids": ["rr_visual_a", "rr_visual_b", "rr_primary_body"],
+                    "retained_node_ids": ["101", "150", "102", "301", "302"],
+                },
+                LineString([(0, 0), (100, 0)]),
+            ),
+        ],
+        special_group_rows=[],
+        group_replacement_audit_rows=[],
+        rcsd_roads=[
+            _road("rr_visual_a", 101, 150, [(0, 0), (50, 0)]),
+            _road("rr_visual_b", 150, 102, [(50, 0), (100, 0)]),
+            _road("rr_primary_body", 301, 302, [(60, 20), (100, 20)]),
+        ],
+        rcsd_node_canonicalizer=NodeCanonicalizer({}, frozenset({"101", "102", "150", "301", "302"})),
+        swsd_segments=[
+            _feature({"id": "primary"}, LineString([(60, 20), (100, 20)])),
+            _feature({"id": "visual"}, LineString([(0, 0), (100, 0)])),
+        ],
+    )
+
+    by_segment = {row["properties"]["swsd_segment_id"]: row["properties"] for row in rows}
+    assert by_segment["primary"]["plan_status"] == "ready"
+    assert by_segment["visual"]["plan_status"] == "ready"
+    assert by_segment["visual"]["execution_action"] == "replace"
+    assert by_segment["visual"]["rcsd_road_ids"] == ["rr_visual_a", "rr_visual_b"]
+    assert "301" not in by_segment["visual"]["retained_node_ids"]
+    assert "302" not in by_segment["visual"]["retained_node_ids"]
+    assert "visual_consistency_primary_body_conflict_pruned_to_junction_context" in by_segment["visual"]["risk_flags"]
+    assert "pruned_primary_body_conflict_rcsd_road_ids=['rr_primary_body']" in by_segment["visual"]["notes"]
+    assert "visual_consistency_road_conflict_with_primary_replacement_plan" not in by_segment["visual"]["risk_flags"]
+
+
 def test_standard_visual_consistency_high_deviation_requires_manual_review() -> None:
     rows = build_replacement_plan_rows(
         replaceable_rows=[
@@ -601,15 +767,17 @@ def test_standard_visual_consistency_high_deviation_requires_manual_review() -> 
     )
 
     props = rows[0]["properties"]
-    assert props["plan_status"] == "blocked"
-    assert props["execution_action"] == "hold"
-    assert props["source_reason"] == "visual_consistency_high_deviation_requires_manual_review"
+    assert props["plan_status"] == "ready"
+    assert props["execution_action"] == "replace"
+    assert props["source_reason"] == "visual_consistency_manual_audit_release"
     assert props["replacement_strategy"] == "visual_consistency_controlled_release"
     assert "visual_consistency_high_deviation" in props["risk_flags"]
-    assert "visual_consistency_high_deviation_requires_manual_review" in props["risk_flags"]
+    assert "visual_consistency_outside_manual_audit" in props["risk_flags"]
+    assert "manual_review_required" in props["risk_flags"]
+    assert "no_formal_trunk_road_conflict" in props["risk_flags"]
 
 
-def test_standard_visual_consistency_release_blocks_when_swsd_coverage_gap_exceeds_gate() -> None:
+def test_standard_visual_consistency_release_manual_audits_when_swsd_coverage_gap_exceeds_gate() -> None:
     rows = build_replacement_plan_rows(
         replaceable_rows=[
             _feature(
@@ -632,17 +800,21 @@ def test_standard_visual_consistency_release_blocks_when_swsd_coverage_gap_excee
         failure_business_audit_rows=[],
         special_group_rows=[],
         group_replacement_audit_rows=[],
-        rcsd_roads=[],
+        rcsd_roads=[_road("rr_visual", 1, 2, [(0, 30), (100, 30)])],
         rcsd_node_canonicalizer=NodeCanonicalizer({}, frozenset()),
+        swsd_segments=[_feature({"id": "s_visual_gap"}, LineString([(0, 0), (100, 0)]))],
     )
 
     props = rows[0]["properties"]
-    assert props["plan_status"] == "blocked"
-    assert props["execution_action"] == "hold"
-    assert props["source_reason"] == "visual_consistency_release_exceeds_formal_replacement_corridor_gate"
+    assert props["plan_status"] == "ready"
+    assert props["execution_action"] == "replace"
+    assert props["source_reason"] == "visual_consistency_manual_audit_release"
     assert props["replacement_strategy"] == "visual_consistency_controlled_release"
     assert "retained_geometry_outside_swsd_visual_consistency_scope" in props["risk_flags"]
-    assert "visual_consistency_release_exceeds_formal_replacement_corridor_gate" in props["risk_flags"]
+    assert "visual_consistency_outside_manual_audit" in props["risk_flags"]
+    assert "manual_review_required" in props["risk_flags"]
+    assert "no_formal_trunk_road_conflict" in props["risk_flags"]
+    assert "visual_outside_swsd_buffer_road_ids=['rr_visual']" in props["notes"]
 
 
 def test_replacement_plan_blocks_reverse_of_rejected_swsd_pair() -> None:
@@ -798,6 +970,160 @@ def test_replacement_plan_marks_mapping_far_from_retained_incident_segment() -> 
     assert "blocked by junction_alignment_to_retained_swsd_exceeds_topology_gate" in props["notes"]
 
 
+def test_surface_aware_release_requires_passed_surface_closure() -> None:
+    props = {
+        "swsd_pair_nodes": ["n1", "n2"],
+        "rcsd_pair_nodes": ["r1", "r2"],
+        "risk_flags": ["junction_alignment_to_retained_swsd_exceeds_topology_gate"],
+    }
+    swsd_points = {"n1": Point(0, 0), "n2": Point(5, 0)}
+    rcsd_points = {"r1": Point(25, 0), "r2": Point(5, 0)}
+    incident = {"n1": ["s_replace", "s_retained"], "n2": ["s_replace"]}
+    ready_segments = {"s_replace"}
+
+    allowed, triggers = _release_allowed(
+        props,
+        {"n1": ("pass", "auto_closed_surface_1v1", 25.0)},
+        swsd_points,
+        rcsd_points,
+        incident,
+        ready_segments,
+    )
+    assert allowed
+    assert triggers[0]["swsd_node_id"] == "n1"
+
+    blocked, blocked_triggers = _release_allowed(
+        props,
+        {"n1": ("fail", "blocked_by_patch_conflict", 25.0)},
+        swsd_points,
+        rcsd_points,
+        incident,
+        ready_segments,
+    )
+    assert not blocked
+    assert blocked_triggers[0]["ok"] is False
+
+
+def test_surface_aware_release_does_not_release_visual_only_risk() -> None:
+    props = {
+        "swsd_pair_nodes": ["n1", "n2"],
+        "rcsd_pair_nodes": ["r1", "r2"],
+        "risk_flags": ["visual_consistency_outside_manual_audit"],
+    }
+    swsd_points = {"n1": Point(0, 0), "n2": Point(5, 0)}
+    rcsd_points = {"r1": Point(25, 0), "r2": Point(5, 0)}
+
+    allowed, triggers = _release_allowed(
+        props,
+        {"n1": ("pass", "auto_closed_surface_1v1", 25.0)},
+        swsd_points,
+        rcsd_points,
+        {"n1": ["s_replace", "s_retained"], "n2": ["s_replace"]},
+        {"s_replace"},
+    )
+
+    assert not allowed
+    assert triggers == []
+
+
+def test_surface_aware_release_accepts_original_pair_endpoint_without_surface_row() -> None:
+    props = {
+        "swsd_pair_nodes": ["n1", "n2"],
+        "rcsd_pair_nodes": ["r1", "r2"],
+        "original_rcsd_pair_nodes": ["r1", "r2"],
+        "risk_flags": ["junction_alignment_to_retained_swsd_exceeds_topology_gate"],
+    }
+    swsd_points = {"n1": Point(0, 0), "n2": Point(5, 0)}
+    rcsd_points = {"r1": Point(25, 0), "r2": Point(5, 0)}
+
+    allowed, triggers = _release_allowed(
+        props,
+        {},
+        swsd_points,
+        rcsd_points,
+        {"n1": ["s_replace"], "n2": ["s_replace"]},
+        set(),
+    )
+
+    assert allowed
+    assert triggers == [
+        {
+            "swsd_node_id": "n1",
+            "rcsd_node_id": "r1",
+            "distance_m": 25.0,
+            "surface_status": ["pass", "auto_closed_selected_replacement_endpoint", 25.0],
+            "ok": True,
+        }
+    ]
+
+
+def test_surface_aware_point_index_uses_mainnodeid() -> None:
+    points = _points_by_id(
+        [
+            {"properties": {"id": "sub1", "mainnodeid": "main1"}, "geometry": Point(1, 2)},
+            {"properties": {"node_id": "node2"}, "geometry": Point(3, 4)},
+        ]
+    )
+
+    assert points["sub1"].equals(Point(1, 2))
+    assert points["main1"].equals(Point(1, 2))
+    assert points["node2"].equals(Point(3, 4))
+
+
+def test_surface_aware_release_rolls_back_plans_that_add_topology_failures() -> None:
+    added_fail_keys = {
+        ("segment_internal_connectivity", "s_group_member", "", "", "segment_corridor_coverage_dropped_after_replacement"),
+        ("segment_junction_connectivity", "", "n1", "", "junction_incident_segment_mapping_missing"),
+    }
+    released = [
+        {"plan_id": "standard:s_ok", "segment_id": "s_ok", "group_segment_ids": []},
+        {"plan_id": "standard:s_direct", "segment_id": "s_direct", "group_segment_ids": []},
+        {"plan_id": "group_path_corridor:s_group", "segment_id": "s_group", "group_segment_ids": ["s_group", "s_group_member"]},
+    ]
+    incident = {"n1": ["s_direct"], "n2": ["s_direct"], "n3": ["s_ok"]}
+
+    assert _rollback_plan_ids_for_failed_segments(added_fail_keys, released, incident) == {
+        "standard:s_direct",
+        "group_path_corridor:s_group",
+    }
+
+
+def test_visual_manual_release_allows_small_pair_attachment_gap_to_retained_incident_segment() -> None:
+    rows = build_replacement_plan_rows(
+        replaceable_rows=[
+            _feature(
+                {
+                    "swsd_segment_id": "s_replace",
+                    "replacement_strategy": "buffer_segment_extraction",
+                    "geometry_buffer_coverage_issue": "retained_geometry_outside_swsd_visual_consistency_scope",
+                    "swsd_uncovered_by_rcsd_length_m": 25.0,
+                    "swsd_uncovered_by_rcsd_ratio": 0.2,
+                    "swsd_pair_nodes": ["n1", "n2"],
+                    "rcsd_pair_nodes": ["r_near", "r2"],
+                    "rcsd_road_ids": ["rr1"],
+                    "retained_node_ids": ["r_near", "r2"],
+                }
+            )
+        ],
+        special_group_rows=[],
+        group_replacement_audit_rows=[],
+        rcsd_roads=[],
+        rcsd_node_canonicalizer=NodeCanonicalizer({}, frozenset()),
+        swsd_segments=[
+            _feature({"id": "s_replace", "pair_nodes": ["n1", "n2"]}),
+            _feature({"id": "s_retained", "pair_nodes": ["n1", "n3"]}),
+        ],
+        swsd_nodes=[_node("n1", 0, 0), _node("n2", 10, 0), _node("n3", 0, 10)],
+        rcsd_nodes=[_node("r_near", 22, 0), _node("r2", 10, 0)],
+    )
+
+    props = rows[0]["properties"]
+    assert props["plan_status"] == "ready"
+    assert props["execution_action"] == "replace"
+    assert "visual_manual_release_pair_attachment_gap_accepted" in props["risk_flags"]
+    assert "junction_alignment_to_retained_swsd_exceeds_topology_gate" not in props["risk_flags"]
+
+
 def test_replacement_plan_blocks_replacement_plans_mapping_same_junction_to_diverged_rcsd_nodes() -> None:
     rows = build_replacement_plan_rows(
         replaceable_rows=[
@@ -837,6 +1163,67 @@ def test_replacement_plan_blocks_replacement_plans_mapping_same_junction_to_dive
     assert by_segment["s2"]["plan_status"] == "blocked"
     assert by_segment["s1"]["source_reason"] == "junction_alignment_between_replacement_plans_diverged"
     assert by_segment["s2"]["source_reason"] == "junction_alignment_between_replacement_plans_diverged"
+
+
+def test_replacement_plan_does_not_block_valid_peer_for_pair_anchor_mismatch_candidate() -> None:
+    rows = build_replacement_plan_rows(
+        replaceable_rows=[
+            _feature(
+                {
+                    "swsd_segment_id": "valid_segment",
+                    "replacement_strategy": "buffer_segment_extraction",
+                    "swsd_pair_nodes": ["n1", "n2"],
+                    "rcsd_pair_nodes": ["r_good", "r2"],
+                    "rcsd_road_ids": ["rr_valid"],
+                }
+            ),
+            _feature(
+                {
+                    "swsd_segment_id": "mismatch_segment",
+                    "replacement_strategy": "buffer_segment_extraction",
+                    "swsd_pair_nodes": ["n1", "n3"],
+                    "original_rcsd_pair_nodes": ["r_good", "r3"],
+                    "rcsd_pair_nodes": ["r_bad", "r3"],
+                    "rcsd_road_ids": ["rr_mismatch"],
+                }
+            ),
+        ],
+        failure_business_audit_rows=[
+            _feature(
+                {
+                    "swsd_segment_id": "mismatch_segment",
+                    "failure_business_category": "pair_anchor_mismatch",
+                    "pair_anchor_error_swsd_nodes": ["n1"],
+                    "pair_anchor_error_original_rcsd_nodes": ["r_good"],
+                    "pair_anchor_error_candidate_rcsd_nodes": ["r_bad"],
+                }
+            )
+        ],
+        special_group_rows=[],
+        group_replacement_audit_rows=[],
+        rcsd_roads=[],
+        rcsd_node_canonicalizer=NodeCanonicalizer({}, frozenset()),
+        swsd_segments=[
+            _feature({"id": "valid_segment", "pair_nodes": ["n1", "n2"]}),
+            _feature({"id": "mismatch_segment", "pair_nodes": ["n1", "n3"]}),
+        ],
+        swsd_nodes=[_node("n1", 0, 0), _node("n2", 10, 0), _node("n3", 0, 10)],
+        rcsd_nodes=[
+            _node("r_good", 0, 0),
+            _node("r_bad", 20, 0),
+            _node("r2", 10, 0),
+            _node("r3", 0, 10),
+        ],
+    )
+
+    by_segment = {row["properties"]["swsd_segment_id"]: row["properties"] for row in rows}
+    assert by_segment["valid_segment"]["plan_status"] == "ready"
+    assert by_segment["valid_segment"]["execution_action"] == "replace"
+    assert "junction_alignment_peer_pair_anchor_mismatch_ignored" in by_segment["valid_segment"]["risk_flags"]
+    assert by_segment["mismatch_segment"]["plan_status"] == "blocked"
+    assert by_segment["mismatch_segment"]["execution_action"] == "hold"
+    assert by_segment["mismatch_segment"]["source_reason"] == "pair_anchor_mismatch_replacement_plan_anchor_not_authoritative"
+    assert "pair_anchor_mismatch_replacement_plan_anchor_not_authoritative" in by_segment["mismatch_segment"]["risk_flags"]
 
 
 def test_replacement_plan_uses_optional_junction_nodes_after_dropped_junction() -> None:
@@ -1044,14 +1431,14 @@ def test_problem_registry_marks_plan_covered_and_upstream_required_segments() ->
     assert by_segment["s5"]["pair_anchor_diagnostic_reason"] == "candidate_anchor_mismatch"
 
 
-def _feature(properties: dict) -> dict:
-    return {"properties": properties, "geometry": LineString([(0, 0), (1, 0)])}
+def _feature(properties: dict, geometry: LineString | None = None) -> dict:
+    return {"properties": properties, "geometry": geometry or LineString([(0, 0), (1, 0)])}
 
 
-def _road(road_id: str, snode: int, enode: int) -> dict:
+def _road(road_id: str, snode: int | str, enode: int | str, coords: list[tuple[float, float]] | None = None) -> dict:
     return {
         "properties": {"id": road_id, "snodeid": snode, "enodeid": enode},
-        "geometry": LineString([(snode, 0), (enode, 0)]),
+        "geometry": LineString(coords or [(float(snode), 0), (float(enode), 0)]),
     }
 
 

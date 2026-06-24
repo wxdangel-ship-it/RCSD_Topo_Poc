@@ -23,7 +23,6 @@ T10_E2E_STAGE_ORDER = (
     "t03",
     "t04",
     "t05",
-    "t07_step3",
     "t06_step12",
     "t06_step3",
     "t09_step12",
@@ -94,7 +93,7 @@ T10_T06_VISUAL_CHECK_FIELDNAMES = (
 T10_T06_VISUAL_LAYER_ROLES = {
     "t01_segment_gpkg": "SWSD Segment source layer for baseline overlay.",
     "t01_roads_gpkg": "SWSD Road source layer before T06 replacement.",
-    "t07_nodes_gpkg": "SWSD/F-RCSD node handoff consumed by T06.",
+    "t07_nodes_gpkg": "T07 Step2 SWSD nodes layer; final T06 handoff is T04 nodes.",
     "t07_surface_gpkg": "T07 semantic junction surface for F-RCSD anchor review.",
     "t03_surface_gpkg": "T03 virtual intersection surface for visual overlay.",
     "t04_surface_gpkg": "T04 divmerge virtual surface for grade-separated anchor review.",
@@ -810,6 +809,7 @@ def _run_t03(
     run_root = stage_dir / "t03"
     produced = {
         "t03_run_root": _path_text(run_root),
+        "t03_nodes": _path_text(run_root / "nodes.gpkg"),
         "t03_surface": _path_text(run_root / "virtual_intersection_polygons.gpkg"),
         "t03_relation_evidence": _path_text(run_root / "t03_swsd_rcsd_relation_evidence.csv"),
         "t03_intersection_match": _path_text(run_root / "intersection_match_t03.geojson"),
@@ -826,7 +826,7 @@ def _run_t04(
     handoffs: Mapping[str, str],
 ) -> tuple[dict[str, Any], dict[str, str]]:
     inputs = {
-        "t07_nodes": _path_from(handoffs.get("t07_nodes")),
+        "t03_nodes": _path_from(handoffs.get("t03_nodes")),
         "t01_roads": _path_from(handoffs.get("t01_roads")),
         "drivezone": external_inputs.get("drivezone"),
         "divstripzone": external_inputs.get("divstripzone"),
@@ -837,7 +837,7 @@ def _run_t04(
     if missing:
         return _blocked_record("t04", stage_dir, "Missing T04 inputs.", inputs=inputs, missing=missing), {}
     env = {
-        "NODES_PATH": str(inputs["t07_nodes"]),
+        "NODES_PATH": str(inputs["t03_nodes"]),
         "ROADS_PATH": str(inputs["t01_roads"]),
         "DRIVEZONE_PATH": str(inputs["drivezone"]),
         "DIVSTRIPZONE_PATH": str(inputs["divstripzone"]),
@@ -858,6 +858,8 @@ def _run_t04(
     run_root = stage_dir / "t04"
     produced = {
         "t04_run_root": _path_text(run_root),
+        "t04_nodes": _path_text(run_root / "nodes.gpkg"),
+        "final_swsd_nodes": _path_text(run_root / "nodes.gpkg"),
         "t04_surface": _path_text(run_root / "divmerge_virtual_anchor_surface.gpkg"),
         "t04_relation_evidence": _path_text(run_root / "t04_swsd_rcsd_relation_evidence.csv"),
         "t04_intersection_match": _path_text(run_root / "intersection_match_t04.geojson"),
@@ -881,7 +883,7 @@ def _run_t05(
     pair_anchor_endpoint_cluster_path: Path | None = None,
 ) -> tuple[dict[str, Any], dict[str, str]]:
     inputs = {
-        "t07_nodes": _path_from(handoffs.get("t07_nodes")),
+        "final_swsd_nodes": _path_from(handoffs.get("final_swsd_nodes") or handoffs.get("t04_nodes")),
         "t07_surface": _path_from(handoffs.get("t07_surface")),
         "t07_relation_evidence": _path_from(handoffs.get("t07_relation_evidence")),
         "t03_surface": _path_from(handoffs.get("t03_surface")),
@@ -932,7 +934,7 @@ def _run_t05(
         "--rcsdnode",
         str(inputs["rcsdnode"]),
         "--nodes",
-        str(inputs["t07_nodes"]),
+        str(inputs["final_swsd_nodes"]),
         "--out-root",
         str(stage_dir),
         "--phase1-run-id",
@@ -1007,7 +1009,6 @@ def _run_t07_step3(
     produced = {
         "t07_step2_nodes": str(inputs["t07_nodes"]),
         "t07_step3_root": _path_text(step3_root),
-        "t07_nodes": _path_text(step3_root / "nodes.gpkg"),
         "t07_step3_nodes": _path_text(step3_root / "nodes.gpkg"),
         "t07_intersection_match_t07": _path_text(step3_root / "intersection_match_t07.geojson"),
         "t07_surface": _path_text(step3_root / "t07_rcsdintersection_anchor_surface.gpkg"),
@@ -1028,7 +1029,7 @@ def _run_t06_step12(
     inputs = {
         "t01_segment": _path_from(handoffs.get("t01_segment")),
         "t01_roads": _path_from(handoffs.get("t01_roads")),
-        "t07_nodes": _path_from(handoffs.get("t07_nodes")),
+        "final_swsd_nodes": _path_from(handoffs.get("final_swsd_nodes") or handoffs.get("t04_nodes")),
         "t05_intersection_match_all": _path_from(handoffs.get("t05_intersection_match_all")),
         "t05_rcsdroad_out": _path_from(handoffs.get("t05_rcsdroad_out")),
         "t05_rcsdnode_out": _path_from(handoffs.get("t05_rcsdnode_out")),
@@ -1044,7 +1045,7 @@ def _run_t06_step12(
         "--swsd-roads",
         str(inputs["t01_roads"]),
         "--swsd-nodes",
-        str(inputs["t07_nodes"]),
+        str(inputs["final_swsd_nodes"]),
         "--intersection-match",
         str(inputs["t05_intersection_match_all"]),
         "--rcsdroad",
@@ -1084,7 +1085,7 @@ def _run_t06_step3(
         "t06_step2_replaceable": t06_step2_replaceable,
         "t01_segment": _path_from(handoffs.get("t01_segment")),
         "t01_roads": _path_from(handoffs.get("t01_roads")),
-        "t07_nodes": _path_from(handoffs.get("t07_nodes")),
+        "final_swsd_nodes": _path_from(handoffs.get("final_swsd_nodes") or handoffs.get("t04_nodes")),
         "t05_rcsdroad_out": _path_from(handoffs.get("t05_rcsdroad_out")),
         "t05_rcsdnode_out": _path_from(handoffs.get("t05_rcsdnode_out")),
         "t07_surface": _path_from(handoffs.get("t07_surface")),
@@ -1093,7 +1094,7 @@ def _run_t06_step3(
         "t04_audit": _path_from(handoffs.get("t04_audit")),
         "t05_junction_surface": _path_from(handoffs.get("t05_junction_surface")),
     }
-    required_inputs = {key: inputs[key] for key in ("t06_step2_replaceable", "t01_segment", "t01_roads", "t07_nodes", "t05_rcsdroad_out", "t05_rcsdnode_out")}
+    required_inputs = {key: inputs[key] for key in ("t06_step2_replaceable", "t01_segment", "t01_roads", "final_swsd_nodes", "t05_rcsdroad_out", "t05_rcsdnode_out")}
     missing = _missing_files(required_inputs)
     if missing:
         return _blocked_record("t06_step3", stage_dir, "Missing T06 Step3 inputs.", inputs=inputs, missing=missing), {}
@@ -1109,7 +1110,7 @@ def _run_t06_step3(
         "--swsd-roads",
         str(inputs["t01_roads"]),
         "--swsd-nodes",
-        str(inputs["t07_nodes"]),
+        str(inputs["final_swsd_nodes"]),
         "--rcsdroad",
         str(inputs["t05_rcsdroad_out"]),
         "--rcsdnode",
@@ -1158,18 +1159,18 @@ def _run_t09_step12(
     handoffs: Mapping[str, str],
 ) -> tuple[dict[str, Any], dict[str, str]]:
     inputs = {
-        "t07_nodes": _path_from(handoffs.get("t07_nodes")),
+        "final_swsd_nodes": _path_from(handoffs.get("final_swsd_nodes") or handoffs.get("t04_nodes")),
         "t01_roads": _path_from(handoffs.get("t01_roads")),
         "t01_segment": _path_from(handoffs.get("t01_segment")),
         "sw_restriction_tool7": external_inputs.get("sw_restriction_tool7"),
         "sw_arrow_tool8": external_inputs.get("sw_arrow_tool8"),
     }
-    required = {key: value for key, value in inputs.items() if key in {"t07_nodes", "t01_roads", "t01_segment"}}
+    required = {key: value for key, value in inputs.items() if key in {"final_swsd_nodes", "t01_roads", "t01_segment"}}
     missing = _missing_files(required)
     if missing:
         return _blocked_record("t09_step12", stage_dir, "Missing T09 Step1/2 inputs.", inputs=inputs, missing=missing), {}
     env = {
-        "T09_SWNODE": str(inputs["t07_nodes"]),
+        "T09_SWNODE": str(inputs["final_swsd_nodes"]),
         "T09_SWROAD": str(inputs["t01_roads"]),
         "T09_SEGMENT": str(inputs["t01_segment"]),
         "T09_RESTRICTION": str(inputs["sw_restriction_tool7"] or ""),
@@ -1390,11 +1391,11 @@ def _t06_visual_paths(*, case_run_dir: Path | None, t06_run_root: Path | None) -
     return {
         "t01_segment_gpkg": case_run_dir / "t01" / "segment.gpkg",
         "t01_roads_gpkg": case_run_dir / "t01" / "roads.gpkg",
-        "t07_nodes_gpkg": case_run_dir / "t07_step3" / "t07_step3" / "step3_intersection_match" / "nodes.gpkg",
+        "t07_nodes_gpkg": case_run_dir / "t07" / "t07" / "step2_anchor_recognition" / "nodes.gpkg",
         "t07_surface_gpkg": case_run_dir
-        / "t07_step3"
-        / "t07_step3"
-        / "step3_intersection_match"
+        / "t07"
+        / "t07"
+        / "step2_anchor_recognition"
         / "t07_rcsdintersection_anchor_surface.gpkg",
         "t03_surface_gpkg": case_run_dir / "t03" / "t03" / "virtual_intersection_polygons.gpkg",
         "t04_surface_gpkg": case_run_dir / "t04" / "t04" / "divmerge_virtual_anchor_surface.gpkg",
@@ -1563,6 +1564,9 @@ def build_t10_t06_funnel_summary(
                 "t01_segment",
                 "t01_roads",
                 "t07_nodes",
+                "t03_nodes",
+                "t04_nodes",
+                "final_swsd_nodes",
                 "t05_intersection_match_all",
                 "t05_rcsdroad_out",
                 "t05_rcsdnode_out",

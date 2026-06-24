@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import ast
-from collections import defaultdict
+from collections import defaultdict, deque
 from typing import Any
+
+from shapely.ops import unary_union
 
 from .graph_builders import NodeCanonicalizer
 from .parsing import ParseError, normalize_id, parse_id_list, unique_preserve_order
@@ -15,9 +17,11 @@ MAX_CONTROLLED_VISUAL_SWSD_UNCOVERED_RATIO = 0.1
 MAX_CONTROLLED_VISUAL_SWSD_UNCOVERED_LENGTH_M = 20.0
 MAX_CONTROLLED_VISUAL_HIGH_DEVIATION_RATIO = 0.5
 MAX_RETAINED_JUNCTION_ATTACHMENT_GAP_M = 20.0
+MAX_VISUAL_MANUAL_RELEASE_PAIR_ATTACHMENT_GAP_M = 25.0
 MAX_REPLACED_JUNCTION_MAPPING_DIVERGENCE_M = 5.0
 MAX_JUNCTION_LOCAL_CONFLICT_ROAD_M = 30.0
 VISUAL_CONFLICT_SWSD_BUFFER_M = 5.0
+VISUAL_CONFLICT_CORRIDOR_BUFFER_M = 15.0
 MIN_VISUAL_CONFLICT_PRUNE_OUTSIDE_RATIO = 0.5
 VISUAL_CONSISTENCY_STRATEGIES = {
     "visual_consistency_high_confidence_repair",
@@ -43,6 +47,7 @@ def build_replacement_plan_rows(
     rcsd_node_by_id = _index_by_id(rcsd_nodes or [])
     replaceable_segment_ids = {_safe_id((row.get("properties") or {}).get("swsd_segment_id")) for row in replaceable_rows}
     pair_anchor_bridges = _pair_anchor_bridges_by_segment(failure_business_audit_rows or [])
+    pair_anchor_issues = _pair_anchor_issues_by_segment(failure_business_audit_rows or [])
     reverse_blockers = _reverse_pair_blockers(
         rejected_rows or [],
         failure_business_audit_rows or [],
@@ -54,8 +59,10 @@ def build_replacement_plan_rows(
             replaceable_rows,
             reverse_blockers=reverse_blockers,
             pair_anchor_bridges=pair_anchor_bridges,
+            pair_anchor_issues=pair_anchor_issues,
             rcsd_road_by_id=rcsd_road_by_id,
             rcsd_node_canonicalizer=rcsd_node_canonicalizer,
+            swsd_geometry_by_segment=_geometry_by_segment_id(swsd_segments or []),
         )
     )
     rows.extend(
@@ -194,8 +201,10 @@ def _standard_plan_rows(
     *,
     reverse_blockers: dict[tuple[str, str], dict[str, str]],
     pair_anchor_bridges: dict[str, dict[str, Any]],
+    pair_anchor_issues: dict[str, dict[str, list[str]]],
     rcsd_road_by_id: dict[str, dict[str, Any]],
     rcsd_node_canonicalizer: NodeCanonicalizer,
+    swsd_geometry_by_segment: dict[str, Any],
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     for row in replaceable_rows:
@@ -210,34 +219,33 @@ def _standard_plan_rows(
         pair_nodes = _parse_list(props.get("swsd_pair_nodes"))
         reverse_blocker = _blocker_for_pair(pair_nodes, reverse_blockers)
         bridge = pair_anchor_bridges.get(segment_id, {})
+        pair_anchor_issue = pair_anchor_issues.get(segment_id, {})
         pair_anchor_bridge_road_ids = [
             road_id for road_id in _parse_list(bridge.get("road_ids")) if road_id in rcsd_road_by_id
         ]
         rcsd_road_ids = unique_preserve_order([*_parse_list(props.get("rcsd_road_ids")), *pair_anchor_bridge_road_ids])
         buffer_distances = _parse_float_list(props.get("adaptive_buffer_distance_m"))
         buffer_distance_blocked = bool(buffer_distances and max(buffer_distances) > MAX_FORMAL_REPLACEMENT_BUFFER_M)
-        visual_coverage_blocked = controlled_visual_release and _visual_consistency_coverage_gate_failed(props)
+        visual_coverage_manual_audit = controlled_visual_release and _visual_consistency_coverage_gate_failed(props)
         retained_node_ids = unique_preserve_order(
             [
                 *_parse_list(props.get("retained_node_ids")),
                 *_canonical_road_endpoint_ids(pair_anchor_bridge_road_ids, rcsd_road_by_id, rcsd_node_canonicalizer),
             ]
         )
-        plan_status = "blocked" if reverse_blocker or buffer_distance_blocked or visual_coverage_blocked else "ready"
+        plan_status = "blocked" if reverse_blocker or buffer_distance_blocked else "ready"
         action = "hold" if plan_status == "blocked" else "replace"
         if reverse_blocker:
             reason = reverse_blocker.get("reason", strategy)
         elif buffer_distance_blocked:
             reason = "adaptive_buffer_exceeds_topology_connectivity_gate"
-        elif visual_coverage_blocked:
-            reason = "visual_consistency_release_exceeds_formal_replacement_corridor_gate"
+        elif controlled_visual_release and (visual_coverage_manual_audit or high_visual_deviation):
+            reason = "visual_consistency_manual_audit_release"
         else:
             reason = props.get("geometry_buffer_coverage_issue") if controlled_visual_release else strategy
         risk_flags = ["reverse_retained_swsd_pair_blocked"] if reverse_blocker else []
         if buffer_distance_blocked:
             risk_flags.append("adaptive_buffer_exceeds_topology_connectivity_gate")
-        if visual_coverage_blocked:
-            risk_flags.append("visual_consistency_release_exceeds_formal_replacement_corridor_gate")
         if pair_anchor_bridge_road_ids:
             risk_flags.append("pair_anchor_bridge_roads_added")
         if controlled_visual_release:
@@ -247,6 +255,8 @@ def _standard_plan_rows(
                     "retained_geometry_outside_swsd_visual_consistency_scope",
                 ]
             )
+            if visual_coverage_manual_audit or high_visual_deviation:
+                risk_flags.extend(["visual_consistency_outside_manual_audit", "manual_review_required"])
             if high_visual_deviation:
                 risk_flags.append("visual_consistency_high_deviation")
         if reverse_blocker:
@@ -256,16 +266,18 @@ def _standard_plan_rows(
                 f"blocked because adaptive buffer exceeds {MAX_FORMAL_REPLACEMENT_BUFFER_M:g}m "
                 "topology connectivity gate"
             )
-        elif visual_coverage_blocked:
-            notes = (
-                "blocked because controlled visual release exceeds formal replacement corridor "
-                "coverage gate"
-            )
         else:
             if controlled_visual_release:
                 notes = "standard Step2 replaceable segment with retained RCSD visual consistency mismatch accepted as controlled release audit risk"
-                if high_visual_deviation:
-                    notes = f"{notes}; high visual deviation requires manual review unless blocked by primary RCSDRoad conflict"
+                if visual_coverage_manual_audit or high_visual_deviation:
+                    notes = f"{notes}; visual consistency deviation requires manual review unless blocked by primary RCSDRoad conflict"
+                outside_road_ids = _visual_outside_swsd_buffer_road_ids(
+                    rcsd_road_ids,
+                    swsd_geometry=swsd_geometry_by_segment.get(segment_id),
+                    rcsd_road_by_id=rcsd_road_by_id,
+                )
+                if outside_road_ids:
+                    notes = f"{notes}; visual_outside_swsd_buffer_road_ids={outside_road_ids}"
             else:
                 notes = (
                     "standard Step2 replaceable segment with pair-anchor bridge roads"
@@ -305,8 +317,12 @@ def _standard_plan_rows(
                     "optional_junc_rcsd_nodes": _parse_list(props.get("optional_junc_rcsd_nodes")),
                     "dropped_junc_nodes": _parse_list(props.get("dropped_junc_nodes")),
                     "dropped_junc_relation_nodes": _parse_list(props.get("dropped_junc_relation_nodes")),
+                    "original_rcsd_pair_nodes": _parse_list(props.get("original_rcsd_pair_nodes")),
                     "rcsd_pair_nodes": _parse_list(props.get("rcsd_pair_nodes")),
                     "rcsd_junc_nodes": _parse_list(props.get("rcsd_junc_nodes")),
+                    "pair_anchor_error_swsd_nodes": pair_anchor_issue.get("swsd_nodes", []),
+                    "pair_anchor_error_original_rcsd_nodes": pair_anchor_issue.get("original_rcsd_nodes", []),
+                    "pair_anchor_error_candidate_rcsd_nodes": pair_anchor_issue.get("candidate_rcsd_nodes", []),
                     "rcsd_road_ids": rcsd_road_ids,
                     "retained_node_ids": retained_node_ids,
                     "pair_anchor_bridge_road_ids": pair_anchor_bridge_road_ids,
@@ -314,6 +330,11 @@ def _standard_plan_rows(
                     "group_segment_ids": [segment_id],
                     "source_segment_ids": [segment_id],
                     "buffer_distances_m": buffer_distances,
+                    "geometry_buffer_coverage_issue": props.get("geometry_buffer_coverage_issue"),
+                    "rcsd_outside_swsd_buffer_length_m": props.get("rcsd_outside_swsd_buffer_length_m"),
+                    "rcsd_outside_swsd_buffer_ratio": props.get("rcsd_outside_swsd_buffer_ratio"),
+                    "swsd_uncovered_by_rcsd_length_m": props.get("swsd_uncovered_by_rcsd_length_m"),
+                    "swsd_uncovered_by_rcsd_ratio": props.get("swsd_uncovered_by_rcsd_ratio"),
                     "risk_flags": risk_flags,
                     "notes": notes,
                 },
@@ -468,6 +489,11 @@ def _visual_consistency_repair_plan_rows(
                     "group_segment_ids": [segment_id],
                     "source_segment_ids": [segment_id],
                     "buffer_distances_m": [],
+                    "geometry_buffer_coverage_issue": props.get("reject_reason"),
+                    "rcsd_outside_swsd_buffer_length_m": props.get("rcsd_outside_swsd_buffer_length_m"),
+                    "rcsd_outside_swsd_buffer_ratio": props.get("rcsd_outside_swsd_buffer_ratio"),
+                    "swsd_uncovered_by_rcsd_length_m": props.get("swsd_uncovered_by_rcsd_length_m"),
+                    "swsd_uncovered_by_rcsd_ratio": props.get("swsd_uncovered_by_rcsd_ratio"),
                     "risk_flags": unique_preserve_order(risk_flags),
                     "notes": (
                         "topology and directionality passed; retained RCSD visual consistency mismatch accepted as controlled release audit risk"
@@ -492,6 +518,7 @@ def _apply_visual_consistency_road_conflict_gate(
     swsd_segments: list[dict[str, Any]],
 ) -> None:
     primary_road_owner: dict[str, str] = {}
+    primary_plan_by_id: dict[str, dict[str, Any]] = {}
     for row in rows:
         props = row.get("properties") or {}
         if not _is_replace_ready_plan(props) or _is_visual_consistency_plan(props):
@@ -499,6 +526,8 @@ def _apply_visual_consistency_road_conflict_gate(
         if props.get("execution_scope") not in {"standard_segment", "path_corridor_group"}:
             continue
         plan_id = str(props.get("replacement_plan_id") or props.get("swsd_segment_id") or "")
+        if plan_id:
+            primary_plan_by_id[plan_id] = props
         for road_id in _parse_list(props.get("rcsd_road_ids")):
             primary_road_owner.setdefault(road_id, plan_id)
     if not primary_road_owner:
@@ -510,7 +539,28 @@ def _apply_visual_consistency_road_conflict_gate(
         if not _is_replace_ready_plan(props) or not _is_visual_consistency_plan(props):
             continue
         rcsd_road_ids = _parse_list(props.get("rcsd_road_ids"))
-        conflict_road_ids = [road_id for road_id in rcsd_road_ids if road_id in primary_road_owner]
+        segment_id = _safe_id(props.get("swsd_segment_id"))
+        conflict_road_ids: list[str] = []
+        same_group_member_road_ids: list[str] = []
+        for road_id in rcsd_road_ids:
+            owner_plan_id = primary_road_owner.get(road_id)
+            if not owner_plan_id:
+                continue
+            owner_plan = primary_plan_by_id.get(owner_plan_id, {})
+            if _is_same_path_group_member_owner(segment_id, owner_plan):
+                same_group_member_road_ids.append(road_id)
+                continue
+            conflict_road_ids.append(road_id)
+        if same_group_member_road_ids:
+            props["risk_flags"] = unique_preserve_order(
+                [
+                    *_parse_list(props.get("risk_flags")),
+                    "visual_consistency_same_path_group_member_conflict_accepted",
+                ]
+            )
+            notes = str(props.get("notes") or "")
+            suffix = f"accepted_same_path_group_member_rcsd_road_ids={same_group_member_road_ids}"
+            props["notes"] = f"{notes}; {suffix}" if notes else suffix
         if not conflict_road_ids:
             continue
         swsd_geometry = swsd_geometry_by_segment.get(_safe_id(props.get("swsd_segment_id")))
@@ -526,17 +576,40 @@ def _apply_visual_consistency_road_conflict_gate(
             )
         ]
         if pruned_road_ids:
-            props["rcsd_road_ids"] = [road_id for road_id in rcsd_road_ids if road_id not in set(pruned_road_ids)]
-            props["risk_flags"] = unique_preserve_order(
-                [
-                    *_parse_list(props.get("risk_flags")),
-                    "visual_consistency_junction_connector_conflict_pruned",
-                ]
+            _prune_plan_roads(
+                props,
+                pruned_road_ids,
+                risk_flag="visual_consistency_junction_connector_conflict_pruned",
+                notes_suffix=f"pruned_junction_local_conflict_rcsd_road_ids={pruned_road_ids}",
+                rcsd_road_by_id=rcsd_road_by_id,
+                rcsd_node_canonicalizer=rcsd_node_canonicalizer,
             )
-            notes = str(props.get("notes") or "")
-            suffix = f"pruned_junction_local_conflict_rcsd_road_ids={pruned_road_ids}"
-            props["notes"] = f"{notes}; {suffix}" if notes else suffix
         remaining_conflict_road_ids = [road_id for road_id in conflict_road_ids if road_id not in set(pruned_road_ids)]
+        junction_context_pruned_road_ids = _prunable_primary_body_conflict_ids(
+            props,
+            remaining_conflict_road_ids,
+            swsd_geometry=swsd_geometry,
+            primary_road_owner=primary_road_owner,
+            primary_plan_by_id=primary_plan_by_id,
+            swsd_geometry_by_segment=swsd_geometry_by_segment,
+            rcsd_road_by_id=rcsd_road_by_id,
+            rcsd_node_canonicalizer=rcsd_node_canonicalizer,
+        )
+        if junction_context_pruned_road_ids:
+            _prune_plan_roads(
+                props,
+                junction_context_pruned_road_ids,
+                risk_flag="visual_consistency_primary_body_conflict_pruned_to_junction_context",
+                notes_suffix=(
+                    "pruned_primary_body_conflict_rcsd_road_ids="
+                    f"{junction_context_pruned_road_ids}"
+                ),
+                rcsd_road_by_id=rcsd_road_by_id,
+                rcsd_node_canonicalizer=rcsd_node_canonicalizer,
+            )
+            remaining_conflict_road_ids = [
+                road_id for road_id in remaining_conflict_road_ids if road_id not in set(junction_context_pruned_road_ids)
+            ]
         blocking_conflict_road_ids = [
             road_id
             for road_id in remaining_conflict_road_ids
@@ -558,7 +631,7 @@ def _apply_visual_consistency_road_conflict_gate(
             suffix = f"accepted_shared_junction_connector_rcsd_road_ids={remaining_conflict_road_ids}"
             props["notes"] = f"{notes}; {suffix}" if notes else suffix
             continue
-        if pruned_road_ids and not blocking_conflict_road_ids:
+        if (pruned_road_ids or junction_context_pruned_road_ids) and not blocking_conflict_road_ids:
             continue
         _block_plan_row(
             props,
@@ -570,6 +643,221 @@ def _apply_visual_consistency_road_conflict_gate(
         props["notes"] = f"{notes}; {suffix}" if notes else suffix
 
 
+def _is_same_path_group_member_owner(segment_id: str | None, owner_plan: dict[str, Any]) -> bool:
+    if not segment_id or owner_plan.get("execution_scope") != "path_corridor_group":
+        return False
+    return segment_id in _parse_list(owner_plan.get("group_segment_ids"))
+
+
+def _prunable_primary_body_conflict_ids(
+    props: dict[str, Any],
+    conflict_road_ids: list[str],
+    *,
+    swsd_geometry: Any,
+    primary_road_owner: dict[str, str],
+    primary_plan_by_id: dict[str, dict[str, Any]],
+    swsd_geometry_by_segment: dict[str, Any],
+    rcsd_road_by_id: dict[str, dict[str, Any]],
+    rcsd_node_canonicalizer: NodeCanonicalizer,
+) -> list[str]:
+    if not conflict_road_ids or swsd_geometry is None or getattr(swsd_geometry, "is_empty", False):
+        return []
+    candidate_road_ids = [road_id for road_id in conflict_road_ids if primary_road_owner.get(road_id)]
+    if not candidate_road_ids:
+        return []
+    if _plan_safe_after_road_prune(
+        props,
+        candidate_road_ids,
+        swsd_geometry=swsd_geometry,
+        rcsd_road_by_id=rcsd_road_by_id,
+        rcsd_node_canonicalizer=rcsd_node_canonicalizer,
+    ):
+        return candidate_road_ids
+    clear_foreign_ids = [
+        road_id
+        for road_id in candidate_road_ids
+        if _is_clear_primary_body_conflict(
+            road_id,
+            swsd_geometry=swsd_geometry,
+            primary_road_owner=primary_road_owner,
+            primary_plan_by_id=primary_plan_by_id,
+            swsd_geometry_by_segment=swsd_geometry_by_segment,
+            rcsd_road_by_id=rcsd_road_by_id,
+        )
+    ]
+    if not clear_foreign_ids:
+        return []
+    if _plan_safe_after_road_prune(
+        props,
+        clear_foreign_ids,
+        swsd_geometry=swsd_geometry,
+        rcsd_road_by_id=rcsd_road_by_id,
+        rcsd_node_canonicalizer=rcsd_node_canonicalizer,
+    ):
+        return clear_foreign_ids
+    pruned_road_ids: list[str] = []
+    for road_id in clear_foreign_ids:
+        trial = [*pruned_road_ids, road_id]
+        if _plan_safe_after_road_prune(
+            props,
+            trial,
+            swsd_geometry=swsd_geometry,
+            rcsd_road_by_id=rcsd_road_by_id,
+            rcsd_node_canonicalizer=rcsd_node_canonicalizer,
+        ):
+            pruned_road_ids.append(road_id)
+    return pruned_road_ids
+
+
+def _is_clear_primary_body_conflict(
+    road_id: str,
+    *,
+    swsd_geometry: Any,
+    primary_road_owner: dict[str, str],
+    primary_plan_by_id: dict[str, dict[str, Any]],
+    swsd_geometry_by_segment: dict[str, Any],
+    rcsd_road_by_id: dict[str, dict[str, Any]],
+) -> bool:
+    road = rcsd_road_by_id.get(road_id)
+    geometry = (road or {}).get("geometry")
+    if geometry is None or getattr(geometry, "is_empty", False):
+        return False
+    owner_plan = primary_plan_by_id.get(primary_road_owner.get(road_id, ""))
+    owner_segment_id = _safe_id((owner_plan or {}).get("swsd_segment_id"))
+    owner_geometry = swsd_geometry_by_segment.get(owner_segment_id)
+    if owner_geometry is None or getattr(owner_geometry, "is_empty", False):
+        return False
+    target_overlap = float(geometry.intersection(swsd_geometry.buffer(VISUAL_CONFLICT_SWSD_BUFFER_M)).length)
+    owner_overlap = float(geometry.intersection(owner_geometry.buffer(VISUAL_CONFLICT_SWSD_BUFFER_M)).length)
+    target_distance = float(geometry.distance(swsd_geometry))
+    owner_distance = float(geometry.distance(owner_geometry))
+    if owner_overlap > 0.0 and target_overlap <= 1e-9:
+        return True
+    if owner_overlap >= target_overlap * 1.5 and owner_distance + 1.0 <= target_distance:
+        return True
+    return target_distance > VISUAL_CONFLICT_SWSD_BUFFER_M and owner_distance <= VISUAL_CONFLICT_SWSD_BUFFER_M
+
+
+def _plan_safe_after_road_prune(
+    props: dict[str, Any],
+    road_ids_to_prune: list[str],
+    *,
+    swsd_geometry: Any,
+    rcsd_road_by_id: dict[str, dict[str, Any]],
+    rcsd_node_canonicalizer: NodeCanonicalizer,
+) -> bool:
+    prune_set = set(road_ids_to_prune)
+    remaining_road_ids = [road_id for road_id in _parse_list(props.get("rcsd_road_ids")) if road_id not in prune_set]
+    if len(remaining_road_ids) == len(_parse_list(props.get("rcsd_road_ids"))) or not remaining_road_ids:
+        return False
+    return _plan_pair_nodes_connected(
+        props,
+        remaining_road_ids,
+        rcsd_road_by_id=rcsd_road_by_id,
+        rcsd_node_canonicalizer=rcsd_node_canonicalizer,
+    ) and _plan_corridor_covered(
+        remaining_road_ids,
+        swsd_geometry=swsd_geometry,
+        rcsd_road_by_id=rcsd_road_by_id,
+    )
+
+
+def _plan_pair_nodes_connected(
+    props: dict[str, Any],
+    road_ids: list[str],
+    *,
+    rcsd_road_by_id: dict[str, dict[str, Any]],
+    rcsd_node_canonicalizer: NodeCanonicalizer,
+) -> bool:
+    pair_nodes = [_canonicalize_node_id(rcsd_node_canonicalizer, node_id) for node_id in _parse_list(props.get("rcsd_pair_nodes"))]
+    pair_nodes = [node_id for node_id in pair_nodes if node_id]
+    if len(pair_nodes) < 2:
+        return False
+    adjacency: dict[str, set[str]] = defaultdict(set)
+    for road_id in road_ids:
+        endpoints = _canonical_road_endpoint_ids([road_id], rcsd_road_by_id, rcsd_node_canonicalizer)
+        if len(endpoints) < 2:
+            continue
+        source, target = endpoints[0], endpoints[-1]
+        adjacency[source].add(target)
+        adjacency[target].add(source)
+    source, target = pair_nodes[0], pair_nodes[1]
+    if source not in adjacency or target not in adjacency:
+        return False
+    queue: deque[str] = deque([source])
+    seen = {source}
+    while queue:
+        node_id = queue.popleft()
+        if node_id == target:
+            return True
+        for next_id in adjacency.get(node_id, set()):
+            if next_id in seen:
+                continue
+            seen.add(next_id)
+            queue.append(next_id)
+    return False
+
+
+def _plan_corridor_covered(
+    road_ids: list[str],
+    *,
+    swsd_geometry: Any,
+    rcsd_road_by_id: dict[str, dict[str, Any]],
+) -> bool:
+    if swsd_geometry is None or getattr(swsd_geometry, "is_empty", False):
+        return False
+    geometries = [
+        road.get("geometry")
+        for road_id in road_ids
+        for road in [rcsd_road_by_id.get(road_id)]
+        if road is not None and road.get("geometry") is not None and not getattr(road.get("geometry"), "is_empty", False)
+    ]
+    if not geometries:
+        return False
+    retained_geometry = unary_union(geometries)
+    segment_length = float(getattr(swsd_geometry, "length", 0.0) or 0.0)
+    if segment_length <= 0.0:
+        return False
+    uncovered_length = float(swsd_geometry.difference(retained_geometry.buffer(VISUAL_CONFLICT_CORRIDOR_BUFFER_M)).length)
+    uncovered_ratio = uncovered_length / segment_length
+    return (
+        uncovered_length <= MAX_CONTROLLED_VISUAL_SWSD_UNCOVERED_LENGTH_M
+        and uncovered_ratio <= MAX_CONTROLLED_VISUAL_SWSD_UNCOVERED_RATIO
+    )
+
+
+def _prune_plan_roads(
+    props: dict[str, Any],
+    road_ids: list[str],
+    *,
+    risk_flag: str,
+    notes_suffix: str,
+    rcsd_road_by_id: dict[str, dict[str, Any]],
+    rcsd_node_canonicalizer: NodeCanonicalizer,
+) -> None:
+    road_id_set = set(road_ids)
+    props["rcsd_road_ids"] = [road_id for road_id in _parse_list(props.get("rcsd_road_ids")) if road_id not in road_id_set]
+    props["retained_node_ids"] = _plan_retained_node_ids(props, rcsd_road_by_id, rcsd_node_canonicalizer)
+    props["risk_flags"] = unique_preserve_order([*_parse_list(props.get("risk_flags")), risk_flag])
+    notes = str(props.get("notes") or "")
+    props["notes"] = f"{notes}; {notes_suffix}" if notes else notes_suffix
+
+
+def _plan_retained_node_ids(
+    props: dict[str, Any],
+    rcsd_road_by_id: dict[str, dict[str, Any]],
+    rcsd_node_canonicalizer: NodeCanonicalizer,
+) -> list[str]:
+    return unique_preserve_order(
+        [
+            *_canonical_road_endpoint_ids(_parse_list(props.get("rcsd_road_ids")), rcsd_road_by_id, rcsd_node_canonicalizer),
+            *_parse_list(props.get("rcsd_pair_nodes")),
+            *_parse_list(props.get("rcsd_junc_nodes")),
+            *_parse_list(props.get("optional_junc_rcsd_nodes")),
+        ]
+    )
+
+
 def _geometry_by_segment_id(swsd_segments: list[dict[str, Any]]) -> dict[str, Any]:
     result: dict[str, Any] = {}
     for segment in swsd_segments:
@@ -579,6 +867,27 @@ def _geometry_by_segment_id(swsd_segments: list[dict[str, Any]]) -> dict[str, An
         if segment_id and geometry is not None and not getattr(geometry, "is_empty", False):
             result.setdefault(segment_id, geometry)
     return result
+
+
+def _visual_outside_swsd_buffer_road_ids(
+    road_ids: list[str],
+    *,
+    swsd_geometry: Any,
+    rcsd_road_by_id: dict[str, dict[str, Any]],
+) -> list[str]:
+    if swsd_geometry is None or getattr(swsd_geometry, "is_empty", False):
+        return []
+    outside_road_ids: list[str] = []
+    swsd_buffer = swsd_geometry.buffer(VISUAL_CONFLICT_CORRIDOR_BUFFER_M)
+    for road_id in road_ids:
+        road = rcsd_road_by_id.get(road_id)
+        road_geometry = (road or {}).get("geometry")
+        if road_geometry is None or getattr(road_geometry, "is_empty", False):
+            continue
+        outside_length = float(road_geometry.difference(swsd_buffer).length)
+        if outside_length > 1e-6:
+            outside_road_ids.append(road_id)
+    return outside_road_ids
 
 
 def _is_prunable_junction_local_conflict(
@@ -656,10 +965,9 @@ def _apply_visual_consistency_high_deviation_gate(rows: list[dict[str, Any]]) ->
             continue
         if "visual_consistency_high_deviation" not in _parse_list(props.get("risk_flags")):
             continue
-        _block_plan_row(
+        _mark_visual_consistency_manual_audit_release(
             props,
-            reason="visual_consistency_high_deviation_requires_manual_review",
-            risk_flag="visual_consistency_high_deviation_requires_manual_review",
+            reason="visual_consistency_high_deviation_manual_audit",
         )
 
 
@@ -677,10 +985,9 @@ def _apply_visual_consistency_coverage_gate(rows: list[dict[str, Any]]) -> None:
             and swsd_uncovered_ratio <= MAX_CONTROLLED_VISUAL_SWSD_UNCOVERED_RATIO
         ):
             continue
-        _block_plan_row(
+        _mark_visual_consistency_manual_audit_release(
             props,
             reason="visual_consistency_release_exceeds_formal_replacement_corridor_gate",
-            risk_flag="visual_consistency_release_exceeds_formal_replacement_corridor_gate",
         )
 
 
@@ -778,7 +1085,19 @@ def _apply_junction_alignment_plan_gate(
                     rcsd_point = _feature_point(rcsd_node_by_id.get(rcsd_node_id))
                     if rcsd_point is None:
                         continue
-                    if float(swsd_point.distance(rcsd_point)) > MAX_RETAINED_JUNCTION_ATTACHMENT_GAP_M:
+                    distance_m = float(swsd_point.distance(rcsd_point))
+                    if distance_m > MAX_RETAINED_JUNCTION_ATTACHMENT_GAP_M:
+                        if _allow_visual_manual_release_pair_attachment_gap(
+                            props,
+                            swsd_node_id=swsd_node_id,
+                            distance_m=distance_m,
+                        ):
+                            _mark_plan_row_risk(
+                                props,
+                                reason="visual_manual_release_pair_attachment_gap_requires_manual_review",
+                                risk_flag="visual_manual_release_pair_attachment_gap_accepted",
+                            )
+                            continue
                         _block_plan_row(
                             props,
                             reason="junction_alignment_to_retained_swsd_exceeds_topology_gate",
@@ -814,6 +1133,42 @@ def _apply_junction_alignment_plan_gate(
                         reason="junction_alignment_between_replacement_plans_connected_by_pair_anchor_bridge",
                         risk_flag="junction_alignment_between_replacement_plans_connected_by_pair_anchor_bridge",
                     )
+                    continue
+                left_pair_anchor_mismatch = _is_pair_anchor_mismatch_mapping(
+                    left_props,
+                    swsd_node_id=swsd_node_id,
+                    rcsd_node_id=left_rcsd_node_id,
+                )
+                right_pair_anchor_mismatch = _is_pair_anchor_mismatch_mapping(
+                    right_props,
+                    swsd_node_id=swsd_node_id,
+                    rcsd_node_id=right_rcsd_node_id,
+                )
+                if left_pair_anchor_mismatch or right_pair_anchor_mismatch:
+                    if left_pair_anchor_mismatch:
+                        _block_plan_row(
+                            left_props,
+                            reason="pair_anchor_mismatch_replacement_plan_anchor_not_authoritative",
+                            risk_flag="pair_anchor_mismatch_replacement_plan_anchor_not_authoritative",
+                        )
+                    else:
+                        _mark_plan_row_risk(
+                            left_props,
+                            reason="junction_alignment_peer_pair_anchor_mismatch_ignored",
+                            risk_flag="junction_alignment_peer_pair_anchor_mismatch_ignored",
+                        )
+                    if right_pair_anchor_mismatch:
+                        _block_plan_row(
+                            right_props,
+                            reason="pair_anchor_mismatch_replacement_plan_anchor_not_authoritative",
+                            risk_flag="pair_anchor_mismatch_replacement_plan_anchor_not_authoritative",
+                        )
+                    else:
+                        _mark_plan_row_risk(
+                            right_props,
+                            reason="junction_alignment_peer_pair_anchor_mismatch_ignored",
+                            risk_flag="junction_alignment_peer_pair_anchor_mismatch_ignored",
+                        )
                     continue
                 _block_plan_row(
                     left_props,
@@ -913,6 +1268,23 @@ def _block_plan_row(props: dict[str, Any], *, reason: str, risk_flag: str) -> No
     props["notes"] = f"{notes}; {suffix}" if notes else suffix
 
 
+def _mark_visual_consistency_manual_audit_release(props: dict[str, Any], *, reason: str) -> None:
+    if props.get("plan_status") != "ready":
+        return
+    props["source_reason"] = "visual_consistency_manual_audit_release"
+    props["risk_flags"] = unique_preserve_order(
+        [
+            *_parse_list(props.get("risk_flags")),
+            "visual_consistency_outside_manual_audit",
+            "manual_review_required",
+            "no_formal_trunk_road_conflict",
+        ]
+    )
+    notes = str(props.get("notes") or "")
+    suffix = f"manual audit release: {reason}"
+    props["notes"] = f"{notes}; {suffix}" if notes else suffix
+
+
 def _mark_plan_row_risk(props: dict[str, Any], *, reason: str, risk_flag: str) -> None:
     if props.get("plan_status") != "ready":
         return
@@ -957,6 +1329,17 @@ def _plan_node_mappings(props: dict[str, Any]) -> dict[str, list[str]]:
     return dict(result)
 
 
+def _is_pair_anchor_mismatch_mapping(props: dict[str, Any], *, swsd_node_id: str, rcsd_node_id: str) -> bool:
+    swsd_nodes = _parse_list(props.get("pair_anchor_error_swsd_nodes"))
+    candidate_nodes = _parse_list(props.get("pair_anchor_error_candidate_rcsd_nodes"))
+    if not swsd_nodes or not candidate_nodes:
+        return False
+    for error_swsd_node, candidate_rcsd_node in zip(swsd_nodes, candidate_nodes):
+        if _safe_id(error_swsd_node) == _safe_id(swsd_node_id) and _safe_id(candidate_rcsd_node) == _safe_id(rcsd_node_id):
+            return True
+    return False
+
+
 def _feature_point(feature_value: dict[str, Any] | None) -> Any:
     geometry = (feature_value or {}).get("geometry")
     if geometry is None or getattr(geometry, "is_empty", False):
@@ -988,6 +1371,25 @@ def _pair_anchor_bridges_by_segment(rows: list[dict[str, Any]]) -> dict[str, dic
         result[segment_id] = {
             "road_ids": road_ids,
             "length_m": props.get("pair_anchor_bridge_length_m"),
+        }
+    return result
+
+
+def _pair_anchor_issues_by_segment(rows: list[dict[str, Any]]) -> dict[str, dict[str, list[str]]]:
+    result: dict[str, dict[str, list[str]]] = {}
+    for row in rows:
+        props = dict(row.get("properties") or {})
+        if str(props.get("failure_business_category") or "") != "pair_anchor_mismatch":
+            continue
+        segment_id = _safe_id(props.get("swsd_segment_id"))
+        swsd_nodes = _parse_list(props.get("pair_anchor_error_swsd_nodes"))
+        candidate_nodes = _parse_list(props.get("pair_anchor_error_candidate_rcsd_nodes"))
+        if not segment_id or not swsd_nodes or not candidate_nodes:
+            continue
+        result[segment_id] = {
+            "swsd_nodes": swsd_nodes,
+            "original_rcsd_nodes": _parse_list(props.get("pair_anchor_error_original_rcsd_nodes")),
+            "candidate_rcsd_nodes": candidate_nodes,
         }
     return result
 
@@ -1025,6 +1427,8 @@ def _visual_consistency_release_mode(
         return ""
     if _parse_list(buffer_props.get("unexpected_mapped_semantic_node_ids")):
         return ""
+    if not _visual_release_pair_anchor_complete(buffer_props, audit_props):
+        return ""
 
     if buffer_props.get("reject_reason") == "retained_geometry_outside_swsd_visual_consistency_scope":
         if _coerce_float(buffer_props.get("retained_road_count")) < 1:
@@ -1040,11 +1444,6 @@ def _visual_consistency_release_mode(
             "swsd_uncovered_by_rcsd_ratio",
         )
         if swsd_uncovered_length is None or swsd_uncovered_ratio is None:
-            return ""
-        if (
-            swsd_uncovered_length > MAX_CONTROLLED_VISUAL_SWSD_UNCOVERED_LENGTH_M
-            or swsd_uncovered_ratio > MAX_CONTROLLED_VISUAL_SWSD_UNCOVERED_RATIO
-        ):
             return ""
         return "controlled_release"
 
@@ -1068,6 +1467,25 @@ def _visual_consistency_release_mode(
     if _coerce_float(audit_props.get("shape_similarity_score")) < 1.0:
         return ""
     return "high_confidence_repair"
+
+
+def _visual_release_pair_anchor_complete(buffer_props: dict[str, Any], audit_props: dict[str, Any]) -> bool:
+    swsd_pair_nodes = _parse_list(audit_props.get("swsd_pair_nodes"))
+    rcsd_pair_nodes = _parse_list(audit_props.get("rcsd_pair_nodes")) or _parse_list(buffer_props.get("required_rcsd_nodes"))
+    return len(swsd_pair_nodes) >= 2 and len(rcsd_pair_nodes) >= 2
+
+
+def _allow_visual_manual_release_pair_attachment_gap(
+    props: dict[str, Any],
+    *,
+    swsd_node_id: str,
+    distance_m: float,
+) -> bool:
+    if "visual_consistency_outside_manual_audit" not in _parse_list(props.get("risk_flags")):
+        return False
+    if swsd_node_id not in set(_parse_list(props.get("swsd_pair_nodes"))):
+        return False
+    return distance_m <= MAX_VISUAL_MANUAL_RELEASE_PAIR_ATTACHMENT_GAP_M
 
 
 def _has_high_visual_consistency_deviation(props: dict[str, Any]) -> bool:

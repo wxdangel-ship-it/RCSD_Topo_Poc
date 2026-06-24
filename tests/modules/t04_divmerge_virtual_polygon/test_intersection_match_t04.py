@@ -97,7 +97,7 @@ def _write_t04_relation_evidence(path: Path) -> None:
     )
 
 
-def test_intersection_match_t04_validates_t07_t03_and_rolls_back_one_to_many(tmp_path: Path) -> None:
+def test_intersection_match_t04_suppresses_conflict_without_node_rollback(tmp_path: Path) -> None:
     pytest.importorskip("fiona")
     run_root = tmp_path / "run"
     run_root.mkdir()
@@ -161,16 +161,15 @@ def test_intersection_match_t04_validates_t07_t03_and_rolls_back_one_to_many(tmp
     assert summary["relation_cardinality_passed"] is False
     assert summary["one_target_to_many_base_count"] == 1
     assert summary["many_target_to_one_base_count"] == 1
-    assert summary["rollback_target_ids"] == ["1001"]
+    assert summary["rollback_target_ids"] == []
     assert {row["error_type"] for row in errors["rows"]} == {"one_target_to_many_base", "many_target_to_one_base"}
-    assert outputs["nodes_updated_to_no_count"] == 1
-    assert nodes_audit["updated_to_no_count"] == 1
-    assert nodes_audit["rows"][-1]["reason"] == "intersection_match_t04_one_target_to_many_base"
+    assert outputs["nodes_updated_to_no_count"] == 0
+    assert nodes_audit["updated_to_no_count"] == 0
 
     fiona = pytest.importorskip("fiona")
     with fiona.open(run_root / "nodes.gpkg") as src:
         node_state_by_id = {str(row["properties"]["id"]): row["properties"]["is_anchor"] for row in src}
-    assert node_state_by_id["1001"] == "no"
+    assert node_state_by_id["1001"] == "yes"
     assert node_state_by_id["2002"] == "yes"
     assert node_state_by_id["3003"] == "yes"
 

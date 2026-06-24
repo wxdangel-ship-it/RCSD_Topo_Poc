@@ -7,7 +7,8 @@
 - 生命周期：Active。
 - 当前主职责：组织端到端业务流程、Case 级证据包、Case replay、feedback、visual check 和 innernet full pipeline manifest。
 - 项目级主业务链：`T08 -> T01 -> T07 -> T03 -> T04 -> T05 -> T06 -> T09`。
-- T10 v1 Case runner 范围：`T01 -> T07 Step1/2 -> T03 -> T04 -> T05 -> T07 Step3 -> T06 -> T09`。
+- T10 v1 Case runner 范围：`T01 -> T07 Step1/2 -> T03 -> T04 -> T05 -> T06 -> T09`。
+- T07 Step3：可选兼容 relation 补锚，不是 Case runner 默认阶段；innernet full pipeline 仅在显式配置兼容 relation 输入时运行。
 - T08：独立前置预处理、质检与修复模块，不由 T10 v1 callable 或 Case runner 调用；innernet full pipeline 总控可把 T08 作为独立前置阶段串入。
 
 ## 2. 文档职责

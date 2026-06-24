@@ -2,7 +2,8 @@
 
 ## 1. 编排正确性
 
-- T10 v1 Case runner 固定为 `T01 -> T07 Step1/2 -> T03 -> T04 -> T05 -> T07 Step3 -> T06 -> T09`。
+- T10 v1 Case runner 固定为 `T01 -> T07 Step1/2 -> T03 -> T04 -> T05 -> T06 -> T09`。
+- T07 Step3 不得作为 T05 后默认必经阶段；只有显式提供兼容 relation 输入时，才允许作为独立兼容补锚阶段运行。
 - Case runner 不调用 T08。
 - Full pipeline 总控可把 T08 作为独立前置阶段串入。
 - 下游 handoff 必须是显式文件路径，不能只传目录。

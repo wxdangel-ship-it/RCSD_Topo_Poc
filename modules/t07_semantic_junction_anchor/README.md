@@ -5,8 +5,8 @@
 ## 1. 当前状态
 
 - 生命周期：Active。
-- 当前主职责：执行已有路口面 1:1 锚定，并通过独立 Step3 消费 T05 relation 做补锚。
-- 上游：T08、DriveZone、RCSDIntersection、RCSDNode、T05。
+- 当前主职责：执行已有路口面 1:1 锚定；Step3 是可选兼容补锚能力，可显式消费早期或外部方案产出的 `intersection_match_all` 兼容 relation 文件。
+- 上游：T08、DriveZone、RCSDIntersection、RCSDNode；Step3 可选消费外部兼容 relation 文件。
 - 下游：T03、T04、T05。
 
 ## 2. 文档职责
@@ -16,7 +16,7 @@
 | `SPEC.md` | 模块需求：业务目标、范围、上下游、输入输出、关键步骤、对错边界。 |
 | `INTERFACE_CONTRACT.md` | 稳定接口：Step1/2/3 输入输出、业务规则、入口和验收契约。 |
 | `architecture/01-introduction-and-goals.md` | 架构背景、目标和非目标。 |
-| `architecture/02-data-and-domain-model.md` | 语义路口、representative node、RCSDIntersection、T05 relation 与 handoff evidence 关系。 |
+| `architecture/02-data-and-domain-model.md` | 语义路口、representative node、RCSDIntersection、兼容 relation 文件与 handoff evidence 关系。 |
 | `architecture/03-solution-strategy.md` | Step1/2 existing surface anchor 与 Step3 relation backfill 的实现策略。 |
 | `architecture/04-evidence-and-audit.md` | nodes 状态、surface handoff、relation evidence、Step3 audit 和 cardinality 审计。 |
 | `architecture/05-quality-requirements.md` | 质量要求、GIS / 拓扑 / 性能检查和回归要求。 |

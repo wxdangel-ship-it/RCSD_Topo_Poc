@@ -281,13 +281,13 @@ T04 采用“业务主链 + 工程编排层”的分工：
 - 发布层与 summary 应保留或可追溯 `mainnodeid / kind_2 / junction_type / patch_id / final_state`，为后续 T05 映射做准备。
 - 对 `road_surface_fork` 主证据且 Step7 `swsd_relation_type = partial` 的场景，Step7 relation evidence 应把 Step4 已识别的局部 `local_rcsd_unit_id = *:node:<rcsdnode_id>` 作为面向 T05 的 relation handoff base，同时通过 `semantic_required_rcsd_node_ids` 保留原 `required_rcsd_node` 语义主点审计链，避免 downstream 使用远端语义主点导致 T06 Segment 有向走廊缺失。
 - 由 `nodes_publish.py` 在 Step7 closeout 后消费最终状态，基于输入 `nodes.gpkg` 做 copy-on-write，只更新当前 selected / effective case 的 representative node `is_anchor`。
-- 由 `intersection_match.py` 基于 T04 relation evidence 发布 `intersection_match_t04.geojson`，并与可选 T07 / T03 intersection match 做 SWSD/RCSD 1:1 cardinality 校验；启用 T07/T03 外部校验输入后，T04 自身 one-target-to-many 冲突必须从输出关系中压制，并把对应 representative node 回滚为 `is_anchor = no`。若可选外部校验文件存在但为空、非法 JSON 或不是 GeoJSON features list，T04 final closeout 必须在 summary 中审计不可消费状态，并按 0 条外部成功关系继续，不改变 Step1-7 构面算法。
+- 由 `intersection_match.py` 基于 T04 relation evidence 发布 `intersection_match_t04.geojson`，并与可选 T07 / T03 intersection match 做 SWSD/RCSD 1:1 cardinality 校验；T04 自身 cardinality 冲突必须从输出关系中压制，但不得回滚 corresponding representative node 的 `is_anchor`。若可选外部校验文件存在但为空、非法 JSON 或不是 GeoJSON features list，T04 final closeout 必须在 summary 中审计不可消费状态，并按 0 条外部成功关系继续，不改变 Step1-7 构面算法。
 - nodes 写回固定为 `accepted -> yes`，Step8 fallback relation 成功 -> `fail4_fallback`，其余 `rejected / runtime_failed / formal result missing -> fail4`。
 
 边界：
 
 - `divmerge_virtual_anchor_surface.gpkg` 是 T04 几何真值；`nodes.gpkg` 是 downstream 状态索引层。
-- `intersection_match_t04.geojson` 是 T04 对下游发布的 SWSD-RCSD 语义路口关系层；它不改变 Step1-7 构面算法，只在 final closeout 做关系校验与必要回滚。
+- `intersection_match_t04.geojson` 是 T04 对下游发布的 SWSD-RCSD 语义路口关系层；它不改变 Step1-7 构面算法，只在 final closeout 做关系校验与冲突 relation 压制。
 - Step7 不新增最终 `review / review_required` 状态；不确定性只留在审计材料中。
 
 ## 9. 工程编排层

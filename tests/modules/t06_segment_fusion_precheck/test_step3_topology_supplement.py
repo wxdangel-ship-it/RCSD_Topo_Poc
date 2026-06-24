@@ -90,6 +90,40 @@ def test_materialize_topology_supplement_keeps_detached_carrier() -> None:
     assert list(generated["geometry"].coords)[-1][:2] == (9.75, 0.0)
 
 
+def test_materialize_restores_covered_formal_body_from_retained_scope() -> None:
+    retained_body = _road("body", "a", "d", [(0, 0), (100, 0)])
+    retained_body["properties"]["segmentid"] = "s1"
+    rcsd_road = {
+        "properties": {"id": "rr", "snodeid": "10", "enodeid": "20", "source": 1},
+        "geometry": LineString([(0, 1), (100, 1)]),
+    }
+    unit = SimpleNamespace(
+        segment_id="s1",
+        retained_detached_swsd_road_ids=["body"],
+        detached_junc_nodes=["d"],
+        swsd_road_ids=[],
+        rcsd_road_ids=["rr"],
+    )
+
+    stats = materialize_topology_supplement_rcsd_roads(
+        [unit],
+        swsd_road_by_id={"body": retained_body},
+        swsd_node_by_id={},
+        rcsd_roads=[],
+        rcsd_nodes=[],
+        rcsd_road_by_id={"rr": rcsd_road},
+        rcsd_node_by_id={},
+        attachment_audit_rows=[],
+        added_road_to_segments={"rr": ["s1"]},
+        source_field_name="source",
+        rcsd_source_value=1,
+    )
+
+    assert stats["formal_body_retained_restored_count"] == 1
+    assert unit.retained_detached_swsd_road_ids == []
+    assert unit.swsd_road_ids == ["body"]
+
+
 def test_materialize_topology_supplement_preserves_non_advance_carrier() -> None:
     swsd_road_by_id = {"sw_regular": _road("sw_regular", "a", "b", [(0, 0), (10, 0)])}
     rcsd_nodes = [_node("10", 0.25), _node("20", 9.75)]
@@ -260,8 +294,9 @@ def test_materialize_mixed_advance_keeps_swsd_carrier_when_rcsd_only_partially_c
 
     assert stats["materialized_road_count"] == 0
     assert stats["reused_existing_rcsd_advance_count"] == 1
+    assert stats["mixed_advance_right_externalized_count"] == 1
     assert unit.swsd_road_ids == []
-    assert unit.retained_detached_swsd_road_ids == ["sw_adv"]
+    assert unit.retained_detached_swsd_road_ids == []
     assert unit.rcsd_road_ids == ["rr_adv"]
     assert carrier["properties"]["t06_mixed_advance_right_carrier"] == 1
     assert added_road_to_segments == {"rr_adv": ["s1"]}
@@ -368,8 +403,9 @@ def test_materialize_attachment_advance_keeps_swsd_carrier_when_rcsd_only_partia
 
     assert stats["materialized_road_count"] == 0
     assert stats["reused_existing_rcsd_advance_count"] == 1
+    assert stats["mixed_advance_right_externalized_count"] == 1
     assert unit.swsd_road_ids == []
-    assert unit.retained_detached_swsd_road_ids == ["sw_adv"]
+    assert unit.retained_detached_swsd_road_ids == []
     assert unit.rcsd_road_ids == ["rr_adv"]
     assert carrier["properties"]["t06_mixed_advance_right_carrier"] == 1
     assert added_road_to_segments == {"rr_adv": ["s1"]}
@@ -543,8 +579,9 @@ def test_materialize_recovers_removed_undercovered_mixed_advance_carrier() -> No
 
     assert stats["recovered_undercovered_mixed_advance_right_count"] == 1
     assert stats["reused_existing_rcsd_advance_count"] == 1
+    assert stats["mixed_advance_right_externalized_count"] == 1
     assert unit.swsd_road_ids == []
-    assert unit.retained_detached_swsd_road_ids == ["sw_adv"]
+    assert unit.retained_detached_swsd_road_ids == []
     assert unit.rcsd_road_ids == ["rr_adv"]
     assert carrier["properties"]["t06_mixed_advance_right_carrier"] == 1
     assert added_road_to_segments == {"rr_adv": ["s1"]}

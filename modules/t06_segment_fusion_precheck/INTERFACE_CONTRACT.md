@@ -58,7 +58,7 @@ run_t06_step1_identify_fusion_units(
 必选输入：
 
 - `swsd_segment_path`：T01 `segment.gpkg`，依赖字段 `id / sgrade / pair_nodes / junc_nodes / roads / geometry`。
-- `swsd_nodes_path`：final `nodes.gpkg`，依赖字段 `id / mainnodeid / has_evd / is_anchor / kind_2`。
+- `swsd_nodes_path`：T04 downstream `final_swsd_nodes`，依赖字段 `id / mainnodeid / has_evd / is_anchor / kind_2`。Step1 基于这里的 `is_anchor` 形成可进入 Step2 的漏斗分母；T05 `intersection_match_all` 只在 Step2 relation mapping 中消费。
 - `out_root`：输出根目录。
 
 ### 2.2 Step2 Runner
@@ -265,12 +265,13 @@ Step3 输出目录：
 - `t06_step3_topology_connectivity_audit.gpkg/csv/json`
 - `t06_step3_surface_topology_audit.gpkg/csv/json`（仅调用方提供 T03/T04/T05/T07 surface 或 T04 audit 时输出）
 - `t06_step3_surface_topology_summary.json`（仅调用方提供 T03/T04/T05/T07 surface 或 T04 audit 时输出）
+- `t06_step3_surface_aware_plan_release_audit.json`（仅调用方提供 T03/T04/T05/T07 surface 或 T04 audit 且存在 retained-junction gate 释放候选时输出）
 - `t06_step3_summary.json`
 
 F-RCSD Road / Node 必须包含 `source` 字段：RCSD 来源为 `1`，SWSD 来源为 `2`。
 SWSD 与 RCSD 原始 `id` 冲突时保留原 id，依赖 `source` 区分，并写入 `t06_step3_id_collision_audit.*`。
 `t06_step3_unreplaced_rcsd_roads` 是 RCSD 视角审计输出，保留原始 RCSDRoad 几何与属性，并增加 `replacement_status / audit_reason / source / length_m` 等字段，用于定位未进入最终替换结果的 RCSDRoad。
-Step3 默认从 Step2 replaceable 同目录优先读取 `t06_segment_replacement_plan.json`，再兼容读取 `geojson/gpkg`；JSON 是完整执行计划主载体，必须保留无 geometry 的特殊路口组内部 plan 行。调用方也可以通过独立脚本参数显式指定特殊路口组审计文件或 group replacement 审计文件作为旧结果兼容输入。summary 必须记录 `step2_replacement_plan_path / input_replacement_plan_count / input_standard_replacement_plan_count / replacement_plan_source / special_junction_group_consumed_count / special_junction_added_rcsd_road_count / special_junction_added_rcsd_node_count`，以及 `group_replacement_audit_input_row_count / group_replacement_passed_row_count / group_replacement_plan_count / group_replacement_assignment_segment_count / group_replacement_created_unit_count / group_replacement_skipped_row_count`。
+Step3 默认从 Step2 replaceable 同目录优先读取 `t06_segment_replacement_plan.json`，再兼容读取 `geojson/gpkg`；JSON 是完整执行计划主载体，必须保留无 geometry 的特殊路口组内部 plan 行。调用方也可以通过独立脚本参数显式指定特殊路口组审计文件或 group replacement 审计文件作为旧结果兼容输入。summary 必须记录 `step2_replacement_plan_path / input_replacement_plan_count / input_standard_replacement_plan_count / replacement_plan_source / special_junction_group_consumed_count / special_junction_added_rcsd_road_count / special_junction_added_rcsd_node_count`，以及 `group_replacement_audit_input_row_count / group_replacement_passed_row_count / group_replacement_plan_count / group_replacement_assignment_segment_count / group_replacement_created_unit_count / group_replacement_skipped_row_count`。当 surface-aware retained-junction gate 释放被触发时，summary 还必须记录 `surface_aware_plan_release`，包括释放数、回退数、内部 topology 新增 fail 数、外部 baseline 对照路径和相对外部 baseline 的新增 fail keys。
 `t06_step3_swsd_frcsd_segment_relation` 是下游稳定关系索引，覆盖所有输入 SWSD Segment：
 
 - `relation_status=replaced`：该 Segment 被 Step3 替换，`frcsd_road_ids` 指向 `source=1` 的 FRCSD Road。
@@ -603,6 +604,8 @@ Step3 提供独立脚本，优先消费 Step2 replacement plan，不改变 `scri
 若最终 F-RCSD 中同一 SWSD node 已同时存在唯一 source=1 与唯一 source=2 节点、两者距离不超过 20m、且当前节点有 surface 命中、T04 未 reject，也可闭合 replaced/retained 边界；闭合 mainnode 的选择顺序为：source=1 节点有效非 0 `mainnodeid` 优先，否则使用唯一 source=2 SWSD 节点的原始默认 `mainnodeid`，不得把 RCSD `mainnodeid=0` 改写为 RCSD node `id`。该 existing cross-source 1:1 规则不补写 relation node map、不处理多 RCSD 候选。多 RCSD 候选只允许在以下受限场景自动处理：当前 SWSD node 命中 T03/T05 surface，候选 source=1 节点中仅有一个具备有效 `mainnodeid` 且距 source=2 节点不超过 5m，其他 source=1 候选至少再远 10m，T04 未 reject 且无 Patch 冲突；此时仅把非 `retained_swsd` relation 中该 SWSD node 的既有 source=1 映射改写为近端候选，标记 `mapping_status=surface_nearest_multi_candidate_fallback` 与 `risk_flags=surface_nearest_multi_candidate_node_map`，并只闭合 source=2 节点与近端 source=1 节点的 `mainnodeid`，不得强行合并远端 RCSD 节点。
 
 当 replaced/retained 边界缺少 source=1 relation node map，但非 `retained_swsd` relation 的正式 `frcsd_road_ids` 中存在唯一近端 source=1 road endpoint，也可作为 selected replacement endpoint fallback：候选 endpoint 必须属于该 Segment 已选 replacement road，距离 source=2 节点不超过 5m，且 10m 内不存在其他有效 RCSD semantic mainnode 或其他近端 RCSD endpoint；若候选 endpoint 为 `mainnodeid=0`，必须存在唯一 source=2 SWSD 节点的有效原始默认 `mainnodeid`，并使用该 SWSD 默认值闭合，不得把 `0` 改写为 RCSD endpoint `id`。T04 reject、Patch 冲突、多候选或仅来源于未选中 RCSD road 的 endpoint 均不得使用该规则。该规则只补写非 `retained_swsd` relation 的 `swsd_to_frcsd_node_map`，标记 `mapping_status=selected_replacement_endpoint_fallback` 与 `risk_flags=selected_replacement_endpoint_fallback_node_map`，并只闭合 source=2 节点与被选 endpoint 的 `mainnodeid`，不新增道路、不修改原始道路几何。`--no-surface-topology-closure` 可关闭自动闭环，仅输出审计。
+
+当 Step3 调用方提供 surface 输入时，脚本可在不改变调用参数的前提下对 `source_reason=junction_alignment_to_retained_swsd_exceeds_topology_gate` 的 Step2 replacement plan 行执行 surface-aware 条件释放。释放条件只接受两类证据：触发超距节点在 surface topology audit 中为 1:1 pass，且 reason 属于 `auto_closed_surface_1v1 / auto_closed_t04_patch_1v1 / auto_closed_step2_junc_1v1 / auto_closed_relation_mapped_boundary_1v1 / auto_closed_selected_replacement_endpoint`；或触发超距节点是 plan 的 `swsd_pair_nodes -> original_rcsd_pair_nodes` 原始端点映射。T04 reject、Patch 冲突、多候选、缺少可解释 endpoint、以及非该 gate 的 blocked plan 都不能被释放。释放后的 plan 必须重跑 Step3 与 topology audit；若候选释放引入新增 hard fail，相关 plan 回退为 `plan_status=blocked / execution_action=hold`，并记录 `source_reason=junction_alignment_surface_release_failed_topology_gate`。若相对传入 `--t06-run-root` 下已有 Step3 baseline 仍存在新增 fail，必须写入 `external_final_added_fail_count / external_final_added_fail_keys`，不得把内部 release 回退通过误表述为外部 baseline 零新增。
 
 内网脚本入口：
 

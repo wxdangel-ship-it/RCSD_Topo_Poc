@@ -289,15 +289,6 @@ def _error_target_ids(error_rows: list[dict[str, str]]) -> set[str]:
     }
 
 
-def _one_to_many_target_ids(error_rows: list[dict[str, str]]) -> set[str]:
-    return {
-        target_id
-        for row in error_rows
-        if row.get("error_type") == "one_target_to_many_base"
-        for target_id in _split_id_parts(row.get("target_id"))
-    }
-
-
 def _patch_closeout_documents(*, run_root: Path, summary: dict[str, Any]) -> None:
     for path in [run_root / "divmerge_virtual_anchor_surface_summary.json", run_root / "step7_consistency_report.json"]:
         if not path.is_file():
@@ -334,24 +325,7 @@ def write_intersection_match_t04(
     error_rows = _build_cardinality_errors(t07_records + t03_records + t04_records)
     error_counts = _error_counts(error_rows)
     suppressed_target_ids = _error_target_ids(error_rows)
-    rollback_target_ids = _one_to_many_target_ids(error_rows)
-
-    rollback_rows: list[dict[str, Any]] = []
-    if external_validation_enabled:
-        for record in t04_records:
-            target_id = str(record["target_id"])
-            if target_id not in rollback_target_ids:
-                continue
-            rollback_rows.append(
-                {
-                    "target_id": target_id,
-                    "case_id": record.get("source_case_id") or target_id,
-                    "representative_node_id": record.get("representative_node_id") or target_id,
-                    "step7_state": record.get("step7_state") or "",
-                    "reason": "intersection_match_t04_one_target_to_many_base",
-                }
-            )
-    deduped_rollback_rows = list({str(row["representative_node_id"]): row for row in rollback_rows}.values())
+    deduped_rollback_rows: list[dict[str, Any]] = []
     output_records = [
         record
         for record in t04_records

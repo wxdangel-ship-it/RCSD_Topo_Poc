@@ -149,7 +149,7 @@ def test_t10_t05_runner_uses_explicit_files_not_run_root_handoffs(tmp_path: Path
     t04_case_root = tmp_path / "t04" / "cases"
     t04_case_root.mkdir(parents=True)
     handoffs = {
-        "t07_nodes": _write_file(tmp_path / "t07" / "nodes.gpkg"),
+        "final_swsd_nodes": _write_file(tmp_path / "t04" / "nodes.gpkg"),
         "t07_surface": _write_file(tmp_path / "t07" / "t07_rcsdintersection_anchor_surface.gpkg"),
         "t07_relation_evidence": _write_file(tmp_path / "t07" / "t07_swsd_rcsd_relation_evidence.csv"),
         "t03_surface": _write_file(tmp_path / "t03" / "virtual_intersection_polygons.gpkg"),
@@ -195,12 +195,59 @@ def test_t10_t05_runner_uses_explicit_files_not_run_root_handoffs(tmp_path: Path
     assert "t07_run_root" not in inputs
     assert "t03_run_root" not in inputs
     assert "t04_run_root" not in inputs
+    assert command[command.index("--nodes") + 1] == handoffs["final_swsd_nodes"]
     assert record["execution_context"] == {"t04_case_root": str(t04_case_root)}
     assert record["outputs"]["t05_phase2_summary"].endswith("/summary.json")
     assert record["missing_outputs"] == []
 
 
-def test_t10_t07_step3_backfills_nodes_after_t05(tmp_path: Path, monkeypatch) -> None:
+def test_t10_t04_consumes_t03_nodes_and_publishes_final_nodes(tmp_path: Path, monkeypatch) -> None:
+    stage_dir = tmp_path / "stage"
+    external_inputs = {
+        "drivezone": Path(_write_file(tmp_path / "external" / "drivezone.gpkg")),
+        "divstripzone": Path(_write_file(tmp_path / "external" / "divstripzone.gpkg")),
+        "rcsdroad": Path(_write_file(tmp_path / "external" / "rcsdroad.gpkg")),
+        "rcsdnode": Path(_write_file(tmp_path / "external" / "rcsdnode.gpkg")),
+    }
+    handoffs = {
+        "t03_nodes": _write_file(tmp_path / "t03" / "nodes.gpkg"),
+        "t01_roads": _write_file(tmp_path / "t01" / "roads.gpkg"),
+        "t03_intersection_match": _write_file(tmp_path / "t03" / "intersection_match_t03.geojson"),
+    }
+    captured: dict[str, object] = {}
+
+    def fake_execute_command(stage_id, stage_dir, repo_root, command, env_overrides, inputs):
+        captured["env"] = env_overrides
+        captured["inputs"] = inputs
+        run_root = stage_dir / "t04"
+        _write_file(run_root / "nodes.gpkg")
+        _write_file(run_root / "divmerge_virtual_anchor_surface.gpkg")
+        _write_file(run_root / "t04_swsd_rcsd_relation_evidence.csv")
+        _write_file(run_root / "intersection_match_t04.geojson")
+        _write_file(run_root / "divmerge_virtual_anchor_surface_summary.json")
+        _write_file(run_root / "divmerge_virtual_anchor_surface_audit.gpkg")
+        (run_root / "cases").mkdir(parents=True, exist_ok=True)
+        return {"stage_id": stage_id, "stage": stage_id, "status": "passed", "outputs": {}}
+
+    monkeypatch.setattr(t10_case_runner, "_execute_command", fake_execute_command)
+
+    record, produced = t10_case_runner._run_t04(
+        case_id="9001",
+        stage_dir=stage_dir,
+        repo_root=tmp_path,
+        external_inputs=external_inputs,
+        handoffs=handoffs,
+    )
+
+    assert record["status"] == "passed"
+    assert captured["env"]["NODES_PATH"] == handoffs["t03_nodes"]
+    assert captured["inputs"]["t03_nodes"] == Path(handoffs["t03_nodes"])
+    assert produced["t04_nodes"].endswith("/t04/nodes.gpkg")
+    assert produced["final_swsd_nodes"] == produced["t04_nodes"]
+    assert record["missing_outputs"] == []
+
+
+def test_t10_t07_step3_compatibility_backfill_helper(tmp_path: Path, monkeypatch) -> None:
     stage_dir = tmp_path / "stage"
     t07_step2_nodes = _write_file(tmp_path / "t07" / "step2_anchor_recognition" / "nodes.gpkg")
     handoffs = {
@@ -244,8 +291,47 @@ def test_t10_t07_step3_backfills_nodes_after_t05(tmp_path: Path, monkeypatch) ->
     assert inputs["t07_nodes"] == Path(t07_step2_nodes)
     assert record["status"] == "passed"
     assert produced["t07_step2_nodes"] == t07_step2_nodes
-    assert produced["t07_nodes"].endswith("/t07_step3/step3_intersection_match/nodes.gpkg")
+    assert produced["t07_step3_nodes"].endswith("/t07_step3/step3_intersection_match/nodes.gpkg")
+    assert "t07_nodes" not in produced
     assert produced["t07_relation_evidence"].endswith("/t07_step3/step3_intersection_match/t07_swsd_rcsd_relation_evidence.csv")
+    assert record["missing_outputs"] == []
+
+
+def test_t10_t06_step12_uses_final_swsd_nodes(tmp_path: Path, monkeypatch) -> None:
+    stage_dir = tmp_path / "stage"
+    handoffs = {
+        "t01_segment": _write_file(tmp_path / "t01" / "segment.gpkg"),
+        "t01_roads": _write_file(tmp_path / "t01" / "roads.gpkg"),
+        "final_swsd_nodes": _write_file(tmp_path / "t04" / "nodes.gpkg"),
+        "t05_intersection_match_all": _write_file(tmp_path / "t05" / "intersection_match_all.geojson"),
+        "t05_rcsdroad_out": _write_file(tmp_path / "t05" / "rcsdroad_out.gpkg"),
+        "t05_rcsdnode_out": _write_file(tmp_path / "t05" / "rcsdnode_out.gpkg"),
+    }
+    captured: dict[str, object] = {}
+
+    def fake_execute_command(stage_id, stage_dir, repo_root, command, env_overrides, inputs):
+        captured["command"] = command
+        captured["inputs"] = inputs
+        run_root = stage_dir / "t06"
+        _write_file(run_root / "step1_identify_fusion_units" / "t06_step1_summary.json")
+        _write_file(run_root / "step2_extract_rcsd_segments" / "t06_step2_summary.json")
+        _write_file(run_root / "step2_extract_rcsd_segments" / "t06_rcsd_segment_replaceable.gpkg")
+        return {"stage_id": stage_id, "stage": stage_id, "status": "passed", "outputs": {}}
+
+    monkeypatch.setattr(t10_case_runner, "_execute_command", fake_execute_command)
+
+    record, _produced = t10_case_runner._run_t06_step12(
+        case_id="9001",
+        stage_dir=stage_dir,
+        repo_root=tmp_path,
+        python_bin="python",
+        handoffs=handoffs,
+    )
+
+    command = captured["command"]
+    assert record["status"] == "passed"
+    assert captured["inputs"]["final_swsd_nodes"] == Path(handoffs["final_swsd_nodes"])
+    assert command[command.index("--swsd-nodes") + 1] == handoffs["final_swsd_nodes"]
     assert record["missing_outputs"] == []
 
 
@@ -259,7 +345,7 @@ def test_t10_t06_step3_uses_replaceable_file_not_run_root_input(tmp_path: Path, 
         ),
         "t01_segment": _write_file(tmp_path / "t01" / "segment.gpkg"),
         "t01_roads": _write_file(tmp_path / "t01" / "roads.gpkg"),
-        "t07_nodes": _write_file(tmp_path / "t07" / "nodes.gpkg"),
+        "final_swsd_nodes": _write_file(tmp_path / "t04" / "nodes.gpkg"),
         "t05_rcsdroad_out": _write_file(tmp_path / "t05" / "rcsdroad_out.gpkg"),
         "t05_rcsdnode_out": _write_file(tmp_path / "t05" / "rcsdnode_out.gpkg"),
     }
@@ -290,6 +376,7 @@ def test_t10_t06_step3_uses_replaceable_file_not_run_root_input(tmp_path: Path, 
     inputs = captured["inputs"]
     assert record["status"] == "passed"
     assert "--t06-run-root" in command
+    assert command[command.index("--swsd-nodes") + 1] == handoffs["final_swsd_nodes"]
     assert "t06_step2_replaceable" in inputs
     assert "t06_run_root" not in inputs
     assert record["execution_context"] == {"t06_run_root": str(t06_run_root)}
@@ -1404,7 +1491,7 @@ def test_t10_case_runner_writes_t06_visual_check_summary(tmp_path: Path, monkeyp
         case_run_dir = kwargs["run_root"] / "cases" / "9001"
         step2 = case_run_dir / "t06_step12" / "t06" / "step2_extract_rcsd_segments"
         step3 = case_run_dir / "t06_step12" / "t06" / "step3_segment_replacement"
-        t07 = case_run_dir / "t07_step3" / "t07_step3" / "step3_intersection_match"
+        t07 = case_run_dir / "t07" / "t07" / "step2_anchor_recognition"
         t03 = case_run_dir / "t03" / "t03"
         t04 = case_run_dir / "t04" / "t04"
         t05 = case_run_dir / "t05" / "t05_phase1"

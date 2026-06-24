@@ -16,10 +16,10 @@
 8. Step2 先将 `kind_2 = 64 / 128` 写为基础 `no / NULL`；`kind_2 = 2048` 进入 strict surface 判定，只有 single-surface / single-SWSD / single-RCSD 条件全部满足时才建立 Step2 surface 成功关系，否则写 `no / NULL`，不参与或接收通用 `fail2`。
 9. Step2 对处理范围内类型形成 `RCSDIntersection -> SWSD 语义路口` 反向索引；同一面对应多个 SWSD 语义路口时，对代表 node `kind_2 in {4, 8, 16, 64, 128}` 统一做 `fail2` 覆盖；`kind_2 = 2048` 使用独立 strict surface 审计，不进入通用 `fail2`。
 10. Step2 输出 `nodes`、语义路口级 summary、audit、perf、node error 工件，以及 T07 版 T02 handoff 成果 `t07_rcsdintersection_anchor_surface.gpkg / t07_swsd_rcsd_relation_evidence.csv/json`；启用 `RCSDNode` 输入时，命中面内没有可用 RCSD 语义节点的 `RCSDIntersection` 不发布为可消费锚定。
-11. Step3 独立读取 Step2 后 `nodes`、T05 `intersection_match_all.geojson` 与输入 `RCSDNode`。
+11. Step3 是独立可选步骤，读取 Step2 后 `nodes`、显式提供的 `intersection_match_all.geojson` 兼容 relation 文件与输入 `RCSDNode`；该 relation 可以来自早期或外部方案，T05 Phase2 产物只是在明确指定时作为兼容输入。
 12. Step3 的 Step2 surface 1V1 推导处理代表 node `kind_2 in {4, 8, 16, 2048}` 的 SWSD 语义路口。
 13. Step3 先读取 Step2 `t07_rcsdintersection_anchor_surface.gpkg`，对 SWSD-RCSDIntersection surface 1V1 结果，以 surface 覆盖输入 `RCSDNode` 的语义路口；仅有 1 个 RCSD 语义路口时建立 SWSD-RCSD 关系，多个时输出 `RCSDNode_error.gpkg`，0 个只写 audit / summary。
-14. Step3 再选择 `has_evd = yes / is_anchor = no` 且代表 node `kind_2 in {4, 8, 16, 128, 2048}` 的 SWSD 语义路口作为 T05 relation 补充候选；只接受 `intersection_match_all.geojson` 中 `status = 0 / base_id != 0`、`base_id` 存在于输入 `RCSDNode.id/mainnodeid` 且未被前段占用的 relation。`kind_2 = 128` 只走该 relation 补充路径；`kind_2 = 2048` 未通过 strict Step2 surface 时也可走该路径。
+14. Step3 再选择 `has_evd = yes / is_anchor = no` 且代表 node `kind_2 in {4, 8, 16, 128, 2048}` 的 SWSD 语义路口作为兼容 relation 补充候选；只接受 `intersection_match_all.geojson` 中 `status = 0 / base_id != 0`、`base_id` 存在于输入 `RCSDNode.id/mainnodeid` 且未被前段占用的 relation。`kind_2 = 128` 只走该 relation 补充路径；`kind_2 = 2048` 未通过 strict Step2 surface 时也可走该路径。
 15. Step3 对最终候选成功 relation 执行 T05 同口径基数质检，1:N、N:1 与重复 success target 写入 `relation_cardinality_errors.csv/json`；若出现 SWSD 1:N，则从 `intersection_match_t07.geojson` 移除该 SWSD 的所有关系并回写 `is_anchor = no`。
 16. Step3 输出 `intersection_match_t07.geojson`，复制 Step2 `t07_rcsdintersection_anchor_surface.gpkg`，并合并生成带 Step2 / Step3 锚定数量的 `t07_swsd_rcsd_relation_evidence.csv/json`。
 
@@ -39,4 +39,4 @@
 - 执行失败包括字段缺失、CRS 缺失、不可投影、geometry 缺失。
 - 代表 node 缺失是数据结构问题，必须审计，不得 fallback。
 - 非处理 `kind_2` 是业务跳过，稳定写为 `NULL`。
-- Step3 relation 缺失、relation 失败或 RCSD `base_id` 缺失均不得写为锚定成功，必须在 Step3 audit 中说明。
+- Step3 兼容 relation 缺失、relation 失败或 RCSD `base_id` 缺失均不得写为锚定成功，必须在 Step3 audit 中说明。

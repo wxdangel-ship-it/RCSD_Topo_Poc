@@ -498,7 +498,7 @@ T04 final closeout 必须基于 `t04_swsd_rcsd_relation_evidence.json` 中 `stat
 - T07 / T03 外部校验文件若路径已提供但内容为空、不是合法 JSON，或不是包含 `features` list 的 GeoJSON，T04 必须将该外部输入记录为不可消费，按 0 条外部成功关系继续执行，并在 `intersection_match_t04_summary.json` 中写入 `t07_validation_input / t03_validation_input / external_validation_unusable_input_count`；不得把不可消费输入解释为成功 relation。
 - 命中冲突时必须输出 `intersection_match_t04_cardinality_errors.csv/json` 与 `intersection_match_t04_summary.json`；`intersection_match_t04_summary.json.relation_cardinality_passed = false`。未提供 T07/T03 外部输入时，T04 自身 relation evidence 的 cardinality 结果只作为 final relation 审计，不提升为 Step7 consistency failure。
 - 任一 cardinality 冲突涉及的 T04 `target_id` 不进入 `intersection_match_t04.geojson`。
-- 启用 T07/T03 外部校验输入后，若冲突类型为 `one_target_to_many_base` 且该关系由 T04 建立，必须取消该 SWSD 语义路口已建立关系，并把 T04 输出 `nodes.gpkg` 中对应 representative node 的 `is_anchor` 回滚为 `no`；回滚必须追加到 `nodes_anchor_update_audit.csv/json`。
+- Relation cardinality 冲突只取消或压制 relation 发布，不得把 Step7 `accepted` 或 Step8 fallback 成功对应的 representative node 回滚为 `no`；SWSD 侧锚定事实继续通过 T04 downstream `nodes.gpkg` 表达，下游 relation 成功与否由 T05 统一发布。
 
 ## 4. Outputs
 
@@ -724,7 +724,7 @@ accepted surface 主层与 summary 至少应保留或可追溯：
 - 输入依据是 T04 relation evidence 中的成功关系，并与 T07 / T03 已发布的 intersection match 做 1:1 cardinality 校验。
 - 若 T07 / T03 可选校验文件存在但不可解析，T04 必须在 summary 中审计该输入状态，并以 0 条外部关系继续，确保空间裁剪或上游空产物不阻断 T04 final closeout。
 - 若存在同一 SWSD 对多个 RCSD，或同一 RCSD 对多个 SWSD，冲突关系不得进入输出 GeoJSON，并必须在 `intersection_match_t04_cardinality_errors.*` 中可追溯。
-- 启用 T07/T03 外部校验输入后，T04 自身导致的同一 SWSD 对多个 RCSD 冲突必须把该 SWSD representative node 回滚为 `is_anchor = no`。
+- T04 自身导致的 cardinality 冲突必须从输出关系中压制，但不得回滚该 SWSD representative node 的 `is_anchor`。
 
 ### 4.8 Downstream nodes 输出
 
@@ -750,7 +750,7 @@ accepted surface 主层与 summary 至少应保留或可追溯：
 - `fallback_relation_state`
 - `reason`
 
-若 `intersection_match_t04` 在 T07/T03 外部校验输入下触发 T04 自身 one-target-to-many rollback，audit 必须追加一条 `new_is_anchor = no` 的记录，`reason = intersection_match_t04_one_target_to_many_base` 或等价可追溯原因。
+Relation cardinality 冲突不得追加 `new_is_anchor = no` 的回滚记录；相关冲突必须写入 `intersection_match_t04_cardinality_errors.*` 与 summary，节点审计只记录 Step7 / Step8 对 `is_anchor` 的正式更新。
 
 `nodes_anchor_update_audit.json` 至少包含：
 

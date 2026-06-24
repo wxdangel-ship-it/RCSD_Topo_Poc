@@ -484,15 +484,6 @@ def _error_target_ids(error_rows: list[dict[str, str]]) -> set[str]:
     }
 
 
-def _one_to_many_target_ids(error_rows: list[dict[str, str]]) -> set[str]:
-    return {
-        target_id
-        for row in error_rows
-        if row.get("error_type") == "one_target_to_many_base"
-        for target_id in _split_id_parts(row.get("target_id"))
-    }
-
-
 def _update_t03_summary_with_intersection_match(
     *,
     run_root: Path,
@@ -541,23 +532,7 @@ def write_intersection_match_t03(
     error_rows = _build_intersection_match_cardinality_errors(t03_records + external_records)
     error_counts = _relation_error_counts(error_rows)
     suppressed_target_ids = _error_target_ids(error_rows)
-    rollback_target_ids = _one_to_many_target_ids(error_rows)
-    t03_success_target_ids = {str(record["target_id"]) for record in t03_records}
-    rollback_rows: list[dict[str, Any]] = []
-    for record in t03_records:
-        target_id = str(record["target_id"])
-        if target_id not in rollback_target_ids or target_id not in t03_success_target_ids:
-            continue
-        rollback_rows.append(
-            {
-                "target_id": target_id,
-                "case_id": record.get("source_case_id") or target_id,
-                "representative_node_id": record.get("representative_node_id") or target_id,
-                "step7_state": record.get("step7_state") or "",
-                "reason": "intersection_match_t03_one_target_to_many_base",
-            }
-        )
-    deduped_rollback_rows = list({str(row["representative_node_id"]): row for row in rollback_rows}.values())
+    deduped_rollback_rows: list[dict[str, Any]] = []
     output_records = [
         record
         for record in t03_records

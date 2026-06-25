@@ -392,6 +392,21 @@ manifest 至少记录：
 
 该 runner 不生成 Case 级 `t10_t06_funnel.*`；全量替换率和质量审计应消费 T06/T09 阶段正式输出或另行运行全量审计脚本。
 
+### 3.6 Four-case statistical baseline registration
+
+当前 T10 四 Case 端到端统计基线登记如下：
+
+- 当前有效基线目录：`/mnt/e/Work/RCSD_Topo_Poc/outputs/baselines/t10_4cases_72b27f2_20260625_182356`
+- 当前有效 run root：`/mnt/e/Work/RCSD_Topo_Poc/outputs/baselines/t10_4cases_72b27f2_20260625_182356/e2e_full`
+- 版本：`72b27f2`，冻结时 `origin/main = 72b27f2`。
+- Case 范围：`1885118`、`609214532`、`74155468`、`991176`。
+- 完成口径：T10 `status = passed`，4 个 Case 全部通过，失败 Case 数为 0。
+- 基线产物：`case_stage_status_baseline.csv`、`t06_funnel_baseline.csv`、`t06_rcsd_base_replacement_rate_baseline.csv`、`baseline_summary.json`、`BASELINE_FREEZE.md`、`BASELINE_USAGE.md`。
+
+旧目录 `outputs/baselines/t10_4cases_beb54bf_20260625_055800` 与 `outputs/baselines/t10_4cases_a2d9a58_20260624_174615` 已取消当前有效身份，仅保留为历史对照。目录 `outputs/baselines/t10_4cases_72b27f2_20260625_172727` 不注册为正式基线，因为执行过程中主工作区切换分支且 T06 阶段前已有未提交 T06 源码改动。
+
+该登记只定义 T10 四 Case 统计对比基线，不新增执行入口，不改变 T01-T09 算法接口。完整漏斗、RCSD Base 替换率、GIS / 拓扑 / 性能审计状态见 `architecture/statistical-baseline.md`。
+
 ## 4. EntryPoints
 
 当前 repo 官方入口：

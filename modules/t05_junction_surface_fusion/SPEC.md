@@ -12,6 +12,7 @@ T05 是项目“路口 1:1 关系层”的统一发布模块。它汇总 T07 / T
 - 输出 copy-on-write `rcsdroad_out.gpkg / rcsdnode_out.gpkg`，不原地修改输入。
 - 用 cardinality audit 阻断同一 SWSD 多 RCSD 或重复 success target 的错误成功关系；同一 RCSD 可对应多个 SWSD 语义路口时保留关系并审计 `many_target_to_one_base`。
 - 将 T07/T03/T04 的多来源证据收口为 T06 可消费的单一关系主表，确保每个 SWSD target 在主表中最多只有一个成功 RCSD base。
+- 输出路口级锚定漏斗，面向 T07/T03/T04/T05 全链路汇总 `kind_2 in {4,8,16,64,128,2048}` 的语义路口处理、证据、发布、成功和拓扑可消费情况。
 
 ## 3. 当前范围
 
@@ -66,6 +67,9 @@ T05 是项目“路口 1:1 关系层”的统一发布模块。它汇总 T07 / T
 | `blocking_errors.*` | 无法发布成功 relation 的阻断原因。 |
 | `module_relation_audit_summary.*` | 按来源模块统计 relation 生产效果。 |
 | `relation_cardinality_errors.*` | 关系基数错误审计。 |
+| `t05_junction_anchor_funnel_summary.json` | 路口级锚定顶层漏斗、T07/T03/T04 来源漏斗、T05 失败分类汇总。 |
+| `t05_junction_anchor_source_funnel.csv` | 面向 PPT / Excel 的 T07/T03/T04 来源模块漏斗表。 |
+| `t05_junction_anchor_failure_reasons.csv` | T05 发布失败的一级分类、scene、reason 和数量。 |
 
 ## 7. 关键业务步骤
 
@@ -86,6 +90,7 @@ T05 是项目“路口 1:1 关系层”的统一发布模块。它汇总 T07 / T
 - 无法合并的多候选必须写 blocking error，不得写主表成功关系。
 - Phase 2 所有 RCSD 修改都是 copy-on-write。
 - `kind_2 = 64` 环岛走独立归组分支，不通过 road-only split。
+- 路口级锚定漏斗只统计 `kind_2 in {4,8,16,64,128,2048}` 的 SWSD 语义路口，按 `mainnodeid` 优先、否则 `id` 的 canonical junction id 去重；T07/T03/T04 来源漏斗是模块贡献统计，不要求三者互斥。
 
 ## 9. 什么是错
 

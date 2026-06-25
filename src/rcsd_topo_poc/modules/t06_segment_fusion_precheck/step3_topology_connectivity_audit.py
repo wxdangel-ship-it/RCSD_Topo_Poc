@@ -753,17 +753,33 @@ def _segment_road_rows(
                 )
                 owner = "T06_step3_group_replacement_manual_audit" if is_group_path_corridor else "T06_step3_segment_relation"
             elif not undirected_connected:
-                status = "fail"
-                reason = "segment_road_endpoints_not_connected"
-                owner = "T06_step2_replacement_plan_or_step3_graph_selection"
+                status = "warn" if is_group_path_corridor else "fail"
+                reason = (
+                    "group_path_corridor_road_endpoint_connectivity_review"
+                    if is_group_path_corridor
+                    else "segment_road_endpoints_not_connected"
+                )
+                owner = (
+                    "T06_step3_group_replacement_manual_audit"
+                    if is_group_path_corridor
+                    else "T06_step2_replacement_plan_or_step3_graph_selection"
+                )
                 if final_undirected_connected:
                     status = "warn"
                     reason = "segment_road_relation_scope_incomplete_but_final_graph_connected"
                     owner = "T06_step3_segment_relation"
             elif directed_path_missing:
-                status = "fail"
-                reason = "segment_road_directed_path_missing"
-                owner = "T06_step2_replacement_plan_or_step3_graph_selection"
+                status = "warn" if is_group_path_corridor else "fail"
+                reason = (
+                    "group_path_corridor_road_directionality_review"
+                    if is_group_path_corridor
+                    else "segment_road_directed_path_missing"
+                )
+                owner = (
+                    "T06_step3_group_replacement_manual_audit"
+                    if is_group_path_corridor
+                    else "T06_step2_replacement_plan_or_step3_graph_selection"
+                )
                 final_directed_path_missing = _road_directed_path_missing(
                     direction,
                     final_path_forward,

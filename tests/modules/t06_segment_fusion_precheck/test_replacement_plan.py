@@ -57,6 +57,15 @@ def test_replacement_plan_combines_standard_group_and_special_rows() -> None:
                 }
             )
         ],
+        failure_business_audit_rows=[
+            _feature(
+                {
+                    "swsd_segment_id": "s2",
+                    "optional_junc_nodes": ["j_mid"],
+                    "optional_junc_rcsd_nodes": ["r_mid"],
+                }
+            )
+        ],
         rcsd_roads=[
             _road("rr1", 10, 20),
             _road("rr2", 20, 30),
@@ -70,6 +79,9 @@ def test_replacement_plan_combines_standard_group_and_special_rows() -> None:
     group = [row for row in rows if row["properties"]["execution_scope"] == "path_corridor_group"][0]["properties"]
     assert group["rcsd_road_ids"] == ["rr1", "rr2"]
     assert group["retained_node_ids"] == ["10", "20", "30"]
+    assert group["optional_junc_nodes"] == ["j_mid"]
+    assert group["optional_junc_rcsd_nodes"] == ["r_mid"]
+    assert group["rcsd_junc_nodes"] == ["r_mid"]
 
 
 def test_replacement_plan_adds_pair_anchor_bridge_roads_to_standard_plan() -> None:
@@ -220,6 +232,80 @@ def test_replacement_plan_blocks_group_when_member_standard_plan_is_blocked() ->
     assert "group_member_replacement_plan_blocked" in group["risk_flags"]
     assert "adaptive_buffer_exceeds_topology_connectivity_gate" in group["risk_flags"]
     assert "blocked_group_member_segments=['s_member']" in group["notes"]
+
+
+def test_group_plan_absorbs_internal_member_visual_road_conflict() -> None:
+    rows = build_replacement_plan_rows(
+        replaceable_rows=[
+            _feature(
+                {
+                    "swsd_segment_id": "s_owner",
+                    "replacement_strategy": "buffer_segment_extraction",
+                    "swsd_pair_nodes": ["a", "b"],
+                    "rcsd_pair_nodes": [1, 2],
+                    "rcsd_road_ids": ["rr_shared"],
+                    "retained_node_ids": [1, 2],
+                }
+            ),
+            _feature(
+                {
+                    "swsd_segment_id": "s_owner2",
+                    "replacement_strategy": "buffer_segment_extraction",
+                    "swsd_pair_nodes": ["d", "e"],
+                    "rcsd_pair_nodes": [4, 5],
+                    "rcsd_road_ids": ["rr_internal_owned"],
+                    "retained_node_ids": [4, 5],
+                }
+            ),
+            _feature(
+                {
+                    "swsd_segment_id": "s_member",
+                    "replacement_strategy": "visual_consistency_controlled_release",
+                    "geometry_buffer_coverage_issue": "retained_geometry_outside_swsd_visual_consistency_scope",
+                    "swsd_uncovered_by_rcsd_length_m": 0.0,
+                    "swsd_uncovered_by_rcsd_ratio": 0.0,
+                    "swsd_pair_nodes": ["b", "c"],
+                    "rcsd_pair_nodes": [2, 3],
+                    "rcsd_road_ids": ["rr_shared", "rr_internal_owned"],
+                    "retained_node_ids": [2, 3],
+                }
+            ),
+        ],
+        special_group_rows=[],
+        group_replacement_audit_rows=[
+            _feature(
+                {
+                    "swsd_segment_id": "s_group",
+                    "group_probe_status": "passed",
+                    "group_probe_repair_owner": "T06_path_corridor_group_replacement",
+                    "group_probe_reason": "passed",
+                    "group_probe_buffer_distance_m": 50.0,
+                    "path_corridor_group_segment_ids": ["s_group", "s_owner", "s_owner2", "s_member"],
+                    "group_probe_rcsd_road_ids": ["rr_shared", "rr_group"],
+                    "swsd_pair_nodes": ["a", "c"],
+                    "rcsd_pair_nodes": [1, 3],
+                }
+            )
+        ],
+        rcsd_roads=[
+            _road("rr_shared", 1, 2, [(0, 0), (100, 0)]),
+            _road("rr_internal_owned", 4, 5, [(0, 10), (100, 10)]),
+            _road("rr_group", 2, 3),
+        ],
+        rcsd_node_canonicalizer=NodeCanonicalizer({}, frozenset({"1", "2", "3", "4", "5"})),
+    )
+
+    by_id = {row["properties"]["replacement_plan_id"]: row["properties"] for row in rows}
+    member = by_id["standard:s_member"]
+    group = by_id["group_path_corridor:s_group"]
+    assert member["plan_status"] == "blocked"
+    assert member["source_reason"] == "visual_consistency_road_conflict_with_primary_replacement_plan"
+    assert group["plan_status"] == "ready"
+    assert group["execution_action"] == "replace"
+    assert group["source_reason"] == "passed"
+    assert "group_member_visual_conflict_absorbed_by_path_corridor_group" in group["risk_flags"]
+    assert "absorbed_group_member_visual_conflict_segments=['s_member']" in group["notes"]
+    assert group["notes"].count("absorbed_group_member_visual_conflict_segments=['s_member']") == 1
 
 
 def test_replacement_plan_adds_high_confidence_single_visual_repair() -> None:

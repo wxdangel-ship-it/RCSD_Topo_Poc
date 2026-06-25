@@ -230,10 +230,15 @@ Phase 2 输出：
 - `rcsdroad_split.gpkg`、`rcsdnode_generated.gpkg`、`rcsdnode_grouped.gpkg`。
 - `rcsd_junctionization_audit.csv/json`、`intersection_match_all_audit.csv/json`、`blocking_errors.csv/json`、`relation_cardinality_errors.csv/json`、`summary.json`。
 - `module_relation_audit_summary.csv/json`：按 T07/T02/T03/T04 输入与场景统计最终关系生产效果。
+- `t05_junction_anchor_funnel_summary.json`：路口级锚定漏斗，覆盖顶层漏斗、T07/T03/T04 来源模块漏斗、T05 失败分类。
+- `t05_junction_anchor_source_funnel.csv`：T07/T03/T04 来源模块漏斗，供 PPT / Excel 汇总。
+- `t05_junction_anchor_failure_reasons.csv`：T05 发布失败的一级分类、scene、reason 和数量。
 
 Phase 2 失败统一 `status = 1`、`base_id = 0`。成功关系的 `base_id` 必须是 RCSD 语义路口主 node id，不得写普通 RCSDRoad id。T03-A 多 RCSDNode 与 T04 complex 多 RCSDNode 先归组再建关系；T03 road-only 与 T04 fallback road-only 才进入 RCSDRoad split。被 split 的原始 RCSDRoad 不进入 active `rcsdroad_out.gpkg`。
 
 Phase 2 在入口统一对 SWSD 语义路口主键做 canonical normalization：evidence `target_id`、surface `mainnodeid`、nodes `id/mainnodeid` 中的整数 ID 字符串 / 浮点字符串表达差异必须归一，例如 `622700016` 与 `622700016.0` 视为同一 target。`intersection_match_all.geojson`、junctionization audit、relation audit 与 blocking/cardinality 输出中的 `target_id` 必须使用 canonical 值。
+
+路口级锚定漏斗的语义路口范围固定为 `kind_2 in {4,8,16,64,128,2048}`。统计时按 `mainnodeid` 优先、否则 `id` 的 canonical junction id 去重；单 node 路口不得因缺少多 node group 被过滤。T07/T03/T04 来源模块漏斗只统计该语义路口范围内的 target，并复用 Phase 2 evidence classifier 分为成功 evidence、无 RCSD、失败 evidence、T05 handoff、T05 采用、T05 成功/失败等指标。来源模块漏斗是贡献统计，不保证 T07/T03/T04 互斥；顶层漏斗按最终 relation target 去重。
 
 Phase 2 不改写 final SWSD `nodes.gpkg`，也不再输出 SWSD node copy-on-write 标记层。若某个 SWSD 语义路口在 Phase 2 审计中确认 `no_related_rcsd`，仅通过 relation failure、junctionization audit 与 module relation audit 表达，不额外改写 `has_evd / is_anchor`。
 
@@ -281,6 +286,19 @@ T04 fallback 场景可补读 `divmerge_virtual_anchor_surface.gpkg`、summary、
 - `scenario = pre_success_rcsdroad_junctionization`：前置成功，只有 RCSDRoad，需要构建 RCSD 路口。
 - `scenario = pre_success_no_rcsd_overall_failure`：前置成功，但确认无 RCSD 关联，最终应为失败关系。
 - 每个 scenario 输出 `relation_success_count / relation_failure_count / missing_relation_count / blocking_error_count / overall_failure_count`。
+
+路口级锚定漏斗统计：
+
+- `top_level_funnel.semantic_junction_total`：final nodes 中 `kind_2 in {4,8,16,64,128,2048}` 的 SWSD 语义路口总数。
+- `top_level_funnel.evidence_junction_total`：T07/T03/T04 任一 relation evidence 覆盖到的语义路口数。
+- `top_level_funnel.t05_phase2_target_total / relation_published_total`：进入 T05 Phase2 并发布 relation 的语义路口数。
+- `top_level_funnel.relation_success_total / relation_failure_total`：T05 最终 `status=0/1` 的语义路口数。
+- `top_level_funnel.graph_consumable_success_total / graph_unconsumable_success_total`：成功 relation 中可被最终 RCSD road graph 消费 / 不可消费的语义路口数。
+- `top_level_funnel.non_semantic_phase2_target_total`：进入 T05 Phase2 但不在上述 `kind_2` 范围内的 target 数，正常应为 0，用于发现上游范围泄漏。
+- `source_module_funnel.input_junction_total`：该来源模块 evidence 覆盖到的语义路口数，不按 evidence 行数统计。
+- `source_module_funnel.success_evidence_junction_total / no_rcsd_junction_total / failure_evidence_junction_total`：复用 T05 Phase2 classifier 对来源 evidence 做路口级归类。
+- `source_module_funnel.handoff_to_t05_total / accepted_by_t05_total / success_after_t05_total / failure_after_t05_total`：该来源在 T05 发布链路中的进入、采用和最终结果统计。
+- `t05_failure_breakdown.no_related_failure_total / upstream_failure_total / t05_closure_failure_total / missing_evidence_failure_total / other_failure_total`：T05 `status=1` relation 的顶层失败分类。
 
 ### 7.1 Relation Graph Consumability Audit
 

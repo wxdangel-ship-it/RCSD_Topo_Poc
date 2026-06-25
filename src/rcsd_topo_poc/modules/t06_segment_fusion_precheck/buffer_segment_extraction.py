@@ -65,6 +65,15 @@ class BufferSegmentResult:
     geometry: BaseGeometry
 
 
+@dataclass(frozen=True)
+class _CandidateContext:
+    source_geometry: BaseGeometry
+    buffer_geometry: BaseGeometry
+    candidate_nodes: list[dict[str, Any]]
+    candidate_roads: list[dict[str, Any]]
+    excluded_roads: list[dict[str, Any]]
+
+
 class SpatialFeatureIndex:
     def __init__(self, features: list[dict[str, Any]]) -> None:
         self.features: list[dict[str, Any]] = []
@@ -87,6 +96,7 @@ class BufferSegmentExtractor:
         self.road_index = SpatialFeatureIndex(rcsd_road_features)
         self.node_index = SpatialFeatureIndex(rcsd_node_features)
         self.node_canonicalizer = NodeCanonicalizer.from_node_features(rcsd_node_features)
+        self._candidate_cache: dict[tuple[int, float, float, float, int], _CandidateContext] = {}
 
     def extract(
         self,
@@ -115,14 +125,11 @@ class BufferSegmentExtractor:
         if segment_geometry is None or segment_geometry.is_empty:
             return _empty_result("missing_swsd_geometry", required_nodes, optional_nodes)
 
-        buffer_geometry = segment_geometry.buffer(cfg.buffer_distance_m)
-        candidate_nodes = _select_candidate_nodes(self.node_index.query(buffer_geometry), buffer_geometry)
-        candidate_roads, excluded_roads = _select_candidate_roads(
-            self.road_index.query(buffer_geometry),
-            buffer_geometry,
-            cfg,
-            node_canonicalizer=self.node_canonicalizer,
-        )
+        candidate_context = self._candidate_context(segment_geometry, cfg)
+        buffer_geometry = candidate_context.buffer_geometry
+        candidate_nodes = list(candidate_context.candidate_nodes)
+        candidate_roads = list(candidate_context.candidate_roads)
+        excluded_roads = list(candidate_context.excluded_roads)
         candidate_roads, excluded_roads = _restore_required_corridor_advance_roads(
             selected_roads=candidate_roads,
             excluded_roads=excluded_roads,
@@ -259,6 +266,37 @@ class BufferSegmentExtractor:
             missing_required_nodes=[],
             selected_component_id=selected,
         )
+
+    def _candidate_context(self, segment_geometry: BaseGeometry, cfg: BufferExtractionConfig) -> _CandidateContext:
+        key = (
+            id(segment_geometry),
+            cfg.buffer_distance_m,
+            cfg.min_road_overlap_ratio,
+            cfg.min_road_overlap_length_m,
+            cfg.advance_right_formway_bit,
+        )
+        cached = self._candidate_cache.get(key)
+        if cached is not None and cached.source_geometry is segment_geometry:
+            return cached
+        buffer_geometry = segment_geometry.buffer(cfg.buffer_distance_m)
+        candidate_nodes = _select_candidate_nodes(self.node_index.query(buffer_geometry), buffer_geometry)
+        candidate_roads, excluded_roads = _select_candidate_roads(
+            self.road_index.query(buffer_geometry),
+            buffer_geometry,
+            cfg,
+            node_canonicalizer=self.node_canonicalizer,
+        )
+        if len(self._candidate_cache) >= 512:
+            self._candidate_cache.clear()
+        context = _CandidateContext(
+            source_geometry=segment_geometry,
+            buffer_geometry=buffer_geometry,
+            candidate_nodes=candidate_nodes,
+            candidate_roads=candidate_roads,
+            excluded_roads=excluded_roads,
+        )
+        self._candidate_cache[key] = context
+        return context
 
 
 @dataclass

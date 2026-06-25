@@ -16,6 +16,7 @@ class GroupReplacementAssignment:
     rcsd_road_ids: list[str]
     retained_node_ids: list[str]
     rcsd_pair_nodes: list[str]
+    rcsd_junc_nodes: list[str]
     plan_ids: list[str]
     source_segment_ids: list[str]
     group_segment_ids: list[str]
@@ -38,6 +39,7 @@ class _Candidate:
     rcsd_road_ids: list[str]
     retained_node_ids: list[str]
     rcsd_pair_nodes: list[str]
+    rcsd_junc_nodes: list[str]
     buffer_distance_m: float
 
 
@@ -87,6 +89,8 @@ def read_group_replacement_assignments_from_plan_rows(
 ) -> tuple[dict[str, GroupReplacementAssignment], GroupReplacementStats]:
     candidates: list[_Candidate] = []
     skipped = 0
+    member_pair_nodes_by_segment = _standard_pair_nodes_by_segment(rows)
+    member_junc_nodes_by_segment = _standard_junc_nodes_by_segment(rows)
     for row in rows:
         props = dict(row.get("properties") or {})
         candidate = _candidate_from_plan_row(
@@ -100,7 +104,11 @@ def read_group_replacement_assignments_from_plan_rows(
             continue
         candidates.append(candidate)
 
-    assignments = _component_assignments(candidates)
+    assignments = _component_assignments(
+        candidates,
+        member_pair_nodes_by_segment=member_pair_nodes_by_segment,
+        member_junc_nodes_by_segment=member_junc_nodes_by_segment,
+    )
     stats = GroupReplacementStats(
         input_row_count=len(rows),
         passed_row_count=len(candidates),
@@ -145,6 +153,8 @@ def apply_group_replacement_assignments(
         unit.retained_node_ids = unique_preserve_order([*unit.retained_node_ids, *scoped_node_ids])
         if not unit.rcsd_pair_nodes and assignment.rcsd_pair_nodes:
             unit.rcsd_pair_nodes = assignment.rcsd_pair_nodes
+        if not unit.rcsd_junc_nodes and assignment.rcsd_junc_nodes:
+            unit.rcsd_junc_nodes = assignment.rcsd_junc_nodes
         unit.group_replacement_plan_ids = unique_preserve_order([*unit.group_replacement_plan_ids, *assignment.plan_ids])
         unit.group_replacement_source_segment_ids = unique_preserve_order(
             [*unit.group_replacement_source_segment_ids, *assignment.source_segment_ids]
@@ -175,7 +185,12 @@ def _candidate_from_row(
         return None
 
     source_segment_id = _safe_id(props.get("swsd_segment_id"))
-    segment_ids = _path_corridor_replacement_segment_ids(props)
+    member_segment_ids = _path_corridor_replacement_segment_ids(props)
+    segment_ids = _candidate_segment_ids(
+        source_segment_id,
+        member_segment_ids,
+        include_source=_source_carrier_junction_mapping_ready(props) or source_segment_id in set(member_segment_ids),
+    )
     rcsd_road_ids = _parse_list(props.get("group_probe_rcsd_road_ids"))
     if not source_segment_id or not segment_ids or not rcsd_road_ids:
         return None
@@ -186,12 +201,14 @@ def _candidate_from_row(
 
     retained_node_ids = _canonical_road_endpoint_ids(rcsd_road_ids, rcsd_road_by_id, canonicalizer)
     rcsd_pair_nodes = _parse_list(props.get("rcsd_pair_nodes"))
+    rcsd_junc_nodes = _parse_list(props.get("optional_junc_rcsd_nodes")) or _parse_list(props.get("rcsd_junc_nodes"))
     return _Candidate(
         source_segment_id=source_segment_id,
         segment_ids=segment_ids,
         rcsd_road_ids=rcsd_road_ids,
         retained_node_ids=retained_node_ids,
         rcsd_pair_nodes=rcsd_pair_nodes,
+        rcsd_junc_nodes=rcsd_junc_nodes,
         buffer_distance_m=_float_or_zero(props.get("group_probe_buffer_distance_m")),
     )
 
@@ -248,7 +265,12 @@ def _candidate_from_plan_row(
         return None
 
     source_segment_id = _safe_id(props.get("swsd_segment_id"))
-    segment_ids = _parse_list(props.get("group_segment_ids"))
+    member_segment_ids = _parse_list(props.get("group_segment_ids"))
+    segment_ids = _candidate_segment_ids(
+        source_segment_id,
+        member_segment_ids,
+        include_source=_source_carrier_junction_mapping_ready(props) or source_segment_id in set(member_segment_ids),
+    )
     rcsd_road_ids = _parse_list(props.get("rcsd_road_ids"))
     if not source_segment_id or not segment_ids or not rcsd_road_ids:
         return None
@@ -268,13 +290,21 @@ def _candidate_from_plan_row(
         rcsd_road_ids=rcsd_road_ids,
         retained_node_ids=retained_node_ids,
         rcsd_pair_nodes=_parse_list(props.get("rcsd_pair_nodes")),
+        rcsd_junc_nodes=_parse_list(props.get("optional_junc_rcsd_nodes")) or _parse_list(props.get("rcsd_junc_nodes")),
         buffer_distance_m=_first_float(props.get("buffer_distances_m")),
     )
 
 
-def _component_assignments(candidates: list[_Candidate]) -> dict[str, GroupReplacementAssignment]:
+def _component_assignments(
+    candidates: list[_Candidate],
+    *,
+    member_pair_nodes_by_segment: dict[str, list[str]] | None = None,
+    member_junc_nodes_by_segment: dict[str, list[str]] | None = None,
+) -> dict[str, GroupReplacementAssignment]:
     if not candidates:
         return {}
+    member_pair_nodes_by_segment = member_pair_nodes_by_segment or {}
+    member_junc_nodes_by_segment = member_junc_nodes_by_segment or {}
 
     parent: dict[str, str] = {}
 
@@ -317,13 +347,19 @@ def _component_assignments(candidates: list[_Candidate]) -> dict[str, GroupRepla
             for _, candidate in component_rows
             if candidate.rcsd_pair_nodes
         }
+        junc_nodes_by_source = {
+            candidate.source_segment_id: candidate.rcsd_junc_nodes
+            for _, candidate in component_rows
+            if candidate.rcsd_junc_nodes
+        }
         distances = sorted({candidate.buffer_distance_m for _, candidate in component_rows})
         for segment_id in component_segment_ids:
             assignments[segment_id] = GroupReplacementAssignment(
                 segment_id=segment_id,
                 rcsd_road_ids=rcsd_road_ids,
                 retained_node_ids=retained_node_ids,
-                rcsd_pair_nodes=pair_nodes_by_source.get(segment_id, []),
+                rcsd_pair_nodes=pair_nodes_by_source.get(segment_id) or member_pair_nodes_by_segment.get(segment_id, []),
+                rcsd_junc_nodes=junc_nodes_by_source.get(segment_id) or member_junc_nodes_by_segment.get(segment_id, []),
                 plan_ids=[plan_id],
                 source_segment_ids=source_segment_ids,
                 group_segment_ids=component_segment_ids,
@@ -368,6 +404,46 @@ def _path_corridor_replacement_segment_ids(props: dict[str, Any]) -> list[str]:
     segment_ids = _parse_list(props.get("path_corridor_group_segment_ids"))
     blocked_segment_ids = set(_parse_list(props.get("path_corridor_blocked_segment_ids")))
     return [segment_id for segment_id in segment_ids if segment_id not in blocked_segment_ids]
+
+
+def _standard_pair_nodes_by_segment(rows: list[dict[str, Any]]) -> dict[str, list[str]]:
+    result: dict[str, list[str]] = {}
+    for row in rows:
+        props = dict(row.get("properties") or {})
+        if props.get("execution_scope") != "standard_segment":
+            continue
+        segment_id = _safe_id(props.get("swsd_segment_id"))
+        pair_nodes = _parse_list(props.get("rcsd_pair_nodes"))
+        if segment_id and pair_nodes:
+            result.setdefault(segment_id, pair_nodes)
+    return result
+
+
+def _standard_junc_nodes_by_segment(rows: list[dict[str, Any]]) -> dict[str, list[str]]:
+    result: dict[str, list[str]] = {}
+    for row in rows:
+        props = dict(row.get("properties") or {})
+        if props.get("execution_scope") != "standard_segment":
+            continue
+        segment_id = _safe_id(props.get("swsd_segment_id"))
+        junc_nodes = _parse_list(props.get("optional_junc_rcsd_nodes")) or _parse_list(props.get("rcsd_junc_nodes"))
+        if segment_id and junc_nodes:
+            result.setdefault(segment_id, junc_nodes)
+    return result
+
+
+def _candidate_segment_ids(source_segment_id: str, segment_ids: list[str], *, include_source: bool) -> list[str]:
+    return unique_preserve_order([source_segment_id, *segment_ids]) if source_segment_id and include_source else segment_ids
+
+
+def _source_carrier_junction_mapping_ready(props: dict[str, Any]) -> bool:
+    swsd_junc_nodes = _parse_list(props.get("swsd_junc_nodes"))
+    if not swsd_junc_nodes:
+        return True
+    mapped_junc_nodes = _parse_list(props.get("optional_junc_rcsd_nodes")) or _parse_list(props.get("rcsd_junc_nodes"))
+    if not mapped_junc_nodes:
+        return False
+    return bool(_parse_list(props.get("optional_junc_nodes")) or _parse_list(props.get("rcsd_junc_nodes")))
 
 
 def _safe_id(value: Any) -> str:

@@ -69,6 +69,7 @@ def build_replacement_plan_rows(
     rows.extend(
         _group_replacement_plan_rows(
             group_replacement_audit_rows,
+            failure_business_audit_by_segment=_props_by_segment(failure_business_audit_rows or []),
             rcsd_road_by_id=rcsd_road_by_id,
             rcsd_node_canonicalizer=rcsd_node_canonicalizer,
         )
@@ -348,6 +349,7 @@ def _standard_plan_rows(
 def _group_replacement_plan_rows(
     group_rows: list[dict[str, Any]],
     *,
+    failure_business_audit_by_segment: dict[str, dict[str, Any]],
     rcsd_road_by_id: dict[str, dict[str, Any]],
     rcsd_node_canonicalizer: NodeCanonicalizer,
 ) -> list[dict[str, Any]]:
@@ -363,6 +365,10 @@ def _group_replacement_plan_rows(
         rcsd_road_ids = _parse_list(props.get("group_probe_rcsd_road_ids"))
         if not segment_id or not group_segment_ids or not rcsd_road_ids:
             continue
+        audit_props = failure_business_audit_by_segment.get(segment_id, {})
+        rcsd_junc_nodes = _parse_list(audit_props.get("optional_junc_rcsd_nodes")) or _parse_list(
+            audit_props.get("rcsd_junc_nodes")
+        )
         buffer_distances = _parse_float_list(props.get("group_probe_buffer_distance_m"))
         buffer_distance_blocked = bool(buffer_distances and max(buffer_distances) > MAX_FORMAL_REPLACEMENT_BUFFER_M)
         rows.append(
@@ -395,7 +401,9 @@ def _group_replacement_plan_rows(
                     "junc_kind2_exempt_nodes": [],
                     "detached_junc_nodes": [],
                     "rcsd_pair_nodes": _parse_list(props.get("rcsd_pair_nodes")),
-                    "rcsd_junc_nodes": [],
+                    "rcsd_junc_nodes": rcsd_junc_nodes,
+                    "optional_junc_nodes": _parse_list(audit_props.get("optional_junc_nodes")),
+                    "optional_junc_rcsd_nodes": _parse_list(audit_props.get("optional_junc_rcsd_nodes")),
                     "rcsd_road_ids": rcsd_road_ids,
                     "retained_node_ids": _canonical_road_endpoint_ids(rcsd_road_ids, rcsd_road_by_id, rcsd_node_canonicalizer),
                     "group_segment_ids": group_segment_ids,
@@ -1192,6 +1200,7 @@ def _apply_junction_alignment_plan_gate(
 
 def _apply_group_member_plan_gate(rows: list[dict[str, Any]]) -> None:
     standard_props_by_segment: dict[str, dict[str, Any]] = {}
+    ready_standard_owner_segments_by_road: dict[str, set[str]] = defaultdict(set)
     for row in rows:
         props = row.get("properties") or {}
         if props.get("execution_scope") != "standard_segment":
@@ -1199,6 +1208,9 @@ def _apply_group_member_plan_gate(rows: list[dict[str, Any]]) -> None:
         segment_id = _safe_id(props.get("swsd_segment_id"))
         if segment_id:
             standard_props_by_segment.setdefault(segment_id, props)
+        if segment_id and _is_replace_ready_plan(props):
+            for road_id in _parse_list(props.get("rcsd_road_ids")):
+                ready_standard_owner_segments_by_road[road_id].add(segment_id)
     if not standard_props_by_segment:
         return
 
@@ -1206,14 +1218,36 @@ def _apply_group_member_plan_gate(rows: list[dict[str, Any]]) -> None:
         props = row.get("properties") or {}
         if props.get("execution_scope") != "path_corridor_group" or not _is_replace_ready_plan(props):
             continue
+        group_segment_ids = set(_parse_list(props.get("group_segment_ids")))
+        group_road_ids = set(_parse_list(props.get("rcsd_road_ids")))
         blocked_members: list[str] = []
+        absorbed_members: list[str] = []
         inherited_risks: list[str] = []
         for segment_id in _parse_list(props.get("group_segment_ids")):
             standard_props = standard_props_by_segment.get(segment_id)
             if standard_props is None or _is_replace_ready_plan(standard_props):
                 continue
+            if _blocked_standard_member_absorbable_by_path_group(
+                standard_props,
+                group_segment_ids=group_segment_ids,
+                group_road_ids=group_road_ids,
+                ready_standard_owner_segments_by_road=ready_standard_owner_segments_by_road,
+            ):
+                absorbed_members.append(segment_id)
+                continue
             blocked_members.append(segment_id)
             inherited_risks.extend(_parse_list(standard_props.get("risk_flags")))
+        if absorbed_members:
+            props["risk_flags"] = unique_preserve_order(
+                [
+                    *_parse_list(props.get("risk_flags")),
+                    "group_member_visual_conflict_absorbed_by_path_corridor_group",
+                ]
+            )
+            notes = str(props.get("notes") or "")
+            suffix = f"absorbed_group_member_visual_conflict_segments={absorbed_members}"
+            if suffix not in notes:
+                props["notes"] = f"{notes}; {suffix}" if notes else suffix
         if not blocked_members:
             continue
         _block_plan_row(
@@ -1225,6 +1259,32 @@ def _apply_group_member_plan_gate(rows: list[dict[str, Any]]) -> None:
         notes = str(props.get("notes") or "")
         suffix = f"blocked_group_member_segments={blocked_members}"
         props["notes"] = f"{notes}; {suffix}" if notes else suffix
+
+
+def _blocked_standard_member_absorbable_by_path_group(
+    standard_props: dict[str, Any],
+    *,
+    group_segment_ids: set[str],
+    group_road_ids: set[str],
+    ready_standard_owner_segments_by_road: dict[str, set[str]],
+) -> bool:
+    if standard_props.get("source_reason") != "visual_consistency_road_conflict_with_primary_replacement_plan":
+        return False
+    if not _is_visual_consistency_plan(standard_props):
+        return False
+    segment_id = _safe_id(standard_props.get("swsd_segment_id"))
+    if not segment_id or segment_id not in group_segment_ids:
+        return False
+    member_road_ids = set(_parse_list(standard_props.get("rcsd_road_ids")))
+    if not member_road_ids:
+        return False
+    for road_id in member_road_ids:
+        owner_segments = ready_standard_owner_segments_by_road.get(road_id, set())
+        if any(owner_segment not in group_segment_ids for owner_segment in owner_segments):
+            return False
+        if road_id not in group_road_ids and not owner_segments:
+            return False
+    return True
 
 
 def _mappings_connected_by_pair_anchor_bridge(

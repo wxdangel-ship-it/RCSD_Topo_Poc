@@ -39,7 +39,12 @@ def _surface(target_id: str, x: float = 0.0):
 
 
 def _node(node_id: int, x: float, y: float, **props):
-    properties = {"id": node_id, "mainnodeid": props.pop("mainnodeid", None), "kind": props.pop("kind", 4)}
+    properties = {
+        "id": node_id,
+        "mainnodeid": props.pop("mainnodeid", None),
+        "kind": props.pop("kind", 4),
+        "kind_2": props.pop("kind_2", 4),
+    }
     properties.update(props)
     return {"properties": properties, "geometry": Point(x, y)}
 
@@ -147,7 +152,23 @@ def test_existing_rcsd_semantic_junction_outputs_success_relation(tmp_path: Path
     relation = _relation_features(artifacts.relation_geojson_path)[0]
     assert relation["properties"] == {"target_id": "100", "base_id": 10, "status": 0, "level": 1, "is_highway": 0}
     assert relation["geometry"]["type"] == "LineString"
-    assert _summary(artifacts)["consistency"]["status_0_base_id_nonzero"]
+    summary = _summary(artifacts)
+    assert summary["consistency"]["status_0_base_id_nonzero"]
+    funnel = summary["junction_anchor_funnel"]
+    assert funnel["semantic_junction_kind_2_values"] == [4, 8, 16, 64, 128, 2048]
+    assert funnel["top_level_funnel"]["semantic_junction_total"] == 1
+    assert funnel["top_level_funnel"]["t05_phase2_target_total"] == 1
+    assert funnel["top_level_funnel"]["relation_success_total"] == 1
+    source_rows = {row["source_module"]: row for row in funnel["source_module_funnel"]}
+    assert source_rows["T03"]["input_junction_total"] == 1
+    assert source_rows["T03"]["success_evidence_junction_total"] == 1
+    assert source_rows["T03"]["success_after_t05_total"] == 1
+    assert artifacts.junction_anchor_funnel_summary_path is not None
+    assert artifacts.junction_anchor_funnel_summary_path.exists()
+    assert artifacts.junction_anchor_source_funnel_csv_path is not None
+    assert artifacts.junction_anchor_source_funnel_csv_path.exists()
+    assert artifacts.junction_anchor_failure_reasons_csv_path is not None
+    assert artifacts.junction_anchor_failure_reasons_csv_path.exists()
 
 
 def test_t10_side_group_candidate_supplements_road_split_decision_without_masking_it() -> None:
@@ -394,7 +415,9 @@ def test_t07_existing_rcsdintersection_missing_base_without_surface_node_fails(t
     assert audit_rows[0]["reason"] == "t07_rcsdintersection_base_not_in_rcsdnode_out"
     graph_rows = json.loads(artifacts.relation_graph_consumability_audit_json_path.read_text(encoding="utf-8"))["rows"]
     assert graph_rows[0]["graph_consumability_status"] == "relation_not_success"
-    assert _summary(artifacts)["relation_graph_unconsumable_success_count"] == 0
+    summary = _summary(artifacts)
+    assert summary["relation_graph_unconsumable_success_count"] == 0
+    assert summary["junction_anchor_funnel"]["t05_failure_breakdown"]["t05_closure_failure_total"] == 1
 
 
 def test_t07_existing_rcsdintersection_groups_multiple_rcsd_semantic_nodes(tmp_path: Path) -> None:

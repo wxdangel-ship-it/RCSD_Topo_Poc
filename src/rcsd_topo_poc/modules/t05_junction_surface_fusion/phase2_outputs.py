@@ -5,6 +5,7 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any, Callable
 
+from .phase2_anchor_funnel import FAILURE_REASON_FIELDS, SOURCE_FUNNEL_FIELDS, build_junction_anchor_funnel
 from .phase2_io import write_csv, write_gpkg, write_json, write_relation_geojson_crs84
 from .phase2_graph_consumability import (
     RELATION_GRAPH_CONSUMABILITY_FIELDS,
@@ -47,6 +48,9 @@ RELATION_CARDINALITY_ERRORS_CSV = "relation_cardinality_errors.csv"
 RELATION_CARDINALITY_ERRORS_JSON = "relation_cardinality_errors.json"
 RELATION_GRAPH_CONSUMABILITY_AUDIT_CSV = "relation_graph_consumability_audit.csv"
 RELATION_GRAPH_CONSUMABILITY_AUDIT_JSON = "relation_graph_consumability_audit.json"
+JUNCTION_ANCHOR_FUNNEL_SUMMARY_JSON = "t05_junction_anchor_funnel_summary.json"
+JUNCTION_ANCHOR_SOURCE_FUNNEL_CSV = "t05_junction_anchor_source_funnel.csv"
+JUNCTION_ANCHOR_FAILURE_REASONS_CSV = "t05_junction_anchor_failure_reasons.csv"
 SUMMARY_FILENAME = "summary.json"
 
 
@@ -56,6 +60,8 @@ def write_phase2_outputs(
     produced_at: str,
     run_id: str,
     input_paths: dict[str, Any],
+    swsd_node_features: list[dict[str, Any]],
+    evidence_rows: list[Any],
     relation_features: list[dict[str, Any]],
     rcsdroad_out_features: list[dict[str, Any]],
     rcsdnode_out_features: list[dict[str, Any]],
@@ -90,6 +96,9 @@ def write_phase2_outputs(
     relation_cardinality_errors_json_path = run_root / RELATION_CARDINALITY_ERRORS_JSON
     relation_graph_consumability_audit_csv_path = run_root / RELATION_GRAPH_CONSUMABILITY_AUDIT_CSV
     relation_graph_consumability_audit_json_path = run_root / RELATION_GRAPH_CONSUMABILITY_AUDIT_JSON
+    junction_anchor_funnel_summary_path = run_root / JUNCTION_ANCHOR_FUNNEL_SUMMARY_JSON
+    junction_anchor_source_funnel_csv_path = run_root / JUNCTION_ANCHOR_SOURCE_FUNNEL_CSV
+    junction_anchor_failure_reasons_csv_path = run_root / JUNCTION_ANCHOR_FAILURE_REASONS_CSV
     summary_path = run_root / SUMMARY_FILENAME
 
     relation_output_features = [
@@ -120,6 +129,13 @@ def write_phase2_outputs(
         audit_rows=audit_rows,
         rcsdnode_out_features=rcsdnode_out_features,
         rcsdroad_out_features=rcsdroad_out_features,
+    )
+    junction_anchor_funnel = build_junction_anchor_funnel(
+        swsd_nodes=swsd_node_features,
+        evidence_rows=evidence_rows,
+        relation_features=relation_output_features,
+        audit_rows=audit_rows,
+        relation_graph_consumability_rows=relation_graph_consumability_rows,
     )
     performance_data = dict(performance or {})
     output_timings_sec: dict[str, float] = dict(performance_data.get("output_timings_sec") or {})
@@ -304,6 +320,41 @@ def write_phase2_outputs(
         output_timings_sec=output_timings_sec,
         output_sizes_bytes=output_sizes_bytes,
     )
+    _write_with_timing(
+        "t05_junction_anchor_funnel_summary",
+        junction_anchor_funnel_summary_path,
+        1,
+        lambda: write_json(junction_anchor_funnel_summary_path, junction_anchor_funnel),
+        progress_logger=progress_logger,
+        output_timings_sec=output_timings_sec,
+        output_sizes_bytes=output_sizes_bytes,
+    )
+    _write_with_timing(
+        "t05_junction_anchor_source_funnel",
+        junction_anchor_source_funnel_csv_path,
+        len(junction_anchor_funnel["source_module_funnel"]),
+        lambda: write_csv(
+            junction_anchor_source_funnel_csv_path,
+            junction_anchor_funnel["source_module_funnel"],
+            SOURCE_FUNNEL_FIELDS,
+        ),
+        progress_logger=progress_logger,
+        output_timings_sec=output_timings_sec,
+        output_sizes_bytes=output_sizes_bytes,
+    )
+    _write_with_timing(
+        "t05_junction_anchor_failure_reasons",
+        junction_anchor_failure_reasons_csv_path,
+        len(junction_anchor_funnel["failure_reason_rows"]),
+        lambda: write_csv(
+            junction_anchor_failure_reasons_csv_path,
+            junction_anchor_funnel["failure_reason_rows"],
+            FAILURE_REASON_FIELDS,
+        ),
+        progress_logger=progress_logger,
+        output_timings_sec=output_timings_sec,
+        output_sizes_bytes=output_sizes_bytes,
+    )
     performance_data["output_timings_sec"] = output_timings_sec
     performance_data["output_sizes_bytes"] = output_sizes_bytes
 
@@ -324,6 +375,7 @@ def write_phase2_outputs(
         relation_cardinality_removed_target_ids=relation_cardinality_removed_target_ids,
         relation_cardinality_removed_relation_count=relation_cardinality_removed_relation_count,
         relation_graph_consumability_rows=relation_graph_consumability_rows,
+        junction_anchor_funnel=junction_anchor_funnel,
         original_split_road_ids=original_split_road_ids,
         performance=performance_data,
         output_paths={
@@ -345,6 +397,9 @@ def write_phase2_outputs(
             "relation_cardinality_errors_json": str(relation_cardinality_errors_json_path),
             "relation_graph_consumability_audit_csv": str(relation_graph_consumability_audit_csv_path),
             "relation_graph_consumability_audit_json": str(relation_graph_consumability_audit_json_path),
+            "t05_junction_anchor_funnel_summary": str(junction_anchor_funnel_summary_path),
+            "t05_junction_anchor_source_funnel": str(junction_anchor_source_funnel_csv_path),
+            "t05_junction_anchor_failure_reasons": str(junction_anchor_failure_reasons_csv_path),
             "summary": str(summary_path),
         },
     )
@@ -368,6 +423,9 @@ def write_phase2_outputs(
         "relation_cardinality_errors_json_path": relation_cardinality_errors_json_path,
         "relation_graph_consumability_audit_csv_path": relation_graph_consumability_audit_csv_path,
         "relation_graph_consumability_audit_json_path": relation_graph_consumability_audit_json_path,
+        "junction_anchor_funnel_summary_path": junction_anchor_funnel_summary_path,
+        "junction_anchor_source_funnel_csv_path": junction_anchor_source_funnel_csv_path,
+        "junction_anchor_failure_reasons_csv_path": junction_anchor_failure_reasons_csv_path,
         "summary_path": summary_path,
         "summary": summary,
     }
@@ -414,6 +472,7 @@ def _summary(
     relation_cardinality_removed_target_ids: set[str],
     relation_cardinality_removed_relation_count: int,
     relation_graph_consumability_rows: list[dict[str, Any]],
+    junction_anchor_funnel: dict[str, Any],
     original_split_road_ids: set[int],
     performance: dict[str, Any],
 ) -> dict[str, Any]:
@@ -453,6 +512,7 @@ def _summary(
         "relation_cardinality_removed_target_count": len(relation_cardinality_removed_target_ids),
         "relation_cardinality_removed_relation_count": relation_cardinality_removed_relation_count,
         "module_relation_audit_summary": module_relation_audit_rows,
+        "junction_anchor_funnel": junction_anchor_funnel,
         "passed": consistency["passed"],
         "crs": {"process": "EPSG:3857", "intersection_match_all": "CRS84"},
         "performance": performance,

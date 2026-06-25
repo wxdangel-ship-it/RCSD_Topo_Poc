@@ -70,27 +70,34 @@ def _write_common_inputs(tmp_path: Path, *, covered: bool) -> tuple[Path, Path, 
     return segment, swsd_roads, swsd_nodes, rcsd_roads, rcsd_nodes, replaceable
 
 
-def _write_group_plan(tmp_path: Path, road_ids: list[str]) -> None:
+def _write_group_plan(
+    tmp_path: Path,
+    road_ids: list[str],
+    *,
+    group_segment_ids: list[str] | None = None,
+    extra_features: list[dict] | None = None,
+    extra_props: dict | None = None,
+) -> None:
+    group_feature = {
+        "properties": {
+            "replacement_plan_id": "group_path_corridor:s_src",
+            "swsd_segment_id": "s_src",
+            "plan_status": "ready",
+            "execution_action": "replace",
+            "execution_scope": "path_corridor_group",
+            "group_segment_ids": group_segment_ids or ["s_src", "s_peer"],
+            "source_segment_ids": ["s_src"],
+            "rcsd_road_ids": road_ids,
+            "retained_node_ids": ["r1", "r2", "r3"],
+            "rcsd_pair_nodes": ["r1", "r3"],
+            "buffer_distances_m": [5.0],
+            **(extra_props or {}),
+        },
+        "geometry": LineString([(0, 0), (100, 0)]),
+    }
     _write(
         tmp_path / "t06_segment_replacement_plan.gpkg",
-        [
-            {
-                "properties": {
-                    "replacement_plan_id": "group_path_corridor:s_src",
-                    "swsd_segment_id": "s_src",
-                    "plan_status": "ready",
-                    "execution_action": "replace",
-                    "execution_scope": "path_corridor_group",
-                    "group_segment_ids": ["s_src", "s_peer"],
-                    "source_segment_ids": ["s_src"],
-                    "rcsd_road_ids": road_ids,
-                    "retained_node_ids": ["r1", "r2", "r3"],
-                    "rcsd_pair_nodes": ["r1", "r3"],
-                    "buffer_distances_m": [5.0],
-                },
-                "geometry": LineString([(0, 0), (100, 0)]),
-            }
-        ],
+        [*(extra_features or []), group_feature],
     )
 
 
@@ -120,6 +127,101 @@ def test_path_corridor_group_source_keeps_full_group_corridor(tmp_path: Path) ->
     assert relations["s_src"]["relation_reason"] == "group_path_corridor_replacement"
     assert "group_path_corridor_replacement" in relations["s_src"]["risk_flags"]
     assert relations["s_src"]["group_replacement_segment_ids"] == ["s_src", "s_peer"]
+
+
+def test_path_corridor_group_member_inherits_pair_nodes_from_blocked_standard_plan(tmp_path: Path) -> None:
+    segment, swsd_roads, swsd_nodes, rcsd_roads, rcsd_nodes, replaceable = _write_common_inputs(tmp_path, covered=True)
+    _write_group_plan(
+        tmp_path,
+        ["rr1", "rr2"],
+        group_segment_ids=["s_peer"],
+        extra_features=[
+            {
+                "properties": {
+                    "replacement_plan_id": "standard:s_peer",
+                    "swsd_segment_id": "s_peer",
+                    "plan_status": "blocked",
+                    "execution_action": "hold",
+                    "execution_scope": "standard_segment",
+                    "rcsd_pair_nodes": ["r2", "r3"],
+                    "rcsd_junc_nodes": ["r2"],
+                },
+                "geometry": LineString([(20, 0), (100, 0)]),
+            }
+        ],
+    )
+
+    artifacts = run_t06_step3_segment_replacement(
+        step2_replaceable_path=replaceable,
+        swsd_segment_path=segment,
+        swsd_roads_path=swsd_roads,
+        swsd_nodes_path=swsd_nodes,
+        rcsdroad_path=rcsd_roads,
+        rcsdnode_path=rcsd_nodes,
+        out_root=tmp_path / "out",
+        run_id="run",
+    )
+
+    units = {item["swsd_segment_id"]: item for item in _props(artifacts.replacement_units_gpkg_path)}
+    assert units["s_peer"]["unit_status"] == "passed"
+    assert units["s_peer"]["unit_reason"] == "group_path_corridor_replacement"
+    assert units["s_peer"]["rcsd_pair_nodes"] == ["r2", "r3"]
+    assert units["s_peer"]["rcsd_junc_nodes"] == ["r2"]
+
+
+def test_path_corridor_group_source_replaced_when_group_ids_omit_source(tmp_path: Path) -> None:
+    segment, swsd_roads, swsd_nodes, rcsd_roads, rcsd_nodes, replaceable = _write_common_inputs(tmp_path, covered=True)
+    _write_group_plan(tmp_path, ["rr1", "rr2"], group_segment_ids=["s_peer"])
+
+    artifacts = run_t06_step3_segment_replacement(
+        step2_replaceable_path=replaceable,
+        swsd_segment_path=segment,
+        swsd_roads_path=swsd_roads,
+        swsd_nodes_path=swsd_nodes,
+        rcsdroad_path=rcsd_roads,
+        rcsdnode_path=rcsd_nodes,
+        out_root=tmp_path / "out",
+        run_id="run",
+    )
+
+    units = {item["swsd_segment_id"]: item for item in _props(artifacts.replacement_units_gpkg_path)}
+    assert units["s_src"]["unit_status"] == "passed"
+    assert units["s_src"]["unit_reason"] == "group_path_corridor_replacement"
+    assert units["s_src"]["rcsd_road_ids"] == ["rr1", "rr2"]
+
+    relations = {item["swsd_segment_id"]: item for item in _props(artifacts.swsd_frcsd_segment_relation_gpkg_path)}
+    assert relations["s_src"]["relation_status"] == "replaced"
+    assert relations["s_src"]["relation_reason"] == "group_path_corridor_replacement"
+    assert relations["s_src"]["group_replacement_segment_ids"] == ["s_src", "s_peer"]
+
+
+def test_path_corridor_group_source_not_replaced_when_junction_mapping_missing(tmp_path: Path) -> None:
+    segment, swsd_roads, swsd_nodes, rcsd_roads, rcsd_nodes, replaceable = _write_common_inputs(tmp_path, covered=True)
+    _write_group_plan(
+        tmp_path,
+        ["rr1", "rr2"],
+        group_segment_ids=["s_peer"],
+        extra_props={"swsd_junc_nodes": ["j_missing"], "optional_junc_nodes": [], "optional_junc_rcsd_nodes": []},
+    )
+
+    artifacts = run_t06_step3_segment_replacement(
+        step2_replaceable_path=replaceable,
+        swsd_segment_path=segment,
+        swsd_roads_path=swsd_roads,
+        swsd_nodes_path=swsd_nodes,
+        rcsdroad_path=rcsd_roads,
+        rcsdnode_path=rcsd_nodes,
+        out_root=tmp_path / "out",
+        run_id="run",
+    )
+
+    units = {item["swsd_segment_id"]: item for item in _props(artifacts.replacement_units_gpkg_path)}
+    assert "s_src" not in units
+    assert units["s_peer"]["unit_status"] == "passed"
+
+    relations = {item["swsd_segment_id"]: item for item in _props(artifacts.swsd_frcsd_segment_relation_gpkg_path)}
+    assert relations["s_src"]["relation_status"] == "retained_swsd"
+    assert relations["s_peer"]["relation_status"] == "replaced"
 
 
 def test_path_corridor_group_coverage_failure_deactivates_whole_group(tmp_path: Path) -> None:

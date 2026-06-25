@@ -6,6 +6,7 @@ from typing import Any
 
 from .io import read_features, write_json
 from .parsing import parse_id_list, unique_preserve_order
+from .schemas import STEP3_SWSD_FRCSD_SEGMENT_RELATION_STEM
 from .step3_segment_replacement import T06Step3Artifacts, run_t06_step3_segment_replacement
 from .step3_topology_connectivity_audit import STEP3_TOPOLOGY_CONNECTIVITY_AUDIT_STEM
 from .step3_surface_topology_audit import run_surface_topology_postprocess
@@ -16,6 +17,9 @@ SURFACE_RELEASE_RISK = "junction_alignment_surface_audit_release"
 SURFACE_RELEASE_ROLLBACK_REASON = "junction_alignment_surface_release_failed_topology_gate"
 SURFACE_RELEASE_PLAN_STEM = "t06_step3_surface_aware_replacement_plan"
 SURFACE_RELEASE_AUDIT = "t06_step3_surface_aware_plan_release_audit.json"
+VISUAL_CONFLICT_REASON = "visual_consistency_road_conflict_with_primary_replacement_plan"
+VISUAL_CONFLICT_RELEASE_RISK = "visual_conflict_controlled_release"
+VISUAL_CONFLICT_ROLLBACK_REASON = "visual_conflict_release_failed_topology_gate"
 RETAINED_JUNCTION_ATTACHMENT_GAP_M = 20.0
 OPTIONAL_JUNCTION_ANCHOR_RELEASE_MAX_GAP_M = 50.0
 OPTIONAL_JUNCTION_ANCHOR_RELEASE_REASON = "auto_closed_step2_optional_junc_anchor"
@@ -188,6 +192,81 @@ def run_surface_aware_step3_segment_replacement(
         )
         final_fail_keys = _topology_fail_keys(artifacts.step_root)
         external_added_fail_keys = final_fail_keys - external_baseline_fail_keys if external_baseline_root else set()
+    visual_release_audit = None
+    visual_rows, visual_released = _visual_conflict_release_plan_rows(safe_rows)
+    if visual_released:
+        visual_baseline_fail_keys = set(final_fail_keys)
+        visual_candidate_plan = _write_plan_json(artifacts.step_root, visual_rows, "visual_candidate")
+        artifacts = _run_step3(
+            step2_replaceable_path=step2_replaceable_path,
+            step2_special_junction_group_audit_path=step2_special_junction_group_audit_path,
+            step2_group_replacement_audit_path=step2_group_replacement_audit_path,
+            step2_replacement_plan_path=visual_candidate_plan,
+            swsd_segment_path=swsd_segment_path,
+            swsd_roads_path=swsd_roads_path,
+            swsd_nodes_path=swsd_nodes_path,
+            rcsdroad_path=rcsdroad_path,
+            rcsdnode_path=rcsdnode_path,
+            out_root=out_root,
+            run_id=run_id,
+            junction_surface_path=surface_inputs.get("t05_surface_path"),
+            progress=progress,
+        )
+        surface_summary = _run_surface(
+            artifacts,
+            swsd_segment_path=swsd_segment_path,
+            swsd_roads_path=swsd_roads_path,
+            surface_inputs=surface_inputs,
+            surface_topology_closure=surface_topology_closure,
+        )
+        visual_candidate_fail_keys = _topology_fail_keys(artifacts.step_root)
+        visual_added_fail_keys = visual_candidate_fail_keys - visual_baseline_fail_keys
+        visual_non_replaced_plan_ids = _visual_conflict_non_replaced_plan_ids(artifacts.step_root, visual_released)
+        visual_rollback_plan_ids = _visual_conflict_rollback_plan_ids(
+            visual_added_fail_keys,
+            visual_released,
+            swsd_segment_path,
+        )
+        visual_rollback_plan_ids.update(visual_non_replaced_plan_ids)
+        if visual_rollback_plan_ids:
+            visual_rows = _rollback_visual_conflict_release_rows(visual_rows, visual_rollback_plan_ids)
+            visual_safe_plan = _write_plan_json(artifacts.step_root, visual_rows, "visual_topology_safe")
+            artifacts = _run_step3(
+                step2_replaceable_path=step2_replaceable_path,
+                step2_special_junction_group_audit_path=step2_special_junction_group_audit_path,
+                step2_group_replacement_audit_path=step2_group_replacement_audit_path,
+                step2_replacement_plan_path=visual_safe_plan,
+                swsd_segment_path=swsd_segment_path,
+                swsd_roads_path=swsd_roads_path,
+                swsd_nodes_path=swsd_nodes_path,
+                rcsdroad_path=rcsdroad_path,
+                rcsdnode_path=rcsdnode_path,
+                out_root=out_root,
+                run_id=run_id,
+                junction_surface_path=surface_inputs.get("t05_surface_path"),
+                progress=progress,
+            )
+            surface_summary = _run_surface(
+                artifacts,
+                swsd_segment_path=swsd_segment_path,
+                swsd_roads_path=swsd_roads_path,
+                surface_inputs=surface_inputs,
+                surface_topology_closure=surface_topology_closure,
+            )
+        final_fail_keys = _topology_fail_keys(artifacts.step_root)
+        external_added_fail_keys = final_fail_keys - external_baseline_fail_keys if external_baseline_root else set()
+        safe_rows = visual_rows
+        visual_release_audit = {
+            "released_count": len(visual_released),
+            "candidate_added_fail_count": len(visual_added_fail_keys),
+            "rolled_back_count": len(visual_rollback_plan_ids),
+            "non_replaced_rolled_back_count": len(visual_non_replaced_plan_ids),
+            "final_added_fail_count": len(final_fail_keys - visual_baseline_fail_keys),
+            "released": visual_released,
+            "non_replaced_rolled_back_plan_ids": sorted(visual_non_replaced_plan_ids),
+            "rolled_back_plan_ids": sorted(visual_rollback_plan_ids),
+        }
+
     audit = {
         "status": "applied_with_external_topology_regression" if external_added_fail_keys else "applied",
         "baseline_fail_count": len(baseline_fail_keys),
@@ -205,6 +284,8 @@ def run_surface_aware_step3_segment_replacement(
         "released": released,
         "rolled_back_plan_ids": sorted(rollback_plan_ids),
     }
+    if visual_release_audit is not None:
+        audit["visual_conflict_release"] = visual_release_audit
     _write_release_audit(artifacts.step_root, audit)
     _merge_release_summary(artifacts.summary_path, audit)
     return artifacts, surface_summary
@@ -426,6 +507,83 @@ def _rollback_release_rows(rows: list[dict[str, Any]], rollback_plan_ids: set[st
         suffix = f"blocked by {SURFACE_RELEASE_ROLLBACK_REASON}"
         props["notes"] = f"{notes}; {suffix}" if notes else suffix
     return rows
+
+
+def _visual_conflict_release_plan_rows(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    released: list[dict[str, Any]] = []
+    result = [{"properties": dict(row.get("properties") or {}), "geometry": row.get("geometry")} for row in rows]
+    for row in result:
+        props = row["properties"]
+        if props.get("source_reason") != VISUAL_CONFLICT_REASON or props.get("plan_status") == "ready":
+            continue
+        _release_visual_conflict_plan_row(props)
+        released.append(
+            {
+                "plan_id": props.get("replacement_plan_id"),
+                "segment_id": props.get("swsd_segment_id"),
+                "scope": props.get("execution_scope"),
+                "group_segment_ids": _ids(props.get("group_segment_ids")),
+                "release_reason": VISUAL_CONFLICT_REASON,
+            }
+        )
+    return result, released
+
+
+def _release_visual_conflict_plan_row(props: dict[str, Any]) -> None:
+    props["plan_status"] = "ready"
+    props["execution_action"] = "replace"
+    props["risk_flags"] = unique_preserve_order([*_ids(props.get("risk_flags")), VISUAL_CONFLICT_REASON, VISUAL_CONFLICT_RELEASE_RISK])
+    notes = str(props.get("notes") or "")
+    suffix = f"risk: {VISUAL_CONFLICT_REASON}; risk: {VISUAL_CONFLICT_RELEASE_RISK}"
+    props["notes"] = f"{notes.strip('; ')}; {suffix}" if notes.strip("; ") else suffix
+
+
+def _rollback_visual_conflict_release_rows(rows: list[dict[str, Any]], rollback_plan_ids: set[str]) -> list[dict[str, Any]]:
+    for row in rows:
+        props = row.get("properties") or {}
+        if str(props.get("replacement_plan_id") or "") not in rollback_plan_ids:
+            continue
+        if VISUAL_CONFLICT_RELEASE_RISK not in set(_ids(props.get("risk_flags"))):
+            continue
+        props["plan_status"] = "blocked"
+        props["execution_action"] = "hold"
+        props["source_reason"] = VISUAL_CONFLICT_REASON
+        props["risk_flags"] = unique_preserve_order([*_ids(props.get("risk_flags")), VISUAL_CONFLICT_ROLLBACK_REASON])
+        notes = str(props.get("notes") or "")
+        suffix = f"blocked by {VISUAL_CONFLICT_ROLLBACK_REASON}"
+        props["notes"] = f"{notes}; {suffix}" if notes else suffix
+    return rows
+
+
+def _visual_conflict_rollback_plan_ids(
+    added_fail_keys: set[tuple[str, str, str, str, str]],
+    released: list[dict[str, Any]],
+    swsd_segment_path: str | Path,
+) -> set[str]:
+    incident = _incident_segments_by_node(read_features(swsd_segment_path))
+    return _rollback_plan_ids_for_failed_segments(added_fail_keys, released, incident)
+
+
+def _visual_conflict_non_replaced_plan_ids(step_root: Path, released: list[dict[str, Any]]) -> set[str]:
+    relation_path = step_root / f"{STEP3_SWSD_FRCSD_SEGMENT_RELATION_STEM}.gpkg"
+    if not relation_path.is_file():
+        return set()
+    status_by_segment: dict[str, str] = {}
+    for row in read_features(relation_path):
+        props = row.get("properties") or {}
+        segment_id = str(props.get("swsd_segment_id") or "")
+        if segment_id:
+            status_by_segment[segment_id] = str(props.get("relation_status") or "")
+    result: set[str] = set()
+    for item in released:
+        plan_id = str(item.get("plan_id") or "")
+        if not plan_id:
+            continue
+        segment_ids = {str(item.get("segment_id") or ""), *_ids(item.get("group_segment_ids"))}
+        segment_ids.discard("")
+        if not any(status_by_segment.get(segment_id) == "replaced" for segment_id in segment_ids):
+            result.add(plan_id)
+    return result
 
 
 def _rollback_plan_ids(

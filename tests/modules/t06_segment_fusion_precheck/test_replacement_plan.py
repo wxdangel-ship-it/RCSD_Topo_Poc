@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from shapely.geometry import LineString, Point
 
+from rcsd_topo_poc.modules.t00_utility_toolbox.common import write_vector
 from rcsd_topo_poc.modules.t06_segment_fusion_precheck.graph_builders import NodeCanonicalizer
 from rcsd_topo_poc.modules.t06_segment_fusion_precheck.replacement_plan import (
     build_problem_registry_rows,
@@ -12,6 +13,10 @@ from rcsd_topo_poc.modules.t06_segment_fusion_precheck.step3_surface_aware_plan_
     _release_allowed,
     _rollback_items_for_plan_rows,
     _rollback_plan_ids_for_failed_segments,
+    _rollback_visual_conflict_release_rows,
+    _visual_conflict_non_replaced_plan_ids,
+    _visual_conflict_release_plan_rows,
+    _visual_conflict_rollback_plan_ids,
 )
 
 
@@ -1336,6 +1341,119 @@ def test_surface_aware_release_rollback_includes_candidate_plan_carriers() -> No
     assert _rollback_plan_ids_for_failed_segments(added_fail_keys, rollback_items, {}) == {
         "group_path_corridor:s_group"
     }
+
+
+def test_visual_conflict_release_keeps_source_reason_and_adds_release_risk() -> None:
+    rows = [
+        _feature(
+            {
+                "replacement_plan_id": "standard:s_visual",
+                "swsd_segment_id": "s_visual",
+                "plan_status": "blocked",
+                "execution_action": "hold",
+                "source_reason": "visual_consistency_road_conflict_with_primary_replacement_plan",
+                "risk_flags": ["manual_review_required"],
+            }
+        ),
+        _feature(
+            {
+                "replacement_plan_id": "standard:s_other",
+                "swsd_segment_id": "s_other",
+                "plan_status": "blocked",
+                "execution_action": "hold",
+                "source_reason": "junction_alignment_to_retained_swsd_exceeds_topology_gate",
+            }
+        ),
+    ]
+
+    released_rows, released = _visual_conflict_release_plan_rows(rows)
+
+    visual_props = released_rows[0]["properties"]
+    other_props = released_rows[1]["properties"]
+    assert visual_props["plan_status"] == "ready"
+    assert visual_props["execution_action"] == "replace"
+    assert visual_props["source_reason"] == "visual_consistency_road_conflict_with_primary_replacement_plan"
+    assert "visual_conflict_controlled_release" in visual_props["risk_flags"]
+    assert other_props["plan_status"] == "blocked"
+    assert released == [
+        {
+            "plan_id": "standard:s_visual",
+            "segment_id": "s_visual",
+            "scope": None,
+            "group_segment_ids": [],
+            "release_reason": "visual_consistency_road_conflict_with_primary_replacement_plan",
+        }
+    ]
+
+
+def test_visual_conflict_rollback_only_blocks_visual_release_plan(tmp_path: Path) -> None:
+    segment_path = tmp_path / "segment.gpkg"
+    write_vector(
+        segment_path,
+        [_feature({"id": "s_visual", "pair_nodes": ["n1", "n2"], "junc_nodes": []}, LineString([(0, 0), (1, 0)]))],
+        crs_text="EPSG:3857",
+    )
+    added_fail_keys = {
+        (
+            "segment_junction_connectivity",
+            '["s_visual", "s_primary"]',
+            "n1",
+            "",
+            "junction_incident_segment_mapped_points_diverged",
+        )
+    }
+    released = [{"plan_id": "standard:s_visual", "segment_id": "s_visual", "group_segment_ids": []}]
+
+    rollback_ids = _visual_conflict_rollback_plan_ids(added_fail_keys, released, segment_path)
+
+    assert rollback_ids == {"standard:s_visual"}
+
+    rows = [
+        _feature(
+            {
+                "replacement_plan_id": "standard:s_visual",
+                "plan_status": "ready",
+                "execution_action": "replace",
+                "source_reason": "visual_consistency_road_conflict_with_primary_replacement_plan",
+                "risk_flags": ["visual_conflict_controlled_release"],
+            }
+        ),
+        _feature(
+            {
+                "replacement_plan_id": "standard:s_primary",
+                "plan_status": "ready",
+                "execution_action": "replace",
+                "source_reason": "passed",
+                "risk_flags": [],
+            }
+        ),
+    ]
+
+    rolled_back = _rollback_visual_conflict_release_rows(rows, rollback_ids)
+
+    assert rolled_back[0]["properties"]["plan_status"] == "blocked"
+    assert rolled_back[0]["properties"]["execution_action"] == "hold"
+    assert "visual_conflict_release_failed_topology_gate" in rolled_back[0]["properties"]["risk_flags"]
+    assert rolled_back[1]["properties"]["plan_status"] == "ready"
+
+
+def test_visual_conflict_non_replaced_release_is_rolled_back(tmp_path: Path) -> None:
+    step_root = tmp_path / "step3"
+    step_root.mkdir()
+    write_vector(
+        step_root / "t06_step3_swsd_frcsd_segment_relation.gpkg",
+        [
+            _feature({"swsd_segment_id": "s_replaced", "relation_status": "replaced"}, LineString([(0, 0), (1, 0)])),
+            _feature({"swsd_segment_id": "s_retained", "relation_status": "retained_swsd"}, LineString([(0, 1), (1, 1)])),
+        ],
+        crs_text="EPSG:3857",
+    )
+    released = [
+        {"plan_id": "standard:s_replaced", "segment_id": "s_replaced", "group_segment_ids": []},
+        {"plan_id": "standard:s_retained", "segment_id": "s_retained", "group_segment_ids": []},
+    ]
+
+    assert _visual_conflict_non_replaced_plan_ids(step_root, released) == {"standard:s_retained"}
 
 
 def test_visual_manual_release_allows_small_pair_attachment_gap_to_retained_incident_segment() -> None:

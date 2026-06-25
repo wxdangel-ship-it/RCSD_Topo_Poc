@@ -23,6 +23,11 @@ GROUP_SEGMENT_MAX_UNCOVERED_RATIO = 0.50
 GROUP_SEGMENT_MIN_UNCOVERED_LENGTH_M = 20.0
 EXISTING_ADVANCE_CORRIDOR_BUFFER_M = 5.0
 EXISTING_ADVANCE_CORRIDOR_MIN_COVERAGE_RATIO = 0.85
+JUNCTION_SURFACE_COVERAGE_RELEASE_RISK_FLAGS = [
+    "formal_corridor_gap_inside_anchored_junction_surface",
+    "junction_surface_coverage_release",
+    "manual_review_required",
+]
 
 
 def exclude_retained_swsd_carriers_from_formal_replacements(
@@ -32,6 +37,7 @@ def exclude_retained_swsd_carriers_from_formal_replacements(
     removed_road_to_segments: dict[str, list[str]],
     swsd_road_by_id: dict[str, dict[str, Any]],
     rcsd_road_by_id: dict[str, dict[str, Any]],
+    junction_surface_by_node_id: dict[str, Any] | None = None,
 ) -> dict[str, int]:
     stats = {
         "excluded_road_count": 0,
@@ -50,6 +56,7 @@ def exclude_retained_swsd_carriers_from_formal_replacements(
             group_units,
             swsd_road_by_id=swsd_road_by_id,
             rcsd_road_by_id=rcsd_road_by_id,
+            junction_surface_by_node_id=junction_surface_by_node_id,
         ):
             continue
         stats["group_corridor_unavailable_group_count"] += 1
@@ -70,6 +77,7 @@ def exclude_retained_swsd_carriers_from_formal_replacements(
             unit,
             swsd_road_by_id=swsd_road_by_id,
             rcsd_road_by_id=rcsd_road_by_id,
+            junction_surface_by_node_id=junction_surface_by_node_id,
         )
         if not corridor_unavailable:
             continue
@@ -107,11 +115,77 @@ def _path_corridor_group_units(units: list[Any]) -> dict[str, list[Any]]:
     return dict(result)
 
 
+def junction_surface_mask_for_unit(unit: Any, junction_surface_by_node_id: dict[str, Any] | None) -> Any:
+    if not junction_surface_by_node_id:
+        return None
+    surfaces = [
+        surface
+        for node_id in unique_preserve_order(
+            [
+                *(getattr(unit, "pair_nodes", []) or []),
+                *(getattr(unit, "junc_nodes", []) or []),
+                *(getattr(unit, "detached_junc_nodes", []) or []),
+            ]
+        )
+        for surface in [junction_surface_by_node_id.get(str(node_id))]
+        if surface is not None and not surface.is_empty
+    ]
+    return unary_union(surfaces) if surfaces else None
+
+
+def junction_surface_by_node_id_from_features(features: list[dict[str, Any]]) -> dict[str, Any]:
+    surfaces: dict[str, list[Any]] = defaultdict(list)
+    for item in features:
+        props = dict(item.get("properties") or {})
+        geometry = item.get("geometry")
+        if geometry is None or geometry.is_empty or geometry.geom_type not in {"Polygon", "MultiPolygon"}:
+            continue
+        node_ids = unique_preserve_order(
+            _safe_surface_id(props.get(field))
+            for field in ("mainnodeid", "target_id", "id")
+            if _safe_surface_id(props.get(field))
+        )
+        for node_id in node_ids:
+            surfaces[node_id].append(geometry)
+    return {node_id: unary_union(geometries) for node_id, geometries in surfaces.items() if geometries}
+
+
+def append_junction_surface_release_risk(unit: Any) -> None:
+    current = parse_id_list(getattr(unit, "risk_flags", []), allow_empty=True)
+    setattr(unit, "risk_flags", unique_preserve_order([*current, *JUNCTION_SURFACE_COVERAGE_RELEASE_RISK_FLAGS]))
+
+
+def coverage_failed_after_junction_surface_release(
+    line: Any,
+    coverage_area: Any,
+    *,
+    max_uncovered_ratio: float,
+    min_uncovered_length_m: float,
+    allowed_surface: Any | None = None,
+) -> tuple[bool, bool]:
+    if line is None or coverage_area is None or line.is_empty or line.length <= 0:
+        return False, False
+    raw_uncovered = line.difference(coverage_area)
+    effective_uncovered = raw_uncovered
+    if allowed_surface is not None and not allowed_surface.is_empty:
+        effective_uncovered = raw_uncovered.difference(allowed_surface)
+    raw_length = float(raw_uncovered.length)
+    effective_length = float(effective_uncovered.length)
+    raw_failed = raw_length / float(line.length) > max_uncovered_ratio and raw_length > min_uncovered_length_m
+    effective_failed = (
+        effective_length / float(line.length) > max_uncovered_ratio
+        and effective_length > min_uncovered_length_m
+    )
+    released = raw_failed and not effective_failed and raw_length > effective_length
+    return effective_failed, released
+
+
 def _group_corridor_coverage_unavailable(
     units: list[Any],
     *,
     swsd_road_by_id: dict[str, dict[str, Any]],
     rcsd_road_by_id: dict[str, dict[str, Any]],
+    junction_surface_by_node_id: dict[str, Any] | None = None,
 ) -> bool:
     swsd_lines = [
         line
@@ -139,11 +213,25 @@ def _group_corridor_coverage_unavailable(
     if not swsd_lines or not rcsd_lines:
         return False
     swsd_union = unary_union(swsd_lines)
-    uncovered_length = float(swsd_union.difference(unary_union(rcsd_lines).buffer(SEGMENT_CORRIDOR_BUFFER_M)).length)
-    return (
-        uncovered_length / float(swsd_union.length) > GROUP_SEGMENT_MAX_UNCOVERED_RATIO
-        and uncovered_length > GROUP_SEGMENT_MIN_UNCOVERED_LENGTH_M
+    allowed_surface = unary_union(
+        [
+            surface
+            for unit in units
+            for surface in [junction_surface_mask_for_unit(unit, junction_surface_by_node_id)]
+            if surface is not None and not surface.is_empty
+        ]
+    ) if junction_surface_by_node_id else None
+    failed, released = coverage_failed_after_junction_surface_release(
+        swsd_union,
+        unary_union(rcsd_lines).buffer(SEGMENT_CORRIDOR_BUFFER_M),
+        max_uncovered_ratio=GROUP_SEGMENT_MAX_UNCOVERED_RATIO,
+        min_uncovered_length_m=GROUP_SEGMENT_MIN_UNCOVERED_LENGTH_M,
+        allowed_surface=allowed_surface,
     )
+    if released:
+        for unit in units:
+            append_junction_surface_release_risk(unit)
+    return failed
 
 
 def _exclude_duplicate_unsegmented_advance_right_roads(
@@ -199,6 +287,7 @@ def _unit_corridor_coverage_unavailable(
     *,
     swsd_road_by_id: dict[str, dict[str, Any]],
     rcsd_road_by_id: dict[str, dict[str, Any]],
+    junction_surface_by_node_id: dict[str, Any] | None = None,
 ) -> bool:
     unit_roads = [rcsd_road_by_id[road_id] for road_id in getattr(unit, "rcsd_road_ids", []) if road_id in rcsd_road_by_id]
     semantic_nodes = set(
@@ -216,6 +305,7 @@ def _unit_corridor_coverage_unavailable(
         *(getattr(unit, "swsd_road_ids", []) or []),
         *(getattr(unit, "retained_detached_swsd_road_ids", []) or []),
     ]
+    allowed_surface = junction_surface_mask_for_unit(unit, junction_surface_by_node_id)
     for road_id in swsd_road_ids:
         swsd_road = swsd_road_by_id.get(str(road_id))
         if _is_side_attachment_swsd_road(swsd_road):
@@ -225,21 +315,32 @@ def _unit_corridor_coverage_unavailable(
             road_id in getattr(unit, "retained_detached_swsd_road_ids", [])
             and _is_formal_unit_body_swsd_road(unit, swsd_road)
         ):
-            if _corridor_coverage_failed(swsd_road, unit_roads):
+            failed, released = _corridor_coverage_failed(swsd_road, unit_roads, allowed_surface=allowed_surface)
+            if released:
+                append_junction_surface_release_risk(unit)
+            if failed:
                 return True
             continue
         if len(endpoints) < 2 or not all(endpoint in semantic_nodes for endpoint in endpoints[:2]):
             continue
-        if not _corridor_coverage_failed(swsd_road, unit_roads):
+        failed, released = _corridor_coverage_failed(swsd_road, unit_roads, allowed_surface=allowed_surface)
+        if released:
+            append_junction_surface_release_risk(unit)
+        if not failed:
             continue
         return True
     return False
 
 
-def _corridor_coverage_failed(swsd_road: dict[str, Any] | None, rcsd_roads: list[dict[str, Any]]) -> bool:
+def _corridor_coverage_failed(
+    swsd_road: dict[str, Any] | None,
+    rcsd_roads: list[dict[str, Any]],
+    *,
+    allowed_surface: Any | None = None,
+) -> tuple[bool, bool]:
     line = _feature_line(swsd_road) if swsd_road is not None else None
     if line is None or line.length <= 0:
-        return False
+        return False, False
     geometries = [
         geometry
         for road in rcsd_roads
@@ -247,11 +348,14 @@ def _corridor_coverage_failed(swsd_road: dict[str, Any] | None, rcsd_roads: list
         if geometry is not None
     ]
     if not geometries:
-        return True
-    uncovered = line.difference(unary_union(geometries).buffer(SEGMENT_CORRIDOR_BUFFER_M))
-    uncovered_length = float(uncovered.length)
-    uncovered_ratio = uncovered_length / float(line.length)
-    return uncovered_ratio > SEGMENT_MAX_UNCOVERED_RATIO and uncovered_length > SEGMENT_MIN_UNCOVERED_LENGTH_M
+        return True, False
+    return coverage_failed_after_junction_surface_release(
+        line,
+        unary_union(geometries).buffer(SEGMENT_CORRIDOR_BUFFER_M),
+        max_uncovered_ratio=SEGMENT_MAX_UNCOVERED_RATIO,
+        min_uncovered_length_m=SEGMENT_MIN_UNCOVERED_LENGTH_M,
+        allowed_surface=allowed_surface,
+    )
 
 
 def materialize_topology_supplement_rcsd_roads(
@@ -268,6 +372,7 @@ def materialize_topology_supplement_rcsd_roads(
     source_field_name: str,
     rcsd_source_value: int,
     retained_swsd_roads: list[dict[str, Any]] | None = None,
+    junction_surface_by_node_id: dict[str, Any] | None = None,
 ) -> dict[str, int]:
     attachment_nodes = _attachment_nodes_by_swsd_road_endpoint(attachment_audit_rows)
     attachment_segment_ids = _replacement_segment_ids_by_swsd_road(attachment_audit_rows)
@@ -425,6 +530,7 @@ def materialize_topology_supplement_rcsd_roads(
             unit,
             swsd_road_by_id=swsd_road_by_id,
             rcsd_road_by_id=rcsd_road_by_id,
+            junction_surface_by_node_id=junction_surface_by_node_id,
         )
         stats["mixed_advance_right_externalized_count"] += _externalize_unsegmented_advance_right_retained_roads(
             unit,
@@ -578,6 +684,7 @@ def materialize_topology_supplement_rcsd_roads(
             unit,
             swsd_road_by_id=swsd_road_by_id,
             rcsd_road_by_id=rcsd_road_by_id,
+            junction_surface_by_node_id=junction_surface_by_node_id,
         )
         for unit in units
     )
@@ -623,6 +730,7 @@ def _restore_covered_formal_body_retained_roads(
     *,
     swsd_road_by_id: dict[str, dict[str, Any]],
     rcsd_road_by_id: dict[str, dict[str, Any]],
+    junction_surface_by_node_id: dict[str, Any] | None = None,
 ) -> int:
     retained_ids = list(getattr(unit, "retained_detached_swsd_road_ids", []) or [])
     if not retained_ids or not getattr(unit, "rcsd_road_ids", []):
@@ -634,13 +742,17 @@ def _restore_covered_formal_body_retained_roads(
     ]
     restored: list[str] = []
     kept: list[str] = []
+    allowed_surface = junction_surface_mask_for_unit(unit, junction_surface_by_node_id)
     for road_id in retained_ids:
         road = swsd_road_by_id.get(str(road_id))
+        failed, released = _corridor_coverage_failed(road, unit_roads, allowed_surface=allowed_surface)
         if (
             _is_formal_unit_body_swsd_road(unit, road)
             and not _is_side_attachment_swsd_road(road)
-            and not _corridor_coverage_failed(road, unit_roads)
+            and not failed
         ):
+            if released:
+                append_junction_surface_release_risk(unit)
             restored.append(str(road_id))
             continue
         kept.append(str(road_id))
@@ -1237,6 +1349,13 @@ def _safe_id(value: Any) -> str | None:
         return normalize_id(value)
     except ParseError:
         return None
+
+
+def _safe_surface_id(value: Any) -> str:
+    try:
+        return normalize_id(value)
+    except ParseError:
+        return ""
 
 
 def _safe_id_list(value: Any) -> list[str]:

@@ -72,7 +72,11 @@ from .step3_topology_connectivity_audit import (
 from .step3_topology_supplement import (
     FORMAL_REPLACEMENT_CORRIDOR_UNAVAILABLE_REASON,
     MIXED_REPLACEMENT_REQUIRES_SWSD_CARRIER_REASON,
+    append_junction_surface_release_risk,
+    coverage_failed_after_junction_surface_release,
     exclude_retained_swsd_carriers_from_formal_replacements,
+    junction_surface_by_node_id_from_features,
+    junction_surface_mask_for_unit,
     materialize_topology_supplement_rcsd_roads,
 )
 
@@ -107,6 +111,7 @@ class ReplacementUnit:
     group_replacement_source_segment_ids: list[str] = field(default_factory=list)
     group_replacement_segment_ids: list[str] = field(default_factory=list)
     group_replacement_buffer_distances_m: list[float] = field(default_factory=list)
+    risk_flags: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -144,6 +149,7 @@ def run_t06_step3_segment_replacement(
     rcsdnode_path: str | Path,
     out_root: str | Path,
     run_id: str | None = None,
+    junction_surface_path: str | Path | None = None,
     source_field_name: str = "source",
     rcsd_source_value: int = 1,
     swsd_source_value: int = 2,
@@ -156,6 +162,11 @@ def run_t06_step3_segment_replacement(
     swsd_nodes = read_features(swsd_nodes_path)
     rcsd_roads = read_features(rcsdroad_path)
     rcsd_nodes = read_features(rcsdnode_path)
+    junction_surface_by_node_id = (
+        junction_surface_by_node_id_from_features(read_features(junction_surface_path))
+        if junction_surface_path is not None
+        else {}
+    )
 
     segment_by_id = _index_by_id(swsd_segments)
     swsd_road_by_id = _index_by_id(swsd_roads)
@@ -238,6 +249,7 @@ def run_t06_step3_segment_replacement(
             if road_id in rcsd_road_by_id
         ),
         attachment_audit_rows=[],
+        junction_surface_by_node_id=junction_surface_by_node_id,
     )
 
     removed_road_to_segments, removed_node_to_segments, preserved_removed_node_count = _compute_removed_swsd_maps(
@@ -313,6 +325,7 @@ def run_t06_step3_segment_replacement(
         source_field_name=source_field_name,
         rcsd_source_value=rcsd_source_value,
         retained_swsd_roads=retained_swsd_roads,
+        junction_surface_by_node_id=junction_surface_by_node_id,
     )
     retained_swsd_excluded_stats = exclude_retained_swsd_carriers_from_formal_replacements(
         passed_units,
@@ -320,12 +333,14 @@ def run_t06_step3_segment_replacement(
         removed_road_to_segments=removed_road_to_segments,
         swsd_road_by_id=swsd_road_by_id,
         rcsd_road_by_id=rcsd_road_by_id,
+        junction_surface_by_node_id=junction_surface_by_node_id,
     )
     if retained_swsd_excluded_stats["deactivated_segment_count"]:
         passed_units = [unit for unit in passed_units if unit.status == "passed"]
     if (
         topology_supplement_materialized_stats["materialized_road_count"]
         or topology_supplement_materialized_stats.get("reused_existing_rcsd_advance_count")
+        or topology_supplement_materialized_stats.get("formal_body_retained_restored_count")
         or retained_swsd_excluded_stats["deactivated_segment_count"]
     ):
         removed_road_to_segments, removed_node_to_segments, preserved_removed_node_count = _compute_removed_swsd_maps(
@@ -559,6 +574,7 @@ def run_t06_step3_segment_replacement(
                 "swsd_nodes_path": str(swsd_nodes_path),
                 "rcsdroad_path": str(rcsdroad_path),
                 "rcsdnode_path": str(rcsdnode_path),
+                "junction_surface_path": str(junction_surface_path) if junction_surface_path is not None else None,
             },
             "params": {
                 "source_field_name": source_field_name,
@@ -593,6 +609,9 @@ def run_t06_step3_segment_replacement(
             "topology_supplement_materialized_missing_attachment_node_count": topology_supplement_materialized_stats[
                 "missing_attachment_node_count"
             ],
+            "topology_supplement_formal_body_retained_restored_count": topology_supplement_materialized_stats.get(
+                "formal_body_retained_restored_count", 0
+            ),
             "removed_swsd_node_preserved_by_retained_road_count": preserved_removed_node_count,
             "removed_swsd_road_count": len(removed_road_to_segments),
             "removed_swsd_node_count": len(removed_node_to_segments),
@@ -1038,6 +1057,7 @@ def _retain_topology_supplement_swsd_roads(
     rcsd_nodes: list[dict[str, Any]],
     global_rcsd_road_ids: list[str],
     attachment_audit_rows: list[dict[str, Any]],
+    junction_surface_by_node_id: dict[str, Any] | None = None,
 ) -> dict[str, int]:
     canonicalizer = NodeCanonicalizer.from_node_features(rcsd_nodes)
     attachment_node_by_swsd = _attachment_rcsd_nodes_by_swsd_node(attachment_audit_rows)
@@ -1060,6 +1080,7 @@ def _retain_topology_supplement_swsd_roads(
             [rcsd_road_by_id[road_id] for road_id in unit.rcsd_road_ids if road_id in rcsd_road_by_id]
         )
         retained: list[str] = []
+        allowed_surface = junction_surface_mask_for_unit(unit, junction_surface_by_node_id)
         for road_id in unit.swsd_road_ids:
             road = swsd_road_by_id.get(road_id)
             endpoints = _road_endpoint_node_ids(road) if road is not None else []
@@ -1077,7 +1098,14 @@ def _retain_topology_supplement_swsd_roads(
             path_reverse = global_graph.reachable_any(end_nodes, start_nodes)
             undirected_connected = global_graph.undirected_reachable_any(start_nodes, end_nodes)
             direction = _coerce_int((road.get("properties") or {}).get("direction")) if road is not None else None
-            if _directed_path_missing(direction, path_forward, path_reverse, undirected_connected) or _road_corridor_coverage_failed(road, unit_corridor):
+            coverage_failed, coverage_released = _road_corridor_coverage_failed(
+                road,
+                unit_corridor,
+                allowed_surface=allowed_surface,
+            )
+            if coverage_released:
+                append_junction_surface_release_risk(unit)
+            if _directed_path_missing(direction, path_forward, path_reverse, undirected_connected) or coverage_failed:
                 retained.append(road_id)
         if retained:
             unit.retained_detached_swsd_road_ids = unique_preserve_order([*unit.retained_detached_swsd_road_ids, *retained])
@@ -1198,17 +1226,23 @@ def _road_union_corridor(roads: list[dict[str, Any]]) -> Any:
     return unary_union(geometries).buffer(2.0)
 
 
-def _road_corridor_coverage_failed(swsd_road: dict[str, Any] | None, selected_corridor: Any) -> bool:
+def _road_corridor_coverage_failed(
+    swsd_road: dict[str, Any] | None,
+    selected_corridor: Any,
+    *,
+    allowed_surface: Any | None = None,
+) -> tuple[bool, bool]:
     if swsd_road is None or selected_corridor is None:
-        return False
+        return False, False
     geometry = swsd_road.get("geometry")
     if geometry is None or geometry.is_empty or geometry.length <= 0:
-        return False
-    uncovered_length = float(geometry.difference(selected_corridor).length)
-    uncovered_ratio = uncovered_length / float(geometry.length)
-    return (
-        uncovered_ratio > TOPOLOGY_SUPPLEMENT_MAX_UNCOVERED_RATIO
-        and uncovered_length > TOPOLOGY_SUPPLEMENT_MIN_UNCOVERED_LENGTH_M
+        return False, False
+    return coverage_failed_after_junction_surface_release(
+        geometry,
+        selected_corridor,
+        max_uncovered_ratio=TOPOLOGY_SUPPLEMENT_MAX_UNCOVERED_RATIO,
+        min_uncovered_length_m=TOPOLOGY_SUPPLEMENT_MIN_UNCOVERED_LENGTH_M,
+        allowed_surface=allowed_surface,
     )
 
 
@@ -1686,6 +1720,8 @@ def _build_swsd_frcsd_segment_relation_rows(
         node_map: list[dict[str, Any]] = []
         risk_flags: list[str] = []
         retained_swsd_road_ids: list[str] = []
+        if unit is not None:
+            risk_flags.extend(unit.risk_flags)
 
         if unit is not None and unit.status == "passed":
             removed_swsd_road_ids = unit.swsd_road_ids
@@ -1784,7 +1820,7 @@ def _build_swsd_frcsd_segment_relation_rows(
                     "group_replacement_segment_ids": (unit.group_replacement_segment_ids if unit is not None else []),
                     "swsd_to_frcsd_node_map": node_map,
                     "source_mix": "+".join(f"source_{value}" for value in source_values),
-                    "risk_flags": risk_flags,
+                    "risk_flags": unique_preserve_order(risk_flags),
                 },
                 segment.get("geometry"),
             )

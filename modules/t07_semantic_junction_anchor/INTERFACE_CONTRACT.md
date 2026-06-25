@@ -4,7 +4,7 @@
 
 本文件是 `t07_semantic_junction_anchor` 的稳定接口契约。T07 当前覆盖语义路口级 Step1 / Step2，并保留可选独立 Step3 relation 补锚：
 
-- Step1：基于 `nodes`、`DriveZone` 与 `RCSDIntersection` 判定代表 node 的 `has_evd`；处理范围内语义路口必须组内所有 node 均命中或满足 `1.5m` evidence 面容差才写 `yes`。
+- Step1：基于 `nodes` 与 `DriveZone` 判定代表 node 的 `has_evd`；处理范围内语义路口必须组内所有 node 均命中道路面或满足 `1.5m` evidence 面容差才写 `yes`。`RCSDIntersection` 不参与 Step1 `has_evd` 正向判定。
 - Step2：基于 `nodes` 与 `RCSDIntersection` 判定代表 node 的 `is_anchor / anchor_reason`。
 - Step3：基于 Step2 后 `nodes`、早期或外部方案产出的 `intersection_match_all.geojson` 兼容 relation 文件与输入 `RCSDNode`，对候选 SWSD 语义路口补写 `is_anchor = yes`；它不是 T07 主链对 T05 relation 的强制回灌。
 - Step2 / Step3 同步维护 T07 版 handoff 成果 `t07_rcsdintersection_anchor_surface.gpkg` 与 `t07_swsd_rcsd_relation_evidence.csv/json`；Step3 surface 产物直接复制 Step2 结果。
@@ -15,7 +15,7 @@
 
 ### 1.1 当前正式支持
 
-- Step1/2 消费 `nodes.gpkg`、`DriveZone.gpkg`、`RCSDIntersection.gpkg` 与可选输入 `RCSDNode.gpkg`；Step3 可选消费 `intersection_match_all.geojson` 兼容 relation 文件与输入 `RCSDNode.gpkg`。
+- Step1/2 消费 `nodes.gpkg`、`DriveZone.gpkg`、`RCSDIntersection.gpkg` 与可选输入 `RCSDNode.gpkg`；其中 Step1 `has_evd` 只使用 `DriveZone`，Step2 `is_anchor` 使用 `RCSDIntersection`。Step3 可选消费 `intersection_match_all.geojson` 兼容 relation 文件与输入 `RCSDNode.gpkg`。
 - 按 `nodes.mainnodeid` 组装 SWSD 语义路口；`mainnodeid` 为空时退化为单 node 语义路口。
 - 以语义路口代表 node 的 `kind_2` 作为 Step1 / Step2 类型 gate。
 - 仅对代表 node `kind_2 in {4, 8, 16, 64, 128, 2048}` 的语义路口处理 `has_evd`。
@@ -149,8 +149,8 @@
   - `anchor_reason = NULL`
   - 不进入 Step2
 - 代表 node `kind_2 in {4, 8, 16, 64, 128, 2048}` 时：
-  - 组内所有 node 均落入或接触 `DriveZone ∪ RCSDIntersection`，代表 node `has_evd = yes`
-  - 若个别组内 node 未严格命中，但到 `DriveZone ∪ RCSDIntersection` 合并 evidence 面距离不超过 `1.5m`，仍视为边界容差命中
+  - 组内所有 node 均落入或接触 `DriveZone`，代表 node `has_evd = yes`
+  - 若个别组内 node 未严格命中，但到 `DriveZone` evidence 面距离不超过 `1.5m`，仍视为边界容差命中
   - 任一组内 node 既未严格命中、也超过 `1.5m` evidence 面容差时，代表 node `has_evd = no`
   - Step1 summary 必须记录 `params.has_evd_evidence_tolerance_m`
 - 边界接触视为命中。

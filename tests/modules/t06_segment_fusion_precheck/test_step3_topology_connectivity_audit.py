@@ -1105,6 +1105,57 @@ def test_topology_audit_warns_replaced_segment_road_outside_precise_coverage() -
     assert road["final_path_forward"] is True
 
 
+def test_topology_audit_downgrades_junction_surface_release_corridor_gap() -> None:
+    base_relation = _relation(
+        "s1",
+        ["1", "2"],
+        ["r1"],
+        [
+            {"swsd_node_id": "1", "frcsd_node_ids": ["10"], "mapping_status": "mapped"},
+            {"swsd_node_id": "2", "frcsd_node_ids": ["20"], "mapping_status": "mapped"},
+        ],
+    )
+    base_kwargs = {
+        "swsd_segments": [
+            _segment("s1", ["1", "2"], LineString([(0, 0), (100, 0)]), sgrade="0-1单", roads=["sw1"])
+        ],
+        "swsd_roads": [_road("sw1", "1", "2", LineString([(0, 0), (100, 0)]), source=2, direction=2)],
+        "frcsd_roads": [_road("r1", "10", "20", LineString([(0, 30), (100, 30)]), direction=2)],
+        "frcsd_nodes": [_node("10", Point(0, 30)), _node("20", Point(100, 30))],
+        "advance_right_audit_rows": [],
+        "source_field_name": "source",
+        "swsd_source_value": 2,
+        "rcsd_source_value": 1,
+    }
+    plain_rows = build_topology_connectivity_audit_rows(segment_relation_rows=[base_relation], **base_kwargs)
+    plain_road = [
+        row["properties"] for row in plain_rows if row["properties"]["audit_layer"] == "segment_road_connectivity"
+    ][0]
+    assert plain_road["audit_status"] == "fail"
+    assert plain_road["audit_reason"] == "segment_road_corridor_coverage_dropped_after_replacement"
+
+    relation = _relation(
+        "s1",
+        ["1", "2"],
+        ["r1"],
+        [
+            {"swsd_node_id": "1", "frcsd_node_ids": ["10"], "mapping_status": "mapped"},
+            {"swsd_node_id": "2", "frcsd_node_ids": ["20"], "mapping_status": "mapped"},
+        ],
+    )
+    relation["properties"]["risk_flags"] = ["junction_surface_coverage_release"]
+
+    rows = build_topology_connectivity_audit_rows(
+        segment_relation_rows=[relation],
+        **base_kwargs,
+    )
+
+    road = [row["properties"] for row in rows if row["properties"]["audit_layer"] == "segment_road_connectivity"][0]
+    assert road["audit_status"] == "warn"
+    assert road["audit_reason"] == "segment_road_corridor_coverage_inside_junction_surface_review"
+    assert road["action"] == "manual_review_required"
+
+
 def test_topology_audit_prefers_attachment_node_for_junction_connectivity() -> None:
     rows = build_topology_connectivity_audit_rows(
         swsd_segments=[

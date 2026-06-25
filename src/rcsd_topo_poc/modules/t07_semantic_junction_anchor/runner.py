@@ -960,8 +960,7 @@ def run_t07_step1_has_evd(
     )
     if intersection_layer_data is not None and not intersection_geoms:
         raise T07RunError("missing_required_field", "RCSDIntersection layer has no non-empty geometry.")
-    evidence_geoms = drivezone_geoms + intersection_geoms
-    evidence_surface = evidence_geoms[0] if len(evidence_geoms) == 1 else unary_union(evidence_geoms)
+    evidence_surface = drivezone_geoms[0] if len(drivezone_geoms) == 1 else unary_union(drivezone_geoms)
     prepared_evidence_surface = prep(evidence_surface)
 
     by_mainnodeid, singleton_by_id = _build_node_index(nodes_layer_data.features, audit_rows)
@@ -1045,7 +1044,10 @@ def run_t07_step1_has_evd(
         "input_paths": input_paths,
         "output_paths": {"nodes": str(nodes_output_path)},
         "target_crs": TARGET_CRS.to_string(),
-        "params": {"has_evd_evidence_tolerance_m": STEP1_HAS_EVD_EVIDENCE_TOLERANCE_M},
+        "params": {
+            "has_evd_evidence_tolerance_m": STEP1_HAS_EVD_EVIDENCE_TOLERANCE_M,
+            "has_evd_evidence_surface": "DriveZone",
+        },
         "audit_count": len(audit_rows),
         "performance": {
             "elapsed_seconds": _elapsed_since(started_at),

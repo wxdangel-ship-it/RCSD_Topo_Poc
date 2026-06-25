@@ -20,6 +20,7 @@ RETAINED_JUNCTION_ATTACHMENT_GAP_M = 20.0
 OPTIONAL_JUNCTION_ANCHOR_RELEASE_MAX_GAP_M = 50.0
 OPTIONAL_JUNCTION_ANCHOR_RELEASE_REASON = "auto_closed_step2_optional_junc_anchor"
 SURFACE_RELEASE_REASONS = {
+    "auto_closed",
     "auto_closed_surface_1v1",
     "auto_closed_t04_patch_1v1",
     "auto_closed_step2_junc_1v1",
@@ -57,6 +58,7 @@ def run_surface_aware_step3_segment_replacement(
         rcsdnode_path=rcsdnode_path,
         out_root=out_root,
         run_id=run_id,
+        junction_surface_path=surface_inputs.get("t05_surface_path"),
         progress=progress,
     )
     surface_summary = _run_surface(
@@ -110,6 +112,7 @@ def run_surface_aware_step3_segment_replacement(
         rcsdnode_path=rcsdnode_path,
         out_root=out_root,
         run_id=run_id,
+        junction_surface_path=surface_inputs.get("t05_surface_path"),
         progress=progress,
     )
     surface_summary = _run_surface(
@@ -119,7 +122,8 @@ def run_surface_aware_step3_segment_replacement(
         surface_inputs=surface_inputs,
         surface_topology_closure=surface_topology_closure,
     )
-    added_fail_keys = _topology_fail_keys(artifacts.step_root) - baseline_fail_keys
+    rollback_reference_fail_keys = external_baseline_fail_keys if external_baseline_root else baseline_fail_keys
+    added_fail_keys = _topology_fail_keys(artifacts.step_root) - rollback_reference_fail_keys
     rollback_plan_ids = _rollback_plan_ids(added_fail_keys, released, swsd_segment_path)
     if rollback_plan_ids:
         final_rows = _rollback_release_rows(release_rows, rollback_plan_ids)
@@ -136,6 +140,7 @@ def run_surface_aware_step3_segment_replacement(
             rcsdnode_path=rcsdnode_path,
             out_root=out_root,
             run_id=run_id,
+            junction_surface_path=surface_inputs.get("t05_surface_path"),
             progress=progress,
         )
         surface_summary = _run_surface(
@@ -360,9 +365,12 @@ def _rollback_plan_ids_for_failed_segments(
         return set()
     failed_segments: set[str] = set()
     for _layer, segment_id, node_id, _road_id, _reason in added_fail_keys:
-        if segment_id:
+        segment_ids = _ids(segment_id)
+        if segment_ids:
+            failed_segments.update(segment_ids)
+        elif segment_id:
             failed_segments.add(segment_id)
-        if node_id:
+        if node_id and not (segment_ids or segment_id):
             failed_segments.update(incident.get(node_id, []))
     result: set[str] = set()
     for item in released:
@@ -398,10 +406,14 @@ def _topology_fail_keys(step_root: Path) -> set[tuple[str, str, str, str, str]]:
         props = row.get("properties") or {}
         if props.get("audit_status") != "fail":
             continue
+        segment_ids = _ids(props.get("swsd_segment_ids"))
+        segment_id = str(props.get("swsd_segment_id") or "")
+        if not segment_id and segment_ids:
+            segment_id = json.dumps(segment_ids, ensure_ascii=False)
         result.add(
             (
                 str(props.get("audit_layer") or ""),
-                str(props.get("swsd_segment_id") or ""),
+                segment_id,
                 str(props.get("swsd_node_id") or ""),
                 str(props.get("frcsd_road_id") or ""),
                 str(props.get("audit_reason") or ""),

@@ -992,6 +992,17 @@ def test_surface_aware_release_requires_passed_surface_closure() -> None:
     assert allowed
     assert triggers[0]["swsd_node_id"] == "n1"
 
+    generic_allowed, generic_triggers = _release_allowed(
+        props,
+        {"n1": ("pass", "auto_closed", 25.0)},
+        swsd_points,
+        rcsd_points,
+        incident,
+        ready_segments,
+    )
+    assert generic_allowed
+    assert generic_triggers[0]["surface_status"][1] == "auto_closed"
+
     blocked, blocked_triggers = _release_allowed(
         props,
         {"n1": ("fail", "blocked_by_patch_conflict", 25.0)},
@@ -1133,6 +1144,25 @@ def test_surface_aware_release_rolls_back_plans_that_add_topology_failures() -> 
         "standard:s_direct",
         "group_path_corridor:s_group",
     }
+
+
+def test_surface_aware_release_rollback_prefers_explicit_junction_segments() -> None:
+    added_fail_keys = {
+        (
+            "segment_junction_connectivity",
+            '["s_direct"]',
+            "n1",
+            "",
+            "junction_incident_segment_mapping_missing",
+        )
+    }
+    released = [
+        {"plan_id": "standard:s_direct", "segment_id": "s_direct", "group_segment_ids": []},
+        {"plan_id": "standard:s_neighbor", "segment_id": "s_neighbor", "group_segment_ids": []},
+    ]
+    incident = {"n1": ["s_direct", "s_neighbor"]}
+
+    assert _rollback_plan_ids_for_failed_segments(added_fail_keys, released, incident) == {"standard:s_direct"}
 
 
 def test_visual_manual_release_allows_small_pair_attachment_gap_to_retained_incident_segment() -> None:

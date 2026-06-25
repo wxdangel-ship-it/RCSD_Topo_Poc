@@ -261,7 +261,7 @@ T04 fallback 场景可补读 `divmerge_virtual_anchor_surface.gpkg`、summary、
 
 全量运行性能观测：
 
-- `progress=True` 时，控制台只输出阶段级进展、输入体量、预分类 plan、只读/可变 target 计数、按 `progress_interval` 稀疏 target 进度和总耗时。
+- `progress=True` 时，控制台输出 Phase 2 前置阶段进展、输入体量、预分类 plan、只读/可变 target 计数、按 `progress_interval` 稀疏 target 进度和总耗时。前置阶段至少覆盖 `read_vectors / build_indexes / read_evidence_tables / load_t04_supplements / merge_evidence / target_contexts / roundabout_aggregations / direct_nearby_node_index / decision_plan`，避免全量运行长时间停留在 `start` 后无法定位。
 - `readonly_workers` 只用于并行处理不修改 RCSDRoad / RCSDNode 的关系构建分支；RCSDRoad split、RCSDNode grouping、新增 id 分配当前保持串行。
 - `next_road_id_start / next_node_id_start` 仅用于解包后的小样本本地测试复现全量运行 ID 分配；常规全量运行不传，默认仍使用原始 RCSDRoad / RCSDNode 全局 `max(id)+1`。
 - `summary.performance.data_volume` 记录输入 feature / evidence 体量。

@@ -1647,13 +1647,38 @@ def _load_step2_dropped_junc_nodes(step_root: Path) -> dict[str, list[str]]:
 
 
 def _iter_step2_junc_rows(step_root: Path) -> list[dict[str, Any]]:
-    step2_root = step_root.parent / "step2_extract_rcsd_segments"
-    for stem in (STEP2_REPLACEMENT_PLAN_STEM, STEP2_FAILURE_BUSINESS_AUDIT_STEM):
-        for suffix in (".gpkg", ".csv"):
-            path = step2_root / f"{stem}{suffix}"
-            if path.is_file():
-                return _read_step2_junc_rows(path)
+    for step2_root in _step2_junc_roots(step_root):
+        for stem in (STEP2_REPLACEMENT_PLAN_STEM, STEP2_FAILURE_BUSINESS_AUDIT_STEM):
+            for suffix in (".gpkg", ".csv"):
+                path = step2_root / f"{stem}{suffix}"
+                if path.is_file():
+                    return _read_step2_junc_rows(path)
     return []
+
+
+def _step2_junc_roots(step_root: Path) -> list[Path]:
+    roots = [step_root.parent / "step2_extract_rcsd_segments"]
+    summary_path = step_root / "t06_step3_summary.json"
+    if summary_path.is_file():
+        try:
+            input_paths = json.loads(summary_path.read_text(encoding="utf-8")).get("input_paths") or {}
+        except json.JSONDecodeError:
+            input_paths = {}
+        step2_replaceable = input_paths.get("step2_replaceable_path")
+        if step2_replaceable:
+            path = Path(step2_replaceable)
+            if not path.is_absolute():
+                path = Path.cwd() / path
+            roots.append(path.parent)
+    result: list[Path] = []
+    seen: set[str] = set()
+    for root in roots:
+        key = str(root.resolve()) if root.exists() else str(root)
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(root)
+    return result
 
 
 def _read_step2_junc_rows(path: Path) -> list[dict[str, Any]]:

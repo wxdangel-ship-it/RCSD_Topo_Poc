@@ -73,6 +73,7 @@ SEGMENT_CORRIDOR_BUFFER_M = 15.0
 SEGMENT_MAX_UNCOVERED_RATIO = 0.05
 SEGMENT_CORRIDOR_MANUAL_REVIEW_MAX_UNCOVERED_RATIO = 0.2
 SEGMENT_MIN_UNCOVERED_LENGTH_M = 20.0
+JUNCTION_SURFACE_COVERAGE_RELEASE_RISK = "junction_surface_coverage_release"
 
 
 def build_topology_connectivity_audit_rows(
@@ -678,6 +679,7 @@ def _segment_road_rows(
             continue
         segment_props = dict((segment or {}).get("properties") or {})
         is_group_path_corridor = _is_group_path_corridor_relation(props)
+        has_junction_surface_coverage_release = JUNCTION_SURFACE_COVERAGE_RELEASE_RISK in _as_id_list(props.get("risk_flags"))
         semantic_node_ids = set(unique_preserve_order([*_as_id_list(segment_props.get("pair_nodes")), *_as_id_list(segment_props.get("junc_nodes"))]))
         pair_node_ids = set(_as_id_list(props.get("swsd_pair_nodes")))
         selected_roads = _relation_roads(props, road_index)
@@ -740,6 +742,8 @@ def _segment_road_rows(
             status = "pass"
             reason = "segment_road_connectivity_passed"
             owner = ""
+            action = ""
+            action_reason = ""
             if missing_mapping_count:
                 status = "warn" if is_group_path_corridor else "fail"
                 reason = (
@@ -771,13 +775,25 @@ def _segment_road_rows(
                     reason = "segment_road_relation_scope_incomplete_but_final_graph_connected"
                     owner = "T06_step3_segment_relation"
             elif corridor_coverage_failed:
-                status = "warn" if is_group_path_corridor else "fail"
+                surface_release_review = has_junction_surface_coverage_release and not is_group_path_corridor
+                status = "warn" if is_group_path_corridor or surface_release_review else "fail"
                 reason = (
                     "group_path_corridor_road_local_coverage_review"
                     if is_group_path_corridor
+                    else "segment_road_corridor_coverage_inside_junction_surface_review"
+                    if surface_release_review
                     else "segment_road_corridor_coverage_dropped_after_replacement"
                 )
-                owner = "T06_step3_group_replacement_manual_audit" if is_group_path_corridor else "T06_step2_replacement_plan_or_group_selection"
+                owner = (
+                    "T06_step3_group_replacement_manual_audit"
+                    if is_group_path_corridor
+                    else "T06_manual_visual_geometry_review"
+                    if surface_release_review
+                    else "T06_step2_replacement_plan_or_group_selection"
+                )
+                if surface_release_review:
+                    action = "manual_review_required"
+                    action_reason = JUNCTION_SURFACE_COVERAGE_RELEASE_RISK
                 final_corridor_uncovered_ratio, final_corridor_uncovered_length = _segment_nearby_uncovered_metrics(
                     swsd_road,
                     final_roads,
@@ -828,8 +844,8 @@ def _segment_road_rows(
                         "final_corridor_uncovered_ratio": _round_ratio(final_corridor_uncovered_ratio),
                         "final_corridor_uncovered_length_m": _round_length(final_corridor_uncovered_length),
                         "projected_gap_m": None,
-                        "action": "",
-                        "action_reason": "",
+                        "action": action,
+                        "action_reason": action_reason,
                     },
                     swsd_road.get("geometry"),
                 )

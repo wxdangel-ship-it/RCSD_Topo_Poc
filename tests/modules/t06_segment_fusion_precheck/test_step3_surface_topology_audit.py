@@ -849,6 +849,33 @@ def test_step2_plan_relation_preprocess_realigns_optional_and_dropped_junctions(
     assert "step2_optional_junc_plan_node_map" in json.loads(relation["risk_flags"])
 
 
+def test_step2_junc_loader_uses_step3_summary_input_path(tmp_path: Path) -> None:
+    step_root = tmp_path / "case_run" / "step3_segment_replacement"
+    step_root.mkdir(parents=True)
+    step2_root = tmp_path / "real_t06" / "step2_extract_rcsd_segments"
+    step2_root.mkdir(parents=True)
+    (step_root / "t06_step3_summary.json").write_text(
+        json.dumps({"input_paths": {"step2_replaceable_path": str(step2_root / "t06_rcsd_segment_replaceable.gpkg")}}),
+        encoding="utf-8",
+    )
+    write_feature_triplet(
+        step_root=step2_root,
+        stem=STEP2_REPLACEMENT_PLAN_STEM,
+        fieldnames=["swsd_segment_id", "dropped_junc_nodes"],
+        features=[
+            _feature(
+                {
+                    "swsd_segment_id": "s1",
+                    "dropped_junc_nodes": ["drop"],
+                },
+                LineString([(0, 0), (1, 0)]),
+            )
+        ],
+    )
+
+    assert _load_step2_dropped_junc_nodes(step_root) == {"s1": ["drop"]}
+
+
 def test_surface_topology_postprocess_remaps_surface_nearest_multi_candidate(tmp_path: Path) -> None:
     step_root = tmp_path / "step3_segment_replacement"
     step_root.mkdir()

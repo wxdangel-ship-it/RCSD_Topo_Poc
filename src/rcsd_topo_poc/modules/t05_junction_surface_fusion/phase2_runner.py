@@ -10,6 +10,7 @@ from typing import Any
 from shapely.geometry import Point
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import unary_union
+from shapely.strtree import STRtree
 
 from .phase2_ids import normalize_target_id
 from .phase2_io import prepare_run_root, produced_at_utc, read_table, read_vector_3857
@@ -94,6 +95,12 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
     def mark(name: str, started_at: float) -> None:
         timings_sec[name] = round(perf_counter() - started_at, 6)
 
+    def mark_and_log(name: str, started_at: float, **counts: Any) -> None:
+        mark(name, started_at)
+        details = " ".join(f"{key}={value}" for key, value in counts.items())
+        suffix = f" {details}" if details else ""
+        log(f"{name} done sec={timings_sec[name]}{suffix}")
+
     def log(message: str) -> None:
         if progress:
             print(f"[T05 Phase2] {message}", flush=True)
@@ -103,16 +110,26 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
     produced_at = produced_at_utc()
 
     read_started = perf_counter()
+    log("read_vectors start")
     surfaces = _feature_dicts(read_vector_3857(junction_surface_path, layer_name=junction_surface_layer, crs_override=crs_override).features)
     swsd_nodes = _feature_dicts(read_vector_3857(nodes_path, layer_name=nodes_layer, crs_override=crs_override).features)
     original_roads = _feature_dicts(read_vector_3857(rcsdroad_path, layer_name=rcsdroad_layer, crs_override=crs_override).features)
     original_rcsdnodes = _feature_dicts(read_vector_3857(rcsdnode_path, layer_name=rcsdnode_layer, crs_override=crs_override).features)
     _ = read_table(_required_path(fusion_audit_path, "fusion_audit_path"))
-    mark("read_vectors_sec", read_started)
+    mark_and_log(
+        "read_vectors_sec",
+        read_started,
+        surfaces=len(surfaces),
+        swsd_nodes=len(swsd_nodes),
+        rcsdroads=len(original_roads),
+        rcsdnodes=len(original_rcsdnodes),
+    )
 
     index_started = perf_counter()
+    log("build_indexes start")
     roads_by_id = _features_by_int_id(original_roads, "RCSDRoad")
     node_out_by_id = _features_by_int_id([_copy_feature(feature) for feature in original_rcsdnodes], "RCSDNode")
+    rcsdnode_tree, rcsdnode_geometries, rcsdnode_ids = _rcsdnode_spatial_index(node_out_by_id)
     node_template = dict((original_rcsdnodes[0].get("properties") or {}) if original_rcsdnodes else {"id": None, "mainnodeid": None})
     next_road_id = _resolve_next_id_start(
         provided=next_road_id_start,
@@ -124,9 +141,16 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
         current_max=max(node_out_by_id.keys(), default=0),
         label="next_node_id_start",
     )
-    mark("build_indexes_sec", index_started)
+    mark_and_log(
+        "build_indexes_sec",
+        index_started,
+        roads_by_id=len(roads_by_id),
+        node_out_by_id=len(node_out_by_id),
+        indexed_rcsdnodes=len(rcsdnode_ids),
+    )
 
     evidence_started = perf_counter()
+    log("read_evidence start")
     if t02_relation_evidence_path is None and t07_relation_evidence_path is None:
         raise ValueError("Either t07_relation_evidence_path or t02_relation_evidence_path is required for T05 Phase 2.")
     t02_rows = read_table(_required_path(t02_relation_evidence_path, "t02_relation_evidence_path")) if t02_relation_evidence_path is not None else []
@@ -143,6 +167,16 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
         if t10_pair_anchor_endpoint_cluster_path is not None
         else []
     )
+    mark_and_log(
+        "read_evidence_tables_sec",
+        evidence_started,
+        t02=len(t02_rows),
+        t07=len(t07_rows),
+        t03=len(t03_rows),
+        t04_base=len(t04_base_rows),
+    )
+    t04_supplement_started = perf_counter()
+    log("load_t04_supplements start")
     t04_target_case_ids = _target_case_ids(t04_base_rows)
     t04_supplements = _load_t04_supplements(
         t04_base_rows=t04_base_rows,
@@ -153,6 +187,9 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
         target_case_ids=t04_target_case_ids,
         crs_override=crs_override,
     )
+    mark_and_log("load_t04_supplements_sec", t04_supplement_started, supplements=len(t04_supplements))
+    evidence_merge_started = perf_counter()
+    log("merge_evidence start")
     t04_rows = _merge_t04_supplements(
         t04_base_rows,
         t04_supplements,
@@ -168,11 +205,17 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
     evidence_by_target: dict[str, list[Any]] = defaultdict(list)
     for evidence in evidence_rows:
         evidence_by_target[evidence.target_id].append(evidence)
+    mark_and_log("merge_evidence_sec", evidence_merge_started, evidence_rows=len(evidence_rows), targets=len(evidence_by_target))
     mark("read_evidence_sec", evidence_started)
 
     plan_started = perf_counter()
+    contexts_started = perf_counter()
+    log("target_contexts start")
     contexts = _target_contexts(surfaces, swsd_nodes, evidence_rows=evidence_rows)
     sorted_contexts = sorted(contexts, key=lambda item: item.target_id)
+    mark_and_log("target_contexts_sec", contexts_started, contexts=len(sorted_contexts))
+    roundabout_started = perf_counter()
+    log("roundabout_aggregations start")
     roundabout_aggregations = build_roundabout_aggregations(
         contexts=sorted_contexts,
         surfaces=surfaces,
@@ -180,19 +223,32 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
         roads_by_id=roads_by_id,
         rcsdnode_features_by_id=node_out_by_id,
     )
+    mark_and_log("roundabout_aggregations_sec", roundabout_started, aggregations=len(roundabout_aggregations))
+    direct_nearby_started = perf_counter()
+    log("direct_nearby_node_index start")
     direct_nearby_node_ids_by_target = _direct_nearby_nonbase_node_ids_by_target(
         sorted_contexts,
         evidence_by_target,
         rcsdnode_features_by_id=node_out_by_id,
+        rcsdnode_tree=rcsdnode_tree,
+        rcsdnode_geometries=rcsdnode_geometries,
+        rcsdnode_ids=rcsdnode_ids,
         protected_rcsdnode_ids=_protected_direct_nearby_node_ids(evidence_rows, roads_by_id=roads_by_id),
     )
+    mark_and_log("direct_nearby_node_index_sec", direct_nearby_started, targets=len(direct_nearby_node_ids_by_target))
+    decision_started = perf_counter()
+    log("decision_plan start")
     decision_plan, plan_stats = _build_decision_plan(
         sorted_contexts,
         evidence_by_target,
         rcsdnode_features_by_id=node_out_by_id,
+        rcsdnode_tree=rcsdnode_tree,
+        rcsdnode_geometries=rcsdnode_geometries,
+        rcsdnode_ids=rcsdnode_ids,
         roundabout_aggregations=roundabout_aggregations,
         direct_nearby_node_ids_by_target=direct_nearby_node_ids_by_target,
     )
+    mark_and_log("decision_plan_sec", decision_started, targets=len(decision_plan))
     mark("build_plan_sec", plan_started)
     data_volume = {
         "surface_count": len(surfaces),
@@ -971,11 +1027,30 @@ def _merge_t04_supplements(rows: list[dict[str, Any]], supplements: dict[str, di
     return merged_rows
 
 
+def _rcsdnode_spatial_index(
+    rcsdnode_features_by_id: dict[int, dict[str, Any]],
+) -> tuple[STRtree | None, list[BaseGeometry], list[int]]:
+    geometries: list[BaseGeometry] = []
+    node_ids: list[int] = []
+    for node_id, feature in rcsdnode_features_by_id.items():
+        geometry = feature.get("geometry")
+        if geometry is None or geometry.is_empty:
+            continue
+        geometries.append(geometry)
+        node_ids.append(node_id)
+    if not geometries:
+        return None, [], []
+    return STRtree(geometries), geometries, node_ids
+
+
 def _build_decision_plan(
     contexts: list[SwsdTargetContext],
     evidence_by_target: dict[str, list[Any]],
     *,
     rcsdnode_features_by_id: dict[int, dict[str, Any]],
+    rcsdnode_tree: STRtree | None,
+    rcsdnode_geometries: list[BaseGeometry],
+    rcsdnode_ids: list[int],
     roundabout_aggregations: dict[str, Any] | None = None,
     direct_nearby_node_ids_by_target: dict[str, list[int]] | None = None,
 ) -> tuple[dict[str, tuple[list[Any], list[Any]]], dict[str, int]]:
@@ -1013,6 +1088,9 @@ def _build_decision_plan(
                 context=context,
                 actionable=actionable,
                 rcsdnode_features_by_id=rcsdnode_features_by_id,
+                rcsdnode_tree=rcsdnode_tree,
+                rcsdnode_geometries=rcsdnode_geometries,
+                rcsdnode_ids=rcsdnode_ids,
                 rcsdnode_semantic_ids=rcsdnode_semantic_ids,
                 nearby_nonbase_node_ids=(direct_nearby_node_ids_by_target or {}).get(context.target_id, []),
             )
@@ -1063,6 +1141,9 @@ def _upgrade_direct_rcsdintersection_multi_nodes(
     context: SwsdTargetContext,
     actionable: list[Any],
     rcsdnode_features_by_id: dict[int, dict[str, Any]],
+    rcsdnode_tree: STRtree | None,
+    rcsdnode_geometries: list[BaseGeometry],
+    rcsdnode_ids: list[int],
     rcsdnode_semantic_ids: set[int],
     nearby_nonbase_node_ids: list[int],
 ) -> list[Any]:
@@ -1078,6 +1159,9 @@ def _upgrade_direct_rcsdintersection_multi_nodes(
     semantic_ids = _surface_rcsd_semantic_ids(
         context.surface_geometry,
         rcsdnode_features_by_id=rcsdnode_features_by_id,
+        rcsdnode_tree=rcsdnode_tree,
+        rcsdnode_geometries=rcsdnode_geometries,
+        rcsdnode_ids=rcsdnode_ids,
     )
     if decision.source_module == SOURCE_T07 and not _all_candidate_bases_resolvable(
         decision.base_id_candidates,
@@ -1180,6 +1264,9 @@ def _direct_nearby_nonbase_node_ids_by_target(
     evidence_by_target: dict[str, list[Any]],
     *,
     rcsdnode_features_by_id: dict[int, dict[str, Any]],
+    rcsdnode_tree: STRtree | None,
+    rcsdnode_geometries: list[BaseGeometry],
+    rcsdnode_ids: list[int],
     protected_rcsdnode_ids: set[int],
 ) -> dict[str, list[int]]:
     raw_by_target: dict[str, list[int]] = {}
@@ -1196,6 +1283,9 @@ def _direct_nearby_nonbase_node_ids_by_target(
             context=context,
             base_id=base_id,
             rcsdnode_features_by_id=rcsdnode_features_by_id,
+            rcsdnode_tree=rcsdnode_tree,
+            rcsdnode_geometries=rcsdnode_geometries,
+            rcsdnode_ids=rcsdnode_ids,
             protected_rcsdnode_ids=protected_rcsdnode_ids,
         )
         if not candidates:
@@ -1240,24 +1330,29 @@ def _nearby_nonbase_rcsdnode_ids(
     context: SwsdTargetContext,
     base_id: int,
     rcsdnode_features_by_id: dict[int, dict[str, Any]],
+    rcsdnode_tree: STRtree | None,
+    rcsdnode_geometries: list[BaseGeometry],
+    rcsdnode_ids: list[int],
     protected_rcsdnode_ids: set[int],
 ) -> list[int]:
     surface = context.surface_geometry
-    if surface is None or surface.is_empty:
+    if surface is None or surface.is_empty or rcsdnode_tree is None:
         return []
     projection_points = [point for point in context.projection_points if point is not None and not point.is_empty]
     if not projection_points:
         return []
     result: list[int] = []
-    for node_id, feature in rcsdnode_features_by_id.items():
+    search_area = surface.buffer(DIRECT_NEARBY_NONBASE_SURFACE_GAP_M)
+    for index in rcsdnode_tree.query(search_area):
+        node_index = int(index)
+        node_id = rcsdnode_ids[node_index]
         if node_id == base_id or node_id in protected_rcsdnode_ids:
             continue
+        feature = rcsdnode_features_by_id[node_id]
         props = feature.get("properties") or {}
         if _positive_int_value(_field_value(props, "mainnodeid")) is not None:
             continue
-        geometry = feature.get("geometry")
-        if geometry is None or geometry.is_empty:
-            continue
+        geometry = rcsdnode_geometries[node_index]
         surface_distance = float(geometry.distance(surface))
         if surface_distance <= 0.0 or surface_distance > DIRECT_NEARBY_NONBASE_SURFACE_GAP_M:
             continue
@@ -1321,12 +1416,24 @@ def _surface_rcsd_semantic_ids(
     surface_geometry: BaseGeometry | None,
     *,
     rcsdnode_features_by_id: dict[int, dict[str, Any]],
+    rcsdnode_tree: STRtree | None = None,
+    rcsdnode_geometries: list[BaseGeometry] | None = None,
+    rcsdnode_ids: list[int] | None = None,
 ) -> list[int]:
     if surface_geometry is None or surface_geometry.is_empty:
         return []
     semantic_ids: set[int] = set()
-    for feature in rcsdnode_features_by_id.values():
-        geometry = feature.get("geometry")
+    if rcsdnode_tree is not None and rcsdnode_geometries is not None and rcsdnode_ids is not None:
+        candidate_features = (
+            (rcsdnode_features_by_id[rcsdnode_ids[int(index)]], rcsdnode_geometries[int(index)])
+            for index in rcsdnode_tree.query(surface_geometry)
+        )
+    else:
+        candidate_features = (
+            (feature, feature.get("geometry"))
+            for feature in rcsdnode_features_by_id.values()
+        )
+    for feature, geometry in candidate_features:
         if geometry is None or geometry.is_empty:
             continue
         if not surface_geometry.covers(geometry):

@@ -101,7 +101,7 @@ def test_step1_uses_representative_kind2_and_writes_only_representative(tmp_path
     props = _read_gpkg_properties_by_id(artifacts.nodes_path)
     assert props["1"]["has_evd"] == "yes"
     assert props["101"]["has_evd"] is None
-    assert props["2"]["has_evd"] == "yes"
+    assert props["2"]["has_evd"] == "no"
     assert props["201"]["has_evd"] is None
     assert props["3"]["has_evd"] == "no"
     assert props["4"]["has_evd"] is None
@@ -110,10 +110,11 @@ def test_step1_uses_representative_kind2_and_writes_only_representative(tmp_path
     summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
     assert summary["processed_kind2_count"] == 4
     assert summary["skipped_kind2_count"] == 1
-    assert summary["has_evd_yes_count"] == 3
-    assert summary["has_evd_no_count"] == 1
+    assert summary["has_evd_yes_count"] == 2
+    assert summary["has_evd_no_count"] == 2
     assert summary["has_evd_null_count"] == 1
     assert summary["params"]["has_evd_evidence_tolerance_m"] == 1.5
+    assert summary["params"]["has_evd_evidence_surface"] == "DriveZone"
     assert summary["input_paths"]["intersection"] == str(intersections_path)
     assert "stage_timings" in summary["performance"]
     assert "write_nodes_seconds" in summary["performance"]["stage_timings"]

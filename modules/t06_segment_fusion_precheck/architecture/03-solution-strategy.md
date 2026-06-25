@@ -214,6 +214,7 @@ T06 采用三步链路：
 - 对提前右转，Step3 可在不重判 Segment 可替换性的前提下执行挂接后处理：已选 RCSD 提前右转 corridor 可以吸附到保留 SWSD carrier；仅 SWSD 存在的提前右转 carrier 可在已选 RCSD Road 上复用或生成挂接节点；普通 RCSD road 挂在已选提前右转 road 中部时，可拆分该提前右转 road 并纳入同一 replacement unit。该后处理只补齐已选/已保留 carrier 的道路、节点和几何一致性。
 - 调用方提供 T03/T04/T05/T07 surface 或 T04 audit 时，Step3 可执行 surface-assisted closure。该 closure 只在唯一候选、T04 未 reject、Patch 无冲突、距离条件可解释时补写节点 `mainnodeid` 或非 `retained_swsd` relation 的 node map；它不新增正式替换道路，不修改原始道路几何，也不把 rejected Segment 改判为 replaceable。
 - 对 `junction_alignment_to_retained_swsd_exceeds_topology_gate` 阻断的 plan 行，Step3 wrapper 可用 surface 1:1 pass 或原始 pair endpoint 映射将该 gate 降级为人工审计风险并重跑替换；候选释放引入新增 topology hard fail 时必须回退对应 plan，相对传入 baseline 的新增 fail 必须在 summary 中暴露。
+- 对已满足 Step2 ready plan、锚定、连通、主干无争占和同源正式替换清单的 replacement unit，Step3 coverage 兜底若只发现端点缺口落在当前 unit 的 T05 junction anchor surface 内，应优先替换并追加人工审计风险，而不是把路口面内合理长度差异重新判为不可替换。该释放只扣除对应路口面内的 uncovered geometry，扣除后仍超阈值或出现 topology audit hard fail 时继续失败 / 回退。
 - Step3 结束时必须输出拓扑连通审计，覆盖 final road-node integrity、正式替换 source 一致性、Segment 内连通、junction mapping 和挂接质量，确保 T09 消费的是可解释的 F-RCSD carrier。
 
 ### 8.4 输出与审计

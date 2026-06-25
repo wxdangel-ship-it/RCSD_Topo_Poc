@@ -46,6 +46,7 @@ from .replacement_plan import (
 )
 from .single_graph_connectivity_retry import SingleGraphConnectivityRetry as _SGR
 from .single_direction_semantic_retry import semantic_endpoint_local_undirected_single_retry as _semantic_endpoint_local_single_retry
+from .step2_progress import Step2Progress
 from .step2_special_junctions import (
     annotate_special_junction_gate as _annotate_special_junction_gate,
     rcsd_graph_edges as _rcsd_graph_edges,
@@ -116,6 +117,7 @@ def run_t06_step2_extract_rcsd_segments(
 ) -> T06Step2Artifacts:
     resolved_run_id, run_root, step_root = prepare_run_roots(out_root, run_id, STEP2_DIR)
     fusion_units = read_features(swsd_fusion_units_path)
+    diag = Step2Progress(step_root, progress, len(fusion_units))
     segments = _segment_index(read_features(swsd_segment_path))
     swsd_roads = _segment_index(read_features(swsd_roads_path))
     swsd_node_features = read_features(swsd_nodes_path)
@@ -171,6 +173,7 @@ def run_t06_step2_extract_rcsd_segments(
             print(f"[T06 Step2] processed {index}/{len(fusion_units)}", flush=True)
         props = dict(unit.get("properties") or {})
         segment_id = str(props.get("swsd_segment_id") or props.get("id") or f"segment_{index}")
+        diag.unit(index, segment_id)
         segment = segments.get(segment_id, unit)
         segment_props = dict(segment.get("properties") or {})
         pair_nodes, junc_nodes, junc_kind2_exempt_nodes, _roads, parse_reason = _parse_unit_lists(props, segment_props)
@@ -1225,6 +1228,7 @@ def run_t06_step2_extract_rcsd_segments(
                 )
             )
 
+    diag.stage("group_audit")
     pre_gate_group_replacement_audit_rows = _build_group_replacement_audit_rows(
         fusion_units=fusion_units,
         segments=list(segments.values()),
@@ -1238,6 +1242,7 @@ def run_t06_step2_extract_rcsd_segments(
         buffer_config=buffer_config,
     )
     path_corridor_covered_segment_ids = _path_corridor_group_covered_segment_ids(pre_gate_group_replacement_audit_rows)
+    diag.stage("special_junction_gate")
     special_group_rows, blocked_segment_ids, removed_replaceable_segment_ids, blocking_groups_by_segment = _special_junction_gate(
         special_junction_segments=special_junction_segments,
         special_swsd_junction_types=special_swsd_junction_types,
@@ -1343,6 +1348,7 @@ def run_t06_step2_extract_rcsd_segments(
         )
     else:
         group_replacement_audit_rows = pre_gate_group_replacement_audit_rows
+    diag.stage("replacement_plan")
     replacement_plan_rows = _build_replacement_plan_rows(
         replaceable_rows=replaceable_rows,
         rejected_rows=rejected_rows,
@@ -1356,11 +1362,13 @@ def run_t06_step2_extract_rcsd_segments(
         swsd_nodes=swsd_node_features,
         rcsd_nodes=rcsd_node_features,
     )
+    diag.stage("problem_registry")
     problem_registry_rows = _build_problem_registry_rows(
         rejected_rows=rejected_rows,
         failure_business_audit_rows=failure_business_audit_rows,
         replacement_plan_rows=replacement_plan_rows,
     )
+    diag.stage("write_outputs")
     candidate_paths = write_feature_triplet(step_root=step_root, stem=STEP2_CANDIDATES_STEM, features=candidate_rows, fieldnames=STEP2_CANDIDATE_FIELDS)
     replaceable_paths = write_feature_triplet(step_root=step_root, stem=STEP2_REPLACEABLE_STEM, features=replaceable_rows, fieldnames=STEP2_REPLACEABLE_FIELDS)
     rejected_paths = write_feature_triplet(step_root=step_root, stem=STEP2_REJECTED_STEM, features=rejected_rows, fieldnames=STEP2_REJECTED_FIELDS)
@@ -1411,6 +1419,7 @@ def run_t06_step2_extract_rcsd_segments(
     rcsd_road_stats = _rcsd_road_coverage_stats(rcsd_roads=rcsd_roads, replaceable_rows=replaceable_rows)
     business_stats = _business_audit_stats(failure_business_audit_rows, replaceable_rows, input_count=len(fusion_units))
     summary_path = step_root / STEP2_SUMMARY
+    diag.stage("summary")
     write_json(
         summary_path,
         {
@@ -1513,6 +1522,7 @@ def run_t06_step2_extract_rcsd_segments(
             },
         },
     )
+    diag.finish(replaceable_count=len(replaceable_rows), replacement_plan_count=len(replacement_plan_rows))
     return T06Step2Artifacts(
         resolved_run_id,
         run_root,

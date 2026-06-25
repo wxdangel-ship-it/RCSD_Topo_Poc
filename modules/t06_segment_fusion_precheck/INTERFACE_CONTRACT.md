@@ -213,6 +213,10 @@ run_t06_step2_extract_rcsd_segments(
 - `t06_segment_replacement_plan.gpkg/csv/json`
 - `t06_segment_replacement_problem_registry.gpkg/csv/json`
 - `t06_step2_summary.json`
+- `t06_step2_progress.jsonl`（仅 `progress=True`）
+- `t06_step2_heartbeat.json`（仅 `progress=True`）
+- `t06_step2_slow_units.jsonl`（仅 `progress=True`）
+- `t06_step2_stackdump.log`（仅 `progress=True` 且运行环境支持 `SIGUSR1`）
 
 Rejected 的 `directionality_mismatch_fixable` 不得被解释为自动可修复结论。若 candidate pair 的 formal retry、adaptive buffer 或 graph-first 硬审计仍失败，`t06_rcsd_segment_failure_business_audit` 必须输出 `manual_review_required=True`、`repair_recommendation=upstream_anchor_or_segment_grouping_required`、`upstream_issue_owner=T03/T04/T05_or_T06_group_replacement`，表示需要上游锚定/虚拟路口归并复核，或后续 T06 multi-SWSD Segment group replacement，而不是当前单 Segment 静默替换。
 
@@ -223,6 +227,8 @@ Rejected 的 `directionality_mismatch_fixable` 不得被解释为自动可修复
 `t06_segment_replacement_plan` 是 Step2 到 Step3 的正式执行边界。它把普通 replaceable Segment、特殊路口组内部 RCSD 实体、path-corridor group replacement 统一表达为 `plan_status=ready` 的 action；Step3 只能执行 plan 中的 RCSDRoad / RCSDNode / Segment group，不得重新补充 RCSD path 或重判可替换性。
 
 `t06_segment_replacement_problem_registry` 是 Step2 到前置模块迭代的正式问题登记。它按 Segment 记录 `root_cause_category / upstream_issue_owner / recommended_module / feedback_action / replan_trigger / evidence_artifacts`，用于把当前无法替换的问题路由给 T01/T03/T04/T05/T07 后续迭代；已由 replacement plan 覆盖、Step2 内已解决、或已审计为合理不可替换的问题也必须登记为相应 `problem_status`，便于防回退审计。
+
+Step2 运行诊断 sidecar 只用于性能和卡点定位，不参与替换率、replacement plan、problem registry 或 Step3 handoff。`t06_step2_heartbeat.json` 记录当前 PID、当前 Segment 或后处理阶段；`t06_step2_progress.jsonl` 记录阶段切换和每 1000 个 Segment 的进度；`t06_step2_slow_units.jsonl` 记录耗时超过阈值的 Segment；Linux/WSL 环境可用 `kill -USR1 <PID>` 将当前 Python 栈写入 `t06_step2_stackdump.log`，用于不中断长耗时进程定位 CPU-bound 热点。
 
 `t06_rcsd_buffer_only_probe` 是 relation-independent 诊断输出；`t06_rcsd_repair_candidates` 输出候选 pair、候选评分和 pair 锚定错误位置。满足受限高置信安全门槛的 pair anchor 候选可驱动 T06 当前 Segment 的一次 effective relation 重试，包括缺失 pair 补全、两端 pair relation 均缺失但 buffer probe 高置信、endpoint cluster 解释的复合路口，以及通过正式 extractor 复核的 `candidate_anchor_mismatch`；但不得回写或静默修改 T05 relation。其它 repair candidate 不驱动 Step2 替换。高等级 single graph-first 受限重审只复用 T05 原始 pair；高等级 dual 若已由 buffer-only probe 给出非人工复核高置信候选 pair 集合，T06 可遍历这些候选 pair 并逐一执行正式双向 extractor / adaptive buffer / `dual_graph_first_bidirectional_retry` 硬审计；只有恰好一个候选 pair 通过时可消费该候选 pair，否则 dual 受限重审仍只复用 T05 原始 pair 或保持 rejected / 人工复核。`t06_rcsd_segment_failure_business_audit` 输出场景 A / 场景 B、B 类细分、自动提升、人工复核、pair anchor 错误定位、重审距离与上游责任归因。
 

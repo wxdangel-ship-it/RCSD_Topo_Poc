@@ -10,6 +10,7 @@ from rcsd_topo_poc.modules.t06_segment_fusion_precheck.replacement_plan import (
 from rcsd_topo_poc.modules.t06_segment_fusion_precheck.step3_surface_aware_plan_release import (
     _points_by_id,
     _release_allowed,
+    _rollback_items_for_plan_rows,
     _rollback_plan_ids_for_failed_segments,
 )
 
@@ -1154,6 +1155,42 @@ def test_surface_aware_release_accepts_original_pair_endpoint_without_surface_ro
     ]
 
 
+def test_surface_aware_release_uses_mainnodeid_fallback_when_exact_point_has_no_trigger() -> None:
+    props = {
+        "swsd_pair_nodes": ["n1", "n2"],
+        "rcsd_pair_nodes": ["r1", "r2"],
+        "original_rcsd_pair_nodes": ["r1", "r2"],
+        "risk_flags": ["junction_alignment_to_retained_swsd_exceeds_topology_gate"],
+    }
+    swsd_points = {"n1": Point(0, 0), "n2": Point(5, 0)}
+    rcsd_points = {"r1": Point(5, 0), "r2": Point(5, 0)}
+    swsd_fallback_points = {"n1": Point(-30, 0)}
+    rcsd_fallback_points = {"r1": Point(5, 0)}
+
+    allowed, triggers = _release_allowed(
+        props,
+        {},
+        swsd_points,
+        rcsd_points,
+        {"n1": ["s_replace"]},
+        set(),
+        swsd_fallback_points=swsd_fallback_points,
+        rcsd_fallback_points=rcsd_fallback_points,
+    )
+
+    assert allowed
+    assert triggers == [
+        {
+            "swsd_node_id": "n1",
+            "rcsd_node_id": "r1",
+            "distance_m": 35.0,
+            "surface_status": ["pass", "auto_closed_selected_replacement_endpoint", 35.0],
+            "ok": True,
+            "point_source": "mainnodeid_fallback",
+        }
+    ]
+
+
 def test_surface_aware_release_accepts_optional_junc_anchor_mapping_without_surface_row() -> None:
     props = {
         "swsd_pair_nodes": ["n1", "n2"],
@@ -1214,6 +1251,21 @@ def test_surface_aware_point_index_uses_mainnodeid() -> None:
     assert points["node2"].equals(Point(3, 4))
 
 
+def test_surface_aware_point_index_prefers_exact_id_over_mainnodeid_fallback() -> None:
+    points = _points_by_id(
+        [
+            {"properties": {"id": "exact1"}, "geometry": Point(0, 0)},
+            {"properties": {"id": "sub1", "mainnodeid": "exact1"}, "geometry": Point(10, 0)},
+            {"properties": {"id": "sub2", "mainnodeid": "main2"}, "geometry": Point(20, 0)},
+        ]
+    )
+
+    assert points["exact1"].equals(Point(0, 0))
+    assert points["sub1"].equals(Point(10, 0))
+    assert points["sub2"].equals(Point(20, 0))
+    assert points["main2"].equals(Point(20, 0))
+
+
 def test_surface_aware_release_rolls_back_plans_that_add_topology_failures() -> None:
     added_fail_keys = {
         ("segment_internal_connectivity", "s_group_member", "", "", "segment_corridor_coverage_dropped_after_replacement"),
@@ -1249,6 +1301,41 @@ def test_surface_aware_release_rollback_prefers_explicit_junction_segments() -> 
     incident = {"n1": ["s_direct", "s_neighbor"]}
 
     assert _rollback_plan_ids_for_failed_segments(added_fail_keys, released, incident) == {"standard:s_direct"}
+
+
+def test_surface_aware_release_rollback_includes_candidate_plan_carriers() -> None:
+    added_fail_keys = {
+        (
+            "segment_junction_connectivity",
+            '["s_group", "s_retained"]',
+            "n1",
+            "",
+            "junction_incident_segment_mapping_missing",
+        )
+    }
+    released = [{"plan_id": "standard:s_release", "segment_id": "s_release", "group_segment_ids": []}]
+    plan_rows = [
+        {
+            "properties": {
+                "replacement_plan_id": "group_path_corridor:s_group",
+                "swsd_segment_id": "s_group",
+                "group_segment_ids": ["s_group", "s_peer"],
+            }
+        },
+        {
+            "properties": {
+                "replacement_plan_id": "standard:s_unrelated",
+                "swsd_segment_id": "s_unrelated",
+                "group_segment_ids": [],
+            }
+        },
+    ]
+
+    rollback_items = [*released, *_rollback_items_for_plan_rows(plan_rows)]
+
+    assert _rollback_plan_ids_for_failed_segments(added_fail_keys, rollback_items, {}) == {
+        "group_path_corridor:s_group"
+    }
 
 
 def test_visual_manual_release_allows_small_pair_attachment_gap_to_retained_incident_segment() -> None:

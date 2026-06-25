@@ -124,7 +124,7 @@ def run_surface_aware_step3_segment_replacement(
     )
     rollback_reference_fail_keys = external_baseline_fail_keys if external_baseline_root else baseline_fail_keys
     added_fail_keys = _topology_fail_keys(artifacts.step_root) - rollback_reference_fail_keys
-    rollback_plan_ids = _rollback_plan_ids(added_fail_keys, released, swsd_segment_path)
+    rollback_plan_ids = _rollback_plan_ids(added_fail_keys, released, release_rows, swsd_segment_path)
     if rollback_plan_ids:
         final_rows = _rollback_release_rows(release_rows, rollback_plan_ids)
         final_plan = _write_plan_json(artifacts.step_root, final_rows, "topology_safe")
@@ -211,8 +211,11 @@ def _surface_release_plan_rows(
     surface_status = _surface_status_by_node(step_root)
     swsd_node_rows = read_features(swsd_nodes_path)
     swsd_points = _points_by_id(swsd_node_rows)
+    swsd_fallback_points = _fallback_points_by_id(swsd_node_rows)
     swsd_anchor_nodes = _anchor_node_ids(swsd_node_rows)
-    rcsd_points = _points_by_id(read_features(rcsdnode_path))
+    rcsd_node_rows = read_features(rcsdnode_path)
+    rcsd_points = _points_by_id(rcsd_node_rows)
+    rcsd_fallback_points = _fallback_points_by_id(rcsd_node_rows)
     incident = _incident_segments_by_node(read_features(swsd_segment_path))
     ready_segments = _ready_segment_ids(plan_rows)
     released: list[dict[str, Any]] = []
@@ -229,6 +232,8 @@ def _surface_release_plan_rows(
             incident,
             ready_segments,
             swsd_anchor_nodes,
+            swsd_fallback_points=swsd_fallback_points,
+            rcsd_fallback_points=rcsd_fallback_points,
         )
         if not allow:
             continue
@@ -253,42 +258,81 @@ def _release_allowed(
     incident: dict[str, list[str]],
     ready_segments: set[str],
     swsd_anchor_nodes: set[str] | None = None,
+    swsd_fallback_points: dict[str, Any] | None = None,
+    rcsd_fallback_points: dict[str, Any] | None = None,
 ) -> tuple[bool, list[dict[str, Any]]]:
     if not _is_retained_junction_gate_plan(props):
         return False, []
     swsd_anchor_nodes = swsd_anchor_nodes or set()
     triggers: list[dict[str, Any]] = []
     for swsd_node_id, rcsd_node_id in _plan_mappings(props):
-        if swsd_node_id not in swsd_points or rcsd_node_id not in rcsd_points:
-            continue
         if not any(segment_id not in ready_segments for segment_id in incident.get(swsd_node_id, [])):
             continue
-        distance_m = float(swsd_points[swsd_node_id].distance(rcsd_points[rcsd_node_id]))
-        if distance_m <= RETAINED_JUNCTION_ATTACHMENT_GAP_M:
-            continue
-        status = surface_status.get(swsd_node_id)
-        if status:
-            ok = bool(status[0] == "pass" and status[1] in SURFACE_RELEASE_REASONS)
-            release_status = list(status)
-        elif _is_original_pair_endpoint_mapping(props, swsd_node_id, rcsd_node_id):
-            ok = True
-            release_status = ["pass", "auto_closed_selected_replacement_endpoint", round(distance_m, 3)]
-        elif _is_optional_junc_anchor_mapping(props, swsd_node_id, rcsd_node_id, swsd_anchor_nodes, distance_m):
-            ok = True
-            release_status = ["pass", OPTIONAL_JUNCTION_ANCHOR_RELEASE_REASON, round(distance_m, 3)]
-        else:
-            ok = False
-            release_status = None
-        triggers.append(
-            {
-                "swsd_node_id": swsd_node_id,
-                "rcsd_node_id": rcsd_node_id,
-                "distance_m": round(distance_m, 3),
-                "surface_status": release_status,
-                "ok": ok,
-            }
+        trigger = _release_trigger_for_mapping(
+            props,
+            swsd_node_id=swsd_node_id,
+            rcsd_node_id=rcsd_node_id,
+            swsd_points=swsd_points,
+            rcsd_points=rcsd_points,
+            surface_status=surface_status,
+            swsd_anchor_nodes=swsd_anchor_nodes,
         )
+        if trigger is None:
+            trigger = _release_trigger_for_mapping(
+                props,
+                swsd_node_id=swsd_node_id,
+                rcsd_node_id=rcsd_node_id,
+                swsd_points=swsd_fallback_points or {},
+                rcsd_points=rcsd_fallback_points or {},
+                surface_status=surface_status,
+                swsd_anchor_nodes=swsd_anchor_nodes,
+                point_source="mainnodeid_fallback",
+            )
+        if trigger is None:
+            continue
+        triggers.append(trigger)
     return bool(triggers) and all(item["ok"] for item in triggers), triggers
+
+
+def _release_trigger_for_mapping(
+    props: dict[str, Any],
+    *,
+    swsd_node_id: str,
+    rcsd_node_id: str,
+    swsd_points: dict[str, Any],
+    rcsd_points: dict[str, Any],
+    surface_status: dict[str, tuple[str, str, Any]],
+    swsd_anchor_nodes: set[str],
+    point_source: str | None = None,
+) -> dict[str, Any] | None:
+    if swsd_node_id not in swsd_points or rcsd_node_id not in rcsd_points:
+        return None
+    distance_m = float(swsd_points[swsd_node_id].distance(rcsd_points[rcsd_node_id]))
+    if distance_m <= RETAINED_JUNCTION_ATTACHMENT_GAP_M:
+        return None
+    status = surface_status.get(swsd_node_id)
+    if status:
+        ok = bool(status[0] == "pass" and status[1] in SURFACE_RELEASE_REASONS)
+        release_status = list(status)
+    elif _is_original_pair_endpoint_mapping(props, swsd_node_id, rcsd_node_id):
+        ok = True
+        release_status = ["pass", "auto_closed_selected_replacement_endpoint", round(distance_m, 3)]
+    elif _is_optional_junc_anchor_mapping(props, swsd_node_id, rcsd_node_id, swsd_anchor_nodes, distance_m):
+        ok = True
+        release_status = ["pass", OPTIONAL_JUNCTION_ANCHOR_RELEASE_REASON, round(distance_m, 3)]
+    else:
+        ok = False
+        release_status = None
+    trigger = {
+        "swsd_node_id": swsd_node_id,
+        "rcsd_node_id": rcsd_node_id,
+        "distance_m": round(distance_m, 3),
+        "surface_status": release_status,
+        "ok": ok,
+    }
+    if point_source:
+        trigger["point_source"] = point_source
+    return trigger
 
 
 def _is_retained_junction_gate_plan(props: dict[str, Any]) -> bool:
@@ -350,10 +394,29 @@ def _rollback_release_rows(rows: list[dict[str, Any]], rollback_plan_ids: set[st
 def _rollback_plan_ids(
     added_fail_keys: set[tuple[str, str, str, str, str]],
     released: list[dict[str, Any]],
+    plan_rows: list[dict[str, Any]],
     swsd_segment_path: str | Path,
 ) -> set[str]:
     incident = _incident_segments_by_node(read_features(swsd_segment_path))
-    return _rollback_plan_ids_for_failed_segments(added_fail_keys, released, incident)
+    rollback_items = [*released, *_rollback_items_for_plan_rows(plan_rows)]
+    return _rollback_plan_ids_for_failed_segments(added_fail_keys, rollback_items, incident)
+
+
+def _rollback_items_for_plan_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for row in rows:
+        props = row.get("properties") or {}
+        plan_id = str(props.get("replacement_plan_id") or "")
+        if not plan_id:
+            continue
+        items.append(
+            {
+                "plan_id": plan_id,
+                "segment_id": str(props.get("swsd_segment_id") or ""),
+                "group_segment_ids": _ids(props.get("group_segment_ids")),
+            }
+        )
+    return items
 
 
 def _rollback_plan_ids_for_failed_segments(
@@ -469,7 +532,24 @@ def _points_by_id(rows: list[dict[str, Any]]) -> dict[str, Any]:
         geom = row.get("geometry")
         if geom is None:
             continue
-        for item_id in _feature_ids(row):
+        for item_id in _feature_exact_ids(row):
+            result[item_id] = geom
+    for row in rows:
+        geom = row.get("geometry")
+        if geom is None:
+            continue
+        for item_id in _feature_fallback_ids(row):
+            result.setdefault(item_id, geom)
+    return result
+
+
+def _fallback_points_by_id(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for row in rows:
+        geom = row.get("geometry")
+        if geom is None:
+            continue
+        for item_id in _feature_fallback_ids(row):
             result[item_id] = geom
     return result
 
@@ -514,10 +594,23 @@ def _feature_id(feature: dict[str, Any]) -> str:
 
 
 def _feature_ids(feature: dict[str, Any]) -> list[str]:
+    return unique_preserve_order([*_feature_exact_ids(feature), *_feature_fallback_ids(feature)])
+
+
+def _feature_exact_ids(feature: dict[str, Any]) -> list[str]:
     props = feature.get("properties") or {}
     return unique_preserve_order(
         str(value)
-        for value in (props.get("id"), props.get("node_id"), props.get("mainnodeid"), props.get("swsd_segment_id"))
+        for value in (props.get("id"), props.get("node_id"), props.get("swsd_segment_id"))
+        if value not in (None, "")
+    )
+
+
+def _feature_fallback_ids(feature: dict[str, Any]) -> list[str]:
+    props = feature.get("properties") or {}
+    return unique_preserve_order(
+        str(value)
+        for value in (props.get("mainnodeid"),)
         if value not in (None, "")
     )
 

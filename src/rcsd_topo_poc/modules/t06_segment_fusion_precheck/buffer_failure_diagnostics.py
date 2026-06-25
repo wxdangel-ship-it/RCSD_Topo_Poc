@@ -8,6 +8,15 @@ from .graph_builders import NodeCanonicalizer
 from .parsing import ParseError
 
 
+_FULL_GRAPH_VIEWS_CACHE: dict[
+    int,
+    tuple[
+        list[tuple[str, str, str, int | None]],
+        tuple[set[str], dict[str, set[str]], dict[str, set[str]]],
+    ],
+] = {}
+
+
 def buffer_failure_diagnostic(
     *,
     result: BufferSegmentResult,
@@ -138,6 +147,11 @@ def _graph_views(
     *,
     road_ids: set[str] | None = None,
 ) -> tuple[set[str], dict[str, set[str]], dict[str, set[str]]]:
+    if road_ids is None:
+        key = id(edges)
+        cached = _FULL_GRAPH_VIEWS_CACHE.get(key)
+        if cached is not None and cached[0] is edges:
+            return cached[1]
     nodes: set[str] = set()
     undirected: dict[str, set[str]] = defaultdict(set)
     directed: dict[str, set[str]] = defaultdict(set)
@@ -151,7 +165,10 @@ def _graph_views(
             directed[source].add(target)
         if direction in {0, 1, 3}:
             directed[target].add(source)
-    return nodes, dict(undirected), dict(directed)
+    views = (nodes, dict(undirected), dict(directed))
+    if road_ids is None:
+        _FULL_GRAPH_VIEWS_CACHE[id(edges)] = (edges, views)
+    return views
 
 
 def _required_graph_status(required_nodes: list[str], graph_nodes: set[str], adjacency: dict[str, set[str]]) -> str:

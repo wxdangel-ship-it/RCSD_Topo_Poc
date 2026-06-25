@@ -74,6 +74,16 @@ class _CandidateContext:
     excluded_roads: list[dict[str, Any]]
 
 
+@dataclass(frozen=True)
+class _GeometryMetrics:
+    is_empty: bool
+    length: float
+    bounds: tuple[float, float, float, float] | None
+
+
+_GEOMETRY_METRICS_CACHE: dict[int, tuple[BaseGeometry, _GeometryMetrics]] = {}
+
+
 class SpatialFeatureIndex:
     def __init__(self, features: list[dict[str, Any]]) -> None:
         self.features: list[dict[str, Any]] = []
@@ -917,12 +927,14 @@ def _weighted_adjacency(
     required_nodes: set[str],
 ) -> dict[str, list[tuple[str, float, str]]]:
     adjacency: dict[str, list[tuple[str, float, str]]] = defaultdict(list)
+    reference_geometry_empty = reference_geometry is None or reference_geometry.is_empty
     reference_buffer_geometry = _path_reference_buffer(reference_geometry)
     reference_buffer_bounds = reference_buffer_geometry.bounds if reference_buffer_geometry is not None else None
     for edge in edges:
         weight = _edge_weight(
             edge,
             reference_geometry=reference_geometry,
+            reference_geometry_empty=reference_geometry_empty,
             reference_buffer_geometry=reference_buffer_geometry,
             reference_buffer_bounds=reference_buffer_bounds,
             required_nodes=required_nodes,
@@ -940,12 +952,14 @@ def _weighted_adjacency(
 
 
 def _path_weight(edges: list[Edge], path: list[str], *, reference_geometry: BaseGeometry | None, required_nodes: set[str]) -> float:
+    reference_geometry_empty = reference_geometry is None or reference_geometry.is_empty
     reference_buffer_geometry = _path_reference_buffer(reference_geometry)
     reference_buffer_bounds = reference_buffer_geometry.bounds if reference_buffer_geometry is not None else None
     weights = {
         edge.edge_id: _edge_weight(
             edge,
             reference_geometry=reference_geometry,
+            reference_geometry_empty=reference_geometry_empty,
             reference_buffer_geometry=reference_buffer_geometry,
             reference_buffer_bounds=reference_buffer_bounds,
             required_nodes=required_nodes,
@@ -959,17 +973,19 @@ def _edge_weight(
     edge: Edge,
     *,
     reference_geometry: BaseGeometry | None,
+    reference_geometry_empty: bool,
     reference_buffer_geometry: BaseGeometry | None,
     reference_buffer_bounds: tuple[float, float, float, float] | None,
     required_nodes: set[str],
 ) -> float:
+    metrics = _edge_geometry_metrics(edge)
     length = 1.0
-    if edge.geometry is not None and not edge.geometry.is_empty:
-        length = max(float(edge.geometry.length), 1.0)
-    if reference_geometry is None or reference_geometry.is_empty:
+    if metrics is not None and not metrics.is_empty:
+        length = max(metrics.length, 1.0)
+    if reference_geometry_empty:
         return length
     shortcut_penalty = _required_shortcut_penalty(edge, length, reference_geometry, required_nodes)
-    off_reference_penalty = _off_reference_penalty(edge, length, reference_buffer_geometry, reference_buffer_bounds)
+    off_reference_penalty = _off_reference_penalty(edge, length, reference_buffer_geometry, reference_buffer_bounds, metrics)
     return length + shortcut_penalty + off_reference_penalty
 
 
@@ -984,14 +1000,33 @@ def _off_reference_penalty(
     length: float,
     reference_buffer_geometry: BaseGeometry | None,
     reference_buffer_bounds: tuple[float, float, float, float] | None,
+    metrics: _GeometryMetrics | None,
 ) -> float:
-    if reference_buffer_geometry is None or edge.geometry is None or edge.geometry.is_empty:
+    if reference_buffer_geometry is None or edge.geometry is None or metrics is None or metrics.is_empty:
         return 0.0
-    if reference_buffer_bounds is not None and not _bounds_intersect(edge.geometry.bounds, reference_buffer_bounds):
+    if reference_buffer_bounds is not None and metrics.bounds is not None and not _bounds_intersect(metrics.bounds, reference_buffer_bounds):
         return length * PATH_OFF_REFERENCE_PENALTY_MULTIPLIER
     inside_length = float(edge.geometry.intersection(reference_buffer_geometry).length)
     off_reference_length = max(0.0, length - inside_length)
     return off_reference_length * PATH_OFF_REFERENCE_PENALTY_MULTIPLIER
+
+
+def _edge_geometry_metrics(edge: Edge) -> _GeometryMetrics | None:
+    geometry = edge.geometry
+    if geometry is None:
+        return None
+    key = id(geometry)
+    cached = _GEOMETRY_METRICS_CACHE.get(key)
+    if cached is not None and cached[0] is geometry:
+        return cached[1]
+    is_empty = bool(geometry.is_empty)
+    metrics = _GeometryMetrics(
+        is_empty=is_empty,
+        length=0.0 if is_empty else float(geometry.length),
+        bounds=None if is_empty else geometry.bounds,
+    )
+    _GEOMETRY_METRICS_CACHE[key] = (geometry, metrics)
+    return metrics
 
 
 def _bounds_intersect(

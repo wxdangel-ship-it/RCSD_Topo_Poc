@@ -94,6 +94,17 @@ class _RoadGraph:
     adjacency: dict[str, list[tuple[str, float, str]]]
 
 
+@dataclass(frozen=True)
+class _RoadGraphEntry:
+    road_id: str
+    source: str
+    target: str
+    weight: float
+
+
+_ROAD_GRAPH_ENTRY_CACHE: dict[int, tuple[list[dict[str, Any]], NodeCanonicalizer, tuple[_RoadGraphEntry, ...]]] = {}
+
+
 def _valid_candidate_pairs(values: list[list[str]]) -> list[list[str]]:
     result: list[list[str]] = []
     seen: set[tuple[str, str]] = set()
@@ -116,12 +127,24 @@ def _road_graph(
     rcsd_node_canonicalizer: NodeCanonicalizer,
 ) -> _RoadGraph:
     adjacency: dict[str, list[tuple[str, float, str]]] = defaultdict(list)
+    for entry in _road_graph_entries(features, rcsd_node_canonicalizer):
+        if candidate_road_ids and entry.road_id not in candidate_road_ids:
+            continue
+        adjacency[entry.source].append((entry.target, entry.weight, entry.road_id))
+        adjacency[entry.target].append((entry.source, entry.weight, entry.road_id))
+    return _RoadGraph(adjacency=dict(adjacency))
+
+
+def _road_graph_entries(features: list[dict[str, Any]], rcsd_node_canonicalizer: NodeCanonicalizer) -> tuple[_RoadGraphEntry, ...]:
+    key = id(features)
+    cached = _ROAD_GRAPH_ENTRY_CACHE.get(key)
+    if cached is not None and cached[0] is features and cached[1] is rcsd_node_canonicalizer:
+        return cached[2]
+    entries: list[_RoadGraphEntry] = []
     for feature in features:
         props = dict(feature.get("properties") or {})
         try:
             road_id = normalize_id(_first_present(props, ["id", "road_id", "roadid"]))
-            if candidate_road_ids and road_id not in candidate_road_ids:
-                continue
             source = rcsd_node_canonicalizer.canonicalize(_first_present(props, ["snodeid", "snode_id", "source", "from_node"]))
             target = rcsd_node_canonicalizer.canonicalize(_first_present(props, ["enodeid", "enode_id", "target", "to_node"]))
         except (KeyError, ParseError):
@@ -130,10 +153,10 @@ def _road_graph(
             continue
         geometry = feature.get("geometry")
         length = float(getattr(geometry, "length", 0.0) or 0.0) if geometry is not None else 0.0
-        weight = max(length, 0.001)
-        adjacency[source].append((target, weight, road_id))
-        adjacency[target].append((source, weight, road_id))
-    return _RoadGraph(adjacency=dict(adjacency))
+        entries.append(_RoadGraphEntry(road_id=road_id, source=source, target=target, weight=max(length, 0.001)))
+    result = tuple(entries)
+    _ROAD_GRAPH_ENTRY_CACHE[key] = (features, rcsd_node_canonicalizer, result)
+    return result
 
 
 def _original_pair_nodes_by_side(

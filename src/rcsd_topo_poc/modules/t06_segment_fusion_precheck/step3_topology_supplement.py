@@ -19,10 +19,19 @@ GROUP_FORMAL_REPLACEMENT_CORRIDOR_UNAVAILABLE_REASON = "group_formal_replacement
 SEGMENT_CORRIDOR_BUFFER_M = 15.0
 SEGMENT_MAX_UNCOVERED_RATIO = 0.05
 SEGMENT_MIN_UNCOVERED_LENGTH_M = 20.0
+SURFACE_AWARE_FORMAL_CORRIDOR_BUFFER_M = 75.0
 GROUP_SEGMENT_MAX_UNCOVERED_RATIO = 0.50
 GROUP_SEGMENT_MIN_UNCOVERED_LENGTH_M = 20.0
 EXISTING_ADVANCE_CORRIDOR_BUFFER_M = 5.0
 EXISTING_ADVANCE_CORRIDOR_MIN_COVERAGE_RATIO = 0.85
+SURFACE_AWARE_FORMAL_CORRIDOR_REQUIRED_FLAGS = {
+    "junction_alignment_to_retained_swsd_exceeds_topology_gate",
+    "junction_alignment_surface_audit_release",
+}
+SURFACE_AWARE_FORMAL_CORRIDOR_RELEASE_RISK_FLAGS = [
+    "surface_aware_formal_corridor_release",
+    "manual_review_required",
+]
 JUNCTION_SURFACE_COVERAGE_RELEASE_RISK_FLAGS = [
     "formal_corridor_gap_inside_anchored_junction_surface",
     "junction_surface_coverage_release",
@@ -153,6 +162,11 @@ def junction_surface_by_node_id_from_features(features: list[dict[str, Any]]) ->
 def append_junction_surface_release_risk(unit: Any) -> None:
     current = parse_id_list(getattr(unit, "risk_flags", []), allow_empty=True)
     setattr(unit, "risk_flags", unique_preserve_order([*current, *JUNCTION_SURFACE_COVERAGE_RELEASE_RISK_FLAGS]))
+
+
+def _append_surface_aware_formal_corridor_release_risk(unit: Any) -> None:
+    current = parse_id_list(getattr(unit, "risk_flags", []), allow_empty=True)
+    setattr(unit, "risk_flags", unique_preserve_order([*current, *SURFACE_AWARE_FORMAL_CORRIDOR_RELEASE_RISK_FLAGS]))
 
 
 def coverage_failed_after_junction_surface_release(
@@ -318,6 +332,9 @@ def _unit_corridor_coverage_unavailable(
             failed, released = _corridor_coverage_failed(swsd_road, unit_roads, allowed_surface=allowed_surface)
             if released:
                 append_junction_surface_release_risk(unit)
+            if failed and _surface_aware_formal_corridor_release_available(unit, swsd_road, unit_roads):
+                _append_surface_aware_formal_corridor_release_risk(unit)
+                continue
             if failed:
                 return True
             continue
@@ -337,6 +354,7 @@ def _corridor_coverage_failed(
     rcsd_roads: list[dict[str, Any]],
     *,
     allowed_surface: Any | None = None,
+    buffer_m: float = SEGMENT_CORRIDOR_BUFFER_M,
 ) -> tuple[bool, bool]:
     line = _feature_line(swsd_road) if swsd_road is not None else None
     if line is None or line.length <= 0:
@@ -351,11 +369,30 @@ def _corridor_coverage_failed(
         return True, False
     return coverage_failed_after_junction_surface_release(
         line,
-        unary_union(geometries).buffer(SEGMENT_CORRIDOR_BUFFER_M),
+        unary_union(geometries).buffer(buffer_m),
         max_uncovered_ratio=SEGMENT_MAX_UNCOVERED_RATIO,
         min_uncovered_length_m=SEGMENT_MIN_UNCOVERED_LENGTH_M,
         allowed_surface=allowed_surface,
     )
+
+
+def _surface_aware_formal_corridor_release_available(
+    unit: Any,
+    swsd_road: dict[str, Any] | None,
+    rcsd_roads: list[dict[str, Any]],
+) -> bool:
+    try:
+        risk_flags = set(parse_id_list(getattr(unit, "risk_flags", []), allow_empty=True))
+    except ParseError:
+        return False
+    if not SURFACE_AWARE_FORMAL_CORRIDOR_REQUIRED_FLAGS.issubset(risk_flags):
+        return False
+    failed, _ = _corridor_coverage_failed(
+        swsd_road,
+        rcsd_roads,
+        buffer_m=SURFACE_AWARE_FORMAL_CORRIDOR_BUFFER_M,
+    )
+    return not failed
 
 
 def materialize_topology_supplement_rcsd_roads(

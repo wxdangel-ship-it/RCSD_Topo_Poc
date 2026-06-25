@@ -964,6 +964,7 @@ def _build_replacement_units(replaceable: list[dict[str, Any]], segment_by_id: d
             rcsd_junc_nodes=_parse_list(props.get("rcsd_junc_nodes")),
             optional_allowed_rcsd_nodes=_parse_list(props.get("optional_allowed_rcsd_nodes")),
             geometry=item.get("geometry") or (segment or {}).get("geometry"),
+            risk_flags=_parse_list(props.get("risk_flags")),
         )
         if segment is None:
             unit.status = "failed"

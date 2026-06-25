@@ -515,12 +515,34 @@ def apply_final_advance_right_endpoint_closure(
         rcsd_source_value=rcsd_source_value,
     )
     _mark_connected_prior_failures(audit_rows, frcsd_roads=frcsd_roads, frcsd_nodes=frcsd_nodes)
+    provenance_count = _annotate_final_road_segment_provenance(
+        frcsd_roads,
+        added_road_to_segments=added_road_to_segments,
+    )
     stats["final_repaired_endpoint_count"] = repaired
     stats["final_failed_endpoint_count"] = failed
     stats["repaired_endpoint_count"] = int(stats.get("repaired_endpoint_count") or 0) + repaired
     stats["failed_endpoint_count"] = failed
     stats["final_split_original_road_count"] = split_stats["split_original_road_count"]
     stats["final_split_road_count"] = split_stats["split_road_count"]
+    stats["final_road_segment_provenance_count"] = provenance_count
+
+
+def _annotate_final_road_segment_provenance(
+    frcsd_roads: list[dict[str, Any]],
+    *,
+    added_road_to_segments: dict[str, list[str]],
+) -> int:
+    annotated = 0
+    for road in frcsd_roads:
+        road_id = _feature_id(road)
+        segment_ids = unique_preserve_order(added_road_to_segments.get(road_id, []))
+        if not segment_ids:
+            continue
+        props = road.setdefault("properties", {})
+        props["t06_swsd_segment_ids"] = segment_ids
+        annotated += 1
+    return annotated
 
 
 def _mark_prior_endpoint_failures(

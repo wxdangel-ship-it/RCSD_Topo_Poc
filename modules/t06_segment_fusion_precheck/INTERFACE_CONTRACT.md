@@ -272,6 +272,7 @@ Step3 输出目录：
 - `t06_step3_summary.json`
 
 F-RCSD Road / Node 必须包含 `source` 字段：RCSD 来源为 `1`，SWSD 来源为 `2`。
+F-RCSD Road 中由 T06 替换发布的 RCSD Road 必须包含 `t06_swsd_segment_ids` 多值字段，记录该最终 Road 承载的 SWSD Segment id 集合；`path_corridor_group` 等组级替换允许一条 RCSD Road 同时承载多个 SWSD Segment，因此不得用单值 `segmentid` 覆盖该多值归属。
 SWSD 与 RCSD 原始 `id` 冲突时保留原 id，依赖 `source` 区分，并写入 `t06_step3_id_collision_audit.*`。
 `t06_step3_unreplaced_rcsd_roads` 是 RCSD 视角审计输出，保留原始 RCSDRoad 几何与属性，并增加 `replacement_status / audit_reason / source / length_m` 等字段，用于定位未进入最终替换结果的 RCSDRoad。
 Step3 默认从 Step2 replaceable 同目录优先读取 `t06_segment_replacement_plan.json`，再兼容读取 `geojson/gpkg`；JSON 是完整执行计划主载体，必须保留无 geometry 的特殊路口组内部 plan 行。调用方也可以通过独立脚本参数显式指定特殊路口组审计文件或 group replacement 审计文件作为旧结果兼容输入。summary 必须记录 `step2_replacement_plan_path / input_replacement_plan_count / input_standard_replacement_plan_count / replacement_plan_source / special_junction_group_consumed_count / special_junction_added_rcsd_road_count / special_junction_added_rcsd_node_count`，以及 `group_replacement_audit_input_row_count / group_replacement_passed_row_count / group_replacement_plan_count / group_replacement_assignment_segment_count / group_replacement_created_unit_count / group_replacement_skipped_row_count`。当 surface-aware retained-junction gate 释放被触发时，summary 还必须记录 `surface_aware_plan_release`，包括释放数、回退数、内部 topology 新增 fail 数、外部 baseline 对照路径和相对外部 baseline 的新增 fail keys。

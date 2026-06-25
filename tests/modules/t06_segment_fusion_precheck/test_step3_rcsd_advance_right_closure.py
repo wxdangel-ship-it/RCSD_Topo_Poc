@@ -219,6 +219,29 @@ def test_final_advance_endpoint_closure_repairs_retained_swsd_advance_leaf() -> 
     ]
 
 
+def test_final_advance_closure_annotates_final_road_segment_provenance() -> None:
+    road = _road("rr1", "10", "20", [(0, 0), (20, 0)])
+    frcsd_roads = [road]
+    frcsd_nodes = [_node("10", 0, 0), _node("20", 20, 0)]
+    stats = {"audit_rows": [], "repaired_endpoint_count": 0, "failed_endpoint_count": 0}
+
+    apply_final_advance_right_endpoint_closure(
+        frcsd_roads,
+        frcsd_nodes,
+        stats,
+        [],
+        [],
+        {},
+        {"rr1": ["s1", "s2"]},
+        {},
+        "source",
+        1,
+    )
+
+    assert road["properties"]["t06_swsd_segment_ids"] == ["s1", "s2"]
+    assert stats["final_road_segment_provenance_count"] == 1
+
+
 def test_final_advance_endpoint_closure_does_not_split_retained_only_swsd_target() -> None:
     retained_main = _swsd_road("sw_main", "1", "2", [(0, 0), (20, 0)])
     rcsd_main = _road("rc_main", "10", "20", [(-10, 0), (0, 0)])

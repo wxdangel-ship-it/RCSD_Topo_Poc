@@ -39,7 +39,7 @@ from .pair_anchor_relation_retry import (
     append_relation_mapping_formal_retry_if_safe as _append_relation_mapping_formal_retry_if_safe,
 )
 from .rejected_context import annotate_rejected_swsd_context as _annotate_rejected_swsd_context
-from .relation_mapping import RelationCheck, RelationRecord, accepted_base_ids, build_relation_map, check_segment_relations
+from .relation_mapping import RelationCheck, RelationRecord, build_relation_map, check_segment_relations
 from .replacement_plan import (
     build_problem_registry_rows as _build_problem_registry_rows,
     build_replacement_plan_rows as _build_replacement_plan_rows,
@@ -63,6 +63,7 @@ from .step2_output_rows import (
     buffer_replaceable_row as _buffer_replaceable_row,
     buffer_segment_row as _buffer_segment_row,
 )
+from .step2_runtime_indexes import RelationBaseIndex, lost_attach_road_ids as _lost_attach_road_ids
 from .schemas import (
     STEP2_CANDIDATE_FIELDS,
     STEP2_CANDIDATES_STEM,
@@ -139,7 +140,8 @@ def run_t06_step2_extract_rcsd_segments(
         min_road_overlap_length_m=min_buffer_road_overlap_length_m,
         advance_right_formway_bit=advance_right_formway_bit,
     )
-    all_base_ids = accepted_base_ids(relation_map)
+    relation_base_index = RelationBaseIndex.from_relation_map(relation_map)
+    all_base_ids = set(relation_base_index.all_base_ids)
 
     candidate_rows: list[dict[str, Any]] = []
     replaceable_rows: list[dict[str, Any]] = []
@@ -192,7 +194,7 @@ def run_t06_step2_extract_rcsd_segments(
                     special_junction_segments[special_junction_id].append(segment_id)
         relation_junc_nodes = _relation_required_junc_nodes(junc_nodes, junc_kind2_exempt_nodes)
         all_base_ids_for_segment = all_base_ids - _accepted_base_ids_for_nodes(junc_kind2_exempt_nodes, relation_map)
-        unexpected_base_ids_for_segment = _unexpected_base_ids_for_segment([*pair_nodes, *junc_nodes], relation_map)
+        unexpected_base_ids_for_segment = relation_base_index.unexpected_for([*pair_nodes, *junc_nodes])
         if junc_kind2_exempt_nodes:
             junc_kind2_relation_exempt_segment_count += 1
             junc_kind2_relation_exempt_node_count += len(junc_kind2_exempt_nodes)
@@ -1786,16 +1788,6 @@ def _accepted_base_ids_for_nodes_ordered(node_ids: list[str], relation_map: dict
     return result
 
 
-def _unexpected_base_ids_for_segment(allowed_node_ids: list[str], relation_map: dict[str, RelationRecord]) -> set[str]:
-    allowed = set(allowed_node_ids)
-    result: set[str] = set()
-    for target_id, relation in relation_map.items():
-        if target_id in allowed or relation.status != 0 or relation.base_id <= 0:
-            continue
-        result.add(str(relation.base_id))
-    return result
-
-
 def _junc_attach_audit(
     *,
     junc_nodes: list[str],
@@ -1901,34 +1893,6 @@ def _pair_anchor_issue_audit_kwargs(diagnostic: PairAnchorIssueDiagnostic | None
         "pair_anchor_diagnostic_source": diagnostic.diagnostic_source,
         "pair_anchor_diagnostic_reason": diagnostic.diagnostic_reason,
     }
-
-
-def _lost_attach_road_ids(
-    *,
-    dropped_relation_nodes: list[str],
-    buffer_result: BufferSegmentResult,
-    rcsd_roads: list[dict[str, Any]],
-    rcsd_node_canonicalizer: NodeCanonicalizer,
-) -> list[str]:
-    dropped = set(dropped_relation_nodes)
-    if not dropped:
-        return []
-    candidate_ids = set(buffer_result.candidate_road_ids)
-    retained_ids = set(buffer_result.retained_road_ids)
-    result: list[str] = []
-    for road in rcsd_roads:
-        props = dict(road.get("properties") or {})
-        try:
-            road_id = normalize_id(_first_present(props, ["id", "road_id", "roadid"]))
-            source = rcsd_node_canonicalizer.canonicalize(_first_present(props, ["snodeid", "snode_id", "source", "from_node"]))
-            target = rcsd_node_canonicalizer.canonicalize(_first_present(props, ["enodeid", "enode_id", "target", "to_node"]))
-        except (KeyError, ParseError):
-            continue
-        if road_id not in candidate_ids or road_id in retained_ids:
-            continue
-        if source in dropped or target in dropped:
-            result.append(road_id)
-    return unique_preserve_order(result)
 
 
 def _buffer_rejected_row(segment_id: str, result: BufferSegmentResult, diagnostic: dict[str, Any] | None = None) -> dict[str, Any]:

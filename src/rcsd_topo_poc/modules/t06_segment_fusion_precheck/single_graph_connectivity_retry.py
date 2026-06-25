@@ -52,6 +52,7 @@ class SingleGraphConnectivityRetry:
             self.road_features,
             node_canonicalizer=self.node_canonicalizer,
         ).edges
+        self.all_edge_by_id = {edge.edge_id: edge for edge in self.all_edges}
         non_advance_roads = [
             feature
             for feature in self.road_features
@@ -61,6 +62,7 @@ class SingleGraphConnectivityRetry:
             non_advance_roads,
             node_canonicalizer=self.node_canonicalizer,
         ).edges
+        self.non_advance_edge_by_id = {edge.edge_id: edge for edge in self.non_advance_edges}
 
     def retry(
         self,
@@ -366,7 +368,10 @@ class SingleGraphConnectivityRetry:
         required_nodes: list[str],
         segment_geometry: BaseGeometry,
     ) -> list[Edge]:
-        for edges in (self.non_advance_edges, self.all_edges):
+        for edges, edge_by_id in (
+            (self.non_advance_edges, self.non_advance_edge_by_id),
+            (self.all_edges, self.all_edge_by_id),
+        ):
             path = _shortest_directed_path_covering_nodes(
                 edges,
                 directed_source,
@@ -376,7 +381,6 @@ class SingleGraphConnectivityRetry:
             )
             if path is None:
                 continue
-            edge_by_id = {edge.edge_id: edge for edge in edges}
             return [edge_by_id[edge_id] for edge_id in path if edge_id in edge_by_id]
         return []
 

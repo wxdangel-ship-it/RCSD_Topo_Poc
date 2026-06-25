@@ -918,11 +918,13 @@ def _weighted_adjacency(
 ) -> dict[str, list[tuple[str, float, str]]]:
     adjacency: dict[str, list[tuple[str, float, str]]] = defaultdict(list)
     reference_buffer_geometry = _path_reference_buffer(reference_geometry)
+    reference_buffer_bounds = reference_buffer_geometry.bounds if reference_buffer_geometry is not None else None
     for edge in edges:
         weight = _edge_weight(
             edge,
             reference_geometry=reference_geometry,
             reference_buffer_geometry=reference_buffer_geometry,
+            reference_buffer_bounds=reference_buffer_bounds,
             required_nodes=required_nodes,
         )
         if not directed:
@@ -939,11 +941,13 @@ def _weighted_adjacency(
 
 def _path_weight(edges: list[Edge], path: list[str], *, reference_geometry: BaseGeometry | None, required_nodes: set[str]) -> float:
     reference_buffer_geometry = _path_reference_buffer(reference_geometry)
+    reference_buffer_bounds = reference_buffer_geometry.bounds if reference_buffer_geometry is not None else None
     weights = {
         edge.edge_id: _edge_weight(
             edge,
             reference_geometry=reference_geometry,
             reference_buffer_geometry=reference_buffer_geometry,
+            reference_buffer_bounds=reference_buffer_bounds,
             required_nodes=required_nodes,
         )
         for edge in edges
@@ -956,6 +960,7 @@ def _edge_weight(
     *,
     reference_geometry: BaseGeometry | None,
     reference_buffer_geometry: BaseGeometry | None,
+    reference_buffer_bounds: tuple[float, float, float, float] | None,
     required_nodes: set[str],
 ) -> float:
     length = 1.0
@@ -964,7 +969,7 @@ def _edge_weight(
     if reference_geometry is None or reference_geometry.is_empty:
         return length
     shortcut_penalty = _required_shortcut_penalty(edge, length, reference_geometry, required_nodes)
-    off_reference_penalty = _off_reference_penalty(edge, length, reference_buffer_geometry)
+    off_reference_penalty = _off_reference_penalty(edge, length, reference_buffer_geometry, reference_buffer_bounds)
     return length + shortcut_penalty + off_reference_penalty
 
 
@@ -974,12 +979,26 @@ def _path_reference_buffer(reference_geometry: BaseGeometry | None) -> BaseGeome
     return reference_geometry.buffer(PATH_REFERENCE_BUFFER_M)
 
 
-def _off_reference_penalty(edge: Edge, length: float, reference_buffer_geometry: BaseGeometry | None) -> float:
+def _off_reference_penalty(
+    edge: Edge,
+    length: float,
+    reference_buffer_geometry: BaseGeometry | None,
+    reference_buffer_bounds: tuple[float, float, float, float] | None,
+) -> float:
     if reference_buffer_geometry is None or edge.geometry is None or edge.geometry.is_empty:
         return 0.0
+    if reference_buffer_bounds is not None and not _bounds_intersect(edge.geometry.bounds, reference_buffer_bounds):
+        return length * PATH_OFF_REFERENCE_PENALTY_MULTIPLIER
     inside_length = float(edge.geometry.intersection(reference_buffer_geometry).length)
     off_reference_length = max(0.0, length - inside_length)
     return off_reference_length * PATH_OFF_REFERENCE_PENALTY_MULTIPLIER
+
+
+def _bounds_intersect(
+    left: tuple[float, float, float, float],
+    right: tuple[float, float, float, float],
+) -> bool:
+    return not (left[2] < right[0] or right[2] < left[0] or left[3] < right[1] or right[3] < left[1])
 
 
 def _required_shortcut_penalty(edge: Edge, length: float, reference_geometry: BaseGeometry, required_nodes: set[str]) -> float:

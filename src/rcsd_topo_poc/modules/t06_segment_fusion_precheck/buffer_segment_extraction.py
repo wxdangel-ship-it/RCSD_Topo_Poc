@@ -82,6 +82,7 @@ class _GeometryMetrics:
 
 
 _GEOMETRY_METRICS_CACHE: dict[int, tuple[BaseGeometry, _GeometryMetrics]] = {}
+_EDGE_DIRECTION_CACHE: dict[int, tuple[dict[str, Any], int | None]] = {}
 
 
 class SpatialFeatureIndex:
@@ -943,12 +944,25 @@ def _weighted_adjacency(
             adjacency[edge.source].append((edge.target, weight, edge.edge_id))
             adjacency[edge.target].append((edge.source, weight, edge.edge_id))
             continue
-        direction = _coerce_int(edge.properties.get("direction")) if edge.properties else None
+        direction = _edge_direction(edge)
         if direction in {0, 1, 2}:
             adjacency[edge.source].append((edge.target, weight, edge.edge_id))
         if direction in {0, 1, 3}:
             adjacency[edge.target].append((edge.source, weight, edge.edge_id))
     return dict(adjacency)
+
+
+def _edge_direction(edge: Edge) -> int | None:
+    properties = edge.properties
+    if not properties:
+        return None
+    cache_key = id(edge)
+    cached = _EDGE_DIRECTION_CACHE.get(cache_key)
+    if cached is not None and cached[0] is properties:
+        return cached[1]
+    direction = _coerce_int(properties.get("direction"))
+    _EDGE_DIRECTION_CACHE[cache_key] = (properties, direction)
+    return direction
 
 
 def _path_weight(edges: list[Edge], path: list[str], *, reference_geometry: BaseGeometry | None, required_nodes: set[str]) -> float:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from shapely.geometry import LineString
 
+from rcsd_topo_poc.modules.t06_segment_fusion_precheck import group_replacement_audit as group_audit
 from rcsd_topo_poc.modules.t06_segment_fusion_precheck.graph_builders import NodeCanonicalizer
 from rcsd_topo_poc.modules.t06_segment_fusion_precheck.group_replacement_audit import (
     _RoadGeometryIndex,
@@ -170,6 +171,37 @@ def test_uncovered_candidate_search_uses_spatial_index_scope() -> None:
         )
         == "near"
     )
+
+
+def test_path_infos_reuses_weighted_adjacency_for_both_directions(monkeypatch) -> None:
+    node_canonicalizer = NodeCanonicalizer({}, frozenset({"10", "20", "30"}))
+    graph_edges = group_audit._build_undirected_graph(
+        [
+            _road("r1", "10", "30", [(0, 0), (50, 0)]),
+            _road("r2", "30", "20", [(50, 0), (100, 0)]),
+        ],
+        node_canonicalizer=node_canonicalizer,
+    ).edges
+    edge_by_id = {edge.edge_id: edge for edge in graph_edges}
+    calls = 0
+    original = group_audit._weighted_adjacency
+
+    def counted_weighted_adjacency(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(group_audit, "_weighted_adjacency", counted_weighted_adjacency)
+
+    path_infos = group_audit._path_infos(
+        graph_edges=graph_edges,
+        edge_by_id=edge_by_id,
+        required_nodes=["10", "20"],
+        segment_geometry=LineString([(0, 0), (100, 0)]),
+    )
+
+    assert calls == 1
+    assert [info["direction"] for info in path_infos] == ["forward", "reverse"]
 
 
 def _segment(segment_id: str, pair_nodes: list[str], coords: list[tuple[float, float]] | None = None) -> dict:

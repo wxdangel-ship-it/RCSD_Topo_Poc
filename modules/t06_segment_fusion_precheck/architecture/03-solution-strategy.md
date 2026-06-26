@@ -205,14 +205,15 @@ T06 采用三步链路：
 - `path_corridor_group` 的 source carrier 使用 Step2 group probe / replacement plan 发布的完整 group `rcsd_road_ids`；非 source member 可继续按成员几何做作用域过滤，避免远距离 RCSD Road 误挂到成员 relation。
 - Step3 不重新判定 Step2 ready group plan 的可替换性。若后续 topology / coverage 兜底仍发现问题，必须按整组 SWSD corridor 与整组 RCSD road union 聚合审计；失败时整组失败或整组回退，并写明 group 级原因，不能让 source carrier 失败而同组其它 member 成功替换。
 - 删除被替换 SWSDRoad；若 Step1/Step2 replaceable 的 final `junc_nodes` 少于 T01 原始 `junc_nodes`，detached junc 触达的原 SWSDRoad 以 `source=2` 保留为局部 restriction carrier，并在 Segment relation 中记录 `replaced+retained_swsd`。
-- Segment relation 中的 `frcsd_road_ids` 只表达正式 RCSD 替换道路。保留 SWSD carrier、SWSD 派生 topology supplement 和提前右转挂接补丁必须通过 `relation_status`、`retained_detached_swsd_road_ids`、风险标记和审计层表达，不能混入正式替换道路清单。
+- Segment relation 中的 `frcsd_road_ids` 表达最终 F-RCSD 中该 Segment 实际可消费的 carrier。`replaced` 关系应指向 `source=1` RCSD 替换道路；`retained_swsd / replaced+retained_swsd` 关系可指向 `source=2` 保留 SWSD carrier，但必须通过 `relation_status`、`frcsd_road_source_values / source_mix`、风险标记和审计层表达来源。
+- 已进入 Step3 ready plan 的 Segment 若在执行后仍因局部 topology / coverage 兜底无法安全替换，不得从 F-RCSD 丢失；应保留原 SWSD Road/Node 作为 `source=2` carrier，或在混合替换时标记 `replaced+retained_swsd` 并进入人工风险审计。
 - SWSDNode 只删除被替换 SWSDRoad 的端点 Node，不删除整个 SWSD 语义路口组。
 - 引入 Step2 retained RCSDRoad / RCSDNode；passed 特殊组内部 RCSDRoad / RCSDNode 作为组级补充加入。
 - 所有 replaceable Segment 的 `pair_nodes + junc_nodes` 形成待重建语义路口集合 C。
 - 若 C 原 main node 被删除，按原 main node、剩余 SWSD node 最小 id、加入 C 的 RCSD node 最小 id 的优先级重选 main node。
 - C 内 Node 继承原 main node 的 `kind / grade / kind_2 / grade_2 / closed_con`。
 - 对提前右转，Step3 可在不重判 Segment 可替换性的前提下执行挂接后处理：已选 RCSD 提前右转 corridor 可以吸附到保留 SWSD carrier；仅 SWSD 存在的提前右转 carrier 可在已选 RCSD Road 上复用或生成挂接节点；普通 RCSD road 挂在已选提前右转 road 中部时，可拆分该提前右转 road 并纳入同一 replacement unit。该后处理只补齐已选/已保留 carrier 的道路、节点和几何一致性。
-- 调用方提供 T03/T04/T05/T07 surface 或 T04 audit 时，Step3 可执行 surface-assisted closure。该 closure 只在唯一候选、T04 未 reject、Patch 无冲突、距离条件可解释时补写节点 `mainnodeid` 或非 `retained_swsd` relation 的 node map；它不新增正式替换道路，不修改原始道路几何，也不把 rejected Segment 改判为 replaceable。
+- 调用方提供 T03/T04/T05/T07 surface 或 T04 audit 时，Step3 可执行 surface-assisted closure。该 closure 只在唯一候选、T04 未 reject、Patch 无冲突、距离条件可解释时补写节点 `mainnodeid` 或非 `retained_swsd` relation 的 node map；它不新增正式替换道路，不修改原始道路几何，也不把 rejected Segment 改判为 replaceable。若 closure materialize 出 split road，所有仍引用 pre-split road id 的非 `retained_swsd` relation 必须同步到最终存在的 split road id。
 - 对 `junction_alignment_to_retained_swsd_exceeds_topology_gate` 阻断的 plan 行，Step3 wrapper 可用 surface 1:1 pass 或原始 pair endpoint 映射将该 gate 降级为人工审计风险并重跑替换；候选释放只引入 T05 有效语义路口关系可解释的多源节点分裂时，生成 `semantic_junction_group_id` 并把 topology hard fail 降级为 warn。其它新增 topology hard fail 必须回退对应 plan，相对传入 baseline 的新增 fail 必须在 summary 中暴露。
 - T05 `intersection_match_all.geojson` 中 `status=0 / base_id>0` 的关系是 Step3 语义路口组证据；`many_target_to_one_base` 允许形成同一组。分歧、合流等工艺差异导致 SWSD/RCSD 节点距离较远时不设硬阈值，但必须在 F-RCSD node 和 semantic junction group 审计中表达风险。
 - 对已满足 Step2 ready plan、锚定、连通、主干无争占和同源正式替换清单的 replacement unit，Step3 coverage 兜底若只发现端点缺口落在当前 unit 的 T05 junction anchor surface 内，应优先替换并追加人工审计风险，而不是把路口面内合理长度差异重新判为不可替换。该释放只扣除对应路口面内的 uncovered geometry，扣除后仍超阈值或出现 topology audit hard fail 时继续失败 / 回退。

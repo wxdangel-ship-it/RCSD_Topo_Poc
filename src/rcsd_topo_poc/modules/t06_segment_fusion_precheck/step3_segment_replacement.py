@@ -55,6 +55,7 @@ from .step3_group_replacement import (
     read_group_replacement_assignments,
     read_group_replacement_assignments_from_plan_rows,
 )
+from .step3_group_coverage_fallback import retain_group_coverage_fallback
 from .step3_output_utils import (
     change_rows as _change_rows,
     feature_id_set as _feature_id_set,
@@ -505,6 +506,31 @@ def run_t06_step3_segment_replacement(
         swsd_source_value=swsd_source_value,
         rcsd_source_value=rcsd_source_value,
     )
+    gcf_stats = retain_group_coverage_fallback(
+        units=units,
+        swsd_segments=swsd_segments,
+        swsd_roads=swsd_roads,
+        swsd_nodes=swsd_nodes,
+        frcsd_roads=frcsd_roads,
+        frcsd_nodes=frcsd_nodes,
+        segment_relation_rows=segment_relation_rows,
+        advance_right_audit_rows=right_attach_audit_rows,
+        removed_road_to_segments=removed_road_to_segments,
+        removed_node_to_segments=removed_node_to_segments,
+        source_field_name=source_field_name,
+        swsd_source_value=swsd_source_value,
+        rcsd_source_value=rcsd_source_value,
+    )
+    if gcf_stats["group_path_corridor_coverage_fallback_segment_count"]:
+        replacement_unit_rows = [feature(_replacement_unit_row(unit), unit.geometry) for unit in units]
+        removed_road_rows = _change_rows(removed_road_to_segments, "road", swsd_source_value, "replaced_swsd_segment")
+        removed_node_rows = _change_rows(removed_node_to_segments, "node", swsd_source_value, "removed_swsd_road_endpoint")
+        collision_rows = _id_collision_rows(
+            retained_swsd_road_ids=_feature_id_set(frcsd_roads, source_field_name, swsd_source_value),
+            retained_swsd_node_ids=_feature_id_set(frcsd_nodes, source_field_name, swsd_source_value),
+            added_rcsd_road_ids=set(added_road_to_segments),
+            added_rcsd_node_ids=set(added_node_to_segments),
+        )
     semantic_junction_group_rows, semantic_junction_group_stats = build_semantic_junction_groups(
         step2_replaceable_path=step2_replaceable_path,
         frcsd_nodes=frcsd_nodes,
@@ -769,6 +795,7 @@ def run_t06_step3_segment_replacement(
             **relation_node_map_backfill_stats,
             **retained_carrier_mainnode_sync_stats,
             **semantic_junction_group_stats,
+            **gcf_stats,
             **semantic_junction_topology_stats,
             **topology_connectivity_summary,
             "outputs": {

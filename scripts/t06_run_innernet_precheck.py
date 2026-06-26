@@ -58,6 +58,7 @@ def main() -> int:
         min_buffer_road_overlap_length_m=args.min_buffer_road_overlap_length_m,
         advance_right_formway_bit=args.advance_right_formway_bit,
         progress=args.progress,
+        write_json_outputs=args.write_json_outputs,
     )
 
     step1_summary = _read_json(artifacts.step1.summary_path)
@@ -96,6 +97,7 @@ def main() -> int:
                     "replacement_plan_count": step2_summary.get("replacement_plan_count"),
                     "replacement_plan_ready_count": step2_summary.get("replacement_plan_ready_count"),
                     "problem_registry_count": step2_summary.get("problem_registry_count"),
+                    "write_json_outputs": step2_summary.get("write_json_outputs"),
                     "rejected_count": step2_summary.get("rejected_count"),
                     "reject_reason_counts": step2_summary.get("reject_reason_counts"),
                     "buffer_segments": step2_summary.get("outputs", {}).get("buffer_segments_gpkg"),
@@ -132,6 +134,12 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--min-buffer-road-overlap-length-m", type=float, default=1.0)
     parser.add_argument("--advance-right-formway-bit", type=int, default=128)
     parser.add_argument("--progress", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument(
+        "--write-json-outputs",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Write Step2 JSON feature dumps. Disabled by default for innernet-scale runs; GPKG/CSV remain written.",
+    )
     return parser.parse_args()
 
 

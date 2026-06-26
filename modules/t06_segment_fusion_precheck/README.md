@@ -27,7 +27,7 @@
 
 T06 提供模块内 callable runner，并保留已登记内网脚本：
 
-- `scripts/t06_run_innernet_precheck.py`：Step1/Step2 内网包装。
+- `scripts/t06_run_innernet_precheck.py`：Step1/Step2 内网包装；内网规模默认跳过 Step2 大体量 JSON feature dump，保留 GPKG/CSV 和 summary。
 - `scripts/t06_run_step3_segment_replacement.py`：Step3 替换与可选 surface topology postprocess 包装。
 
 详细调用方式以 `INTERFACE_CONTRACT.md` 与 `docs/repository-metadata/entrypoint-registry.md` 为准。

@@ -25,6 +25,7 @@ def run_t06_segment_fusion_precheck(
     min_buffer_road_overlap_length_m: float = 1.0,
     advance_right_formway_bit: int = 128,
     progress: bool = False,
+    write_json_outputs: bool = True,
 ) -> T06PrecheckArtifacts:
     step1 = run_t06_step1_identify_fusion_units(
         swsd_segment_path=swsd_segment_path,
@@ -51,5 +52,6 @@ def run_t06_segment_fusion_precheck(
         min_buffer_road_overlap_length_m=min_buffer_road_overlap_length_m,
         advance_right_formway_bit=advance_right_formway_bit,
         progress=progress,
+        write_json_outputs=write_json_outputs,
     )
     return T06PrecheckArtifacts(run_id=step1.run_id, run_root=step1.run_root, step1=step1, step2=step2)

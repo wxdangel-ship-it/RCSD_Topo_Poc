@@ -114,3 +114,6 @@ def test_innernet_script_runs_t06_precheck_with_explicit_paths(tmp_path: Path) -
     assert "fusion_units" not in payload["step1"]
     assert payload["step2"]["replaceable_count"] == 1
     assert Path(payload["step2"]["replaceable"]).is_file()
+    assert payload["step2"]["write_json_outputs"] is False
+    assert not (Path(payload["step2"]["run_root"]) / "t06_rcsd_segment_replaceable.json").exists()
+    assert (Path(payload["step2"]["run_root"]) / "t06_segment_replacement_plan.gpkg").is_file()

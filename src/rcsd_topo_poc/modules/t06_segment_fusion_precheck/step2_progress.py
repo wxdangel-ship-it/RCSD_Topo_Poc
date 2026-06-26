@@ -18,9 +18,11 @@ class Step2Progress:
         self.progress_path = step_root / "t06_step2_progress.jsonl"
         self.heartbeat_path = step_root / "t06_step2_heartbeat.json"
         self.slow_units_path = step_root / "t06_step2_slow_units.jsonl"
+        self.slow_groups_path = step_root / "t06_step2_slow_groups.jsonl"
         self.stackdump_path = step_root / "t06_step2_stackdump.log"
         self._phase = "init"
         self._unit: dict[str, Any] | None = None
+        self._group: dict[str, Any] | None = None
         self._stackdump_file = None
         if self.enabled:
             self._install_stackdump()
@@ -41,10 +43,31 @@ class Step2Progress:
         if self.enabled:
             self._close_unit()
 
+    def group(self, index: int, *, segment_id: str, failure_business_count: int) -> None:
+        if not self.enabled:
+            return
+        self._close_group()
+        self._phase = "group_audit"
+        self._group = {"index": index, "segment_id": segment_id, "started_at": time.monotonic()}
+        fields = {
+            "phase": self._phase,
+            "index": index,
+            "segment_id": segment_id,
+            "failure_business_count": failure_business_count,
+        }
+        self._write_heartbeat(fields)
+        if index == 1 or index % 100 == 0:
+            self._write_event("group_progress", **fields)
+
+    def group_done(self, **fields: Any) -> None:
+        if self.enabled:
+            self._close_group(extra_fields=fields)
+
     def stage(self, name: str, **fields: Any) -> None:
         if not self.enabled:
             return
         self._close_unit()
+        self._close_group()
         self._phase = name
         payload = {"phase": name, **fields}
         self._write_event("stage", **payload)
@@ -54,6 +77,7 @@ class Step2Progress:
         if not self.enabled:
             return
         self._close_unit()
+        self._close_group()
         self._write_event("finish", phase="done", **fields)
         self._write_heartbeat({"phase": "done", **fields})
         self.close()
@@ -85,6 +109,20 @@ class Step2Progress:
                 },
             )
         self._unit = None
+
+    def _close_group(self, extra_fields: dict[str, Any] | None = None) -> None:
+        if self._group is None:
+            return
+        elapsed = time.monotonic() - float(self._group["started_at"])
+        payload = {
+            "elapsed_sec": round(elapsed, 3),
+            "index": self._group["index"],
+            "segment_id": self._group["segment_id"],
+            **(extra_fields or {}),
+        }
+        if elapsed >= self.slow_unit_sec:
+            self._write_jsonl(self.slow_groups_path, {"event": "slow_group", **payload})
+        self._group = None
 
     def _install_stackdump(self) -> None:
         if not hasattr(signal, "SIGUSR1"):

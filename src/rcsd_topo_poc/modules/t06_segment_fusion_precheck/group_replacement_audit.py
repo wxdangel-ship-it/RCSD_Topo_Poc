@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import heapq
 from dataclasses import dataclass
 from typing import Any
 
@@ -13,7 +14,7 @@ from .buffer_segment_extraction import (
     _build_undirected_graph,
     _edge_geometry,
     _nodes_from_edges,
-    _shortest_directed_path_covering_nodes,
+    _weighted_adjacency,
 )
 from .graph_builders import Edge, NodeCanonicalizer
 from .parsing import ParseError, directionality_from_sgrade, normalize_id, parse_id_list, unique_preserve_order
@@ -69,6 +70,12 @@ class _RoadGeometryIndex:
         return tuple(result)
 
 
+@dataclass(frozen=True)
+class _PathCorridorBuffers:
+    narrow: BaseGeometry
+    wide: BaseGeometry
+
+
 def build_group_replacement_audit_rows(
     *,
     fusion_units: list[dict[str, Any]],
@@ -81,6 +88,7 @@ def build_group_replacement_audit_rows(
     rejected_rows: list[dict[str, Any]],
     failure_business_audit_rows: list[dict[str, Any]],
     buffer_config: BufferExtractionConfig | None = None,
+    progress: Any | None = None,
 ) -> list[dict[str, Any]]:
     segment_by_id = _index_features(segments)
     fusion_segment_ids = {_feature_id(row) for row in fusion_units if _feature_id(row)}
@@ -106,6 +114,7 @@ def build_group_replacement_audit_rows(
 
     rows: list[dict[str, Any]] = []
     seen: set[str] = set()
+    group_index = 0
     for audit in failure_business_audit_rows:
         props = dict(audit.get("properties") or {})
         segment_id = str(props.get("swsd_segment_id") or "")
@@ -114,6 +123,9 @@ def build_group_replacement_audit_rows(
         if not _is_group_audit_candidate(props):
             continue
         seen.add(segment_id)
+        group_index += 1
+        if progress is not None:
+            progress.group(group_index, segment_id=segment_id, failure_business_count=len(failure_business_audit_rows))
         segment = segment_by_id.get(segment_id)
         segment_props = dict(segment.get("properties") or {}) if segment is not None else {}
         pair_nodes = _parse_list(props.get("swsd_pair_nodes") or segment_props.get("pair_nodes"))
@@ -147,10 +159,12 @@ def build_group_replacement_audit_rows(
         )
         group_segment_ids = unique_preserve_order([segment_id, *incident_segment_ids])
         path_geometry = _path_geometry(path_infos)
+        path_corridor_buffers = _path_corridor_buffers(path_geometry)
         path_corridor_incident_segment_ids = _path_corridor_segments(
             segment_ids=incident_segment_ids,
             segment_by_id=segment_by_id,
             path_geometry=path_geometry,
+            path_corridor_buffers=path_corridor_buffers,
         )
         path_corridor_segment_ids = unique_preserve_order([segment_id, *path_corridor_incident_segment_ids])
         side_incident_segment_ids = [sid for sid in incident_segment_ids if sid not in set(path_corridor_incident_segment_ids)]
@@ -164,6 +178,7 @@ def build_group_replacement_audit_rows(
             if _is_source_path_corridor_carrier(
                 segment=segment,
                 path_geometry=path_geometry,
+                path_corridor_buffers=path_corridor_buffers,
             )
             else [segment_id]
         )
@@ -243,6 +258,14 @@ def build_group_replacement_audit_rows(
                 path_geometry,
             )
         )
+        if progress is not None:
+            progress.group_done(
+                group_index=group_index,
+                segment_id=segment_id,
+                group_segment_count=len(group_segment_ids),
+                path_corridor_group_segment_count=len(path_corridor_segment_ids),
+                group_probe_status=group_probe["status"],
+            )
     return rows
 
 
@@ -282,13 +305,18 @@ def _path_infos(
         return []
     source, target = required_nodes
     result: list[dict[str, Any]] = []
+    adjacency = _weighted_adjacency(
+        graph_edges,
+        directed=True,
+        reference_geometry=segment_geometry,
+        required_nodes=set(required_nodes),
+    )
     for label, start, end in (("forward", source, target), ("reverse", target, source)):
-        edge_ids = _shortest_directed_path_covering_nodes(
-            graph_edges,
+        edge_ids = _shortest_path_from_adjacency(
+            adjacency,
             start,
             end,
             required_nodes,
-            reference_geometry=segment_geometry,
         )
         if not edge_ids:
             continue
@@ -302,6 +330,76 @@ def _path_infos(
             }
         )
     return result
+
+
+def _shortest_path_from_adjacency(
+    adjacency: dict[str, list[tuple[str, float, str]]],
+    source: str,
+    target: str,
+    required_nodes: list[str],
+) -> list[str] | None:
+    graph_nodes = set(adjacency)
+    graph_nodes.update(neighbor for neighbors in adjacency.values() for neighbor, _weight, _edge_id in neighbors)
+    terminals: list[str] = []
+    seen_terminals: set[str] = set()
+    for node in required_nodes:
+        if node not in graph_nodes or node in seen_terminals:
+            continue
+        seen_terminals.add(node)
+        terminals.append(node)
+    if source not in graph_nodes or target not in graph_nodes or len(terminals) < len(set(required_nodes)):
+        return None
+
+    terminal_index = {node: index for index, node in enumerate(terminals)}
+    all_mask = (1 << len(terminals)) - 1
+    start_mask = _node_mask(source, terminal_index)
+    queue: list[tuple[float, int, str, int]] = []
+    sequence = 0
+    heapq.heappush(queue, (0.0, sequence, source, start_mask))
+    distances: dict[tuple[str, int], float] = {(source, start_mask): 0.0}
+    previous: dict[tuple[str, int], tuple[str, int, str]] = {}
+    goal: tuple[str, int] | None = None
+
+    while queue:
+        distance, _sequence, node, mask = heapq.heappop(queue)
+        state = (node, mask)
+        if distance > distances.get(state, float("inf")):
+            continue
+        if node == target and mask == all_mask:
+            goal = state
+            break
+        for neighbor, weight, edge_id in adjacency.get(node, []):
+            next_mask = mask | _node_mask(neighbor, terminal_index)
+            next_state = (neighbor, next_mask)
+            next_distance = distance + weight
+            if next_distance >= distances.get(next_state, float("inf")):
+                continue
+            distances[next_state] = next_distance
+            previous[next_state] = (node, mask, edge_id)
+            sequence += 1
+            heapq.heappush(queue, (next_distance, sequence, neighbor, next_mask))
+
+    if goal is None:
+        return None
+
+    path: list[str] = []
+    state = goal
+    while state != (source, start_mask):
+        prev = previous.get(state)
+        if prev is None:
+            return None
+        prev_node, prev_mask, edge_id = prev
+        path.append(edge_id)
+        state = (prev_node, prev_mask)
+    path.reverse()
+    return path
+
+
+def _node_mask(node: str, terminal_index: dict[str, int]) -> int:
+    index = terminal_index.get(node)
+    if index is None:
+        return 0
+    return 1 << index
 
 
 def _path_geometry(path_infos: list[dict[str, Any]]) -> BaseGeometry | None:
@@ -318,6 +416,7 @@ def _path_corridor_segments(
     segment_ids: list[str],
     segment_by_id: dict[str, dict[str, Any]],
     path_geometry: BaseGeometry | None,
+    path_corridor_buffers: _PathCorridorBuffers | None = None,
 ) -> list[str]:
     if path_geometry is None or path_geometry.is_empty:
         return []
@@ -327,17 +426,34 @@ def _path_corridor_segments(
         geometry = segment.get("geometry") if segment is not None else None
         if not isinstance(geometry, BaseGeometry) or geometry.is_empty:
             continue
-        if _is_path_corridor_carrier(geometry, path_geometry):
+        if _is_path_corridor_carrier(geometry, path_geometry, path_corridor_buffers=path_corridor_buffers):
             result.append(segment_id)
     return result
 
 
-def _is_path_corridor_carrier(segment_geometry: BaseGeometry, path_geometry: BaseGeometry) -> bool:
+def _path_corridor_buffers(path_geometry: BaseGeometry | None) -> _PathCorridorBuffers | None:
+    if path_geometry is None or path_geometry.is_empty:
+        return None
+    return _PathCorridorBuffers(
+        narrow=path_geometry.buffer(PATH_CORRIDOR_NARROW_BUFFER_M),
+        wide=path_geometry.buffer(PATH_CORRIDOR_WIDE_BUFFER_M),
+    )
+
+
+def _is_path_corridor_carrier(
+    segment_geometry: BaseGeometry,
+    path_geometry: BaseGeometry,
+    *,
+    path_corridor_buffers: _PathCorridorBuffers | None = None,
+) -> bool:
     length = float(segment_geometry.length or 0.0)
     if length <= 0:
         return False
-    narrow_ratio = segment_geometry.intersection(path_geometry.buffer(PATH_CORRIDOR_NARROW_BUFFER_M)).length / length
-    wide_ratio = segment_geometry.intersection(path_geometry.buffer(PATH_CORRIDOR_WIDE_BUFFER_M)).length / length
+    buffers = path_corridor_buffers or _path_corridor_buffers(path_geometry)
+    if buffers is None:
+        return False
+    narrow_ratio = segment_geometry.intersection(buffers.narrow).length / length
+    wide_ratio = segment_geometry.intersection(buffers.wide).length / length
     return (
         narrow_ratio >= PATH_CORRIDOR_MIN_NARROW_OVERLAP_RATIO
         or wide_ratio >= PATH_CORRIDOR_MIN_WIDE_OVERLAP_RATIO
@@ -348,13 +464,14 @@ def _is_source_path_corridor_carrier(
     *,
     segment: dict[str, Any] | None,
     path_geometry: BaseGeometry | None,
+    path_corridor_buffers: _PathCorridorBuffers | None = None,
 ) -> bool:
     if path_geometry is None or path_geometry.is_empty:
         return False
     geometry = (segment or {}).get("geometry")
     if not isinstance(geometry, BaseGeometry) or geometry.is_empty:
         return False
-    return _is_path_corridor_carrier(geometry, path_geometry)
+    return _is_path_corridor_carrier(geometry, path_geometry, path_corridor_buffers=path_corridor_buffers)
 
 
 def _group_union_probe(

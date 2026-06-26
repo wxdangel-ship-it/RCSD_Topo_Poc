@@ -85,6 +85,9 @@ def test_step1_identifies_evd_fusion_fail4_and_rejections(tmp_path: Path) -> Non
     assert summary["swsd_candidate_count"] == 3
     assert summary["final_fusion_unit_count"] == 2
     assert summary["swsd_final_fusion_unit_count"] == 2
+    assert summary["segment_total"] == 5
+    assert summary["all_required_junctions_have_evidence_segment_count"] == 3
+    assert summary["all_required_junctions_anchored_segment_count"] == 2
     assert summary["has_fail4_fallback_segment_count"] == 1
     assert summary["reject_reason_counts"]["has_evd_not_yes"] == 1
     assert summary["reject_reason_counts"]["invalid_pair_nodes"] == 1

@@ -146,6 +146,8 @@ class T05Phase2Artifacts:
     relation_graph_consumability_audit_json_path: Path
     junction_anchor_funnel_summary_path: Path
     junction_anchor_source_funnel_csv_path: Path
+    junction_anchor_kind2_funnel_csv_path: Path
+    junction_anchor_kind2_funnel_json_path: Path
     junction_anchor_failure_reasons_csv_path: Path
     summary_path: Path
     relation_count: int

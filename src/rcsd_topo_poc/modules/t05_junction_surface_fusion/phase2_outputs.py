@@ -5,7 +5,12 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any, Callable
 
-from .phase2_anchor_funnel import FAILURE_REASON_FIELDS, SOURCE_FUNNEL_FIELDS, build_junction_anchor_funnel
+from .phase2_anchor_funnel import (
+    FAILURE_REASON_FIELDS,
+    KIND2_FUNNEL_FIELDS,
+    SOURCE_FUNNEL_FIELDS,
+    build_junction_anchor_funnel,
+)
 from .phase2_io import write_csv, write_gpkg, write_json, write_relation_geojson_crs84
 from .phase2_graph_consumability import (
     RELATION_GRAPH_CONSUMABILITY_FIELDS,
@@ -50,6 +55,8 @@ RELATION_GRAPH_CONSUMABILITY_AUDIT_CSV = "relation_graph_consumability_audit.csv
 RELATION_GRAPH_CONSUMABILITY_AUDIT_JSON = "relation_graph_consumability_audit.json"
 JUNCTION_ANCHOR_FUNNEL_SUMMARY_JSON = "t05_junction_anchor_funnel_summary.json"
 JUNCTION_ANCHOR_SOURCE_FUNNEL_CSV = "t05_junction_anchor_source_funnel.csv"
+JUNCTION_ANCHOR_KIND2_FUNNEL_CSV = "t05_junction_anchor_kind2_funnel.csv"
+JUNCTION_ANCHOR_KIND2_FUNNEL_JSON = "t05_junction_anchor_kind2_funnel.json"
 JUNCTION_ANCHOR_FAILURE_REASONS_CSV = "t05_junction_anchor_failure_reasons.csv"
 SUMMARY_FILENAME = "summary.json"
 
@@ -98,6 +105,8 @@ def write_phase2_outputs(
     relation_graph_consumability_audit_json_path = run_root / RELATION_GRAPH_CONSUMABILITY_AUDIT_JSON
     junction_anchor_funnel_summary_path = run_root / JUNCTION_ANCHOR_FUNNEL_SUMMARY_JSON
     junction_anchor_source_funnel_csv_path = run_root / JUNCTION_ANCHOR_SOURCE_FUNNEL_CSV
+    junction_anchor_kind2_funnel_csv_path = run_root / JUNCTION_ANCHOR_KIND2_FUNNEL_CSV
+    junction_anchor_kind2_funnel_json_path = run_root / JUNCTION_ANCHOR_KIND2_FUNNEL_JSON
     junction_anchor_failure_reasons_csv_path = run_root / JUNCTION_ANCHOR_FAILURE_REASONS_CSV
     summary_path = run_root / SUMMARY_FILENAME
 
@@ -343,6 +352,31 @@ def write_phase2_outputs(
         output_sizes_bytes=output_sizes_bytes,
     )
     _write_with_timing(
+        "t05_junction_anchor_kind2_funnel_csv",
+        junction_anchor_kind2_funnel_csv_path,
+        len(junction_anchor_funnel["kind2_funnel"]),
+        lambda: write_csv(
+            junction_anchor_kind2_funnel_csv_path,
+            junction_anchor_funnel["kind2_funnel"],
+            KIND2_FUNNEL_FIELDS,
+        ),
+        progress_logger=progress_logger,
+        output_timings_sec=output_timings_sec,
+        output_sizes_bytes=output_sizes_bytes,
+    )
+    _write_with_timing(
+        "t05_junction_anchor_kind2_funnel_json",
+        junction_anchor_kind2_funnel_json_path,
+        len(junction_anchor_funnel["kind2_funnel"]),
+        lambda: write_json(
+            junction_anchor_kind2_funnel_json_path,
+            {"row_count": len(junction_anchor_funnel["kind2_funnel"]), "rows": junction_anchor_funnel["kind2_funnel"]},
+        ),
+        progress_logger=progress_logger,
+        output_timings_sec=output_timings_sec,
+        output_sizes_bytes=output_sizes_bytes,
+    )
+    _write_with_timing(
         "t05_junction_anchor_failure_reasons",
         junction_anchor_failure_reasons_csv_path,
         len(junction_anchor_funnel["failure_reason_rows"]),
@@ -399,6 +433,8 @@ def write_phase2_outputs(
             "relation_graph_consumability_audit_json": str(relation_graph_consumability_audit_json_path),
             "t05_junction_anchor_funnel_summary": str(junction_anchor_funnel_summary_path),
             "t05_junction_anchor_source_funnel": str(junction_anchor_source_funnel_csv_path),
+            "t05_junction_anchor_kind2_funnel_csv": str(junction_anchor_kind2_funnel_csv_path),
+            "t05_junction_anchor_kind2_funnel_json": str(junction_anchor_kind2_funnel_json_path),
             "t05_junction_anchor_failure_reasons": str(junction_anchor_failure_reasons_csv_path),
             "summary": str(summary_path),
         },
@@ -425,6 +461,8 @@ def write_phase2_outputs(
         "relation_graph_consumability_audit_json_path": relation_graph_consumability_audit_json_path,
         "junction_anchor_funnel_summary_path": junction_anchor_funnel_summary_path,
         "junction_anchor_source_funnel_csv_path": junction_anchor_source_funnel_csv_path,
+        "junction_anchor_kind2_funnel_csv_path": junction_anchor_kind2_funnel_csv_path,
+        "junction_anchor_kind2_funnel_json_path": junction_anchor_kind2_funnel_json_path,
         "junction_anchor_failure_reasons_csv_path": junction_anchor_failure_reasons_csv_path,
         "summary_path": summary_path,
         "summary": summary,

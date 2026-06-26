@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 from shapely.geometry.base import BaseGeometry
+from shapely.strtree import STRtree
 
 from .buffer_segment_extraction import (
     BufferExtractionConfig,
@@ -29,6 +31,42 @@ PATH_CORRIDOR_WIDE_BUFFER_M = 50.0
 PATH_CORRIDOR_MIN_NARROW_OVERLAP_RATIO = 0.5
 PATH_CORRIDOR_MIN_WIDE_OVERLAP_RATIO = 0.75
 GROUP_PROBE_BUFFER_DISTANCES_M = (50.0, 75.0, 100.0, 150.0)
+MAX_UNCOVERED_AUGMENTATION_ITERATIONS = 256
+
+
+@dataclass(frozen=True)
+class _RoadGeometryEntry:
+    road_id: str
+    geometry: BaseGeometry
+    length: float
+
+
+@dataclass(frozen=True)
+class _RoadGeometryIndex:
+    entries: tuple[_RoadGeometryEntry, ...]
+    tree: STRtree | None
+    geometry_index_by_id: dict[int, int]
+
+    @classmethod
+    def build(cls, rcsd_road_by_id: dict[str, dict[str, Any]]) -> "_RoadGeometryIndex":
+        entries = tuple(_road_geometry_entries(rcsd_road_by_id))
+        geometries = [entry.geometry for entry in entries]
+        return cls(
+            entries=entries,
+            tree=STRtree(geometries) if geometries else None,
+            geometry_index_by_id={id(geometry): index for index, geometry in enumerate(geometries)},
+        )
+
+    def query(self, geometry: BaseGeometry) -> tuple[_RoadGeometryEntry, ...]:
+        if self.tree is None or geometry.is_empty:
+            return ()
+        result: list[_RoadGeometryEntry] = []
+        for item in self.tree.query(geometry):
+            index = _strtree_query_index(item, self.geometry_index_by_id)
+            if index is None or index < 0 or index >= len(self.entries):
+                continue
+            result.append(self.entries[index])
+        return tuple(result)
 
 
 def build_group_replacement_audit_rows(
@@ -59,6 +97,7 @@ def build_group_replacement_audit_rows(
     graph_edges = _build_undirected_graph(rcsd_roads, node_canonicalizer=rcsd_node_canonicalizer).edges
     edge_by_id = {edge.edge_id: edge for edge in graph_edges}
     rcsd_road_by_id = _index_features(rcsd_roads)
+    rcsd_road_index = _RoadGeometryIndex.build(rcsd_road_by_id)
     group_probe_extractor = (
         BufferSegmentExtractor(rcsd_road_features=rcsd_roads, rcsd_node_features=rcsd_nodes)
         if rcsd_nodes is not None
@@ -156,6 +195,7 @@ def build_group_replacement_audit_rows(
             buffer_config=buffer_config,
             replaceable_road_ids_by_segment=replaceable_road_ids_by_segment,
             rcsd_road_by_id=rcsd_road_by_id,
+            rcsd_road_index=rcsd_road_index,
         )
         rows.append(
             feature(
@@ -329,6 +369,7 @@ def _group_union_probe(
     buffer_config: BufferExtractionConfig | None,
     replaceable_road_ids_by_segment: dict[str, list[str]],
     rcsd_road_by_id: dict[str, dict[str, Any]],
+    rcsd_road_index: _RoadGeometryIndex,
 ) -> dict[str, Any]:
     if extractor is None:
         return _group_probe_row("not_evaluated", "missing_rcsd_nodes_for_probe")
@@ -381,6 +422,7 @@ def _group_union_probe(
                 segment_ids=segment_ids,
                 segment_by_id=segment_by_id,
                 rcsd_road_by_id=rcsd_road_by_id,
+                rcsd_road_index=rcsd_road_index,
             )
             return _group_probe_row(
                 "passed",
@@ -404,6 +446,7 @@ def _group_union_probe(
                 segment_ids=segment_ids,
                 segment_by_id=segment_by_id,
                 rcsd_road_by_id=rcsd_road_by_id,
+                rcsd_road_index=rcsd_road_index,
             )
             augmented_probe["rcsd_road_ids"] = road_ids
             augmented_probe["rcsd_road_count"] = len(road_ids)
@@ -423,18 +466,20 @@ def _augment_probe_with_uncovered_segment_geometry(
     segment_ids: list[str],
     segment_by_id: dict[str, dict[str, Any]],
     rcsd_road_by_id: dict[str, dict[str, Any]],
+    rcsd_road_index: _RoadGeometryIndex,
     coverage_buffer_m: float = 5.0,
     candidate_buffer_m: float = 8.0,
     segment_max_uncovered_ratio: float = 0.02,
     segment_min_uncovered_length_m: float = 20.0,
     candidate_min_overlap_length_m: float = 8.0,
     candidate_min_inside_ratio: float = 0.4,
+    max_augmentation_iterations: int = MAX_UNCOVERED_AUGMENTATION_ITERATIONS,
 ) -> list[str]:
     current_ids = unique_preserve_order(retained_road_ids)
     if not current_ids:
         return current_ids
 
-    while True:
+    for _ in range(max_augmentation_iterations):
         selected_geometry = _road_union(current_ids, rcsd_road_by_id)
         if selected_geometry is None or selected_geometry.is_empty:
             return current_ids
@@ -452,7 +497,7 @@ def _augment_probe_with_uncovered_segment_geometry(
         candidate_id = _best_uncovered_segment_candidate(
             uncovered_geometry,
             current_ids=set(current_ids),
-            rcsd_road_by_id=rcsd_road_by_id,
+            rcsd_road_index=rcsd_road_index,
             candidate_buffer_m=candidate_buffer_m,
             candidate_min_overlap_length_m=candidate_min_overlap_length_m,
             candidate_min_inside_ratio=candidate_min_inside_ratio,
@@ -460,6 +505,7 @@ def _augment_probe_with_uncovered_segment_geometry(
         if candidate_id is None:
             return current_ids
         current_ids.append(candidate_id)
+    return current_ids
 
 
 def _road_union(road_ids: list[str], rcsd_road_by_id: dict[str, dict[str, Any]]) -> BaseGeometry | None:
@@ -485,12 +531,13 @@ def _worst_uncovered_segment(
     coverage_buffer_m: float,
 ) -> tuple[float, BaseGeometry] | None:
     worst: tuple[float, BaseGeometry] | None = None
+    selected_buffer = selected_geometry.buffer(coverage_buffer_m)
     for segment_id in segment_ids:
         segment = segment_by_id.get(segment_id)
         geometry = segment.get("geometry") if segment is not None else None
         if not isinstance(geometry, BaseGeometry) or geometry.is_empty or geometry.length <= 0:
             continue
-        uncovered = geometry.difference(selected_geometry.buffer(coverage_buffer_m))
+        uncovered = geometry.difference(selected_buffer)
         ratio = float(uncovered.length) / float(geometry.length)
         if worst is None or ratio > worst[0]:
             worst = (ratio, uncovered)
@@ -501,23 +548,27 @@ def _best_uncovered_segment_candidate(
     uncovered_geometry: BaseGeometry,
     *,
     current_ids: set[str],
-    rcsd_road_by_id: dict[str, dict[str, Any]],
+    rcsd_road_index: _RoadGeometryIndex,
     candidate_buffer_m: float,
     candidate_min_overlap_length_m: float,
     candidate_min_inside_ratio: float,
 ) -> str | None:
     best: tuple[float, float, float, str] | None = None
-    for road_id, road in rcsd_road_by_id.items():
+    candidate_scope = uncovered_geometry.buffer(candidate_buffer_m)
+    if candidate_scope.is_empty:
+        return None
+    for entry in rcsd_road_index.query(candidate_scope):
+        road_id = entry.road_id
         if road_id in current_ids:
             continue
-        geometry = road.get("geometry")
-        if not isinstance(geometry, BaseGeometry) or geometry.is_empty or geometry.length <= 0:
+        geometry = entry.geometry
+        if not geometry.intersects(candidate_scope):
             continue
-        overlap = float(geometry.intersection(uncovered_geometry.buffer(candidate_buffer_m)).length)
-        inside_ratio = overlap / float(geometry.length)
+        overlap = float(geometry.intersection(candidate_scope).length)
+        inside_ratio = overlap / entry.length
         if overlap < candidate_min_overlap_length_m or inside_ratio < candidate_min_inside_ratio:
             continue
-        score = (overlap, inside_ratio, float(geometry.length), road_id)
+        score = (overlap, inside_ratio, entry.length, road_id)
         if best is None or score > best:
             best = score
     return best[3] if best is not None else None
@@ -833,6 +884,26 @@ def _index_features(features: list[dict[str, Any]]) -> dict[str, dict[str, Any]]
         if item_id:
             result[item_id] = item
     return result
+
+
+def _road_geometry_entries(rcsd_road_by_id: dict[str, dict[str, Any]]) -> list[_RoadGeometryEntry]:
+    result: list[_RoadGeometryEntry] = []
+    for road_id, road in rcsd_road_by_id.items():
+        geometry = road.get("geometry")
+        if not isinstance(geometry, BaseGeometry) or geometry.is_empty:
+            continue
+        length = float(geometry.length or 0.0)
+        if length <= 0.0:
+            continue
+        result.append(_RoadGeometryEntry(str(road_id), geometry, length))
+    return result
+
+
+def _strtree_query_index(item: Any, geometry_index_by_id: dict[int, int]) -> int | None:
+    try:
+        return int(item)
+    except (TypeError, ValueError):
+        return geometry_index_by_id.get(id(item))
 
 
 def _feature_id(item: dict[str, Any]) -> str:

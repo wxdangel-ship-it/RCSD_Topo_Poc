@@ -55,7 +55,21 @@ from .step3_group_replacement import (
     read_group_replacement_assignments,
     read_group_replacement_assignments_from_plan_rows,
 )
+from .step3_output_utils import (
+    change_rows as _change_rows,
+    feature_id_set as _feature_id_set,
+    fieldnames as _fieldnames,
+    id_collision_rows as _id_collision_rows,
+    unreplaced_rcsd_road_rows as _unreplaced_rcsd_road_rows,
+)
 from .step3_relation_node_map import backfill_relation_node_maps_from_attachment_audit, sync_retained_swsd_carrier_mainnodes
+from .step3_semantic_junction_groups import (
+    SEMANTIC_JUNCTION_GROUP_FIELD,
+    STEP3_SEMANTIC_JUNCTION_GROUP_FIELDS,
+    STEP3_SEMANTIC_JUNCTION_GROUPS_STEM,
+    build_semantic_junction_groups,
+    downgrade_semantic_junction_topology_rows,
+)
 from .step3_rcsd_advance_right_closure import (
     apply_final_advance_right_endpoint_closure as _close_final_adv,
     apply_native_rcsd_advance_right_closure,
@@ -491,6 +505,14 @@ def run_t06_step3_segment_replacement(
         swsd_source_value=swsd_source_value,
         rcsd_source_value=rcsd_source_value,
     )
+    semantic_junction_group_rows, semantic_junction_group_stats = build_semantic_junction_groups(
+        step2_replaceable_path=step2_replaceable_path,
+        frcsd_nodes=frcsd_nodes,
+        segment_relation_rows=segment_relation_rows,
+        source_field_name=source_field_name,
+        swsd_source_value=swsd_source_value,
+        rcsd_source_value=rcsd_source_value,
+    )
 
     road_paths = write_feature_triplet(
         step_root=step_root,
@@ -502,7 +524,7 @@ def run_t06_step3_segment_replacement(
         step_root=step_root,
         stem=STEP3_FRCSD_NODE_STEM,
         features=frcsd_nodes,
-        fieldnames=_fieldnames(frcsd_nodes, ["id", "mainnodeid", source_field_name]),
+        fieldnames=_fieldnames(frcsd_nodes, ["id", "mainnodeid", source_field_name, SEMANTIC_JUNCTION_GROUP_FIELD]),
     )
     replacement_unit_paths = write_feature_triplet(
         step_root=step_root,
@@ -515,6 +537,12 @@ def run_t06_step3_segment_replacement(
         stem=STEP3_SWSD_FRCSD_SEGMENT_RELATION_STEM,
         features=segment_relation_rows,
         fieldnames=STEP3_SWSD_FRCSD_SEGMENT_RELATION_FIELDS,
+    )
+    semantic_junction_group_paths = write_feature_triplet(
+        step_root=step_root,
+        stem=STEP3_SEMANTIC_JUNCTION_GROUPS_STEM,
+        features=semantic_junction_group_rows,
+        fieldnames=STEP3_SEMANTIC_JUNCTION_GROUP_FIELDS,
     )
     junction_paths = write_feature_triplet(
         step_root=step_root,
@@ -550,6 +578,10 @@ def run_t06_step3_segment_replacement(
         source_field_name=source_field_name,
         swsd_source_value=swsd_source_value,
         rcsd_source_value=rcsd_source_value,
+    )
+    semantic_junction_topology_stats = downgrade_semantic_junction_topology_rows(
+        topology_connectivity_audit_rows,
+        semantic_junction_group_rows,
     )
     topology_connectivity_paths = write_feature_triplet(
         step_root=step_root,
@@ -736,12 +768,15 @@ def run_t06_step3_segment_replacement(
             "segment_relation_failed_count": sum(1 for row in segment_relation_rows if row["properties"].get("relation_status") == "failed"),
             **relation_node_map_backfill_stats,
             **retained_carrier_mainnode_sync_stats,
+            **semantic_junction_group_stats,
+            **semantic_junction_topology_stats,
             **topology_connectivity_summary,
             "outputs": {
                 **{f"frcsd_road_{key}": str(value) for key, value in road_paths.items()},
                 **{f"frcsd_node_{key}": str(value) for key, value in node_paths.items()},
                 **{f"replacement_units_{key}": str(value) for key, value in replacement_unit_paths.items()},
                 **{f"swsd_frcsd_segment_relation_{key}": str(value) for key, value in segment_relation_paths.items()},
+                **{f"semantic_junction_groups_{key}": str(value) for key, value in semantic_junction_group_paths.items()},
                 **{f"junction_rebuild_audit_{key}": str(value) for key, value in junction_paths.items()},
                 **{f"removed_swsd_roads_{key}": str(value) for key, value in removed_road_paths.items()},
                 **{f"removed_swsd_nodes_{key}": str(value) for key, value in removed_node_paths.items()},
@@ -2154,98 +2189,6 @@ def _replacement_unit_row(unit: ReplacementUnit) -> dict[str, Any]:
         "group_replacement_segment_ids": unit.group_replacement_segment_ids,
         "group_replacement_buffer_distances_m": unit.group_replacement_buffer_distances_m,
     }
-
-
-def _change_rows(items: dict[str, list[str]], entity_type: str, source_value: int, reason: str) -> list[dict[str, Any]]:
-    return [
-        feature(
-            {
-                "entity_id": entity_id,
-                "entity_type": entity_type,
-                "source": source_value,
-                "reason": reason,
-                "swsd_segment_ids": segment_ids,
-            },
-            None,
-        )
-        for entity_id, segment_ids in sorted(items.items(), key=lambda item: _id_sort_key(item[0]))
-    ]
-
-
-def _unreplaced_rcsd_road_rows(
-    *,
-    rcsd_roads: list[dict[str, Any]],
-    added_road_ids: set[str],
-    source_value: int,
-) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    for road in rcsd_roads:
-        try:
-            road_id = _feature_id(road)
-        except ParseError:
-            continue
-        if road_id in added_road_ids:
-            continue
-        props = dict(road.get("properties") or {})
-        props.update(
-            {
-                "id": road_id,
-                "replacement_status": "not_replaced",
-                "audit_reason": "not_referenced_by_step2_replaceable_rcsd_segment",
-                "source": source_value,
-                "length_m": _round_length(_feature_length(road)),
-            }
-        )
-        rows.append(feature(props, road.get("geometry")))
-    return sorted(rows, key=lambda item: _id_sort_key(_feature_id(item)))
-
-
-def _feature_id_set(features: list[dict[str, Any]], source_field_name: str, source_value: int) -> set[str]:
-    return {
-        _feature_id(item)
-        for item in features
-        if (item.get("properties") or {}).get(source_field_name) == source_value
-    }
-
-
-def _id_collision_rows(
-    *,
-    retained_swsd_road_ids: set[str],
-    retained_swsd_node_ids: set[str],
-    added_rcsd_road_ids: set[str],
-    added_rcsd_node_ids: set[str],
-) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    for entity_type, swsd_ids, rcsd_ids in (
-        ("road", retained_swsd_road_ids, added_rcsd_road_ids),
-        ("node", retained_swsd_node_ids, added_rcsd_node_ids),
-    ):
-        for entity_id in sorted(swsd_ids.intersection(rcsd_ids), key=_id_sort_key):
-            rows.append(
-                feature(
-                    {
-                        "entity_type": entity_type,
-                        "entity_id": entity_id,
-                        "swsd_present": True,
-                        "rcsd_present": True,
-                        "policy": "keep_original_ids_and_audit_with_source_field",
-                    },
-                    None,
-                )
-            )
-    return rows
-
-
-def _fieldnames(features: list[dict[str, Any]], preferred: list[str]) -> list[str]:
-    fields: list[str] = []
-    for field_name in preferred:
-        if field_name not in fields:
-            fields.append(field_name)
-    for item in features:
-        for field_name in (item.get("properties") or {}).keys():
-            if field_name not in fields:
-                fields.append(field_name)
-    return fields
 
 
 def _feature_length(feature_item: dict[str, Any]) -> float:

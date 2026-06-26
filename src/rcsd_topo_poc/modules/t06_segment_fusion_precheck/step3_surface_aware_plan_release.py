@@ -7,6 +7,11 @@ from typing import Any
 from .io import read_features, write_json
 from .parsing import parse_id_list, unique_preserve_order
 from .schemas import STEP3_SWSD_FRCSD_SEGMENT_RELATION_STEM
+from .step3_semantic_junction_groups import (
+    discover_intersection_match_path,
+    refresh_semantic_junction_topology_audit,
+    valid_t05_relation_targets,
+)
 from .step3_segment_replacement import T06Step3Artifacts, run_t06_step3_segment_replacement
 from .step3_topology_connectivity_audit import STEP3_TOPOLOGY_CONNECTIVITY_AUDIT_STEM
 from .step3_surface_topology_audit import run_surface_topology_postprocess
@@ -23,6 +28,7 @@ VISUAL_CONFLICT_ROLLBACK_REASON = "visual_conflict_release_failed_topology_gate"
 RETAINED_JUNCTION_ATTACHMENT_GAP_M = 20.0
 OPTIONAL_JUNCTION_ANCHOR_RELEASE_MAX_GAP_M = 50.0
 OPTIONAL_JUNCTION_ANCHOR_RELEASE_REASON = "auto_closed_step2_optional_junc_anchor"
+T05_SEMANTIC_JUNCTION_RELEASE_REASON = "auto_closed_t05_semantic_junction_relation"
 SURFACE_RELEASE_REASONS = {
     "auto_closed",
     "auto_closed_surface_1v1",
@@ -31,6 +37,7 @@ SURFACE_RELEASE_REASONS = {
     "auto_closed_relation_mapped_boundary_1v1",
     "auto_closed_selected_replacement_endpoint",
     OPTIONAL_JUNCTION_ANCHOR_RELEASE_REASON,
+    T05_SEMANTIC_JUNCTION_RELEASE_REASON,
 }
 
 
@@ -305,7 +312,7 @@ def _run_surface(
 ) -> dict[str, Any] | None:
     if not any(surface_inputs.values()):
         return None
-    return run_surface_topology_postprocess(
+    summary = run_surface_topology_postprocess(
         step_root=artifacts.step_root,
         swsd_segment_path=swsd_segment_path,
         swsd_roads_path=swsd_roads_path,
@@ -316,6 +323,10 @@ def _run_surface(
         t05_surface_path=surface_inputs.get("t05_surface_path"),
         apply_closure=surface_topology_closure,
     )
+    semantic_stats = refresh_semantic_junction_topology_audit(step_root=artifacts.step_root, summary_path=artifacts.summary_path)
+    if summary is not None:
+        summary["semantic_junction_topology_refresh"] = semantic_stats
+    return summary
 
 
 def _surface_release_plan_rows(
@@ -334,6 +345,8 @@ def _surface_release_plan_rows(
     rcsd_node_rows = read_features(rcsdnode_path)
     rcsd_points = _points_by_id(rcsd_node_rows)
     rcsd_fallback_points = _fallback_points_by_id(rcsd_node_rows)
+    t05_relation_by_target = _t05_relation_targets_for_step(step_root)
+    rcsd_semantic_ids_by_node = _semantic_ids_by_node(rcsd_node_rows)
     incident = _incident_segments_by_node(read_features(swsd_segment_path))
     ready_segments = _ready_segment_ids(plan_rows)
     released: list[dict[str, Any]] = []
@@ -352,6 +365,8 @@ def _surface_release_plan_rows(
             swsd_anchor_nodes,
             swsd_fallback_points=swsd_fallback_points,
             rcsd_fallback_points=rcsd_fallback_points,
+            t05_relation_by_target=t05_relation_by_target,
+            rcsd_semantic_ids_by_node=rcsd_semantic_ids_by_node,
         )
         if not allow:
             continue
@@ -378,10 +393,14 @@ def _release_allowed(
     swsd_anchor_nodes: set[str] | None = None,
     swsd_fallback_points: dict[str, Any] | None = None,
     rcsd_fallback_points: dict[str, Any] | None = None,
+    t05_relation_by_target: dict[str, str] | None = None,
+    rcsd_semantic_ids_by_node: dict[str, set[str]] | None = None,
 ) -> tuple[bool, list[dict[str, Any]]]:
     if not _is_retained_junction_gate_plan(props):
         return False, []
     swsd_anchor_nodes = swsd_anchor_nodes or set()
+    t05_relation_by_target = t05_relation_by_target or {}
+    rcsd_semantic_ids_by_node = rcsd_semantic_ids_by_node or {}
     triggers: list[dict[str, Any]] = []
     for swsd_node_id, rcsd_node_id in _plan_mappings(props):
         if not any(segment_id not in ready_segments for segment_id in incident.get(swsd_node_id, [])):
@@ -394,6 +413,8 @@ def _release_allowed(
             rcsd_points=rcsd_points,
             surface_status=surface_status,
             swsd_anchor_nodes=swsd_anchor_nodes,
+            t05_relation_by_target=t05_relation_by_target,
+            rcsd_semantic_ids_by_node=rcsd_semantic_ids_by_node,
         )
         if trigger is None:
             trigger = _release_trigger_for_mapping(
@@ -405,6 +426,8 @@ def _release_allowed(
                 surface_status=surface_status,
                 swsd_anchor_nodes=swsd_anchor_nodes,
                 point_source="mainnodeid_fallback",
+                t05_relation_by_target=t05_relation_by_target,
+                rcsd_semantic_ids_by_node=rcsd_semantic_ids_by_node,
             )
         if trigger is None:
             continue
@@ -422,14 +445,25 @@ def _release_trigger_for_mapping(
     surface_status: dict[str, tuple[str, str, Any]],
     swsd_anchor_nodes: set[str],
     point_source: str | None = None,
+    t05_relation_by_target: dict[str, str] | None = None,
+    rcsd_semantic_ids_by_node: dict[str, set[str]] | None = None,
 ) -> dict[str, Any] | None:
     if swsd_node_id not in swsd_points or rcsd_node_id not in rcsd_points:
         return None
     distance_m = float(swsd_points[swsd_node_id].distance(rcsd_points[rcsd_node_id]))
-    if distance_m <= RETAINED_JUNCTION_ATTACHMENT_GAP_M:
-        return None
+    t05_release = _is_t05_semantic_relation_mapping(
+        swsd_node_id,
+        rcsd_node_id,
+        t05_relation_by_target or {},
+        rcsd_semantic_ids_by_node or {},
+    )
     status = surface_status.get(swsd_node_id)
-    if status:
+    if t05_release:
+        ok = True
+        release_status = ["pass", T05_SEMANTIC_JUNCTION_RELEASE_REASON, round(distance_m, 3)]
+    elif distance_m <= RETAINED_JUNCTION_ATTACHMENT_GAP_M:
+        return None
+    elif status:
         ok = bool(status[0] == "pass" and status[1] in SURFACE_RELEASE_REASONS)
         release_status = list(status)
     elif _is_original_pair_endpoint_mapping(props, swsd_node_id, rcsd_node_id):
@@ -451,6 +485,19 @@ def _release_trigger_for_mapping(
     if point_source:
         trigger["point_source"] = point_source
     return trigger
+
+
+def _is_t05_semantic_relation_mapping(
+    swsd_node_id: str,
+    rcsd_node_id: str,
+    t05_relation_by_target: dict[str, str],
+    rcsd_semantic_ids_by_node: dict[str, set[str]],
+) -> bool:
+    base_id = t05_relation_by_target.get(swsd_node_id)
+    if not base_id:
+        return False
+    semantic_ids = rcsd_semantic_ids_by_node.get(rcsd_node_id, {rcsd_node_id})
+    return base_id in semantic_ids
 
 
 def _is_retained_junction_gate_plan(props: dict[str, Any]) -> bool:
@@ -652,6 +699,27 @@ def _surface_status_by_node(step_root: Path) -> dict[str, tuple[str, str, Any]]:
         node_id = str(props.get("swsd_node_id") or "")
         if node_id:
             result[node_id] = (str(props.get("audit_status") or ""), str(props.get("audit_reason") or ""), props.get("max_pairwise_distance_m"))
+    return result
+
+
+def _t05_relation_targets_for_step(step_root: Path) -> dict[str, str]:
+    step2_replaceable_path = _summary_input_path(step_root / "t06_step3_summary.json", "step2_replaceable_path")
+    if step2_replaceable_path is None:
+        return {}
+    relation_path = discover_intersection_match_path(step2_replaceable_path)
+    if relation_path is None:
+        return {}
+    return valid_t05_relation_targets(relation_path)
+
+
+def _semantic_ids_by_node(rows: list[dict[str, Any]]) -> dict[str, set[str]]:
+    result: dict[str, set[str]] = {}
+    for row in rows:
+        exact_ids = _feature_exact_ids(row)
+        if not exact_ids:
+            continue
+        node_id = exact_ids[0]
+        result[node_id] = set(_feature_ids(row))
     return result
 
 

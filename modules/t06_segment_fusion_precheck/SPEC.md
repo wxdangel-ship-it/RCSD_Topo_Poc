@@ -71,7 +71,8 @@ T06 消费 T01 SWSD Segment 与 T05 SWSD-RCSD 语义路口关系，构建 RCSDSe
 | `t06_segment_replacement_plan.*` | Step2 发布的正式 Step3 执行计划，覆盖标准 replaceable、passed 特殊路口组内部 RCSD 对象和 passed path-corridor group replacement。 |
 | `t06_segment_replacement_problem_registry.*` | Segment 替换问题注册表，记录已由当前 plan 覆盖、已由 Step2 标准计划解决或仍需上游迭代的问题。 |
 | `t06_step2_progress.jsonl / t06_step2_heartbeat.json / t06_step2_slow_units.jsonl / t06_step2_stackdump.log` | Step2 在 `progress=True` 时输出的运行诊断 sidecar，用于内网长耗时任务定位当前 Segment、当前后处理阶段、慢单元和 SIGUSR1 栈转储；不作为替换业务成果或 Step3 输入。 |
-| `t06_frcsd_road.* / t06_frcsd_node.*` | Step3 F-RCSD 替换结果。 |
+| `t06_frcsd_road.* / t06_frcsd_node.*` | Step3 F-RCSD 替换结果；`t06_frcsd_node.*` 可写入 `semantic_junction_group_id`，表达物理节点分离但语义同一路口的分组。 |
+| `t06_step3_semantic_junction_groups.*` | Step3 基于 T05 有效 `target_id -> base_id` 关系输出的语义路口组审计，覆盖远距离 SWSD/RCSD 多源节点分裂风险。 |
 | `t06_step3_unreplaced_rcsd_roads.*` | 未进入替换结果的 RCSDRoad 审计。 |
 | `t06_step3_swsd_frcsd_segment_relation.*` | 所有 SWSD Segment 到 F-RCSD carrier 的稳定关系索引，区分 `replaced / replaced+retained_swsd / retained_swsd / failed`。 |
 | `t06_step3_topology_connectivity_audit.*` | Step3 最终道路-节点完整性、正式替换 source 一致性、Segment 内连通、路口映射和挂接质量审计。 |
@@ -107,7 +108,8 @@ T06 消费 T01 SWSD Segment 与 T05 SWSD-RCSD 语义路口关系，构建 RCSDSe
 - Step3 只执行 Step2 replacement plan，不重新判定特殊组或 path-corridor group 可替换性；若标准 replaceable 的 final junc 集合相对 T01 原始 Segment 发生 detached junc 缩减，detached junc 触达的原 SWSDRoad 必须保留为 `source=2` 局部 carrier，并在 relation 中标记 `replaced+retained_swsd`。
 - Step3 relation 中的 `frcsd_road_ids` 只表达正式 RCSD 替换道路清单；保留 SWSD carrier、SWSD 派生 topology supplement 和提前右转挂接补丁必须通过状态、风险标记和审计单独暴露。
 - Surface-assisted closure 只在唯一候选、T04 未 reject、Patch 无冲突、距离和 source 条件可解释时补节点语义或 relation node map；它不能新增替换道路，不能修改原始道路几何。
-- Surface-aware retained-junction gate 释放只适用于 Step2 已因 `junction_alignment_to_retained_swsd_exceeds_topology_gate` 阻断的 replacement plan 行；触发节点必须有 surface audit 1:1 pass，或是 plan 原始 pair endpoint 与 `original_rcsd_pair_nodes` 的可解释映射。释放后必须重跑 Step3 与 topology audit；若候选释放引入新增 hard fail，相关 plan 必须回退为 blocked / hold 并记录 `junction_alignment_surface_release_failed_topology_gate`。相对传入 baseline 的新增 topology fail 必须在 summary 中显式暴露，不允许 silent pass。
+- Surface-aware retained-junction gate 释放只适用于 Step2 已因 `junction_alignment_to_retained_swsd_exceeds_topology_gate` 阻断的 replacement plan 行；触发节点必须有 surface audit 1:1 pass，或是 plan 原始 pair endpoint 与 `original_rcsd_pair_nodes` 的可解释映射。释放后必须重跑 Step3 与 topology audit；若候选释放只引入 T05 有效语义路口关系可解释的 SWSD/RCSD 多源节点分裂，则允许降级为风险审计并输出 `semantic_junction_group_id`；其它新增 hard fail 仍必须回退为 blocked / hold 并记录 `junction_alignment_surface_release_failed_topology_gate`。相对传入 baseline 的新增 topology fail 必须在 summary 中显式暴露，不允许 silent pass。
+- T05 `intersection_match_all.geojson` 中 `status=0 / base_id>0` 的关系是 T06 语义路口组的业务证据；`many_target_to_one_base` 按 T05 非阻断审计口径允许形成同一 `semantic_junction_group_id`。分歧、合流等工艺差异导致的远距离 SWSD/RCSD node 不设硬距离阈值，但必须进入 `t06_step3_semantic_junction_groups.*` 和 topology warn 审计。
 - T06 输出必须同时能解释“为什么能替换”和“为什么没有替换”：replacement plan 是执行边界，problem registry 是回流边界，topology audit 是最终 QA 边界。
 
 ## 9. 什么是错
@@ -122,7 +124,7 @@ T06 消费 T01 SWSD Segment 与 T05 SWSD-RCSD 语义路口关系，构建 RCSDSe
 - 将 detached junc 的 `identity_retained_swsd` node map 解释成 RCSD 锚定成功，或因此回写 T05 relation。
 - 因 SWSD/RCSD 原始 `id` 冲突而重写 ID；应依赖 `source` 区分并输出 collision audit。
 - 把保留 SWSD carrier 或 topology supplement 混入正式 RCSD 替换道路清单。
-- 用 surface evidence 绕过 T04 reject、多 RCSD 候选、Patch 冲突或 Step2 可替换性判定；或在 surface-aware gate 释放后忽略新增 topology hard fail。
+- 用 surface evidence 绕过 T04 reject、多 RCSD 候选、Patch 冲突或 Step2 可替换性判定；或在 surface-aware gate 释放后忽略无法由 T05 语义路口组解释的新增 topology hard fail。
 - 因宽 buffer 审计通过就忽略窄通道主线断裂风险。
 
 ## 10. 当前治理缺口

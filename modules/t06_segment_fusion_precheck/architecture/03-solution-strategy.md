@@ -213,7 +213,8 @@ T06 采用三步链路：
 - C 内 Node 继承原 main node 的 `kind / grade / kind_2 / grade_2 / closed_con`。
 - 对提前右转，Step3 可在不重判 Segment 可替换性的前提下执行挂接后处理：已选 RCSD 提前右转 corridor 可以吸附到保留 SWSD carrier；仅 SWSD 存在的提前右转 carrier 可在已选 RCSD Road 上复用或生成挂接节点；普通 RCSD road 挂在已选提前右转 road 中部时，可拆分该提前右转 road 并纳入同一 replacement unit。该后处理只补齐已选/已保留 carrier 的道路、节点和几何一致性。
 - 调用方提供 T03/T04/T05/T07 surface 或 T04 audit 时，Step3 可执行 surface-assisted closure。该 closure 只在唯一候选、T04 未 reject、Patch 无冲突、距离条件可解释时补写节点 `mainnodeid` 或非 `retained_swsd` relation 的 node map；它不新增正式替换道路，不修改原始道路几何，也不把 rejected Segment 改判为 replaceable。
-- 对 `junction_alignment_to_retained_swsd_exceeds_topology_gate` 阻断的 plan 行，Step3 wrapper 可用 surface 1:1 pass 或原始 pair endpoint 映射将该 gate 降级为人工审计风险并重跑替换；候选释放引入新增 topology hard fail 时必须回退对应 plan，相对传入 baseline 的新增 fail 必须在 summary 中暴露。
+- 对 `junction_alignment_to_retained_swsd_exceeds_topology_gate` 阻断的 plan 行，Step3 wrapper 可用 surface 1:1 pass 或原始 pair endpoint 映射将该 gate 降级为人工审计风险并重跑替换；候选释放只引入 T05 有效语义路口关系可解释的多源节点分裂时，生成 `semantic_junction_group_id` 并把 topology hard fail 降级为 warn。其它新增 topology hard fail 必须回退对应 plan，相对传入 baseline 的新增 fail 必须在 summary 中暴露。
+- T05 `intersection_match_all.geojson` 中 `status=0 / base_id>0` 的关系是 Step3 语义路口组证据；`many_target_to_one_base` 允许形成同一组。分歧、合流等工艺差异导致 SWSD/RCSD 节点距离较远时不设硬阈值，但必须在 F-RCSD node 和 semantic junction group 审计中表达风险。
 - 对已满足 Step2 ready plan、锚定、连通、主干无争占和同源正式替换清单的 replacement unit，Step3 coverage 兜底若只发现端点缺口落在当前 unit 的 T05 junction anchor surface 内，应优先替换并追加人工审计风险，而不是把路口面内合理长度差异重新判为不可替换。该释放只扣除对应路口面内的 uncovered geometry，扣除后仍超阈值或出现 topology audit hard fail 时继续失败 / 回退。
 - Step3 结束时必须输出拓扑连通审计，覆盖 final road-node integrity、正式替换 source 一致性、Segment 内连通、junction mapping 和挂接质量，确保 T09 消费的是可解释的 F-RCSD carrier。
 
@@ -221,13 +222,14 @@ T06 采用三步链路：
 
 - `t06_frcsd_road.*`
 - `t06_frcsd_node.*`
+- `t06_step3_semantic_junction_groups.*`
 - `t06_step3_unreplaced_rcsd_roads.*`
 - id collision audit、删除 / 引入 / main node 重建审计。
 - `t06_step3_swsd_frcsd_segment_relation.*`，用于 T09 和 T10 理解每个 SWSD Segment 的 F-RCSD carrier。
 - `t06_step3_topology_connectivity_audit.*`，用于批量检查最终拓扑连通与 source 边界。
 - `t06_step3_surface_topology_audit.*` 与 summary，用于解释 surface-assisted closure 的使用和阻断。
 - `t06_step3_surface_aware_plan_release_audit.json`，用于解释 retained-junction gate 条件释放、topology 回退和外部 baseline 新增 fail 对照。
-- summary 必须记录 `replacement_plan_source`、输入 plan 行数、按 `execution_scope` 的执行计数、path-corridor group 计数、detached junc 保留计数和 `surface_aware_plan_release` 审计摘要。
+- summary 必须记录 `replacement_plan_source`、输入 plan 行数、按 `execution_scope` 的执行计数、path-corridor group 计数、detached junc 保留计数、semantic junction group 计数和 `surface_aware_plan_release` 审计摘要。
 
 ### 8.5 对错边界
 

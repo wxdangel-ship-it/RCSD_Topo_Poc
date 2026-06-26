@@ -12,11 +12,9 @@ from .buffer_segment_extraction import (
     BufferSegmentExtractor,
     BufferSegmentResult,
     _build_undirected_graph,
-    _edge_direction,
     _edge_geometry,
-    _edge_weight,
     _nodes_from_edges,
-    _path_reference_buffer,
+    _weighted_adjacency,
 )
 from .graph_builders import Edge, NodeCanonicalizer
 from .parsing import ParseError, directionality_from_sgrade, normalize_id, parse_id_list, unique_preserve_order
@@ -72,96 +70,6 @@ class _RoadGeometryIndex:
         return tuple(result)
 
 
-@dataclass(frozen=True)
-class _DirectedStep:
-    target: str
-    edge: Edge
-
-
-class _PathWeightContext:
-    def __init__(self, reference_geometry: BaseGeometry | None, required_nodes: set[str]) -> None:
-        self.reference_geometry = reference_geometry
-        self.reference_geometry_empty = reference_geometry is None or reference_geometry.is_empty
-        self.reference_buffer_geometry = _path_reference_buffer(reference_geometry)
-        self.reference_buffer_bounds = self.reference_buffer_geometry.bounds if self.reference_buffer_geometry is not None else None
-        self.required_nodes = required_nodes
-        self._weight_by_edge_identity: dict[int, float] = {}
-
-    def weight(self, edge: Edge) -> float:
-        key = id(edge)
-        cached = self._weight_by_edge_identity.get(key)
-        if cached is not None:
-            return cached
-        weight = _edge_weight(
-            edge,
-            reference_geometry=self.reference_geometry,
-            reference_geometry_empty=self.reference_geometry_empty,
-            reference_buffer_geometry=self.reference_buffer_geometry,
-            reference_buffer_bounds=self.reference_buffer_bounds,
-            required_nodes=self.required_nodes,
-        )
-        self._weight_by_edge_identity[key] = weight
-        return weight
-
-
-@dataclass(frozen=True)
-class _DirectedPathTopology:
-    adjacency: dict[str, tuple[_DirectedStep, ...]]
-
-    @classmethod
-    def build(cls, edges: list[Edge]) -> "_DirectedPathTopology":
-        adjacency: dict[str, list[_DirectedStep]] = {}
-        for edge in edges:
-            direction = _edge_direction(edge)
-            if direction in {0, 1, 2}:
-                adjacency.setdefault(edge.source, []).append(_DirectedStep(edge.target, edge))
-            if direction in {0, 1, 3}:
-                adjacency.setdefault(edge.target, []).append(_DirectedStep(edge.source, edge))
-        return cls({node: tuple(steps) for node, steps in adjacency.items()})
-
-    def shortest_path(
-        self,
-        source: str,
-        target: str,
-        *,
-        weight_context: _PathWeightContext,
-    ) -> list[str] | None:
-        queue: list[tuple[float, int, str]] = []
-        sequence = 0
-        heapq.heappush(queue, (0.0, sequence, source))
-        distances: dict[str, float] = {source: 0.0}
-        previous: dict[str, tuple[str, str]] = {}
-
-        while queue:
-            distance, _sequence, node = heapq.heappop(queue)
-            if distance > distances.get(node, float("inf")):
-                continue
-            if node == target:
-                break
-            for step in self.adjacency.get(node, ()):
-                next_distance = distance + weight_context.weight(step.edge)
-                if next_distance >= distances.get(step.target, float("inf")):
-                    continue
-                distances[step.target] = next_distance
-                previous[step.target] = (node, step.edge.edge_id)
-                sequence += 1
-                heapq.heappush(queue, (next_distance, sequence, step.target))
-
-        if target not in distances:
-            return None
-
-        path: list[str] = []
-        node = target
-        while node != source:
-            prev = previous.get(node)
-            if prev is None:
-                return None
-            node, edge_id = prev
-            path.append(edge_id)
-        path.reverse()
-        return path
-
-
 def build_group_replacement_audit_rows(
     *,
     fusion_units: list[dict[str, Any]],
@@ -189,7 +97,6 @@ def build_group_replacement_audit_rows(
     relation_base_ids = set(base_to_targets)
     graph_edges = _build_undirected_graph(rcsd_roads, node_canonicalizer=rcsd_node_canonicalizer).edges
     edge_by_id = {edge.edge_id: edge for edge in graph_edges}
-    path_topology = _DirectedPathTopology.build(graph_edges)
     rcsd_road_by_id = _index_features(rcsd_roads)
     rcsd_road_index = _RoadGeometryIndex.build(rcsd_road_by_id)
     group_probe_extractor = (
@@ -197,7 +104,6 @@ def build_group_replacement_audit_rows(
         if rcsd_nodes is not None
         else None
     )
-    group_probe_cache: dict[tuple[Any, ...], dict[str, Any]] = {}
 
     rows: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -222,7 +128,7 @@ def build_group_replacement_audit_rows(
         )
         allowed_base_ids.update(rcsd_pair_nodes)
         path_infos = _path_infos(
-            path_topology=path_topology,
+            graph_edges=graph_edges,
             edge_by_id=edge_by_id,
             required_nodes=rcsd_pair_nodes,
             segment_geometry=segment.get("geometry") if segment is not None else None,
@@ -279,38 +185,19 @@ def build_group_replacement_audit_rows(
         ]
         audit_status = _audit_status(path_infos, unexpected_targets, rejected_in_group, outside_step1)
         corridor_audit_status = _audit_status(path_infos, unexpected_targets, path_corridor_rejected, path_corridor_outside_step1)
-        source_directionality = directionality_from_sgrade(segment_props.get("sgrade") or props.get("swsd_sgrade")) or ""
-        if corridor_audit_status == "candidate_group_closure_ready":
-            probe_key = _group_probe_cache_key(
-                segment_ids=path_corridor_probe_segment_ids,
-                rcsd_pair_nodes=rcsd_pair_nodes,
-                allowed_base_ids=allowed_base_ids,
-                source_directionality=source_directionality,
-                buffer_config=buffer_config,
-            )
-            cached_probe = group_probe_cache.get(probe_key)
-            if cached_probe is None:
-                group_probe = _group_union_probe(
-                    extractor=group_probe_extractor,
-                    segment_ids=path_corridor_probe_segment_ids,
-                    segment_by_id=segment_by_id,
-                    rcsd_pair_nodes=rcsd_pair_nodes,
-                    allowed_base_ids=allowed_base_ids,
-                    relation_base_ids=relation_base_ids,
-                    source_directionality=source_directionality,
-                    buffer_config=buffer_config,
-                    replaceable_road_ids_by_segment=replaceable_road_ids_by_segment,
-                    rcsd_road_by_id=rcsd_road_by_id,
-                    rcsd_road_index=rcsd_road_index,
-                )
-                group_probe_cache[probe_key] = _clone_group_probe(group_probe)
-            else:
-                group_probe = _clone_group_probe(cached_probe)
-        else:
-            group_probe = _group_probe_row(
-                "not_evaluated",
-                f"{corridor_audit_status}_not_probeable",
-            )
+        group_probe = _group_union_probe(
+            extractor=group_probe_extractor,
+            segment_ids=path_corridor_probe_segment_ids,
+            segment_by_id=segment_by_id,
+            rcsd_pair_nodes=rcsd_pair_nodes,
+            allowed_base_ids=allowed_base_ids,
+            relation_base_ids=relation_base_ids,
+            source_directionality=directionality_from_sgrade(segment_props.get("sgrade") or props.get("swsd_sgrade")) or "",
+            buffer_config=buffer_config,
+            replaceable_road_ids_by_segment=replaceable_road_ids_by_segment,
+            rcsd_road_by_id=rcsd_road_by_id,
+            rcsd_road_index=rcsd_road_index,
+        )
         rows.append(
             feature(
                 {
@@ -387,7 +274,7 @@ def _is_group_audit_candidate(props: dict[str, Any]) -> bool:
 
 def _path_infos(
     *,
-    path_topology: _DirectedPathTopology,
+    graph_edges: list[Edge],
     edge_by_id: dict[str, Edge],
     required_nodes: list[str],
     segment_geometry: BaseGeometry | None,
@@ -395,10 +282,15 @@ def _path_infos(
     if len(set(required_nodes)) != 2:
         return []
     source, target = required_nodes
-    weight_context = _PathWeightContext(segment_geometry, set(required_nodes))
+    adjacency = _weighted_adjacency(
+        graph_edges,
+        directed=True,
+        reference_geometry=segment_geometry,
+        required_nodes=set(required_nodes),
+    )
     result: list[dict[str, Any]] = []
     for label, start, end in (("forward", source, target), ("reverse", target, source)):
-        edge_ids = path_topology.shortest_path(start, end, weight_context=weight_context)
+        edge_ids = _shortest_path_from_adjacency(adjacency, start, end)
         if not edge_ids:
             continue
         edges = [edge_by_id[edge_id] for edge_id in edge_ids if edge_id in edge_by_id]
@@ -411,6 +303,47 @@ def _path_infos(
             }
         )
     return result
+
+
+def _shortest_path_from_adjacency(
+    adjacency: dict[str, list[tuple[str, float, str]]],
+    source: str,
+    target: str,
+) -> list[str] | None:
+    queue: list[tuple[float, int, str]] = []
+    sequence = 0
+    heapq.heappush(queue, (0.0, sequence, source))
+    distances: dict[str, float] = {source: 0.0}
+    previous: dict[str, tuple[str, str]] = {}
+
+    while queue:
+        distance, _sequence, node = heapq.heappop(queue)
+        if distance > distances.get(node, float("inf")):
+            continue
+        if node == target:
+            break
+        for neighbor, weight, edge_id in adjacency.get(node, []):
+            next_distance = distance + weight
+            if next_distance >= distances.get(neighbor, float("inf")):
+                continue
+            distances[neighbor] = next_distance
+            previous[neighbor] = (node, edge_id)
+            sequence += 1
+            heapq.heappush(queue, (next_distance, sequence, neighbor))
+
+    if target not in distances:
+        return None
+
+    path: list[str] = []
+    node = target
+    while node != source:
+        prev = previous.get(node)
+        if prev is None:
+            return None
+        node, edge_id = prev
+        path.append(edge_id)
+    path.reverse()
+    return path
 
 
 def _path_geometry(path_infos: list[dict[str, Any]]) -> BaseGeometry | None:
@@ -838,37 +771,6 @@ def _group_probe_row(
         ),
         "repair_owner": repair_owner,
     }
-
-
-def _group_probe_cache_key(
-    *,
-    segment_ids: list[str],
-    rcsd_pair_nodes: list[str],
-    allowed_base_ids: set[str],
-    source_directionality: str,
-    buffer_config: BufferExtractionConfig | None,
-) -> tuple[Any, ...]:
-    cfg = buffer_config or BufferExtractionConfig()
-    return (
-        tuple(segment_ids),
-        tuple(rcsd_pair_nodes),
-        tuple(sorted(allowed_base_ids)),
-        source_directionality,
-        cfg.min_road_overlap_ratio,
-        cfg.min_road_overlap_length_m,
-        cfg.advance_right_formway_bit,
-        cfg.max_geometry_buffer_mismatch_ratio,
-        cfg.min_geometry_buffer_mismatch_length_m,
-        cfg.visual_consistency_buffer_distance_m,
-        cfg.max_visual_consistency_mismatch_ratio,
-        cfg.min_visual_consistency_mismatch_length_m,
-    )
-
-
-def _clone_group_probe(row: dict[str, Any]) -> dict[str, Any]:
-    clone = dict(row)
-    clone["rcsd_road_ids"] = list(row.get("rcsd_road_ids") or [])
-    return clone
 
 
 def _accepted_base_to_targets(

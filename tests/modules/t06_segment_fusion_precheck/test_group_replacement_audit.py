@@ -41,37 +41,6 @@ def test_group_replacement_audit_blocks_when_external_anchor_segment_is_not_repl
     assert props["repair_recommendation"] == "upstream_anchor_or_step1_group_scope_required"
 
 
-def test_group_replacement_audit_skips_probe_when_path_corridor_is_blocked(monkeypatch) -> None:
-    def fail_extract(*args, **kwargs):
-        raise AssertionError("blocked path-corridor rows must not run the expensive group probe")
-
-    monkeypatch.setattr(group_audit.BufferSegmentExtractor, "extract", fail_extract)
-
-    rows = build_group_replacement_audit_rows(
-        fusion_units=[_segment("s1_s2", ["s1", "s2"]), _segment("sx_s3", ["sx", "s3"])],
-        segments=[_segment("s1_s2", ["s1", "s2"]), _segment("sx_s3", ["sx", "s3"])],
-        relation_map={
-            "s1": RelationRecord("s1", 10, 0, {}),
-            "s2": RelationRecord("s2", 20, 0, {}),
-            "sx": RelationRecord("sx", 30, 0, {}),
-        },
-        rcsd_roads=[
-            _road("r1", "10", "30", [(0, 0), (50, 0)]),
-            _road("r2", "30", "20", [(50, 0), (100, 0)]),
-        ],
-        rcsd_nodes=[_node("10"), _node("20"), _node("30")],
-        rcsd_node_canonicalizer=NodeCanonicalizer({}, frozenset({"10", "20", "30"})),
-        replaceable_rows=[],
-        rejected_rows=[_rejected("sx_s3", "rcsd_not_bidirectional_for_swsd_dual")],
-        failure_business_audit_rows=[_failure("s1_s2", ["s1", "s2"], ["10", "20"])],
-    )
-
-    props = rows[0]["properties"]
-    assert props["corridor_audit_status"] == "blocked_group_closure_incomplete"
-    assert props["group_probe_status"] == "not_evaluated"
-    assert props["group_probe_reason"] == "blocked_group_closure_incomplete_not_probeable"
-
-
 def test_group_replacement_audit_separates_side_incident_from_path_corridor() -> None:
     side_segment = _segment("sx_s3", ["sx", "s3"], [(50, 0), (50, 100)])
     rows = build_group_replacement_audit_rows(
@@ -142,7 +111,7 @@ def test_group_replacement_audit_reports_directionality_when_group_probe_fails()
         rcsd_nodes=[_node("10"), _node("20"), _node("30")],
         rcsd_node_canonicalizer=NodeCanonicalizer({}, frozenset({"10", "20", "30"})),
         replaceable_rows=[],
-        rejected_rows=[],
+        rejected_rows=[_rejected("sx_s3", "rcsd_not_bidirectional_for_swsd_dual")],
         failure_business_audit_rows=[_failure("s1_s2", ["s1", "s2"], ["10", "20"])],
     )
 
@@ -204,38 +173,35 @@ def test_uncovered_candidate_search_uses_spatial_index_scope() -> None:
     )
 
 
-def test_path_infos_lazily_weights_only_reachable_edges(monkeypatch) -> None:
+def test_path_infos_reuses_weighted_adjacency_for_both_directions(monkeypatch) -> None:
     node_canonicalizer = NodeCanonicalizer({}, frozenset({"10", "20", "30"}))
     graph_edges = group_audit._build_undirected_graph(
         [
             _road("r1", "10", "30", [(0, 0), (50, 0)]),
             _road("r2", "30", "20", [(50, 0), (100, 0)]),
-            *[
-                _road(f"far_{index}", f"far_{index}_a", f"far_{index}_b", [(0, 10000 + index), (50, 10000 + index)])
-                for index in range(100)
-            ],
         ],
         node_canonicalizer=node_canonicalizer,
     ).edges
     edge_by_id = {edge.edge_id: edge for edge in graph_edges}
-    weighted_road_ids: list[str] = []
-    original = group_audit._edge_weight
+    calls = 0
+    original = group_audit._weighted_adjacency
 
-    def counted_edge_weight(edge, *args, **kwargs):
-        weighted_road_ids.append(edge.road_id)
-        return original(edge, *args, **kwargs)
+    def counted_weighted_adjacency(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original(*args, **kwargs)
 
-    monkeypatch.setattr(group_audit, "_edge_weight", counted_edge_weight)
+    monkeypatch.setattr(group_audit, "_weighted_adjacency", counted_weighted_adjacency)
 
     path_infos = group_audit._path_infos(
-        path_topology=group_audit._DirectedPathTopology.build(graph_edges),
+        graph_edges=graph_edges,
         edge_by_id=edge_by_id,
         required_nodes=["10", "20"],
         segment_geometry=LineString([(0, 0), (100, 0)]),
     )
 
+    assert calls == 1
     assert [info["direction"] for info in path_infos] == ["forward", "reverse"]
-    assert set(weighted_road_ids) == {"r1", "r2"}
 
 
 def _segment(segment_id: str, pair_nodes: list[str], coords: list[tuple[float, float]] | None = None) -> dict:

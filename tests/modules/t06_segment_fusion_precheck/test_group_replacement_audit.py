@@ -3,7 +3,11 @@ from __future__ import annotations
 from shapely.geometry import LineString
 
 from rcsd_topo_poc.modules.t06_segment_fusion_precheck.graph_builders import NodeCanonicalizer
-from rcsd_topo_poc.modules.t06_segment_fusion_precheck.group_replacement_audit import build_group_replacement_audit_rows
+from rcsd_topo_poc.modules.t06_segment_fusion_precheck.group_replacement_audit import (
+    _RoadGeometryIndex,
+    _best_uncovered_segment_candidate,
+    build_group_replacement_audit_rows,
+)
 from rcsd_topo_poc.modules.t06_segment_fusion_precheck.relation_mapping import RelationRecord
 
 
@@ -146,6 +150,26 @@ def test_group_replacement_audit_augments_probe_with_replaceable_corridor_roads(
     assert props["group_probe_repair_owner"] == "T06_path_corridor_group_replacement"
     assert props["path_corridor_probe_segment_ids"] == ["s1_s2", "sx_s3"]
     assert props["group_probe_rcsd_road_ids"] == ["r1", "r2", "r3"]
+
+
+def test_uncovered_candidate_search_uses_spatial_index_scope() -> None:
+    roads = [_road("near", "10", "20", [(0, 0), (100, 0)])]
+    roads.extend(_road(f"far_{index}", "10", "20", [(0, 10000 + index), (100, 10000 + index)]) for index in range(100))
+    road_index = _RoadGeometryIndex.build({str(road["properties"]["id"]): road for road in roads})
+    uncovered = LineString([(20, 0), (80, 0)])
+
+    assert [entry.road_id for entry in road_index.query(uncovered.buffer(8.0))] == ["near"]
+    assert (
+        _best_uncovered_segment_candidate(
+            uncovered,
+            current_ids=set(),
+            rcsd_road_index=road_index,
+            candidate_buffer_m=8.0,
+            candidate_min_overlap_length_m=8.0,
+            candidate_min_inside_ratio=0.4,
+        )
+        == "near"
+    )
 
 
 def _segment(segment_id: str, pair_nodes: list[str], coords: list[tuple[float, float]] | None = None) -> dict:

@@ -227,7 +227,7 @@ def _standard_plan_rows(
         ]
         rcsd_road_ids = unique_preserve_order([*_parse_list(props.get("rcsd_road_ids")), *pair_anchor_bridge_road_ids])
         buffer_distances = _parse_float_list(props.get("adaptive_buffer_distance_m"))
-        buffer_distance_blocked = bool(buffer_distances and max(buffer_distances) > MAX_FORMAL_REPLACEMENT_BUFFER_M)
+        buffer_distance_risk = bool(buffer_distances and max(buffer_distances) > MAX_FORMAL_REPLACEMENT_BUFFER_M)
         visual_coverage_manual_audit = controlled_visual_release and _visual_consistency_coverage_gate_failed(props)
         retained_node_ids = unique_preserve_order(
             [
@@ -235,19 +235,21 @@ def _standard_plan_rows(
                 *_canonical_road_endpoint_ids(pair_anchor_bridge_road_ids, rcsd_road_by_id, rcsd_node_canonicalizer),
             ]
         )
-        plan_status = "blocked" if reverse_blocker or buffer_distance_blocked else "ready"
+        plan_status = "blocked" if reverse_blocker else "ready"
         action = "hold" if plan_status == "blocked" else "replace"
         if reverse_blocker:
             reason = reverse_blocker.get("reason", strategy)
-        elif buffer_distance_blocked:
-            reason = "adaptive_buffer_exceeds_topology_connectivity_gate"
         elif controlled_visual_release and (visual_coverage_manual_audit or high_visual_deviation):
             reason = "visual_consistency_manual_audit_release"
+        elif buffer_distance_risk:
+            reason = props.get("adaptive_buffer_source_reason") or (
+                props.get("geometry_buffer_coverage_issue") if controlled_visual_release else strategy
+            )
         else:
             reason = props.get("geometry_buffer_coverage_issue") if controlled_visual_release else strategy
         risk_flags = ["reverse_retained_swsd_pair_blocked"] if reverse_blocker else []
-        if buffer_distance_blocked:
-            risk_flags.append("adaptive_buffer_exceeds_topology_connectivity_gate")
+        if buffer_distance_risk:
+            risk_flags.append("adaptive_buffer_exceeds_topology_connectivity_audit_threshold")
         if pair_anchor_bridge_road_ids:
             risk_flags.append("pair_anchor_bridge_roads_added")
         if controlled_visual_release:
@@ -263,11 +265,6 @@ def _standard_plan_rows(
                 risk_flags.append("visual_consistency_high_deviation")
         if reverse_blocker:
             notes = f"blocked by reverse retained SWSD segment {reverse_blocker['segment_id']}"
-        elif buffer_distance_blocked:
-            notes = (
-                f"blocked because adaptive buffer exceeds {MAX_FORMAL_REPLACEMENT_BUFFER_M:g}m "
-                "topology connectivity gate"
-            )
         else:
             if controlled_visual_release:
                 notes = "standard Step2 replaceable segment with retained RCSD visual consistency mismatch accepted as controlled release audit risk"
@@ -286,6 +283,11 @@ def _standard_plan_rows(
                     if pair_anchor_bridge_road_ids
                     else "standard Step2 replaceable segment"
                 )
+            if buffer_distance_risk:
+                notes = (
+                    f"{notes}; adaptive buffer exceeds {MAX_FORMAL_REPLACEMENT_BUFFER_M:g}m "
+                    "topology connectivity audit threshold; released as risk audit only"
+                )
         rows.append(
             feature(
                 {
@@ -298,11 +300,7 @@ def _standard_plan_rows(
                     "upstream_owner": (
                         "T06_reverse_pair_consistency"
                         if reverse_blocker
-                        else (
-                            "T06_step2_topology_connectivity_gate"
-                            if buffer_distance_blocked
-                            else "T05_relation_consumed"
-                        )
+                        else "T05_relation_consumed"
                     ),
                     "source_artifact": "t06_rcsd_segment_replaceable",
                     "source_reason": reason,
@@ -370,27 +368,25 @@ def _group_replacement_plan_rows(
             audit_props.get("rcsd_junc_nodes")
         )
         buffer_distances = _parse_float_list(props.get("group_probe_buffer_distance_m"))
-        buffer_distance_blocked = bool(buffer_distances and max(buffer_distances) > MAX_FORMAL_REPLACEMENT_BUFFER_M)
+        buffer_distance_risk = bool(buffer_distances and max(buffer_distances) > MAX_FORMAL_REPLACEMENT_BUFFER_M)
+        notes = props.get("notes") or "path-corridor group replacement plan"
+        if buffer_distance_risk:
+            notes = (
+                f"{notes}; group probe buffer exceeds {MAX_FORMAL_REPLACEMENT_BUFFER_M:g}m "
+                "topology connectivity audit threshold; released as risk audit only"
+            )
         rows.append(
             feature(
                 {
                     "replacement_plan_id": f"group_path_corridor:{segment_id}",
                     "swsd_segment_id": segment_id,
-                    "plan_status": "blocked" if buffer_distance_blocked else "ready",
-                    "execution_action": "hold" if buffer_distance_blocked else "replace",
+                    "plan_status": "ready",
+                    "execution_action": "replace",
                     "execution_scope": "path_corridor_group",
                     "plan_owner": "T06_STEP2",
-                    "upstream_owner": (
-                        "T06_step2_topology_connectivity_gate"
-                        if buffer_distance_blocked
-                        else "T03/T04/T05_feedback_candidate"
-                    ),
+                    "upstream_owner": "T03/T04/T05_feedback_candidate",
                     "source_artifact": "t06_segment_group_replacement_audit",
-                    "source_reason": (
-                        "group_probe_buffer_exceeds_topology_connectivity_gate"
-                        if buffer_distance_blocked
-                        else props.get("group_probe_reason")
-                    ),
+                    "source_reason": props.get("group_probe_reason"),
                     "replacement_strategy": "path_corridor_group_replacement",
                     "special_junction_id": "",
                     "special_junction_type": "",
@@ -413,18 +409,13 @@ def _group_replacement_plan_rows(
                         [
                             "group_path_corridor_replacement",
                             *(
-                                ["group_probe_buffer_exceeds_topology_connectivity_gate"]
-                                if buffer_distance_blocked
+                                ["group_probe_buffer_exceeds_topology_connectivity_audit_threshold"]
+                                if buffer_distance_risk
                                 else []
                             ),
                         ]
                     ),
-                    "notes": (
-                        f"blocked because group probe buffer exceeds {MAX_FORMAL_REPLACEMENT_BUFFER_M:g}m "
-                        "topology connectivity gate"
-                        if buffer_distance_blocked
-                        else props.get("notes") or "path-corridor group replacement plan"
-                    ),
+                    "notes": notes,
                 },
                 row.get("geometry"),
             )

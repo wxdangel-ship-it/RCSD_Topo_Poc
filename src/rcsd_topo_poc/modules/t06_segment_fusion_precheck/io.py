@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
@@ -39,20 +40,38 @@ def write_feature_triplet(
     stem: str,
     features: list[dict[str, Any]],
     fieldnames: list[str],
+    write_json_output: bool = True,
+    progress: Callable[[str, str, Path], None] | None = None,
 ) -> dict[str, Path]:
     gpkg_path = step_root / f"{stem}.gpkg"
     csv_path = step_root / f"{stem}.csv"
     json_path = step_root / f"{stem}.json"
+    paths = {"gpkg": gpkg_path, "csv": csv_path}
+    _notify_output_progress(progress, "gpkg", "start", gpkg_path)
     write_gpkg(gpkg_path, features, empty_fields=fieldnames, geometry_type="Unknown")
+    _notify_output_progress(progress, "gpkg", "end", gpkg_path)
+    _notify_output_progress(progress, "csv", "start", csv_path)
     write_csv(csv_path, (feature.get("properties") or {} for feature in features), fieldnames)
-    write_json(
-        json_path,
-        {
-            "row_count": len(features),
-            "features": [_feature_json(feature) for feature in features],
-        },
-    )
-    return {"gpkg": gpkg_path, "csv": csv_path, "json": json_path}
+    _notify_output_progress(progress, "csv", "end", csv_path)
+    if write_json_output:
+        _notify_output_progress(progress, "json", "start", json_path)
+        write_json(
+            json_path,
+            {
+                "row_count": len(features),
+                "features": [_feature_json(feature) for feature in features],
+            },
+        )
+        _notify_output_progress(progress, "json", "end", json_path)
+        paths["json"] = json_path
+    else:
+        _notify_output_progress(progress, "json", "skipped", json_path)
+    return paths
+
+
+def _notify_output_progress(progress: Callable[[str, str, Path], None] | None, fmt: str, status: str, path: Path) -> None:
+    if progress is not None:
+        progress(fmt, status, path)
 
 
 def write_csv(path: str | Path, rows: Iterable[dict[str, Any]], fieldnames: list[str]) -> None:

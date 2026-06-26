@@ -115,6 +115,7 @@ def run_t06_step2_extract_rcsd_segments(
     min_buffer_road_overlap_length_m: float = 1.0,
     advance_right_formway_bit: int = 128,
     progress: bool = False,
+    write_json_outputs: bool = True,
 ) -> T06Step2Artifacts:
     resolved_run_id, run_root, step_root = prepare_run_roots(out_root, run_id, STEP2_DIR)
     fusion_units = read_features(swsd_fusion_units_path)
@@ -1373,53 +1374,28 @@ def run_t06_step2_extract_rcsd_segments(
         replacement_plan_rows=replacement_plan_rows,
     )
     diag.stage("write_outputs")
-    candidate_paths = write_feature_triplet(step_root=step_root, stem=STEP2_CANDIDATES_STEM, features=candidate_rows, fieldnames=STEP2_CANDIDATE_FIELDS)
-    replaceable_paths = write_feature_triplet(step_root=step_root, stem=STEP2_REPLACEABLE_STEM, features=replaceable_rows, fieldnames=STEP2_REPLACEABLE_FIELDS)
-    rejected_paths = write_feature_triplet(step_root=step_root, stem=STEP2_REJECTED_STEM, features=rejected_rows, fieldnames=STEP2_REJECTED_FIELDS)
-    buffer_segment_paths = write_feature_triplet(step_root=step_root, stem=STEP2_BUFFER_SEGMENTS_STEM, features=buffer_segment_rows, fieldnames=STEP2_BUFFER_SEGMENT_FIELDS)
-    buffer_rejected_paths = write_feature_triplet(step_root=step_root, stem=STEP2_BUFFER_REJECTED_STEM, features=buffer_rejected_rows, fieldnames=STEP2_BUFFER_REJECTED_FIELDS)
-    buffer_only_probe_paths = write_feature_triplet(
-        step_root=step_root,
-        stem=STEP2_BUFFER_ONLY_PROBE_STEM,
-        features=buffer_only_probe_rows,
-        fieldnames=STEP2_BUFFER_ONLY_PROBE_FIELDS,
-    )
-    repair_candidate_paths = write_feature_triplet(
-        step_root=step_root,
-        stem=STEP2_REPAIR_CANDIDATES_STEM,
-        features=repair_candidate_rows,
-        fieldnames=STEP2_REPAIR_CANDIDATE_FIELDS,
-    )
-    failure_business_audit_paths = write_feature_triplet(
-        step_root=step_root,
-        stem=STEP2_FAILURE_BUSINESS_AUDIT_STEM,
-        features=failure_business_audit_rows,
-        fieldnames=STEP2_FAILURE_BUSINESS_AUDIT_FIELDS,
-    )
-    special_group_paths = write_feature_triplet(
-        step_root=step_root,
-        stem=STEP2_SPECIAL_JUNCTION_GROUPS_STEM,
-        features=special_group_rows,
-        fieldnames=STEP2_SPECIAL_JUNCTION_GROUP_FIELDS,
-    )
-    group_replacement_audit_paths = write_feature_triplet(
-        step_root=step_root,
-        stem=STEP2_GROUP_REPLACEMENT_AUDIT_STEM,
-        features=group_replacement_audit_rows,
-        fieldnames=STEP2_GROUP_REPLACEMENT_AUDIT_FIELDS,
-    )
-    replacement_plan_paths = write_feature_triplet(
-        step_root=step_root,
-        stem=STEP2_REPLACEMENT_PLAN_STEM,
-        features=replacement_plan_rows,
-        fieldnames=STEP2_REPLACEMENT_PLAN_FIELDS,
-    )
-    problem_registry_paths = write_feature_triplet(
-        step_root=step_root,
-        stem=STEP2_PROBLEM_REGISTRY_STEM,
-        features=problem_registry_rows,
-        fieldnames=STEP2_PROBLEM_REGISTRY_FIELDS,
-    )
+    def _write_step2(stem: str, rows: list[dict[str, Any]], fields: list[str]) -> dict[str, Path]:
+        return write_feature_triplet(
+            step_root=step_root,
+            stem=stem,
+            features=rows,
+            fieldnames=fields,
+            write_json_output=write_json_outputs,
+            progress=lambda fmt, status, path: diag.output(stem, fmt, status, path),
+        )
+
+    candidate_paths = _write_step2(STEP2_CANDIDATES_STEM, candidate_rows, STEP2_CANDIDATE_FIELDS)
+    replaceable_paths = _write_step2(STEP2_REPLACEABLE_STEM, replaceable_rows, STEP2_REPLACEABLE_FIELDS)
+    rejected_paths = _write_step2(STEP2_REJECTED_STEM, rejected_rows, STEP2_REJECTED_FIELDS)
+    buffer_segment_paths = _write_step2(STEP2_BUFFER_SEGMENTS_STEM, buffer_segment_rows, STEP2_BUFFER_SEGMENT_FIELDS)
+    buffer_rejected_paths = _write_step2(STEP2_BUFFER_REJECTED_STEM, buffer_rejected_rows, STEP2_BUFFER_REJECTED_FIELDS)
+    buffer_only_probe_paths = _write_step2(STEP2_BUFFER_ONLY_PROBE_STEM, buffer_only_probe_rows, STEP2_BUFFER_ONLY_PROBE_FIELDS)
+    repair_candidate_paths = _write_step2(STEP2_REPAIR_CANDIDATES_STEM, repair_candidate_rows, STEP2_REPAIR_CANDIDATE_FIELDS)
+    failure_business_audit_paths = _write_step2(STEP2_FAILURE_BUSINESS_AUDIT_STEM, failure_business_audit_rows, STEP2_FAILURE_BUSINESS_AUDIT_FIELDS)
+    special_group_paths = _write_step2(STEP2_SPECIAL_JUNCTION_GROUPS_STEM, special_group_rows, STEP2_SPECIAL_JUNCTION_GROUP_FIELDS)
+    group_replacement_audit_paths = _write_step2(STEP2_GROUP_REPLACEMENT_AUDIT_STEM, group_replacement_audit_rows, STEP2_GROUP_REPLACEMENT_AUDIT_FIELDS)
+    replacement_plan_paths = _write_step2(STEP2_REPLACEMENT_PLAN_STEM, replacement_plan_rows, STEP2_REPLACEMENT_PLAN_FIELDS)
+    problem_registry_paths = _write_step2(STEP2_PROBLEM_REGISTRY_STEM, problem_registry_rows, STEP2_PROBLEM_REGISTRY_FIELDS)
     rcsd_road_stats = _rcsd_road_coverage_stats(rcsd_roads=rcsd_roads, replaceable_rows=replaceable_rows)
     business_stats = _business_audit_stats(failure_business_audit_rows, replaceable_rows, input_count=len(fusion_units))
     summary_path = step_root / STEP2_SUMMARY
@@ -1450,6 +1426,7 @@ def run_t06_step2_extract_rcsd_segments(
                 "visual_consistency_buffer_distance_m": buffer_config.visual_consistency_buffer_distance_m,
                 "max_visual_consistency_mismatch_ratio": buffer_config.max_visual_consistency_mismatch_ratio,
                 "min_visual_consistency_mismatch_length_m": buffer_config.min_visual_consistency_mismatch_length_m,
+                "write_json_outputs": write_json_outputs,
             },
             "input_fusion_unit_count": len(fusion_units),
             "relation_success_count": relation_success_count,
@@ -1495,6 +1472,7 @@ def run_t06_step2_extract_rcsd_segments(
             "replacement_plan_scope_counts": dict(Counter(item["properties"].get("execution_scope") for item in replacement_plan_rows)),
             "problem_registry_count": len(problem_registry_rows),
             "problem_registry_status_counts": dict(Counter(item["properties"].get("problem_status") for item in problem_registry_rows)),
+            "write_json_outputs": write_json_outputs,
             "adaptive_high_grade_buffer_retry_count": adaptive_high_grade_buffer_retry_count,
             "adaptive_high_grade_single_buffer_retry_count": adaptive_high_grade_single_buffer_retry_count,
             "adaptive_high_grade_dual_buffer_retry_count": adaptive_high_grade_dual_buffer_retry_count,
@@ -1522,7 +1500,7 @@ def run_t06_step2_extract_rcsd_segments(
                 "topology_consistency": "buffer-based RCSD Segment graph uses canonicalized RCSD semantic nodes, explicit component coverage checks and special junction group gating",
                 "geometry_semantics": "SWSD geometry defines the buffer window; RCSD geometry is used for intersects/overlap candidate selection and retained output geometry; Step2 replacement plan is the formal Step3 execution scope",
                 "audit_traceability": "input paths, params, counts, reasons, adaptive buffer retry distance, replacement plan and problem registry outputs recorded",
-                "performance_verifiable": "input counts, candidate counts and output sizes are reproducible from summary",
+                "performance_verifiable": "input counts, candidate counts, output paths, write_json_outputs and heartbeat output_write events are reproducible from summary/progress sidecars",
             },
         },
     )

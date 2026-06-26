@@ -92,6 +92,11 @@ def apply_native_rcsd_advance_right_closure(
         rcsd_road_by_id=rcsd_road_by_id,
         canonicalizer=canonicalizer,
     )
+    native_node_degree = _selected_canonical_node_degrees(
+        selected_ids=list(rcsd_road_by_id),
+        rcsd_road_by_id=rcsd_road_by_id,
+        canonicalizer=canonicalizer,
+    )
     _add_mixed_retained_swsd_endpoint_degrees(
         node_degree,
         retained_swsd_roads=retained_swsd_roads or [],
@@ -121,6 +126,7 @@ def apply_native_rcsd_advance_right_closure(
         for endpoint_index, (node_id, point) in enumerate(zip(endpoint_ids[:2], endpoint_points[:2])):
             canonical_id = _canonicalize(canonicalizer, node_id)
             degree = node_degree.get(canonical_id, 0)
+            native_degree = native_node_degree.get(canonical_id, degree)
             segment_ids = added_road_to_segments.get(road_id, [])
             if degree > 1:
                 audit_rows.append(
@@ -157,6 +163,25 @@ def apply_native_rcsd_advance_right_closure(
                     and swsd_node_by_id is not None
                 ):
                     target_swsd_road_id, swsd_distance_m, swsd_projected = swsd_match
+                    if _has_unselected_native_rcsd_neighbors(native_degree=native_degree, selected_degree=degree):
+                        failed_endpoint_count += 1
+                        audit_rows.append(
+                            _audit_row(
+                                road_id=road_id,
+                                node_id=node_id,
+                                endpoint_index=endpoint_index,
+                                status="fail",
+                                action="audit_native_rcsd_boundary_endpoint",
+                                reason="rcsd_advance_right_leaf_endpoint_has_unselected_native_rcsd_neighbor",
+                                degree=degree,
+                                target_road_source="source_2",
+                                target_swsd_road_id=target_swsd_road_id,
+                                gap_m=round(float(point.distance(swsd_projected)), 3),
+                                replacement_segment_ids=segment_ids,
+                                geometry=point,
+                            )
+                        )
+                        continue
                     swsd_node_id, swsd_node_id_seed, node_created = _ensure_swsd_attachment_node(
                         rcsd_node_id=node_id,
                         point=swsd_projected,
@@ -237,6 +262,25 @@ def apply_native_rcsd_advance_right_closure(
                     and float(point.distance(swsd_match[2])) < gap_m
                 ):
                     target_swsd_road_id, swsd_distance_m, swsd_projected = swsd_match
+                    if _has_unselected_native_rcsd_neighbors(native_degree=native_degree, selected_degree=degree):
+                        failed_endpoint_count += 1
+                        audit_rows.append(
+                            _audit_row(
+                                road_id=road_id,
+                                node_id=node_id,
+                                endpoint_index=endpoint_index,
+                                status="fail",
+                                action="audit_native_rcsd_boundary_endpoint",
+                                reason="rcsd_advance_right_leaf_endpoint_has_unselected_native_rcsd_neighbor",
+                                degree=degree,
+                                target_road_source="source_2",
+                                target_swsd_road_id=target_swsd_road_id,
+                                gap_m=round(float(point.distance(swsd_projected)), 3),
+                                replacement_segment_ids=segment_ids,
+                                geometry=point,
+                            )
+                        )
+                        continue
                     swsd_node_id, swsd_node_id_seed, node_created = _ensure_swsd_attachment_node(
                         rcsd_node_id=node_id,
                         point=swsd_projected,
@@ -368,6 +412,11 @@ def apply_final_advance_right_endpoint_closure(
     road_by_id = {_feature_id(road): road for road in frcsd_roads}
     canonicalizer = NodeCanonicalizer.from_node_features(frcsd_nodes)
     node_degree = _final_canonical_node_degrees(frcsd_roads, canonicalizer=canonicalizer)
+    native_node_degree = _selected_canonical_node_degrees(
+        selected_ids=list(rcsd_road_by_id),
+        rcsd_road_by_id=rcsd_road_by_id,
+        canonicalizer=canonicalizer,
+    )
     split_points_by_road: dict[str, dict[str, tuple[float, str]]] = defaultdict(dict)
     audit_rows: list[dict[str, Any]] = stats.setdefault("audit_rows", [])
     generated_node_seed = _next_numeric_id(node_by_id)
@@ -385,6 +434,7 @@ def apply_final_advance_right_endpoint_closure(
             continue
         for endpoint_index, (node_id, point) in enumerate(zip(endpoint_ids[:2], endpoint_points[:2])):
             degree = node_degree.get(_canonicalize(canonicalizer, node_id), 0)
+            native_degree = native_node_degree.get(_canonicalize(canonicalizer, node_id), degree)
             if degree > 1:
                 continue
             match = _nearest_final_projection(
@@ -423,6 +473,62 @@ def apply_final_advance_right_endpoint_closure(
             target_source = str(target_props.get(source_field_name) or "")
             replacement_segment_ids = added_road_to_segments.get(target_road_id, [])
             advance_source = str(props.get(source_field_name) or "")
+            if (
+                advance_source
+                and advance_source != str(rcsd_source_value)
+                and target_source == str(rcsd_source_value)
+                and target_road is not None
+                and _is_advance_right_rcsd_road(target_road)
+                and _road_has_unselected_native_rcsd_boundary_endpoint(
+                    target_road,
+                    native_node_degree=native_node_degree,
+                    selected_node_degree=node_degree,
+                    canonicalizer=canonicalizer,
+                )
+            ):
+                failed += 1
+                audit_rows.append(
+                    _audit_row(
+                        road_id=road_id,
+                        node_id=node_id,
+                        endpoint_index=endpoint_index,
+                        status="fail",
+                        action="audit_native_rcsd_boundary_target_endpoint",
+                        reason="final_retained_swsd_advance_target_has_unselected_native_rcsd_neighbor",
+                        degree=degree,
+                        target_road_source=f"source_{target_source}",
+                        target_road_id=target_road_id,
+                        target_node_id=target_endpoint_node_id,
+                        gap_m=round(float(point.distance(projected)), 3),
+                        replacement_segment_ids=replacement_segment_ids,
+                        geometry=point,
+                    )
+                )
+                continue
+            if (
+                advance_source == str(rcsd_source_value)
+                and target_source
+                and target_source != str(rcsd_source_value)
+                and _has_unselected_native_rcsd_neighbors(native_degree=native_degree, selected_degree=degree)
+            ):
+                failed += 1
+                audit_rows.append(
+                    _audit_row(
+                        road_id=road_id,
+                        node_id=node_id,
+                        endpoint_index=endpoint_index,
+                        status="fail",
+                        action="audit_native_rcsd_boundary_endpoint",
+                        reason="final_rcsd_advance_right_leaf_endpoint_has_unselected_native_rcsd_neighbor",
+                        degree=degree,
+                        target_road_source=f"source_{target_source}",
+                        target_swsd_road_id=target_road_id,
+                        gap_m=round(float(point.distance(projected)), 3),
+                        replacement_segment_ids=[],
+                        geometry=point,
+                    )
+                )
+                continue
             if (
                 advance_source == str(rcsd_source_value)
                 and target_source
@@ -653,6 +759,27 @@ def _add_mixed_retained_swsd_endpoint_degrees(
         for node_id in unique_preserve_order(_road_endpoint_node_ids(road)[:2]):
             canonical_id = _canonicalize(canonicalizer, node_id)
             degree[canonical_id] = int(degree.get(canonical_id) or 0) + 1
+
+
+def _has_unselected_native_rcsd_neighbors(*, native_degree: int, selected_degree: int) -> bool:
+    return native_degree > 1 and native_degree > selected_degree
+
+
+def _road_has_unselected_native_rcsd_boundary_endpoint(
+    road: dict[str, Any],
+    *,
+    native_node_degree: dict[str, int],
+    selected_node_degree: dict[str, int],
+    canonicalizer: NodeCanonicalizer,
+) -> bool:
+    for node_id in unique_preserve_order(_road_endpoint_node_ids(road)[:2]):
+        canonical_id = _canonicalize(canonicalizer, node_id)
+        if _has_unselected_native_rcsd_neighbors(
+            native_degree=int(native_node_degree.get(canonical_id) or 0),
+            selected_degree=int(selected_node_degree.get(canonical_id) or 0),
+        ):
+            return True
+    return False
 
 
 def _final_canonical_node_degrees(

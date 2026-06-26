@@ -70,13 +70,15 @@ T06 消费 T01 SWSD Segment 与 T05 SWSD-RCSD 语义路口关系，构建 RCSDSe
 | `t06_special_junction_group_audit.*` | 环岛 / 复杂路口组级门控审计。 |
 | `t06_segment_replacement_plan.*` | Step2 发布的正式 Step3 执行计划，覆盖标准 replaceable、passed 特殊路口组内部 RCSD 对象和 passed path-corridor group replacement。 |
 | `t06_segment_replacement_problem_registry.*` | Segment 替换问题注册表，记录已由当前 plan 覆盖、已由 Step2 标准计划解决或仍需上游迭代的问题。 |
-| `t06_step2_progress.jsonl / t06_step2_heartbeat.json / t06_step2_slow_units.jsonl / t06_step2_slow_groups.jsonl / t06_step2_stackdump.log` | Step2 在 `progress=True` 时输出的运行诊断 sidecar，用于内网长耗时任务定位当前 Segment、group_audit 当前组、当前后处理阶段、慢单元、慢 group 和 SIGUSR1 栈转储；不作为替换业务成果或 Step3 输入。 |
+| `t06_step2_progress.jsonl / t06_step2_heartbeat.json / t06_step2_slow_units.jsonl / t06_step2_slow_groups.jsonl / t06_step2_stackdump.log` | Step2 在 `progress=True` 时输出的运行诊断 sidecar，用于内网长耗时任务定位当前 Segment、group_audit 当前组、当前后处理阶段、逐文件写出状态、慢单元、慢 group 和 SIGUSR1 栈转储；不作为替换业务成果或 Step3 输入。 |
 | `t06_frcsd_road.* / t06_frcsd_node.*` | Step3 F-RCSD 替换结果；`t06_frcsd_node.*` 可写入 `semantic_junction_group_id`，表达物理节点分离但语义同一路口的分组。 |
 | `t06_step3_semantic_junction_groups.*` | Step3 基于 T05 有效 `target_id -> base_id` 关系输出的语义路口组审计，覆盖远距离 SWSD/RCSD 多源节点分裂风险。 |
 | `t06_step3_unreplaced_rcsd_roads.*` | 未进入替换结果的 RCSDRoad 审计。 |
 | `t06_step3_swsd_frcsd_segment_relation.*` | 所有 SWSD Segment 到 F-RCSD carrier 的稳定关系索引，区分 `replaced / replaced+retained_swsd / retained_swsd / failed`；`frcsd_road_ids` 必须指向最终存在的 F-RCSD Road，按 `source_mix / frcsd_road_source_values` 区分 RCSD 替换 carrier 与保留 SWSD carrier。 |
 | `t06_step3_topology_connectivity_audit.*` | Step3 最终道路-节点完整性、正式替换 source 一致性、Segment 内连通、路口映射和挂接质量审计。 |
 | `t06_step3_surface_topology_audit.*` | 可选 surface-assisted closure 审计，记录 T03/T04/T05/T07 surface 对节点闭合的贡献和阻断原因。 |
+
+Step2 正式成果以 GPKG/CSV 为稳定载体；JSON feature dump 只作为本地调试和兼容产物。内网脚本默认 `write_json_outputs=false`，避免在大规模写出阶段重复序列化大几何导致长时间无进度或进程被终止；summary 必须记录该开关，Step3 必须能消费同目录 GPKG replacement plan。
 
 ## 7. 关键业务步骤
 
@@ -91,7 +93,7 @@ T06 消费 T01 SWSD Segment 与 T05 SWSD-RCSD 语义路口关系，构建 RCSDSe
 | 特殊组门控 | 环岛和复杂路口关联 Segment 必须全组可替换，否则整组移出 replaceable。 |
 | Step2 replacement plan | 把标准 replaceable、特殊组内部对象、path-corridor group replacement 统一发布为 Step3 执行计划。 |
 | Step2 problem registry | 将 rejected、当前 plan 覆盖和 Step2 自动解决的问题登记为可回流上游模块的审计记录。 |
-| Step2 progress diagnostics | 在 `progress=True` 的长耗时运行中持续写出 heartbeat、阶段进度、group_audit 组级进度、慢 Segment / 慢 group 记录和可触发栈转储，保证正式 GPKG/CSV/JSON 输出落盘前也能定位 CPU-bound 卡点。 |
+| Step2 progress diagnostics | 在 `progress=True` 的长耗时运行中持续写出 heartbeat、阶段进度、group_audit 组级进度、逐个输出文件的 start/end/skipped、慢 Segment / 慢 group 记录和可触发栈转储，保证正式成果落盘阶段也能定位 I/O 或序列化卡点。 |
 | Step3 替换 | 按 replacement plan 删除被替换 SWSDRoad 和端点 Node，引入 retained RCSDRoad/RCSDNode；若 Step1 detached junc 仍触达原 SWSDRoad，则以 `source=2` 保留为局部 restriction carrier，并重建语义路口 C。 |
 | Step3 后处理 | 对提前右转、缺失端点、保留 SWSD carrier、path-corridor 局部 coverage 回退、surface-assisted node closure、retained-junction gate 条件释放和最终 topology connectivity 做审计或受控补齐，提升 F-RCSD 下游可用性。 |
 

@@ -161,7 +161,7 @@ def test_replacement_plan_excludes_blocked_path_corridor_segments() -> None:
     assert props["group_segment_ids"] == ["s2"]
 
 
-def test_replacement_plan_blocks_group_when_probe_buffer_is_too_wide() -> None:
+def test_replacement_plan_marks_group_probe_buffer_risk_without_holding() -> None:
     rows = build_replacement_plan_rows(
         replaceable_rows=[],
         special_group_rows=[],
@@ -185,16 +185,17 @@ def test_replacement_plan_blocks_group_when_probe_buffer_is_too_wide() -> None:
     )
 
     props = rows[0]["properties"]
-    assert props["plan_status"] == "blocked"
-    assert props["execution_action"] == "hold"
-    assert props["source_reason"] == "group_probe_buffer_exceeds_topology_connectivity_gate"
+    assert props["plan_status"] == "ready"
+    assert props["execution_action"] == "replace"
+    assert props["source_reason"] == "passed"
     assert props["risk_flags"] == [
         "group_path_corridor_replacement",
-        "group_probe_buffer_exceeds_topology_connectivity_gate",
+        "group_probe_buffer_exceeds_topology_connectivity_audit_threshold",
     ]
+    assert "released as risk audit only" in props["notes"]
 
 
-def test_replacement_plan_blocks_group_when_member_standard_plan_is_blocked() -> None:
+def test_replacement_plan_does_not_block_group_for_member_adaptive_buffer_risk() -> None:
     rows = build_replacement_plan_rows(
         replaceable_rows=[
             _feature(
@@ -231,13 +232,12 @@ def test_replacement_plan_blocks_group_when_member_standard_plan_is_blocked() ->
     by_id = {row["properties"]["replacement_plan_id"]: row["properties"] for row in rows}
     standard = by_id["standard:s_member"]
     group = by_id["group_path_corridor:s_group"]
-    assert standard["plan_status"] == "blocked"
-    assert group["plan_status"] == "blocked"
-    assert group["execution_action"] == "hold"
-    assert group["source_reason"] == "group_member_replacement_plan_blocked"
-    assert "group_member_replacement_plan_blocked" in group["risk_flags"]
-    assert "adaptive_buffer_exceeds_topology_connectivity_gate" in group["risk_flags"]
-    assert "blocked_group_member_segments=['s_member']" in group["notes"]
+    assert standard["plan_status"] == "ready"
+    assert standard["execution_action"] == "replace"
+    assert group["plan_status"] == "ready"
+    assert group["execution_action"] == "replace"
+    assert standard["risk_flags"] == ["adaptive_buffer_exceeds_topology_connectivity_audit_threshold"]
+    assert group["risk_flags"] == ["group_path_corridor_replacement"]
 
 
 def test_group_plan_absorbs_internal_member_visual_road_conflict() -> None:
@@ -1001,7 +1001,7 @@ def test_replacement_plan_does_not_block_reverse_of_covered_replaceable_audit() 
     assert by_segment["b_a"]["execution_action"] == "replace"
 
 
-def test_replacement_plan_blocks_standard_segment_when_adaptive_buffer_is_too_wide() -> None:
+def test_replacement_plan_marks_standard_adaptive_buffer_risk_without_holding() -> None:
     rows = build_replacement_plan_rows(
         replaceable_rows=[
             _feature(
@@ -1023,10 +1023,12 @@ def test_replacement_plan_blocks_standard_segment_when_adaptive_buffer_is_too_wi
     )
 
     props = rows[0]["properties"]
-    assert props["plan_status"] == "blocked"
-    assert props["execution_action"] == "hold"
-    assert props["source_reason"] == "adaptive_buffer_exceeds_topology_connectivity_gate"
-    assert props["risk_flags"] == ["adaptive_buffer_exceeds_topology_connectivity_gate"]
+    assert props["plan_status"] == "ready"
+    assert props["execution_action"] == "replace"
+    assert props["upstream_owner"] == "T05_relation_consumed"
+    assert props["source_reason"] == "single_graph_retry:swsd_geometry_not_covered_by_retained_rcsd"
+    assert props["risk_flags"] == ["adaptive_buffer_exceeds_topology_connectivity_audit_threshold"]
+    assert "released as risk audit only" in props["notes"]
 
 
 def test_replacement_plan_marks_mapping_far_from_retained_incident_segment() -> None:

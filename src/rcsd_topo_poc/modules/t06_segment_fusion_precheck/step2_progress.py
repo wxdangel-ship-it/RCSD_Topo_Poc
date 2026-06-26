@@ -73,6 +73,24 @@ class Step2Progress:
         self._write_event("stage", **payload)
         self._write_heartbeat(payload)
 
+    def output(self, stem: str, fmt: str, status: str, path: Path) -> None:
+        if not self.enabled:
+            return
+        payload: dict[str, Any] = {
+            "phase": "write_outputs",
+            "stem": stem,
+            "format": fmt,
+            "status": status,
+            "path": str(path),
+        }
+        if status == "end":
+            try:
+                payload["size_bytes"] = path.stat().st_size
+            except OSError:
+                pass
+        self._write_event("output_write", **payload)
+        self._write_heartbeat(payload)
+
     def finish(self, **fields: Any) -> None:
         if not self.enabled:
             return

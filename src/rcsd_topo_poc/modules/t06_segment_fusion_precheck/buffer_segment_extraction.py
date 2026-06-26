@@ -82,6 +82,7 @@ class _GeometryMetrics:
 
 
 _GEOMETRY_METRICS_CACHE: dict[int, tuple[BaseGeometry, _GeometryMetrics]] = {}
+_PATH_REFERENCE_BUFFER_CACHE: dict[int, tuple[BaseGeometry, BaseGeometry]] = {}
 
 
 class SpatialFeatureIndex:
@@ -992,7 +993,15 @@ def _edge_weight(
 def _path_reference_buffer(reference_geometry: BaseGeometry | None) -> BaseGeometry | None:
     if reference_geometry is None or reference_geometry.is_empty:
         return None
-    return reference_geometry.buffer(PATH_REFERENCE_BUFFER_M)
+    key = id(reference_geometry)
+    cached = _PATH_REFERENCE_BUFFER_CACHE.get(key)
+    if cached is not None and cached[0] is reference_geometry:
+        return cached[1]
+    buffered = reference_geometry.buffer(PATH_REFERENCE_BUFFER_M)
+    if len(_PATH_REFERENCE_BUFFER_CACHE) >= 8192:
+        _PATH_REFERENCE_BUFFER_CACHE.clear()
+    _PATH_REFERENCE_BUFFER_CACHE[key] = (reference_geometry, buffered)
+    return buffered
 
 
 def _off_reference_penalty(

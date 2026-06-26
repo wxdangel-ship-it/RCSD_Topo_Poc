@@ -1242,6 +1242,7 @@ def run_t06_step2_extract_rcsd_segments(
         rejected_rows=rejected_rows,
         failure_business_audit_rows=failure_business_audit_rows,
         buffer_config=buffer_config,
+        progress=diag,
     )
     path_corridor_covered_segment_ids = _path_corridor_group_covered_segment_ids(pre_gate_group_replacement_audit_rows)
     diag.stage("special_junction_gate")
@@ -1347,6 +1348,7 @@ def run_t06_step2_extract_rcsd_segments(
             rejected_rows=rejected_rows,
             failure_business_audit_rows=failure_business_audit_rows,
             buffer_config=buffer_config,
+            progress=diag,
         )
     else:
         group_replacement_audit_rows = pre_gate_group_replacement_audit_rows

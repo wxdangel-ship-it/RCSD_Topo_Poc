@@ -23,18 +23,24 @@ def test_step2_progress_writes_runtime_sidecars(tmp_path):
 
     progress.unit(1, "seg_a")
     progress.unit(2, "seg_b")
+    progress.group(1, segment_id="seg_group", failure_business_count=3)
+    progress.group_done(group_index=1, segment_id="seg_group", group_probe_status="passed")
     progress.stage("replacement_plan")
     progress.finish(replaceable_count=1, replacement_plan_count=1)
 
     heartbeat = json.loads((tmp_path / "t06_step2_heartbeat.json").read_text(encoding="utf-8"))
     progress_rows = _jsonl(tmp_path / "t06_step2_progress.jsonl")
     slow_rows = _jsonl(tmp_path / "t06_step2_slow_units.jsonl")
+    slow_group_rows = _jsonl(tmp_path / "t06_step2_slow_groups.jsonl")
 
     assert heartbeat["phase"] == "done"
     assert heartbeat["replaceable_count"] == 1
     assert any(row["event"] == "unit_progress" and row["segment_id"] == "seg_a" for row in progress_rows)
+    assert any(row["event"] == "group_progress" and row["segment_id"] == "seg_group" for row in progress_rows)
     assert any(row["event"] == "stage" and row["phase"] == "replacement_plan" for row in progress_rows)
     assert {row["segment_id"] for row in slow_rows} == {"seg_a", "seg_b"}
+    assert slow_group_rows[0]["event"] == "slow_group"
+    assert slow_group_rows[0]["group_probe_status"] == "passed"
 
 
 def test_step2_progress_disabled_writes_no_sidecars(tmp_path):

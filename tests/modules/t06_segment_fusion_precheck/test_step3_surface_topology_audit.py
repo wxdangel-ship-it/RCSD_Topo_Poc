@@ -752,7 +752,7 @@ def test_surface_topology_postprocess_uses_step2_optional_junc_one_to_one_mappin
                     "rcsd_junc_nodes": ["40", "30"],
                 },
                 LineString([(0, 0), (10, 0)]),
-            )
+            ),
         ],
     )
     _write_layer(
@@ -1255,7 +1255,17 @@ def test_surface_topology_postprocess_materializes_selected_replacement_midroad_
                     "risk_flags": [],
                 },
                 LineString([(0, 0), (10, 0)]),
-            )
+            ),
+            _feature(
+                {
+                    "swsd_segment_id": "s_shared",
+                    "relation_status": "replaced",
+                    "frcsd_road_ids": ["rr1"],
+                    "swsd_to_frcsd_node_map": [],
+                    "risk_flags": [],
+                },
+                LineString([(0, -1), (10, -1)]),
+            ),
         ],
     )
     _write_layer(
@@ -1280,7 +1290,7 @@ def test_surface_topology_postprocess_materializes_selected_replacement_midroad_
 
     assert summary["surface_topology_selected_replacement_midroad_closed_count"] == 1
     assert summary["surface_topology_selected_replacement_midroad_materialized_count"] == 1
-    assert summary["surface_topology_relation_node_map_update_count"] == 1
+    assert summary["surface_topology_relation_node_map_update_count"] == 2
     nodes = {item["properties"]["id"]: item["properties"] for item in read_features(step_root / "t06_frcsd_node.gpkg")}
     generated_nodes = [
         props for props in nodes.values() if props.get("t06_generated_reason") == "surface_topology_selected_replacement_midroad"
@@ -1295,11 +1305,17 @@ def test_surface_topology_postprocess_materializes_selected_replacement_midroad_
         str(split_roads[0]["enodeid"]),
         str(split_roads[1]["snodeid"]),
     }
-    relation = read_features(step_root / "t06_step3_swsd_frcsd_segment_relation.gpkg")[0]["properties"]
+    relations = {
+        item["properties"]["swsd_segment_id"]: item["properties"]
+        for item in read_features(step_root / "t06_step3_swsd_frcsd_segment_relation.gpkg")
+    }
+    relation = relations["s_replaced"]
     node_map = json.loads(relation["swsd_to_frcsd_node_map"])
     assert node_map[0]["frcsd_node_ids"] == [generated_node_id]
     assert node_map[0]["mapping_status"] == "selected_replacement_midroad_projection"
-    assert json.loads(relation["frcsd_road_ids"]) == [str(split_roads[0]["id"]), str(split_roads[1]["id"])]
+    split_ids = [str(split_roads[0]["id"]), str(split_roads[1]["id"])]
+    assert json.loads(relation["frcsd_road_ids"]) == split_ids
+    assert json.loads(relations["s_shared"]["frcsd_road_ids"]) == split_ids
 
 
 def test_surface_topology_postprocess_materializes_parallel_selected_midroad_nodes(

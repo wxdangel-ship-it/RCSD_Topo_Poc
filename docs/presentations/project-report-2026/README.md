@@ -31,6 +31,7 @@
 | `01-master-outline.md` | 完整母版章节结构和叙事顺序。 |
 | `02-slide-catalog.md` | 每页 PPT 的标题、结论、证据、图片需求和裁剪策略。 |
 | `03-evidence-index.md` | 汇报结论对应的证据索引，避免无来源数字和判断。 |
+| `04-metric-system.md` | 汇报指标体系，定义端到端、路口锚定、Segment 替换和 restriction 恢复的指标口径。 |
 | `05-open-questions.md` | 后续讨论中需要确认的问题。 |
 | `slides/` | 分章节 Markdown 草稿。 |
 | `assets/diagrams/` | 汇报用流程图、架构图、漏斗图等轻量图示。 |

@@ -1238,14 +1238,14 @@ def _apply_relation_node_map_updates(
         segment_id = _safe_id(props.get("swsd_segment_id"))
         if str(props.get("relation_status") or "") == "retained_swsd":
             continue
+        row_changed = False
         for update in updates:
-            if segment_id not in set(update.get("swsd_segment_ids") or []):
-                continue
-            row_changed = _replace_relation_road_ids(props, update)
-            if _upsert_relation_node_map(props, update):
+            if _replace_relation_road_ids(props, update):
                 row_changed = True
-            if row_changed:
-                updated += 1
+            if segment_id in set(update.get("swsd_segment_ids") or []) and _upsert_relation_node_map(props, update):
+                row_changed = True
+        if row_changed:
+            updated += 1
     if updated:
         write_feature_triplet(
             step_root=step_root,

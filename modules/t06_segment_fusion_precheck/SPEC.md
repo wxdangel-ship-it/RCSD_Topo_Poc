@@ -74,7 +74,7 @@ T06 消费 T01 SWSD Segment 与 T05 SWSD-RCSD 语义路口关系，构建 RCSDSe
 | `t06_frcsd_road.* / t06_frcsd_node.*` | Step3 F-RCSD 替换结果；`t06_frcsd_node.*` 可写入 `semantic_junction_group_id`，表达物理节点分离但语义同一路口的分组。 |
 | `t06_step3_semantic_junction_groups.*` | Step3 基于 T05 有效 `target_id -> base_id` 关系输出的语义路口组审计，覆盖远距离 SWSD/RCSD 多源节点分裂风险。 |
 | `t06_step3_unreplaced_rcsd_roads.*` | 未进入替换结果的 RCSDRoad 审计。 |
-| `t06_step3_swsd_frcsd_segment_relation.*` | 所有 SWSD Segment 到 F-RCSD carrier 的稳定关系索引，区分 `replaced / replaced+retained_swsd / retained_swsd / failed`。 |
+| `t06_step3_swsd_frcsd_segment_relation.*` | 所有 SWSD Segment 到 F-RCSD carrier 的稳定关系索引，区分 `replaced / replaced+retained_swsd / retained_swsd / failed`；`frcsd_road_ids` 必须指向最终存在的 F-RCSD Road，按 `source_mix / frcsd_road_source_values` 区分 RCSD 替换 carrier 与保留 SWSD carrier。 |
 | `t06_step3_topology_connectivity_audit.*` | Step3 最终道路-节点完整性、正式替换 source 一致性、Segment 内连通、路口映射和挂接质量审计。 |
 | `t06_step3_surface_topology_audit.*` | 可选 surface-assisted closure 审计，记录 T03/T04/T05/T07 surface 对节点闭合的贡献和阻断原因。 |
 
@@ -93,7 +93,7 @@ T06 消费 T01 SWSD Segment 与 T05 SWSD-RCSD 语义路口关系，构建 RCSDSe
 | Step2 problem registry | 将 rejected、当前 plan 覆盖和 Step2 自动解决的问题登记为可回流上游模块的审计记录。 |
 | Step2 progress diagnostics | 在 `progress=True` 的长耗时运行中持续写出 heartbeat、阶段进度、慢 Segment 记录和可触发栈转储，保证正式 GPKG/CSV/JSON 输出落盘前也能定位 CPU-bound 卡点。 |
 | Step3 替换 | 按 replacement plan 删除被替换 SWSDRoad 和端点 Node，引入 retained RCSDRoad/RCSDNode；若 Step1 detached junc 仍触达原 SWSDRoad，则以 `source=2` 保留为局部 restriction carrier，并重建语义路口 C。 |
-| Step3 后处理 | 对提前右转、缺失端点、保留 SWSD carrier、surface-assisted node closure、retained-junction gate 条件释放和最终 topology connectivity 做审计或受控补齐，提升 F-RCSD 下游可用性。 |
+| Step3 后处理 | 对提前右转、缺失端点、保留 SWSD carrier、path-corridor 局部 coverage 回退、surface-assisted node closure、retained-junction gate 条件释放和最终 topology connectivity 做审计或受控补齐，提升 F-RCSD 下游可用性。 |
 
 ## 8. 什么是对
 
@@ -106,7 +106,9 @@ T06 消费 T01 SWSD Segment 与 T05 SWSD-RCSD 语义路口关系，构建 RCSDSe
 - buffer-only probe 若给出非 ambiguous、非人工复核的 `high_confidence_pair_anchor_candidate`，即使 T05 两端已有 anchor 但一端或两端被诊断为 `candidate_anchor_mismatch`，或 T05 两端 pair relation 均缺失但候选 pair 满足高置信安全门槛，也只允许在 T06 当前 Segment 内构造候选 effective relation 并重新执行正式 extractor；重试失败仍保持 rejected，不回写 T05 relation。
 - 单向 `multi_anchor_ambiguous` 只能在 probe 高置信、oriented RCSD pair 与 SWSD Segment 轴向端点侧位一致、且正式试算恰好一个 oriented candidate 通过时自动替换；多个候选通过、无候选通过或硬审计失败必须保持 rejected / 人工复核。
 - Step3 只执行 Step2 replacement plan，不重新判定特殊组或 path-corridor group 可替换性；若标准 replaceable 的 final junc 集合相对 T01 原始 Segment 发生 detached junc 缩减，detached junc 触达的原 SWSDRoad 必须保留为 `source=2` 局部 carrier，并在 relation 中标记 `replaced+retained_swsd`。
-- Step3 relation 中的 `frcsd_road_ids` 只表达正式 RCSD 替换道路清单；保留 SWSD carrier、SWSD 派生 topology supplement 和提前右转挂接补丁必须通过状态、风险标记和审计单独暴露。
+- Step3 relation 中的 `frcsd_road_ids` 表达该 Segment 在最终 F-RCSD 中实际可消费的 carrier。`relation_status=replaced` 时应为正式 RCSD 替换道路；`retained_swsd / replaced+retained_swsd` 时可包含 `source=2` 的保留 SWSD carrier，但必须通过 `source_mix / frcsd_road_source_values`、状态和风险标记暴露来源。
+- Step3 若在执行后发现 ready plan 的局部 coverage / topology 兜底无法形成安全 RCSD 替换，不得丢弃该 SWSD Segment；必须保留原 SWSD Road/Node 为 `source=2` carrier，或将混合关系标记为 `replaced+retained_swsd` 并进入 topology / risk audit。
+- Surface-assisted closure materialize 出的 split road 必须同步回所有引用原始 road id 的非 `retained_swsd` relation；`frcsd_road_ids` 不得保留已被替换掉的 pre-split road id。
 - Surface-assisted closure 只在唯一候选、T04 未 reject、Patch 无冲突、距离和 source 条件可解释时补节点语义或 relation node map；它不能新增替换道路，不能修改原始道路几何。
 - Surface-aware retained-junction gate 释放只适用于 Step2 已因 `junction_alignment_to_retained_swsd_exceeds_topology_gate` 阻断的 replacement plan 行；触发节点必须有 surface audit 1:1 pass，或是 plan 原始 pair endpoint 与 `original_rcsd_pair_nodes` 的可解释映射。释放后必须重跑 Step3 与 topology audit；若候选释放只引入 T05 有效语义路口关系可解释的 SWSD/RCSD 多源节点分裂，则允许降级为风险审计并输出 `semantic_junction_group_id`；其它新增 hard fail 仍必须回退为 blocked / hold 并记录 `junction_alignment_surface_release_failed_topology_gate`。相对传入 baseline 的新增 topology fail 必须在 summary 中显式暴露，不允许 silent pass。
 - T05 `intersection_match_all.geojson` 中 `status=0 / base_id>0` 的关系是 T06 语义路口组的业务证据；`many_target_to_one_base` 按 T05 非阻断审计口径允许形成同一 `semantic_junction_group_id`。分歧、合流等工艺差异导致的远距离 SWSD/RCSD node 不设硬距离阈值，但必须进入 `t06_step3_semantic_junction_groups.*` 和 topology warn 审计。

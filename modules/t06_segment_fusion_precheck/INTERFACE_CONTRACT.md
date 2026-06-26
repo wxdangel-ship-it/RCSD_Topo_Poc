@@ -31,6 +31,7 @@ Step1 / Step2 / Step3 代码均已提供模块内 callable runner；所有阶段
 - 对 final `nodes.gpkg.kind_2=64` 的环岛路口与 `kind_2=128` 的复杂路口执行特殊组门控：按 `pair_nodes + junc_nodes` 包含该语义路口识别关联 Segment；只有组内全部关联 Segment 均通过可替换判定时，组内 Segment 才允许进入 Step2 replaceable；否则组内所有原本可替换 Segment 均移出 replaceable，并以 `special_junction_group_not_fully_replaceable` 记录拒绝。
 - Step3 优先消费 Step2 replacement plan，删除被替换 SWSDRoad 及其端点 SWSDNode，引入 plan 中发布的 retained RCSDRoad / RCSDNode、特殊路口组内部 Node/Road 与 path-corridor group RCSDRoad；输出 `source=1` 的 RCSD 数据与 `source=2` 的 SWSD 数据，并按 `pair_nodes + junc_nodes` 聚合重建语义路口 C。若旧运行缺少 replacement plan，Step3 可回退读取同目录特殊路口组审计和 group replacement 审计，且必须在 summary 中记录 legacy source。
 - Step3 若发现 replaceable Segment 的 `swsd_junc_nodes` 少于 T01 原始 `junc_nodes`，说明上游已对部分 junc-only 节点执行主通道脱挂；detached junc 触达的原 SWSDRoad 必须以 `source=2` 保留为局部通行限制 carrier，并在 Segment relation 中输出 `relation_status=replaced+retained_swsd`、`detached_junc_nodes`、`retained_detached_swsd_road_ids` 与 detached junc identity node map。该规则不回写 T05 relation，也不宣称 detached junc 已完成 RCSD 锚定。
+- Step3 若在执行 ready plan 后由 topology / coverage 兜底确认某个 Segment 不能安全完成 RCSD 替换，不得丢弃原 SWSD 承载；应保留该 Segment 原 SWSD Road/Node 为 `source=2` carrier，输出 `relation_status=retained_swsd` 或 `replaced+retained_swsd`，并通过 topology audit 与 risk flag 暴露原因。
 
 ### 1.2 当前非目标
 
@@ -128,7 +129,7 @@ run_t06_step2_extract_rcsd_segments(
 - Step3 若保留 topology / coverage 兜底校验，必须按 `group_replacement_segment_ids` 聚合整组 SWSD corridor 与整组 RCSD road union 判断；不得用单个 source carrier 的局部 formal coverage 直接 hard fail。group 级 coverage 失败时，必须整组失败或整组回退，并通过 `unit_reason=group_formal_replacement_corridor_coverage_unavailable` 暴露审计原因，禁止出现 source carrier 失败、其它 group member 成功的部分替换。
 - Step3 formal replacement corridor coverage / retained SWSD carrier coverage 只作为执行兜底，不得把已满足 Step2 replacement plan、端点锚定、方向连通、主干无争占、同 Segment 无多源混合的替换单元，仅因端点 coverage gap 位于当前 Segment 已锚定 T05 junction anchor surface 内而 hard fail。此类 gap 可从 hard coverage 缺口中扣除，并在 relation / unit 风险中追加 `formal_corridor_gap_inside_anchored_junction_surface`、`junction_surface_coverage_release`、`manual_review_required`；若扣除路口面后仍超阈值，仍按原 coverage gate 失败。
 - Step3 清除 SWSDNode 的范围只限于被替换 SWSDRoad 的端点 Node，不清除 `pair_nodes / junc_nodes` 所在 SWSD 语义路口组的全部 Node。
-- Step3 relation 中的 `frcsd_road_ids` 是正式 Segment 替换道路清单，必须保持同源 RCSD 数据；`retained_swsd` carrier、SWSD 派生 topology supplement 与提前右转挂接补丁只能作为保留/补拓扑材料或审计材料输出，不得混入正式替换道路清单。若 Segment 需要保留 SWSD carrier，必须通过 `relation_status=replaced+retained_swsd`、`retained_detached_swsd_road_ids` 与风险标记暴露，但 `frcsd_road_source_values / source_mix` 仍只描述正式替换清单。
+- Step3 relation 中的 `frcsd_road_ids` 是该 Segment 在最终 F-RCSD 中实际可消费的 carrier 清单。`relation_status=replaced` 时应指向 `source=1` RCSD 替换道路；`retained_swsd / replaced+retained_swsd` 时可指向 `source=2` 保留 SWSD carrier，但必须通过 `frcsd_road_source_values / source_mix`、状态和风险标记暴露来源。若 surface topology materialize 出 split road，所有非 `retained_swsd` relation 都必须把 pre-split road id 同步为最终存在的 split road id。
 - Step3 可在不重判 Segment 可替换性的前提下执行提前右转后处理：已选 RCSD 提右 corridor 若一端接已替换 RCSD、另一端贴近保留 SWSD carrier，应保留 RCSD 提右并将 RCSD 端点吸附到对应 SWSD 几何位置；仅 SWSD 存在提右 carrier 时，应按 T05 road-only split 语义在已选 RCSD Road 上复用或生成 RCSD 挂接节点；提右与其它挂接 road 共用 SWSD 主路节点时必须复用同一挂接位置；普通 RCSD road 挂接在已选 RCSD 提右 road 中点时，应拆分该提右 road 并把挂接 road 加入同一 replacement unit。该后处理只补齐已选/已保留 carrier 的道路、节点与几何一致性，不把 rejected Segment 改判为 replaceable。
 - Step3 待重建语义路口 C 来自所有 replaceable Segment 的 `pair_nodes + junc_nodes`；C 内 Node 的 `kind / grade / kind_2 / grade_2 / closed_con` 继承原 main node 对应 Node 的属性。
 
@@ -288,7 +289,7 @@ Step3 默认从 Step2 replaceable 同目录优先读取 `t06_segment_replacement
 `t06_step3_swsd_frcsd_segment_relation` 是下游稳定关系索引，覆盖所有输入 SWSD Segment：
 
 - `relation_status=replaced`：该 Segment 被 Step3 替换，`frcsd_road_ids` 指向 `source=1` 的 FRCSD Road。
-- `relation_status=replaced+retained_swsd`：该 Segment 主通道被 Step3 替换，同时 detached junc 触达的局部 SWSDRoad 以 `source=2` 保留为 T09 通行限制 carrier。
+- `relation_status=replaced+retained_swsd`：该 Segment 主通道被 Step3 替换，同时 detached junc 或局部 coverage 回退触达的 SWSDRoad 以 `source=2` 保留为 T09 通行限制 carrier；`frcsd_road_ids` 可同时指向 `source=1` RCSD carrier 与 `source=2` SWSD carrier，来源以 `frcsd_road_source_values / source_mix` 区分。
 - `relation_status=retained_swsd`：该 Segment 未被替换，`frcsd_road_ids` 指向 FRCSD 中保留的 `source=2` SWSD Road。
 - `relation_status=failed`：该 Segment 关系解析失败或缺少必要承载，必须写明 `relation_reason`。
 

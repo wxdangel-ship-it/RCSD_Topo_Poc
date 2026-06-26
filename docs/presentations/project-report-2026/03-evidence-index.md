@@ -15,10 +15,13 @@
 | E-001 | 全量运行 run root | 支撑成果摘要、漏斗统计、T10 编排说明。 | 待确认。 |
 | E-002 | 总输入规模和阶段统计 | 支撑成果漏斗。 | 待确认。 |
 | E-003 | 成功构建路口、路段、Movement 的统计 | 支撑道路结构层效果。 | 待确认。 |
-| E-004 | SWSD/RCSD 关系构建成功和失败统计 | 支撑关系构建成果与损失原因。 | 待确认。 |
-| E-005 | T06 replacement plan / problem registry | 支撑替换资格判断、损失原因和典型案例。 | 待确认。 |
-| E-006 | T06 Step3 替换执行结果 | 支撑最终输出和保留原因。 | 待确认。 |
-| E-007 | 关系冲突审计 | 支撑 `1V1` 关系质量问题说明。 | 待确认。 |
+| E-004 | T05 路口锚定漏斗 | 支撑路口锚定可消费率、来源贡献和前置损失分析。 | 待确认真实 `t05_junction_anchor_funnel_summary.json`。 |
+| E-005 | T05 relation 质量审计 | 支撑 relation 基数错误、blocking error、graph consumability 分析。 | 待确认 `relation_cardinality_errors.*`、`blocking_errors.*`、`relation_graph_consumability_audit.*`。 |
+| E-006 | T06 Step1/Step2/Step3 漏斗 | 支撑 Segment 替换率、RCSD 候选构建率、replacement plan ready 率。 | 待确认 `t06_step1_summary.json`、`t06_step2_summary.json`、`t06_step3_summary.json` 或 T10 `t10_t06_funnel.*`。 |
+| E-007 | T06 Step3 relation 明细 | 支撑 RCSD 最终替换率、纯替换率、混源保留率、retained / failed 统计。 | 待确认 `t06_step3_swsd_frcsd_segment_relation.*`。 |
+| E-013 | T06 problem registry / failure business audit | 支撑 Segment 损失原因、上游回流和质量闭环。 | 待确认 `t06_segment_replacement_problem_registry.*`、`t06_rcsd_segment_failure_business_audit.*`。 |
+| E-014 | T06 topology / surface QA | 支撑替换后拓扑质量和 surface-assisted closure 贡献。 | 待确认 `t06_step3_topology_connectivity_audit.*`、`t06_step3_surface_topology_audit.*`。 |
+| E-015 | T09 restriction 恢复统计 | 后续通行能力专题证据，暂不纳入 L0 / L1 主指标。 | 待确认 `t09_swsd_field_rule_restoration_summary.json`、`t09_step3_frcsd_restriction_summary.json`。 |
 | E-008 | 典型复杂 junction case 图片 | 支撑成果现状与根因分析中的示例页。 | 待选 case。 |
 | E-009 | 典型数据缺失或表达不足 case 图片 | 支撑损失原因示例。 | 待选 case。 |
 | E-010 | 典型替换风险 case 图片 | 支撑替换门控和保留策略说明。 | 待选 case。 |

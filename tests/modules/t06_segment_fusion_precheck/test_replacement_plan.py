@@ -12,6 +12,7 @@ from rcsd_topo_poc.modules.t06_segment_fusion_precheck.step3_surface_aware_plan_
     _points_by_id,
     _release_allowed,
     _rollback_items_for_plan_rows,
+    _rollback_plan_ids,
     _rollback_plan_ids_for_failed_segments,
     _rollback_visual_conflict_release_rows,
     _visual_conflict_non_replaced_plan_ids,
@@ -1310,7 +1311,13 @@ def test_surface_aware_release_rollback_prefers_explicit_junction_segments() -> 
     assert _rollback_plan_ids_for_failed_segments(added_fail_keys, released, incident) == {"standard:s_direct"}
 
 
-def test_surface_aware_release_rollback_includes_candidate_plan_carriers() -> None:
+def test_surface_aware_release_rollback_does_not_block_unreleased_candidate_plan_carriers(tmp_path: Path) -> None:
+    segment_path = tmp_path / "segment.gpkg"
+    write_vector(
+        segment_path,
+        [_feature({"id": "s_group", "pair_nodes": ["n1", "n2"], "junc_nodes": []}, LineString([(0, 0), (1, 0)]))],
+        crs_text="EPSG:3857",
+    )
     added_fail_keys = {
         (
             "segment_junction_connectivity",
@@ -1338,11 +1345,38 @@ def test_surface_aware_release_rollback_includes_candidate_plan_carriers() -> No
         },
     ]
 
-    rollback_items = [*released, *_rollback_items_for_plan_rows(plan_rows)]
+    assert _rollback_items_for_plan_rows(plan_rows)[0]["plan_id"] == "group_path_corridor:s_group"
+    assert _rollback_plan_ids(added_fail_keys, released, plan_rows, segment_path) == set()
 
-    assert _rollback_plan_ids_for_failed_segments(added_fail_keys, rollback_items, {}) == {
-        "group_path_corridor:s_group"
+
+def test_surface_aware_release_rollback_keeps_t05_semantic_release_as_risk(tmp_path: Path) -> None:
+    segment_path = tmp_path / "segment.gpkg"
+    write_vector(
+        segment_path,
+        [_feature({"id": "s_release", "pair_nodes": ["n1", "n2"], "junc_nodes": []}, LineString([(0, 0), (1, 0)]))],
+        crs_text="EPSG:3857",
+    )
+    added_fail_keys = {
+        (
+            "segment_junction_connectivity",
+            "[\"s_release\"]",
+            "",
+            "",
+            "segment_junction_connectivity_missing",
+        )
     }
+    released = [
+        {
+            "plan_id": "standard:s_release",
+            "segment_id": "s_release",
+            "group_segment_ids": ["s_release"],
+            "triggers": [
+                {"surface_status": ["pass", "auto_closed_t05_semantic_junction_relation", 25.964], "ok": True}
+            ],
+        }
+    ]
+
+    assert _rollback_plan_ids(added_fail_keys, released, [], segment_path) == set()
 
 
 def test_visual_conflict_release_keeps_source_reason_and_adds_release_risk() -> None:
@@ -1439,6 +1473,48 @@ def test_visual_conflict_rollback_only_blocks_visual_release_plan(tmp_path: Path
     assert rolled_back[1]["properties"]["plan_status"] == "ready"
 
 
+def test_visual_conflict_release_does_not_rollback_for_advance_right_leaf_audit(tmp_path: Path) -> None:
+    segment_path = tmp_path / "segment.gpkg"
+    write_vector(
+        segment_path,
+        [_feature({"id": "s_visual", "pair_nodes": ["n1", "n2"], "junc_nodes": []}, LineString([(0, 0), (1, 0)]))],
+        crs_text="EPSG:3857",
+    )
+    added_fail_keys = {
+        (
+            "advance_right_endpoint_connectivity",
+            '["s_visual", "s_peer"]',
+            "",
+            "r_leaf",
+            "advance_right_leaf_endpoint_unattached",
+        )
+    }
+    released = [{"plan_id": "standard:s_visual", "segment_id": "s_visual", "group_segment_ids": ["s_visual"]}]
+
+    assert _visual_conflict_rollback_plan_ids(added_fail_keys, released, segment_path) == set()
+
+
+def test_visual_conflict_release_rolls_back_for_segment_connectivity_fail(tmp_path: Path) -> None:
+    segment_path = tmp_path / "segment.gpkg"
+    write_vector(
+        segment_path,
+        [_feature({"id": "s_visual", "pair_nodes": ["n1", "n2"], "junc_nodes": []}, LineString([(0, 0), (1, 0)]))],
+        crs_text="EPSG:3857",
+    )
+    added_fail_keys = {
+        (
+            "segment_road_connectivity",
+            "s_visual",
+            "",
+            "",
+            "segment_road_endpoints_not_connected",
+        )
+    }
+    released = [{"plan_id": "standard:s_visual", "segment_id": "s_visual", "group_segment_ids": ["s_visual"]}]
+
+    assert _visual_conflict_rollback_plan_ids(added_fail_keys, released, segment_path) == {"standard:s_visual"}
+
+
 def test_visual_conflict_non_replaced_release_is_rolled_back(tmp_path: Path) -> None:
     step_root = tmp_path / "step3"
     step_root.mkdir()
@@ -1477,6 +1553,17 @@ def test_visual_manual_release_allows_small_pair_attachment_gap_to_retained_inci
         ],
         special_group_rows=[],
         group_replacement_audit_rows=[],
+        failure_business_audit_rows=[
+            _feature(
+                {
+                    "swsd_segment_id": "s_replace",
+                    "failure_business_category": "pair_anchor_mismatch",
+                    "pair_anchor_error_swsd_nodes": ["n1", "n2"],
+                    "pair_anchor_error_original_rcsd_nodes": [""],
+                    "pair_anchor_error_candidate_rcsd_nodes": ["r2", "r1"],
+                }
+            )
+        ],
         rcsd_roads=[],
         rcsd_node_canonicalizer=NodeCanonicalizer({}, frozenset()),
         swsd_segments=[
@@ -1491,6 +1578,53 @@ def test_visual_manual_release_allows_small_pair_attachment_gap_to_retained_inci
     assert props["plan_status"] == "ready"
     assert props["execution_action"] == "replace"
     assert "visual_manual_release_pair_attachment_gap_accepted" in props["risk_flags"]
+    assert "junction_alignment_to_retained_swsd_exceeds_topology_gate" not in props["risk_flags"]
+
+
+def test_pair_anchor_repair_attachment_gap_is_risk_not_blocker() -> None:
+    rows = build_replacement_plan_rows(
+        replaceable_rows=[
+            _feature(
+                {
+                    "swsd_segment_id": "s_replace",
+                    "replacement_strategy": "buffer_segment_extraction",
+                    "swsd_pair_nodes": ["n1", "n2"],
+                    "rcsd_pair_nodes": ["r1", "r2"],
+                    "original_rcsd_pair_nodes": ["r1"],
+                    "pair_anchor_error_swsd_nodes": ["n1", "n2"],
+                    "pair_anchor_error_candidate_rcsd_nodes": ["r2", "r1"],
+                    "rcsd_road_ids": ["rr1"],
+                    "retained_node_ids": ["r1", "r2"],
+                }
+            )
+        ],
+        special_group_rows=[],
+        group_replacement_audit_rows=[],
+        failure_business_audit_rows=[
+            _feature(
+                {
+                    "swsd_segment_id": "s_replace",
+                    "failure_business_category": "pair_anchor_mismatch",
+                    "pair_anchor_error_swsd_nodes": ["n1", "n2"],
+                    "pair_anchor_error_original_rcsd_nodes": ["r1", ""],
+                    "pair_anchor_error_candidate_rcsd_nodes": ["r2", "r1"],
+                }
+            )
+        ],
+        rcsd_roads=[],
+        rcsd_node_canonicalizer=NodeCanonicalizer({}, frozenset()),
+        swsd_segments=[
+            _feature({"id": "s_replace", "pair_nodes": ["n1", "n2"]}),
+            _feature({"id": "s_retained", "pair_nodes": ["n2", "n3"]}),
+        ],
+        swsd_nodes=[_node("n1", 0, 0), _node("n2", 100, 0), _node("n3", 100, 10)],
+        rcsd_nodes=[_node("r1", 0, 0), _node("r2", 180, 0)],
+    )
+
+    props = rows[0]["properties"]
+    assert props["plan_status"] == "ready"
+    assert props["execution_action"] == "replace"
+    assert "pair_anchor_repair_attachment_gap_accepted" in props["risk_flags"]
     assert "junction_alignment_to_retained_swsd_exceeds_topology_gate" not in props["risk_flags"]
 
 

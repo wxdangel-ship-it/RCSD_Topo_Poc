@@ -608,7 +608,32 @@ def _visual_conflict_rollback_plan_ids(
     swsd_segment_path: str | Path,
 ) -> set[str]:
     incident = _incident_segments_by_node(read_features(swsd_segment_path))
-    return _rollback_plan_ids_for_failed_segments(added_fail_keys, released, incident)
+    return _rollback_plan_ids_for_failed_segments(_visual_conflict_rollback_fail_keys(added_fail_keys), released, incident)
+
+
+def _visual_conflict_rollback_fail_keys(
+    added_fail_keys: set[tuple[str, str, str, str, str]],
+) -> set[tuple[str, str, str, str, str]]:
+    return {
+        key
+        for key in added_fail_keys
+        if not (key[0] == "advance_right_endpoint_connectivity" and key[4] == "advance_right_leaf_endpoint_unattached")
+    }
+
+
+def _surface_release_rollback_eligible_items(released: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [item for item in released if not _is_t05_semantic_surface_release(item)]
+
+
+def _is_t05_semantic_surface_release(item: dict[str, Any]) -> bool:
+    triggers = [trigger for trigger in item.get("triggers") or [] if isinstance(trigger, dict)]
+    if not triggers:
+        return False
+    for trigger in triggers:
+        status = trigger.get("surface_status")
+        if not isinstance(status, list) or len(status) < 2 or status[1] != T05_SEMANTIC_JUNCTION_RELEASE_REASON:
+            return False
+    return True
 
 
 def _visual_conflict_non_replaced_plan_ids(step_root: Path, released: list[dict[str, Any]]) -> set[str]:
@@ -636,12 +661,15 @@ def _visual_conflict_non_replaced_plan_ids(step_root: Path, released: list[dict[
 def _rollback_plan_ids(
     added_fail_keys: set[tuple[str, str, str, str, str]],
     released: list[dict[str, Any]],
-    plan_rows: list[dict[str, Any]],
+    _plan_rows: list[dict[str, Any]],
     swsd_segment_path: str | Path,
 ) -> set[str]:
     incident = _incident_segments_by_node(read_features(swsd_segment_path))
-    rollback_items = [*released, *_rollback_items_for_plan_rows(plan_rows)]
-    return _rollback_plan_ids_for_failed_segments(added_fail_keys, rollback_items, incident)
+    return _rollback_plan_ids_for_failed_segments(
+        added_fail_keys,
+        _surface_release_rollback_eligible_items(released),
+        incident,
+    )
 
 
 def _rollback_items_for_plan_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:

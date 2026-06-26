@@ -1105,6 +1105,17 @@ def _apply_junction_alignment_plan_gate(
                                 risk_flag="visual_manual_release_pair_attachment_gap_accepted",
                             )
                             continue
+                        if _allow_pair_anchor_repair_attachment_gap(
+                            props,
+                            swsd_node_id=swsd_node_id,
+                            rcsd_node_id=rcsd_node_id,
+                        ):
+                            _mark_plan_row_risk(
+                                props,
+                                reason="pair_anchor_repair_attachment_gap_requires_manual_review",
+                                risk_flag="pair_anchor_repair_attachment_gap_accepted",
+                            )
+                            continue
                         _block_plan_row(
                             props,
                             reason="junction_alignment_to_retained_swsd_exceeds_topology_gate",
@@ -1350,6 +1361,8 @@ def _mark_plan_row_risk(props: dict[str, Any], *, reason: str, risk_flag: str) -
     props["risk_flags"] = unique_preserve_order([*_parse_list(props.get("risk_flags")), risk_flag])
     notes = str(props.get("notes") or "")
     suffix = f"risk: {reason}"
+    if suffix in notes:
+        return
     props["notes"] = f"{notes}; {suffix}" if notes else suffix
 
 
@@ -1545,6 +1558,33 @@ def _allow_visual_manual_release_pair_attachment_gap(
     if swsd_node_id not in set(_parse_list(props.get("swsd_pair_nodes"))):
         return False
     return distance_m <= MAX_VISUAL_MANUAL_RELEASE_PAIR_ATTACHMENT_GAP_M
+
+
+def _allow_pair_anchor_repair_attachment_gap(
+    props: dict[str, Any],
+    *,
+    swsd_node_id: str,
+    rcsd_node_id: str,
+) -> bool:
+    if props.get("execution_scope") != "standard_segment":
+        return False
+    existing_risk_flags = set(_parse_list(props.get("risk_flags")))
+    if existing_risk_flags - {"pair_anchor_repair_attachment_gap_accepted"}:
+        return False
+    swsd_pair_nodes = set(_parse_list(props.get("swsd_pair_nodes")))
+    if swsd_node_id not in swsd_pair_nodes:
+        return False
+    rcsd_pair_nodes = set(_parse_list(props.get("rcsd_pair_nodes")))
+    if rcsd_node_id not in rcsd_pair_nodes:
+        return False
+    original_rcsd_pair_nodes = set(_parse_list(props.get("original_rcsd_pair_nodes")))
+    if len(rcsd_pair_nodes) < 2 or len(original_rcsd_pair_nodes) >= len(rcsd_pair_nodes):
+        return False
+    pair_anchor_error_swsd_nodes = set(_parse_list(props.get("pair_anchor_error_swsd_nodes")))
+    if pair_anchor_error_swsd_nodes != swsd_pair_nodes:
+        return False
+    candidate_nodes = set(_parse_list(props.get("pair_anchor_error_candidate_rcsd_nodes")))
+    return rcsd_node_id in candidate_nodes or rcsd_node_id not in original_rcsd_pair_nodes
 
 
 def _has_high_visual_consistency_deviation(props: dict[str, Any]) -> bool:

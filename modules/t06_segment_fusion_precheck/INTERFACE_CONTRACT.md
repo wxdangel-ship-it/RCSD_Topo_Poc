@@ -178,8 +178,6 @@ run_t06_step2_extract_rcsd_segments(
 
 其中首行为 `sgrade=__TOTAL__` 的总体统计，其余行按输入 Segment 中 `sgrade` 首次出现顺序输出分组统计。
 
-`t06_step1_summary.json` 额外提供面向汇报的业务别名：`segment_total = input_segment_count`，`all_required_junctions_have_evidence_segment_count = evd_candidate_count`，`all_required_junctions_anchored_segment_count = final_fusion_unit_count`。其中 required junction 以 Step1 当前 `pair_nodes + kept junc_nodes` 硬检查集合为准，放行到 Step2 probe 的高等级例外仍不被解释为 T05 relation 成功。
-
 `rejected` 稳定字段：
 
 - `swsd_segment_id`
@@ -296,27 +294,6 @@ Step3 默认从 Step2 replaceable 同目录优先读取 `t06_segment_replacement
 - `relation_status=failed`：该 Segment 关系解析失败或缺少必要承载，必须写明 `relation_reason`。
 
 稳定字段至少包含：`swsd_segment_id / relation_status / relation_reason / swsd_pair_nodes / swsd_junc_nodes / junc_kind2_exempt_nodes / detached_junc_nodes / swsd_road_ids / removed_swsd_road_ids / retained_detached_swsd_road_ids / frcsd_road_ids / frcsd_road_source_values / rcsd_pair_nodes / rcsd_junc_nodes / junction_c_ids / group_replacement_plan_ids / group_replacement_source_segment_ids / group_replacement_segment_ids / swsd_to_frcsd_node_map / source_mix / risk_flags`。
-
-`t06_step3_summary.json` 的 Segment 替换汇报字段：
-
-- `segment_relation_replaced_count`：`relation_status=replaced` 的 Segment 数。
-- `segment_relation_replaced_retained_swsd_count`：`relation_status=replaced+retained_swsd` 的 Segment 数。
-- `segment_replacement_success_count`：`replaced + replaced+retained_swsd`，是最终替换成功 Segment 数。
-- `segment_replacement_success_rate`：以 `segment_relation_count` 为分母。
-- `segment_retained_swsd_count / segment_failed_count`：`retained_swsd / failed` 的业务别名。
-
-`t06_step3_summary.json` 的 road 与里程替换汇报字段：
-
-- `swsd_road_denominator_count / swsd_length_denominator_m`：Step3 输入 `swsd_roads_path` 中按 SWSDRoad `id` 去重后的道路数量与几何长度，长度单位为米。
-- `swsd_road_replaced_count / swsd_length_replaced_m`：被 Step3 删除并由 F-RCSD 替换的去重 SWSDRoad 数量与长度。
-- `swsd_road_retained_count / swsd_length_retained_m`：分母减替换部分后的保留 SWSDRoad 数量与长度。
-- `rcsd_road_added_count / rcsd_length_added_m`：最终进入 F-RCSD 的去重 RCSD source road 数量与长度。
-- `road_replacement_rate / length_replacement_rate`：分别以 `swsd_road_denominator_count / swsd_length_denominator_m` 为分母。
-
-`t06_step3_summary.json` 的 topology 汇报字段：
-
-- `topology_segment_total / topology_segment_pass_count / topology_segment_warn_count / topology_segment_fail_count / topology_segment_pass_rate`：按 `swsd_segment_id` 去重合并 `t06_step3_topology_connectivity_audit.*`，同一 Segment 多行 audit 取最差状态，禁止用 audit row count 代替 Segment 数。
-- `topology_road_total / topology_road_pass_count / topology_road_warn_count / topology_road_fail_count / topology_road_pass_rate`：按 `final_road_node_integrity` 的 `frcsd_road_id` 去重合并最终 road-node integrity 状态，同一 Road 多行取最差状态。
 
 ### 3.4 文本证据包 helper 输出
 

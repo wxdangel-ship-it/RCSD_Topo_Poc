@@ -762,8 +762,6 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
         relation_graph_consumability_audit_json_path=outputs["relation_graph_consumability_audit_json_path"],
         junction_anchor_funnel_summary_path=outputs["junction_anchor_funnel_summary_path"],
         junction_anchor_source_funnel_csv_path=outputs["junction_anchor_source_funnel_csv_path"],
-        junction_anchor_kind2_funnel_csv_path=outputs["junction_anchor_kind2_funnel_csv_path"],
-        junction_anchor_kind2_funnel_json_path=outputs["junction_anchor_kind2_funnel_json_path"],
         junction_anchor_failure_reasons_csv_path=outputs["junction_anchor_failure_reasons_csv_path"],
         summary_path=outputs["summary_path"],
         relation_count=summary["intersection_match_all_feature_count"],

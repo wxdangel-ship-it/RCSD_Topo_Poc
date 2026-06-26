@@ -31,27 +31,9 @@ SOURCE_FUNNEL_FIELDS = [
     "failure_after_t05_total",
     "not_handed_to_t05_total",
 ]
-KIND2_FUNNEL_FIELDS = [
-    "kind_2",
-    "junction_type",
-    "semantic_junction_total",
-    "evidence_junction_total",
-    "relation_success_total",
-    "graph_consumable_success_total",
-    "graph_unconsumable_success_total",
-    "relation_failure_total",
-]
 FAILURE_REASON_FIELDS = ["failure_category", "scene", "reason", "count"]
 _PRIMARY_SOURCES = (SOURCE_T07, SOURCE_T03, SOURCE_T04)
 _ACTIONABLE_SCENES = {SCENE_DIRECT, SCENE_GROUP_EXISTING, SCENE_ROAD_SPLIT, SCENE_ROUNDABOUT}
-_JUNCTION_TYPE_BY_KIND_2 = {
-    4: "center_junction",
-    8: "merge",
-    16: "diverge",
-    64: "roundabout",
-    128: "complex_divmerge",
-    2048: "single_sided_t_mouth",
-}
 _T05_CLOSURE_REASONS = {
     "t07_rcsdintersection_base_not_in_rcsdnode_out",
     "missing_base_id_candidate",
@@ -69,8 +51,7 @@ def build_junction_anchor_funnel(
     audit_rows: list[dict[str, Any]],
     relation_graph_consumability_rows: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    semantic_junctions = _semantic_junction_records(swsd_nodes)
-    semantic_ids = set(semantic_junctions)
+    semantic_ids = _semantic_junction_ids(swsd_nodes)
     relation_rows = [feature.get("properties") or {} for feature in relation_features]
     relation_rows_by_target = {
         normalize_target_id(row.get("target_id")): row
@@ -114,28 +95,15 @@ def build_junction_anchor_funnel(
         "t05_phase2_target_total": len(semantic_relation_rows),
         "relation_published_total": len(semantic_relation_rows),
         "relation_success_total": len(success_targets),
-        "relation_published_success_total": len(success_targets),
         "relation_failure_total": len(failure_targets),
         "graph_consumable_success_total": len(graph_consumable_targets & success_targets),
         "graph_unconsumable_success_total": len(success_targets - graph_consumable_targets),
-        "relation_graph_consumable_total": len(graph_consumable_targets & success_targets),
-        "relation_graph_unconsumable_total": len(success_targets - graph_consumable_targets),
-        "relation_graph_consumable_rate": _rate(len(graph_consumable_targets & success_targets), len(success_targets)),
-        "relation_graph_unconsumable_rate": _rate(len(success_targets - graph_consumable_targets), len(success_targets)),
         "non_semantic_phase2_target_total": len(relation_rows_by_target) - len(semantic_relation_rows),
     }
-    kind2_rows = _kind2_funnel_rows(
-        semantic_junctions=semantic_junctions,
-        evidence_ids=evidence_ids,
-        success_targets=success_targets,
-        failure_targets=failure_targets,
-        graph_consumable_targets=graph_consumable_targets,
-    )
     return {
         "semantic_junction_kind_2_values": list(SEMANTIC_JUNCTION_KIND_2_VALUES),
         "semantic_junction_id_rule": "mainnodeid if valid else id",
         "top_level_funnel": top_level,
-        "kind2_funnel": kind2_rows,
         "source_module_funnel": source_rows,
         "t05_failure_breakdown": failure_breakdown,
         "failure_reason_rows": failure_reason_rows,
@@ -146,55 +114,16 @@ def build_junction_anchor_funnel(
     }
 
 
-def _semantic_junction_records(swsd_nodes: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    result: dict[str, dict[str, Any]] = {}
+def _semantic_junction_ids(swsd_nodes: list[dict[str, Any]]) -> set[str]:
+    result: set[str] = set()
     for feature in swsd_nodes:
         props = feature.get("properties") or {}
-        kind_2 = _int_value(_field_value(props, "kind_2"))
-        if kind_2 not in SEMANTIC_JUNCTION_KIND_2_VALUES:
+        if _int_value(_field_value(props, "kind_2")) not in SEMANTIC_JUNCTION_KIND_2_VALUES:
             continue
         junction_id = normalize_target_id(_field_value(props, "mainnodeid") or _field_value(props, "id"))
         if junction_id:
-            result.setdefault(junction_id, {"kind_2": kind_2, "junction_type": _JUNCTION_TYPE_BY_KIND_2.get(kind_2, "unknown")})
+            result.add(junction_id)
     return result
-
-
-def _kind2_funnel_rows(
-    *,
-    semantic_junctions: dict[str, dict[str, Any]],
-    evidence_ids: set[str],
-    success_targets: set[str],
-    failure_targets: set[str],
-    graph_consumable_targets: set[str],
-) -> list[dict[str, Any]]:
-    rows_by_kind: dict[int, dict[str, Any]] = {}
-    for target_id, record in semantic_junctions.items():
-        kind_2 = int(record["kind_2"])
-        row = rows_by_kind.setdefault(
-            kind_2,
-            {
-                "kind_2": kind_2,
-                "junction_type": record["junction_type"],
-                "semantic_junction_total": 0,
-                "evidence_junction_total": 0,
-                "relation_success_total": 0,
-                "graph_consumable_success_total": 0,
-                "graph_unconsumable_success_total": 0,
-                "relation_failure_total": 0,
-            },
-        )
-        row["semantic_junction_total"] += 1
-        if target_id in evidence_ids:
-            row["evidence_junction_total"] += 1
-        if target_id in success_targets:
-            row["relation_success_total"] += 1
-            if target_id in graph_consumable_targets:
-                row["graph_consumable_success_total"] += 1
-            else:
-                row["graph_unconsumable_success_total"] += 1
-        if target_id in failure_targets:
-            row["relation_failure_total"] += 1
-    return [rows_by_kind[kind_2] for kind_2 in SEMANTIC_JUNCTION_KIND_2_VALUES if kind_2 in rows_by_kind]
 
 
 def _source_funnel_rows(
@@ -313,9 +242,3 @@ def _int_value(value: Any) -> int | None:
         return int(float(str(value).strip()))
     except (TypeError, ValueError):
         return None
-
-
-def _rate(numerator: int, denominator: int) -> float:
-    if denominator <= 0:
-        return 0.0
-    return round(numerator / denominator, 6)

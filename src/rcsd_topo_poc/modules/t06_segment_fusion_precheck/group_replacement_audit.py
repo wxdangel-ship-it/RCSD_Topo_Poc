@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import heapq
 from dataclasses import dataclass
 from typing import Any
 
@@ -14,7 +13,7 @@ from .buffer_segment_extraction import (
     _build_undirected_graph,
     _edge_geometry,
     _nodes_from_edges,
-    _weighted_adjacency,
+    _shortest_directed_path_covering_nodes,
 )
 from .graph_builders import Edge, NodeCanonicalizer
 from .parsing import ParseError, directionality_from_sgrade, normalize_id, parse_id_list, unique_preserve_order
@@ -282,15 +281,15 @@ def _path_infos(
     if len(set(required_nodes)) != 2:
         return []
     source, target = required_nodes
-    adjacency = _weighted_adjacency(
-        graph_edges,
-        directed=True,
-        reference_geometry=segment_geometry,
-        required_nodes=set(required_nodes),
-    )
     result: list[dict[str, Any]] = []
     for label, start, end in (("forward", source, target), ("reverse", target, source)):
-        edge_ids = _shortest_path_from_adjacency(adjacency, start, end)
+        edge_ids = _shortest_directed_path_covering_nodes(
+            graph_edges,
+            start,
+            end,
+            required_nodes,
+            reference_geometry=segment_geometry,
+        )
         if not edge_ids:
             continue
         edges = [edge_by_id[edge_id] for edge_id in edge_ids if edge_id in edge_by_id]
@@ -303,47 +302,6 @@ def _path_infos(
             }
         )
     return result
-
-
-def _shortest_path_from_adjacency(
-    adjacency: dict[str, list[tuple[str, float, str]]],
-    source: str,
-    target: str,
-) -> list[str] | None:
-    queue: list[tuple[float, int, str]] = []
-    sequence = 0
-    heapq.heappush(queue, (0.0, sequence, source))
-    distances: dict[str, float] = {source: 0.0}
-    previous: dict[str, tuple[str, str]] = {}
-
-    while queue:
-        distance, _sequence, node = heapq.heappop(queue)
-        if distance > distances.get(node, float("inf")):
-            continue
-        if node == target:
-            break
-        for neighbor, weight, edge_id in adjacency.get(node, []):
-            next_distance = distance + weight
-            if next_distance >= distances.get(neighbor, float("inf")):
-                continue
-            distances[neighbor] = next_distance
-            previous[neighbor] = (node, edge_id)
-            sequence += 1
-            heapq.heappush(queue, (next_distance, sequence, neighbor))
-
-    if target not in distances:
-        return None
-
-    path: list[str] = []
-    node = target
-    while node != source:
-        prev = previous.get(node)
-        if prev is None:
-            return None
-        node, edge_id = prev
-        path.append(edge_id)
-    path.reverse()
-    return path
 
 
 def _path_geometry(path_infos: list[dict[str, Any]]) -> BaseGeometry | None:

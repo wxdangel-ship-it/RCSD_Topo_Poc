@@ -63,7 +63,6 @@ TOPOLOGY_CONNECTIVITY_AUDIT_LAYERS = [
     "advance_right_endpoint_connectivity",
 ]
 TOPOLOGY_CONNECTIVITY_AUDIT_STATUSES = ["pass", "warn", "fail"]
-_STATUS_RANK = {"pass": 0, "warn": 1, "fail": 2}
 
 JUNCTION_WARN_DISTANCE_M = 1.0
 JUNCTION_FAIL_DISTANCE_M = 5.0
@@ -459,8 +458,6 @@ def summarize_topology_connectivity_audit(rows: list[dict[str, Any]]) -> dict[st
         "topology_connectivity_warn_count": 0,
         "topology_connectivity_pass_count": 0,
     }
-    segment_status_by_id: dict[str, str] = {}
-    road_status_by_id: dict[str, str] = {}
     for layer in TOPOLOGY_CONNECTIVITY_AUDIT_LAYERS:
         for status in TOPOLOGY_CONNECTIVITY_AUDIT_STATUSES:
             counts[f"topology_connectivity_{layer}_{status}_count"] = 0
@@ -471,55 +468,13 @@ def summarize_topology_connectivity_audit(rows: list[dict[str, Any]]) -> dict[st
         counts[f"topology_connectivity_{layer}_{status}_count"] = (
             counts.get(f"topology_connectivity_{layer}_{status}_count", 0) + 1
         )
-        if status in _STATUS_RANK:
-            for segment_id in _topology_segment_ids(props):
-                segment_status_by_id[segment_id] = _worse_status(segment_status_by_id.get(segment_id), status)
-            if layer == "final_road_node_integrity":
-                for road_id in _as_id_list(props.get("frcsd_road_id")):
-                    road_status_by_id[road_id] = _worse_status(road_status_by_id.get(road_id), status)
         if status == "fail":
             counts["topology_connectivity_fail_count"] += 1
         elif status == "warn":
             counts["topology_connectivity_warn_count"] += 1
         elif status == "pass":
             counts["topology_connectivity_pass_count"] += 1
-    counts.update(_dedup_status_summary("topology_segment", segment_status_by_id))
-    counts.update(_dedup_status_summary("topology_road", road_status_by_id))
     return counts
-
-
-def _topology_segment_ids(props: dict[str, Any]) -> list[str]:
-    segment_ids = _as_id_list(props.get("swsd_segment_ids"))
-    segment_id = str(props.get("swsd_segment_id") or "").strip()
-    if segment_id:
-        segment_ids.append(segment_id)
-    return unique_preserve_order(segment_ids)
-
-
-def _worse_status(current: str | None, candidate: str) -> str:
-    if current is None:
-        return candidate
-    return candidate if _STATUS_RANK[candidate] > _STATUS_RANK[current] else current
-
-
-def _dedup_status_summary(prefix: str, status_by_id: dict[str, str]) -> dict[str, Any]:
-    total = len(status_by_id)
-    pass_count = sum(1 for status in status_by_id.values() if status == "pass")
-    warn_count = sum(1 for status in status_by_id.values() if status == "warn")
-    fail_count = sum(1 for status in status_by_id.values() if status == "fail")
-    return {
-        f"{prefix}_total": total,
-        f"{prefix}_pass_count": pass_count,
-        f"{prefix}_warn_count": warn_count,
-        f"{prefix}_fail_count": fail_count,
-        f"{prefix}_pass_rate": _rate(pass_count, total),
-    }
-
-
-def _rate(numerator: int, denominator: int) -> float:
-    if denominator <= 0:
-        return 0.0
-    return round(numerator / denominator, 6)
 
 
 def _segment_internal_rows(

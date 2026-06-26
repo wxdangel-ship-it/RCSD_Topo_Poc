@@ -168,23 +168,8 @@ def test_step3_replaces_roads_endpoint_nodes_only_rebuilds_c_and_audits_id_colli
     assert summary["road_id_collision_count"] == 1
     assert summary["segment_relation_count"] == 2
     assert summary["segment_relation_replaced_count"] == 1
-    assert summary["segment_relation_replaced_retained_swsd_count"] == 0
     assert summary["segment_relation_retained_swsd_count"] == 1
     assert summary["segment_relation_failed_count"] == 0
-    assert summary["segment_replacement_success_count"] == 1
-    assert summary["segment_replacement_success_rate"] == 0.5
-    assert summary["segment_retained_swsd_count"] == 1
-    assert summary["segment_failed_count"] == 0
-    assert summary["swsd_road_denominator_count"] == 3
-    assert summary["swsd_road_replaced_count"] == 1
-    assert summary["swsd_road_retained_count"] == 2
-    assert summary["rcsd_road_added_count"] == 1
-    assert summary["road_replacement_rate"] == 0.333333
-    assert summary["swsd_length_denominator_m"] == 10.0
-    assert summary["swsd_length_replaced_m"] == 1.0
-    assert summary["swsd_length_retained_m"] == 9.0
-    assert summary["rcsd_length_added_m"] == 1.0
-    assert summary["length_replacement_rate"] == 0.1
 
     roads = _props(artifacts.frcsd_road_gpkg_path)
     assert ("sr1", 2) not in {(item["id"], item["source"]) for item in roads}
@@ -902,12 +887,6 @@ def test_step3_excludes_detached_junc_swsd_roads_from_formal_replacement(tmp_pat
     assert summary["detached_junc_retained_segment_count"] == 1
     assert summary["detached_junc_retained_swsd_road_count"] == 1
     assert summary["removed_swsd_road_count"] == 1
-    assert summary["segment_relation_replaced_count"] == 0
-    assert summary["segment_relation_replaced_retained_swsd_count"] == 1
-    assert summary["segment_replacement_success_count"] == 1
-    assert summary["segment_replacement_success_rate"] == 1.0
-    assert summary["segment_retained_swsd_count"] == 0
-    assert summary["segment_failed_count"] == 0
 
     roads = _props(artifacts.frcsd_road_gpkg_path)
     assert {("main", 2), ("side", 2), ("rr1", 1)} & {(item["id"], item["source"]) for item in roads} == {

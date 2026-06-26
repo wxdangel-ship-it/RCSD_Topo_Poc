@@ -78,7 +78,6 @@ from .step3_rcsd_advance_right_closure import (
     final_swsd_road_endpoint_ids as _swsd_ep,
     write_rcsd_advance_right_closure_audit,
 )
-from .step3_report_metrics import build_step3_report_metrics
 from .step3_topology_connectivity_audit import (
     STEP3_TOPOLOGY_CONNECTIVITY_AUDIT_FIELDS,
     STEP3_TOPOLOGY_CONNECTIVITY_AUDIT_STEM,
@@ -672,21 +671,13 @@ def run_t06_step3_segment_replacement(
                 "formal_body_retained_restored_count", 0
             ),
             "removed_swsd_node_preserved_by_retained_road_count": preserved_removed_node_count,
-            **build_step3_report_metrics(
-                swsd_roads=swsd_roads,
-                frcsd_roads=frcsd_roads,
-                source_field_name=source_field_name,
-                rcsd_source_value=rcsd_source_value,
-                removed_road_to_segments=removed_road_to_segments,
-                removed_node_to_segments=removed_node_to_segments,
-                added_road_to_segments=added_road_to_segments,
-                added_node_to_segments=added_node_to_segments,
-                unreplaced_rcsd_road_rows=unreplaced_rcsd_road_rows,
-                segment_relation_rows=segment_relation_rows,
-            ),
+            "removed_swsd_road_count": len(removed_road_to_segments),
+            "removed_swsd_node_count": len(removed_node_to_segments),
             "retained_swsd_missing_endpoint_node_generated_count": retained_swsd_endpoint_node_stats[
                 "generated_node_count"
             ],
+            "added_rcsd_road_count": len(added_road_to_segments),
+            "added_rcsd_node_count": len(added_node_to_segments),
             "post_advance_right_attachment_added_road_count": post_advance_right_attachment_stats[
                 "added_road_count"
             ],
@@ -788,6 +779,8 @@ def run_t06_step3_segment_replacement(
             "special_junction_added_rcsd_node_count": len(
                 {node_id for node_id in special_added_node_to_segments if node_id in rcsd_node_by_id}
             ),
+            "unreplaced_rcsd_road_count": len(unreplaced_rcsd_road_rows),
+            "unreplaced_rcsd_road_length_m": _round_length(sum(_feature_length(row) for row in unreplaced_rcsd_road_rows)),
             "junction_c_count": len(junctions),
             "junction_rebuilt_count": sum(1 for row in junction_audit_rows if row["properties"].get("new_mainnode_id")),
             "mainnode_reselected_count": sum(1 for row in junction_audit_rows if row["properties"].get("original_mainnode_removed")),
@@ -795,6 +788,10 @@ def run_t06_step3_segment_replacement(
             "node_id_collision_count": sum(1 for row in collision_rows if row["properties"].get("entity_type") == "node"),
             "frcsd_road_count": len(frcsd_roads),
             "frcsd_node_count": len(frcsd_nodes),
+            "segment_relation_count": len(segment_relation_rows),
+            "segment_relation_replaced_count": sum(1 for row in segment_relation_rows if row["properties"].get("relation_status") == "replaced"),
+            "segment_relation_retained_swsd_count": sum(1 for row in segment_relation_rows if row["properties"].get("relation_status") == "retained_swsd"),
+            "segment_relation_failed_count": sum(1 for row in segment_relation_rows if row["properties"].get("relation_status") == "failed"),
             **relation_node_map_backfill_stats,
             **retained_carrier_mainnode_sync_stats,
             **semantic_junction_group_stats,

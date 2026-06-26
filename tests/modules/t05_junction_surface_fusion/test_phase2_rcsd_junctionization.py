@@ -8,9 +8,7 @@ from shapely.geometry import LineString, MultiLineString, Point, box
 
 from rcsd_topo_poc.modules.t00_utility_toolbox.common import write_vector
 from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import read_vector_layer
-from rcsd_topo_poc.modules.t05_junction_surface_fusion.phase2_anchor_funnel import build_junction_anchor_funnel
 from rcsd_topo_poc.modules.t05_junction_surface_fusion.phase2_models import (
-    Phase2Evidence,
     SCENE_GROUP_EXISTING,
     SCENE_ROAD_SPLIT,
     SceneDecision,
@@ -169,56 +167,8 @@ def test_existing_rcsd_semantic_junction_outputs_success_relation(tmp_path: Path
     assert artifacts.junction_anchor_funnel_summary_path.exists()
     assert artifacts.junction_anchor_source_funnel_csv_path is not None
     assert artifacts.junction_anchor_source_funnel_csv_path.exists()
-    assert artifacts.junction_anchor_kind2_funnel_csv_path is not None
-    assert artifacts.junction_anchor_kind2_funnel_csv_path.exists()
-    assert artifacts.junction_anchor_kind2_funnel_json_path is not None
-    assert artifacts.junction_anchor_kind2_funnel_json_path.exists()
     assert artifacts.junction_anchor_failure_reasons_csv_path is not None
     assert artifacts.junction_anchor_failure_reasons_csv_path.exists()
-
-
-def test_junction_anchor_funnel_business_aliases_kind2_and_consumability() -> None:
-    funnel = build_junction_anchor_funnel(
-        swsd_nodes=[
-            {"properties": {"id": 100, "mainnodeid": 100, "kind_2": 4}},
-            {"properties": {"id": 200, "mainnodeid": 200, "kind_2": 8}},
-        ],
-        evidence_rows=[
-            Phase2Evidence("T03", {"target_id": "100", "status_suggested": 0, "base_id_candidate": 10}, "100", "c1"),
-            Phase2Evidence("T03", {"target_id": "200", "status_suggested": 0, "base_id_candidate": 20}, "200", "c2"),
-            Phase2Evidence("T04", {"target_id": "200", "status_suggested": 0, "base_id_candidate": 20}, "200", "c3"),
-        ],
-        relation_features=[
-            {"properties": {"target_id": "100", "base_id": 10, "status": 0}},
-            {"properties": {"target_id": "200", "base_id": 20, "status": 0}},
-        ],
-        audit_rows=[
-            {"target_id": "100", "source_module": "T03", "status": 0},
-            {"target_id": "200", "source_module": "T03|T04", "status": 0},
-        ],
-        relation_graph_consumability_rows=[
-            {"target_id": "100", "graph_consumable": 1},
-            {"target_id": "200", "graph_consumable": 0},
-        ],
-    )
-
-    top_level = funnel["top_level_funnel"]
-    assert top_level["relation_published_success_total"] == 2
-    assert top_level["relation_graph_consumable_total"] == 1
-    assert top_level["relation_graph_unconsumable_total"] == 1
-    assert top_level["relation_graph_consumable_rate"] == 0.5
-    assert top_level["relation_graph_unconsumable_rate"] == 0.5
-
-    rows = {row["kind_2"]: row for row in funnel["kind2_funnel"]}
-    assert rows[4]["junction_type"] == "center_junction"
-    assert rows[4]["graph_consumable_success_total"] == 1
-    assert rows[8]["junction_type"] == "merge"
-    assert rows[8]["graph_unconsumable_success_total"] == 1
-
-    source_rows = {row["source_module"]: row for row in funnel["source_module_funnel"]}
-    assert source_rows["T03"]["input_junction_total"] == 2
-    assert source_rows["T04"]["input_junction_total"] == 1
-    assert "not mutually exclusive" in funnel["notes"][0]
 
 
 def test_t10_side_group_candidate_supplements_road_split_decision_without_masking_it() -> None:

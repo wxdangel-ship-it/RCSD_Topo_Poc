@@ -478,30 +478,6 @@ def test_topology_audit_fails_final_road_with_missing_endpoint_node() -> None:
     assert summary["topology_connectivity_final_road_node_integrity_fail_count"] == 1
 
 
-def test_topology_summary_deduplicates_segment_and_road_statuses() -> None:
-    summary = summarize_topology_connectivity_audit(
-        [
-            {"properties": {"audit_layer": "segment_internal_connectivity", "audit_status": "pass", "swsd_segment_id": "s1"}},
-            {"properties": {"audit_layer": "segment_road_connectivity", "audit_status": "warn", "swsd_segment_id": "s1"}},
-            {"properties": {"audit_layer": "segment_internal_connectivity", "audit_status": "pass", "swsd_segment_id": "s2"}},
-            {"properties": {"audit_layer": "final_road_node_integrity", "audit_status": "pass", "frcsd_road_id": "r1"}},
-            {"properties": {"audit_layer": "final_road_node_integrity", "audit_status": "fail", "frcsd_road_id": "r1"}},
-            {"properties": {"audit_layer": "final_road_node_integrity", "audit_status": "pass", "frcsd_road_id": "r2"}},
-        ]
-    )
-
-    assert summary["topology_segment_total"] == 2
-    assert summary["topology_segment_pass_count"] == 1
-    assert summary["topology_segment_warn_count"] == 1
-    assert summary["topology_segment_fail_count"] == 0
-    assert summary["topology_segment_pass_rate"] == 0.5
-    assert summary["topology_road_total"] == 2
-    assert summary["topology_road_pass_count"] == 1
-    assert summary["topology_road_warn_count"] == 0
-    assert summary["topology_road_fail_count"] == 1
-    assert summary["topology_road_pass_rate"] == 0.5
-
-
 def test_topology_audit_uses_existing_endpoint_node_when_source_field_is_missing() -> None:
     rows = build_topology_connectivity_audit_rows(
         swsd_segments=[],

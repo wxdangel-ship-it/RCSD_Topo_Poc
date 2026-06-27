@@ -271,6 +271,8 @@ Step3 输出目录：
 - `t06_step3_added_rcsd_roads.csv/json`
 - `t06_step3_added_rcsd_nodes.csv/json`
 - `t06_step3_unreplaced_rcsd_roads.gpkg/csv/json`
+- `t06_step3_unreplaced_rcsd_attribution.gpkg/csv`
+- `t06_step3_unreplaced_rcsd_attribution_summary.json`
 - `t06_step3_id_collision_audit.gpkg/csv/json`
 - `t06_step3_swsd_frcsd_segment_relation.gpkg/csv/json`
 - `t06_step3_semantic_junction_groups.gpkg/csv/json`
@@ -286,6 +288,7 @@ F-RCSD Node 可包含 `semantic_junction_group_id` 字段：当 T05 已发布有
 F-RCSD Road 中由 T06 替换发布的 RCSD Road 必须包含 `t06_swsd_segment_ids` 多值字段，记录该最终 Road 承载的 SWSD Segment id 集合；`path_corridor_group` 等组级替换允许一条 RCSD Road 同时承载多个 SWSD Segment，因此不得用单值 `segmentid` 覆盖该多值归属。
 SWSD 与 RCSD 原始 `id` 冲突时保留原 id，依赖 `source` 区分，并写入 `t06_step3_id_collision_audit.*`。
 `t06_step3_unreplaced_rcsd_roads` 是 RCSD 视角审计输出，保留原始 RCSDRoad 几何与属性，并增加 `replacement_status / audit_reason / source / length_m` 等字段，用于定位未进入最终替换结果的 RCSDRoad。该产物以 RCSDRoad 为审计主键，不替代 SWSD Segment relation；若要统计 RCSD Base 替换率，应以 T05 `rcsdroad_out.gpkg` 去重 Road / 里程为分母，以 Step3 relation 中最终 `source=1` F-RCSD carrier 的原始 RCSDRoad 集合作为正式落地口径，并可同时保留 Step2 replaceable 引用集合作为 reference 口径。
+`t06_step3_unreplaced_rcsd_attribution` 是 `t06_step3_unreplaced_rcsd_roads` 的归因增强层，不改变 Step3 替换结果。它以 50m Segment buffer 对未替换 RCSDRoad 进行反向归因，优先级固定为 `5 > 4 > 3 > 2 > 1 > 6`：`5` 表示已在可替换范围但 Step2/Step3 未最终落地，归属 T06 算法策略质量；`4` 表示已在所有路口 Relation 的 Segment 范围但不可替换，归属 SWSD 数据质量或 SWSD-RCSD 匹配质量；`3` 表示在 T06 有证据 Segment 范围但未达到所有路口 Relation，归属 T05 前路口锚定问题；`2` 表示在 SWSD Segment 范围但不在 T06 有证据 Segment 范围，归属 RCSD 与 Patch 版本不一致；`1` 表示不在 SWSD Segment 范围，归属 SWSD 时效性或质量导致 RCSD 无法替换；`6` 表示无法落入上述任何归因范围，必须进入人工审计。输出字段必须保留 `attribution_class / attribution_subclass / attribution_owner / matched_*_segment_ids / step1_reject_reasons / step2_reject_reasons / plan_statuses / step3_relation_statuses`，summary 必须给出 total-RCSD 分母、未替换 RCSD 里程、RCSD 替换率以及按大类 / 子类 / 归属方聚合的数量和里程。
 `t06_step3_semantic_junction_groups` 是语义路口组审计输出，字段至少包含 `semantic_junction_group_id / t05_base_id / swsd_node_ids / rcsd_node_ids / frcsd_node_ids / evidence_source / max_pairwise_distance_m / risk_reason / affected_segment_ids / relation_statuses / source_mixes`。该输出基于 T05 `intersection_match_all.geojson` 中 `status=0 / base_id>0` 的有效关系构建，允许 `many_target_to_one_base` 形成同一组；距离不设硬阈值，只作为风险审计字段。
 Step3 默认从 Step2 replaceable 同目录读取 `t06_segment_replacement_plan.*`：优先读取 `json`（若存在），再兼容读取 `geojson/gpkg`；内网 no-json 模式下，GPKG/CSV 是完整执行计划的稳定载体，JSON feature dump 不是必需产物。调用方也可以通过独立脚本参数显式指定特殊路口组审计文件或 group replacement 审计文件作为旧结果兼容输入。summary 必须记录 `step2_replacement_plan_path / input_replacement_plan_count / input_standard_replacement_plan_count / replacement_plan_source / special_junction_group_consumed_count / special_junction_added_rcsd_road_count / special_junction_added_rcsd_node_count`，以及 `group_replacement_audit_input_row_count / group_replacement_passed_row_count / group_replacement_plan_count / group_replacement_assignment_segment_count / group_replacement_created_unit_count / group_replacement_skipped_row_count`。当 surface-aware retained-junction gate 释放被触发时，summary 还必须记录 `surface_aware_plan_release`，包括释放数、回退数、内部 topology 新增 fail 数、外部 baseline 对照路径和相对外部 baseline 的新增 fail keys。
 `t06_step3_swsd_frcsd_segment_relation` 是下游稳定关系索引，覆盖所有输入 SWSD Segment：

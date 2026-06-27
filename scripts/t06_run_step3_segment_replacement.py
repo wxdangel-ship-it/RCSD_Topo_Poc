@@ -15,6 +15,9 @@ if str(SRC_ROOT) not in sys.path:
 from rcsd_topo_poc.modules.t06_segment_fusion_precheck import (  # noqa: E402
     run_t06_step3_segment_replacement,
 )
+from rcsd_topo_poc.modules.t06_segment_fusion_precheck.rcsd_unreplaced_attribution import (  # noqa: E402
+    run_t06_rcsd_unreplaced_attribution,
+)
 from rcsd_topo_poc.modules.t06_segment_fusion_precheck.schemas import STEP3_DIR  # noqa: E402
 from rcsd_topo_poc.modules.t06_segment_fusion_precheck.step3_progress import Step3ProgressWatchdog  # noqa: E402
 from rcsd_topo_poc.modules.t06_segment_fusion_precheck.step3_surface_aware_plan_release import (  # noqa: E402
@@ -106,6 +109,13 @@ def main() -> int:
                 progress=args.progress,
             )
             surface_topology = None
+        diag.stage("run_rcsd_unreplaced_attribution")
+        attribution_artifacts = run_t06_rcsd_unreplaced_attribution(
+            t06_run_root=t06_run_root,
+            step_output_root=artifacts.run_root,
+            swsd_segment_path=inputs["swsd_segment_path"],
+            rcsdroad_path=inputs["rcsdroad_path"],
+        )
         diag.stage("read_summary", summary_path=str(artifacts.summary_path))
         summary = _read_json(artifacts.summary_path)
     except Exception as exc:
@@ -137,6 +147,14 @@ def main() -> int:
                     "frcsd_node_count": summary.get("frcsd_node_count"),
                     "topology_connectivity_fail_count": summary.get("topology_connectivity_fail_count"),
                     "surface_topology": surface_topology,
+                    "rcsd_unreplaced_attribution": {
+                        "gpkg": str(attribution_artifacts.attribution_gpkg_path),
+                        "csv": str(attribution_artifacts.attribution_csv_path),
+                        "summary": str(attribution_artifacts.summary_path),
+                        "unreplaced_rcsd_road_count": attribution_artifacts.summary.get("unreplaced_rcsd_road_count"),
+                        "unreplaced_rcsd_road_length_m": attribution_artifacts.summary.get("unreplaced_rcsd_road_length_m"),
+                        "by_attribution_class": attribution_artifacts.summary.get("by_attribution_class"),
+                    },
                     "outputs": summary.get("outputs"),
                 },
             },

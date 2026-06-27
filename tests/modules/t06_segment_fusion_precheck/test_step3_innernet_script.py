@@ -96,3 +96,5 @@ def test_step3_script_consumes_step2_outputs_and_writes_summary(tmp_path: Path) 
     assert payload["step3"]["replacement_unit_success_count"] == 1
     assert Path(payload["step3"]["frcsd_road"]).is_file()
     assert Path(payload["step3"]["frcsd_node"]).is_file()
+    assert Path(payload["step3"]["rcsd_unreplaced_attribution"]["gpkg"]).is_file()
+    assert Path(payload["step3"]["rcsd_unreplaced_attribution"]["summary"]).is_file()

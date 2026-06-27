@@ -398,14 +398,12 @@ def run_t06_step3_segment_replacement(
     for node_id, segment_ids in special_added_node_to_segments.items():
         if node_id in rcsd_node_by_id:
             _append_unique_segments(added_node_to_segments.setdefault(node_id, []), segment_ids)
+    s2n = defaultdict(list)
+    for nid, sids in added_node_to_segments.items():
+        for sid in sids:
+            s2n[str(sid)].append(nid)
     for unit in passed_units:
-        unit.added_rcsd_node_ids = unique_preserve_order(
-            [
-                node_id
-                for node_id, segment_ids in added_node_to_segments.items()
-                if unit.segment_id in segment_ids
-            ]
-        )
+        unit.added_rcsd_node_ids = unique_preserve_order(s2n.get(unit.segment_id, []))
 
     junctions = _build_junction_states(
         units=passed_units,

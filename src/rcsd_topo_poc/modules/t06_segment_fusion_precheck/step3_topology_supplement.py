@@ -6,6 +6,7 @@ from typing import Any
 
 from shapely.geometry import LineString, Point
 from shapely.ops import substring, unary_union
+from shapely.strtree import STRtree
 
 from .parsing import ParseError, normalize_id, parse_id_list, unique_preserve_order
 from .road_attributes import is_advance_right_turn_road
@@ -37,6 +38,65 @@ JUNCTION_SURFACE_COVERAGE_RELEASE_RISK_FLAGS = [
     "junction_surface_coverage_release",
     "manual_review_required",
 ]
+
+
+class _LineSpatialIndex:
+    def __init__(self, entries: list[tuple[str, dict[str, Any], LineString]]) -> None:
+        self._entries = entries
+        self._order_by_road_id = {entry[0]: index for index, entry in enumerate(entries)}
+        self._geometries = [entry[2] for entry in entries]
+        self._entry_by_geometry_id = {id(geometry): entry for entry in entries for geometry in [entry[2]]}
+        self._tree = STRtree(self._geometries) if self._geometries else None
+
+    def __bool__(self) -> bool:
+        return bool(self._entries)
+
+    def query(self, geometry: Any) -> list[tuple[str, dict[str, Any], LineString]]:
+        if self._tree is None or geometry is None or geometry.is_empty:
+            return []
+        entries: list[tuple[str, dict[str, Any], LineString]] = []
+        for hit in self._tree.query(geometry):
+            entry = self._entry_for_hit(hit)
+            if entry is not None:
+                entries.append(entry)
+        return sorted(entries, key=lambda entry: self._order_by_road_id.get(entry[0], 0))
+
+    def _entry_for_hit(self, hit: Any) -> tuple[str, dict[str, Any], LineString] | None:
+        try:
+            index = int(hit)
+        except (TypeError, ValueError):
+            return self._entry_by_geometry_id.get(id(hit))
+        if 0 <= index < len(self._entries):
+            return self._entries[index]
+        return None
+
+
+class _AdvanceRoadIndex(_LineSpatialIndex):
+    def __init__(self, rcsd_road_by_id: dict[str, dict[str, Any]]) -> None:
+        entries: list[tuple[str, dict[str, Any], LineString]] = []
+        self.line_by_id: dict[str, LineString] = {}
+        self.node_to_roads: dict[str, list[str]] = defaultdict(list)
+        for road_id, road in rcsd_road_by_id.items():
+            if not _is_existing_rcsd_advance_candidate(road):
+                continue
+            line = _feature_line(road)
+            if line is None or line.length <= 0:
+                continue
+            road_id_text = str(road_id)
+            entries.append((road_id_text, road, line))
+            self.line_by_id[road_id_text] = line
+            for node_id in _road_endpoint_node_ids(road):
+                self.node_to_roads[node_id].append(road_id_text)
+        super().__init__(entries)
+
+
+def _line_index_for_roads(road_by_id: dict[str, dict[str, Any]]) -> _LineSpatialIndex:
+    entries: list[tuple[str, dict[str, Any], LineString]] = []
+    for road_id, road in road_by_id.items():
+        line = _feature_line(road)
+        if line is not None and line.length > 0:
+            entries.append((str(road_id), road, line))
+    return _LineSpatialIndex(entries)
 
 
 def exclude_retained_swsd_carriers_from_formal_replacements(
@@ -256,15 +316,10 @@ def _exclude_duplicate_unsegmented_advance_right_roads(
     rcsd_road_by_id: dict[str, dict[str, Any]],
     overlap_ratio_threshold: float = 0.5,
 ) -> dict[str, list[str]]:
-    selected_geometries = [
-        geometry
-        for road in rcsd_road_by_id.values()
-        for geometry in [_feature_line(road)]
-        if geometry is not None
-    ]
-    if not selected_geometries:
+    selected_index = _line_index_for_roads(rcsd_road_by_id)
+    if not selected_index:
         return {}
-    selected_corridor = unary_union(selected_geometries).buffer(1.0)
+    advance_index = _AdvanceRoadIndex(rcsd_road_by_id)
     excluded: dict[str, list[str]] = {}
     for road_id, road in swsd_road_by_id.items():
         if road_id in removed_road_to_segments or not _is_advance_right_road(road):
@@ -280,16 +335,22 @@ def _exclude_duplicate_unsegmented_advance_right_roads(
         matching_rcsd_advance_ids = _matching_existing_rcsd_advance_road_ids(
             road,
             rcsd_road_by_id=rcsd_road_by_id,
+            advance_index=advance_index,
         )
         matching_rcsd_covers = bool(matching_rcsd_advance_ids) and _is_covered_by_existing_rcsd_advance_corridor(
             road,
             rcsd_road_by_id=rcsd_road_by_id,
             selected_road_ids=matching_rcsd_advance_ids,
+            advance_index=advance_index,
         )
         if not matching_rcsd_covers:
             props["t06_mixed_advance_right_carrier"] = 1
             road["properties"] = props
             continue
+        local_geometries = [entry[2] for entry in selected_index.query(line.buffer(1.0))]
+        if not local_geometries:
+            continue
+        selected_corridor = unary_union(local_geometries).buffer(1.0)
         if float(line.intersection(selected_corridor).length) / float(line.length) < overlap_ratio_threshold:
             continue
         excluded[road_id] = ["t06_duplicate_unsegmented_advance_right"]
@@ -432,11 +493,13 @@ def materialize_topology_supplement_rcsd_roads(
     }
     materialized_source_road_ids: set[str] = set()
     mixed_boundary_split_source_road_ids: set[str] = set()
+    advance_index = _AdvanceRoadIndex(rcsd_road_by_id)
     recovered_count = _recover_undercovered_mixed_advance_right_carriers(
         units,
         swsd_road_by_id=swsd_road_by_id,
         rcsd_road_by_id=rcsd_road_by_id,
         attachment_segment_ids=attachment_segment_ids,
+        advance_index=advance_index,
     )
     stats["recovered_undercovered_mixed_advance_right_count"] = recovered_count
     for unit in units:
@@ -463,6 +526,7 @@ def materialize_topology_supplement_rcsd_roads(
             existing_rcsd_advance_ids = _matching_existing_rcsd_advance_road_ids(
                 road,
                 rcsd_road_by_id=rcsd_road_by_id,
+                advance_index=advance_index,
             )
             use_replaced_rcsd_group = _can_use_existing_rcsd_advance_group_for_replaced_carrier(
                 road,
@@ -497,6 +561,7 @@ def materialize_topology_supplement_rcsd_roads(
                     road,
                     rcsd_road_by_id=rcsd_road_by_id,
                     selected_road_ids=unit.rcsd_road_ids,
+                    advance_index=advance_index,
                 ) and not use_replaced_rcsd_group:
                     still_retained.append(road_id)
                     road.setdefault("properties", {})["t06_mixed_advance_right_carrier"] = 1
@@ -523,6 +588,7 @@ def materialize_topology_supplement_rcsd_roads(
                 road,
                 rcsd_road_by_id=rcsd_road_by_id,
                 selected_road_ids=unit.rcsd_road_ids,
+                advance_index=advance_index,
             ) and not use_replaced_rcsd_group:
                 still_retained.append(road_id)
                 continue
@@ -591,6 +657,7 @@ def materialize_topology_supplement_rcsd_roads(
             existing_rcsd_advance_ids = _matching_existing_rcsd_advance_road_ids(
                 road,
                 rcsd_road_by_id=rcsd_road_by_id,
+                advance_index=advance_index,
             )
             use_replaced_rcsd_group = _can_use_existing_rcsd_advance_group_for_replaced_carrier(
                 road,
@@ -635,6 +702,7 @@ def materialize_topology_supplement_rcsd_roads(
                         road,
                         rcsd_road_by_id=rcsd_road_by_id,
                         selected_road_ids=coverage_rcsd_advance_ids,
+                        advance_index=advance_index,
                     )
                 )
             )
@@ -806,6 +874,7 @@ def _recover_undercovered_mixed_advance_right_carriers(
     swsd_road_by_id: dict[str, dict[str, Any]],
     rcsd_road_by_id: dict[str, dict[str, Any]],
     attachment_segment_ids: dict[str, list[str]],
+    advance_index: _AdvanceRoadIndex | None = None,
 ) -> int:
     recovered_count = 0
     for unit in units:
@@ -823,6 +892,7 @@ def _recover_undercovered_mixed_advance_right_carriers(
                     road,
                     rcsd_road_by_id=rcsd_road_by_id,
                     selected_road_ids=getattr(unit, "rcsd_road_ids", []),
+                    advance_index=advance_index,
                 )
             ):
                 kept_swsd_road_ids.append(road_id)
@@ -844,11 +914,13 @@ def _is_undercovered_mixed_advance_right_carrier(
     *,
     rcsd_road_by_id: dict[str, dict[str, Any]],
     selected_road_ids: list[str] | None = None,
+    advance_index: _AdvanceRoadIndex | None = None,
 ) -> bool:
     return _is_marked_mixed_advance_right_carrier(road) and not _is_covered_by_existing_rcsd_advance_corridor(
         road,
         rcsd_road_by_id=rcsd_road_by_id,
         selected_road_ids=selected_road_ids,
+        advance_index=advance_index,
     )
 
 
@@ -1080,21 +1152,17 @@ def _matching_existing_rcsd_advance_road_ids(
     rcsd_road_by_id: dict[str, dict[str, Any]],
     buffer_m: float = 1.0,
     overlap_ratio_threshold: float = 0.2,
+    advance_index: _AdvanceRoadIndex | None = None,
 ) -> list[str]:
     line = _feature_line(swsd_road)
     if line is None or line.length <= 0:
         return []
+    if advance_index is None:
+        advance_index = _AdvanceRoadIndex(rcsd_road_by_id)
     result: list[str] = []
     corridor_candidates: list[tuple[str, LineString]] = []
-    for rcsd_road_id, rcsd_road in rcsd_road_by_id.items():
-        props = dict(rcsd_road.get("properties") or {})
-        if props.get("t06_split_reason") == TOPOLOGY_SUPPLEMENT_SPLIT_REASON:
-            continue
-        if not _is_advance_right_road(rcsd_road):
-            continue
-        rcsd_line = _feature_line(rcsd_road)
-        if rcsd_line is None or rcsd_line.length <= 0:
-            continue
+    search_distance = max(float(buffer_m), EXISTING_ADVANCE_CORRIDOR_BUFFER_M)
+    for rcsd_road_id, _, rcsd_line in advance_index.query(line.buffer(search_distance)):
         if line.distance(rcsd_line) <= EXISTING_ADVANCE_CORRIDOR_BUFFER_M:
             corridor_candidates.append((str(rcsd_road_id), rcsd_line))
         if line.distance(rcsd_line) <= buffer_m:
@@ -1107,6 +1175,7 @@ def _matching_existing_rcsd_advance_road_ids(
             swsd_road,
             rcsd_road_by_id=rcsd_road_by_id,
             seed_road_ids=unique_preserve_order(result),
+            advance_index=advance_index,
         )
     if not corridor_candidates:
         return []
@@ -1124,6 +1193,7 @@ def _matching_existing_rcsd_advance_road_ids(
             for road_id, candidate_line in corridor_candidates
             if candidate_line.intersection(line.buffer(EXISTING_ADVANCE_CORRIDOR_BUFFER_M, cap_style=2)).length > 0
         ),
+        advance_index=advance_index,
     )
 
 
@@ -1132,19 +1202,14 @@ def _expand_connected_existing_rcsd_advance_road_ids(
     *,
     rcsd_road_by_id: dict[str, dict[str, Any]],
     seed_road_ids: list[str],
+    advance_index: _AdvanceRoadIndex | None = None,
 ) -> list[str]:
     line = _feature_line(swsd_road)
     if line is None or not seed_road_ids:
         return unique_preserve_order(seed_road_ids)
-    node_to_roads: dict[str, list[str]] = defaultdict(list)
-    for road_id, road in rcsd_road_by_id.items():
-        props = dict(road.get("properties") or {})
-        if props.get("t06_split_reason") == TOPOLOGY_SUPPLEMENT_SPLIT_REASON:
-            continue
-        if not _is_advance_right_road(road):
-            continue
-        for node_id in _road_endpoint_node_ids(road):
-            node_to_roads[node_id].append(str(road_id))
+    if advance_index is None:
+        advance_index = _AdvanceRoadIndex(rcsd_road_by_id)
+    node_to_roads = advance_index.node_to_roads
     result = unique_preserve_order(seed_road_ids)
     visited = set(result)
     queue = list(result)
@@ -1157,8 +1222,7 @@ def _expand_connected_existing_rcsd_advance_road_ids(
             for candidate_id in node_to_roads.get(node_id, []):
                 if candidate_id in visited:
                     continue
-                candidate = rcsd_road_by_id.get(candidate_id)
-                candidate_line = _feature_line(candidate) if candidate is not None else None
+                candidate_line = advance_index.line_by_id.get(candidate_id)
                 if candidate_line is None or line.distance(candidate_line) > EXISTING_ADVANCE_CORRIDOR_BUFFER_M:
                     continue
                 visited.add(candidate_id)
@@ -1172,22 +1236,27 @@ def _is_covered_by_existing_rcsd_advance_corridor(
     *,
     rcsd_road_by_id: dict[str, dict[str, Any]],
     selected_road_ids: list[str] | None = None,
+    advance_index: _AdvanceRoadIndex | None = None,
 ) -> bool:
     line = _feature_line(swsd_road)
     if line is None or line.length <= 0:
         return False
-    selected = {str(road_id) for road_id in selected_road_ids or []}
+    if advance_index is None:
+        advance_index = _AdvanceRoadIndex(rcsd_road_by_id)
+    selected = [str(road_id) for road_id in selected_road_ids or []]
     candidates: list[LineString] = []
-    for rcsd_road_id, rcsd_road in rcsd_road_by_id.items():
-        if selected and str(rcsd_road_id) not in selected:
-            continue
-        props = dict(rcsd_road.get("properties") or {})
-        if props.get("t06_split_reason") == TOPOLOGY_SUPPLEMENT_SPLIT_REASON:
-            continue
-        if not _is_advance_right_road(rcsd_road):
-            continue
-        candidate = _feature_line(rcsd_road)
-        if candidate is None or candidate.length <= 0:
+    if selected:
+        indexed_entries = [
+            (road_id, advance_index.line_by_id.get(road_id))
+            for road_id in selected
+        ]
+    else:
+        indexed_entries = [
+            (road_id, candidate)
+            for road_id, _, candidate in advance_index.query(line.buffer(EXISTING_ADVANCE_CORRIDOR_BUFFER_M))
+        ]
+    for _, candidate in indexed_entries:
+        if candidate is None:
             continue
         if line.distance(candidate) <= EXISTING_ADVANCE_CORRIDOR_BUFFER_M:
             candidates.append(candidate)
@@ -1360,6 +1429,11 @@ def _feature_line(feature: dict[str, Any]) -> LineString | None:
 
 def _is_advance_right_road(road: dict[str, Any]) -> bool:
     return is_advance_right_turn_road(dict(road.get("properties") or {}))
+
+
+def _is_existing_rcsd_advance_candidate(road: dict[str, Any]) -> bool:
+    props = dict(road.get("properties") or {})
+    return props.get("t06_split_reason") != TOPOLOGY_SUPPLEMENT_SPLIT_REASON and _is_advance_right_road(road)
 
 
 def _is_side_attachment_swsd_road(road: dict[str, Any] | None) -> bool:

@@ -18,6 +18,9 @@ from .road_attributes import is_advance_right_turn_road
 
 PATH_REFERENCE_BUFFER_M = 15.0
 PATH_OFF_REFERENCE_PENALTY_MULTIPLIER = 6.0
+CONNECTED_CORRIDOR_SUPPLEMENT_BUFFER_M = 5.0
+CONNECTED_CORRIDOR_SUPPLEMENT_MAX_OUTSIDE_RATIO = 0.1
+CONNECTED_CORRIDOR_SUPPLEMENT_MAX_OUTSIDE_LENGTH_M = 20.0
 
 
 @dataclass(frozen=True)
@@ -206,6 +209,14 @@ class BufferSegmentExtractor:
             require_directed_pair=require_directed_pair,
             require_bidirectional=require_bidirectional,
         )
+        if require_bidirectional:
+            corridor_edges = _include_connected_corridor_supplement_edges(
+                selected_edges,
+                corridor_edges,
+                required_nodes=set(required_nodes),
+                blocked_nodes=unexpected_base_ids - set(pruned.inner_nodes),
+                reference_geometry=segment_geometry,
+            )
         corridor_nodes = _nodes_from_edges(corridor_edges)
         unexpected_mapped_semantic_nodes = sorted((unexpected_base_ids - set(pruned.inner_nodes)) & corridor_nodes)
         ok, reason, unexpected_endpoint_nodes = _retained_status(
@@ -268,7 +279,7 @@ class BufferSegmentExtractor:
             excluded_roads=excluded_roads,
             retained_nodes=sorted(corridor_nodes),
             inner_nodes=sorted(set(pruned.inner_nodes) & corridor_nodes),
-            out_nodes=pruned.out_nodes,
+            out_nodes=sorted(set(pruned.out_nodes) - corridor_nodes),
             unexpected_endpoint_nodes=unexpected_endpoint_nodes,
             unexpected_mapped_semantic_nodes=unexpected_mapped_semantic_nodes,
             low_overlap_road_ids=low_overlap_road_ids,
@@ -1081,6 +1092,58 @@ def _include_internal_corridor_edges(
             continue
         result.append(edge)
         selected_edge_ids.add(edge.edge_id)
+    return result
+
+
+def _include_connected_corridor_supplement_edges(
+    edges: list[Edge],
+    selected_edges: list[Edge],
+    *,
+    required_nodes: set[str],
+    blocked_nodes: set[str],
+    reference_geometry: BaseGeometry | None,
+) -> list[Edge]:
+    if reference_geometry is None or reference_geometry.is_empty or not selected_edges:
+        return selected_edges
+    selected_edge_ids = {edge.edge_id for edge in selected_edges}
+    retained_nodes = _nodes_from_edges(selected_edges)
+    supplement_buffer = reference_geometry.buffer(CONNECTED_CORRIDOR_SUPPLEMENT_BUFFER_M)
+    supplement_edges = [
+        edge
+        for edge in edges
+        if edge.edge_id not in selected_edge_ids
+        and not (edge.source in required_nodes and edge.target in required_nodes)
+        and _edge_within_buffer_scope(
+            edge,
+            reference_buffer_geometry=supplement_buffer,
+            max_mismatch_ratio=CONNECTED_CORRIDOR_SUPPLEMENT_MAX_OUTSIDE_RATIO,
+            min_mismatch_length_m=CONNECTED_CORRIDOR_SUPPLEMENT_MAX_OUTSIDE_LENGTH_M,
+        )
+    ]
+    if not supplement_edges:
+        return selected_edges
+
+    supplement_ids: set[str] = set()
+    supplement_components = _connected_components(_adjacency_from_edges(supplement_edges))
+    for component in supplement_components:
+        if component & blocked_nodes:
+            continue
+        boundary_nodes = sorted(component & retained_nodes)
+        if len(boundary_nodes) < 2 or not (set(boundary_nodes) & required_nodes):
+            continue
+        component_edges = [
+            edge for edge in supplement_edges if edge.source in component and edge.target in component
+        ]
+        for path in _minimum_terminal_edge_paths(component_edges, boundary_nodes, reference_geometry=reference_geometry):
+            supplement_ids.update(path)
+    if not supplement_ids:
+        return selected_edges
+
+    result = list(selected_edges)
+    for edge in edges:
+        if edge.edge_id in supplement_ids and edge.edge_id not in selected_edge_ids:
+            result.append(edge)
+            selected_edge_ids.add(edge.edge_id)
     return result
 
 

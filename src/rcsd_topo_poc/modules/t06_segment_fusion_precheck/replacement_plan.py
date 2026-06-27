@@ -13,6 +13,8 @@ from .schemas import feature
 
 
 MAX_FORMAL_REPLACEMENT_BUFFER_M = 75.0
+GROUP_SOURCE_BLOCKED_REASON = "path_corridor_source_segment_blocked"
+GROUP_BUFFER_EXCEEDS_REASON = "group_probe_buffer_exceeds_topology_connectivity_audit_threshold"
 MIN_VISUAL_REPAIR_GEOMETRY_OVERLAP_RATIO = 0.65
 MAX_CONTROLLED_VISUAL_SWSD_UNCOVERED_RATIO = 0.1
 MAX_CONTROLLED_VISUAL_SWSD_UNCOVERED_LENGTH_M = 20.0
@@ -360,6 +362,7 @@ def _group_replacement_plan_rows(
             continue
         segment_id = _safe_id(props.get("swsd_segment_id"))
         group_segment_ids = _path_corridor_replacement_segment_ids(props)
+        blocked_segment_ids = set(_parse_list(props.get("path_corridor_blocked_segment_ids")))
         rcsd_road_ids = _parse_list(props.get("group_probe_rcsd_road_ids"))
         if not segment_id or not group_segment_ids or not rcsd_road_ids:
             continue
@@ -369,7 +372,16 @@ def _group_replacement_plan_rows(
         )
         buffer_distances = _parse_float_list(props.get("group_probe_buffer_distance_m"))
         buffer_distance_risk = bool(buffer_distances and max(buffer_distances) > MAX_FORMAL_REPLACEMENT_BUFFER_M)
+        source_blocked = segment_id in blocked_segment_ids
+        risk_reasons = unique_preserve_order(
+            [
+                *([GROUP_SOURCE_BLOCKED_REASON] if source_blocked else []),
+                *([GROUP_BUFFER_EXCEEDS_REASON] if buffer_distance_risk else []),
+            ]
+        )
         notes = props.get("notes") or "path-corridor group replacement plan"
+        if source_blocked:
+            notes = f"{notes}; source segment is blocked in path-corridor audit; flagged for manual review"
         if buffer_distance_risk:
             notes = (
                 f"{notes}; group probe buffer exceeds {MAX_FORMAL_REPLACEMENT_BUFFER_M:g}m "
@@ -408,11 +420,7 @@ def _group_replacement_plan_rows(
                     "risk_flags": unique_preserve_order(
                         [
                             "group_path_corridor_replacement",
-                            *(
-                                ["group_probe_buffer_exceeds_topology_connectivity_audit_threshold"]
-                                if buffer_distance_risk
-                                else []
-                            ),
+                            *risk_reasons,
                         ]
                     ),
                     "notes": notes,

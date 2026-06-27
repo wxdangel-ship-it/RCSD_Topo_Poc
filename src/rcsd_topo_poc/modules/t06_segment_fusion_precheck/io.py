@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
-from shapely.geometry import mapping
+from shapely.geometry import LineString, MultiLineString, MultiPolygon, Polygon, mapping, shape
 from shapely.geometry.base import BaseGeometry
 
 from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import read_vector_layer
@@ -47,8 +47,9 @@ def write_feature_triplet(
     csv_path = step_root / f"{stem}.csv"
     json_path = step_root / f"{stem}.json"
     paths = {"gpkg": gpkg_path, "csv": csv_path}
+    gpkg_features, gpkg_geometry_type = _gpkg_features_and_geometry_type(features)
     _notify_output_progress(progress, "gpkg", "start", gpkg_path)
-    write_gpkg(gpkg_path, features, empty_fields=fieldnames, geometry_type=_infer_gpkg_geometry_type(features))
+    write_gpkg(gpkg_path, gpkg_features, empty_fields=fieldnames, geometry_type=gpkg_geometry_type)
     _notify_output_progress(progress, "gpkg", "end", gpkg_path)
     _notify_output_progress(progress, "csv", "start", csv_path)
     write_csv(csv_path, (feature.get("properties") or {} for feature in features), fieldnames)
@@ -71,14 +72,59 @@ def write_feature_triplet(
 
 def _infer_gpkg_geometry_type(features: list[dict[str, Any]]) -> str:
     geometry_types = {
-        geometry.geom_type
+        geometry_type
         for feature in features
-        for geometry in [feature.get("geometry")]
-        if isinstance(geometry, BaseGeometry) and not geometry.is_empty
+        for geometry_type in [_feature_geometry_type(feature.get("geometry"))]
+        if geometry_type
     }
     if len(geometry_types) == 1:
         return next(iter(geometry_types))
     return "Unknown"
+
+
+def _gpkg_features_and_geometry_type(features: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], str]:
+    geometry_type = _infer_gpkg_geometry_type(features)
+    if geometry_type != "Unknown":
+        return features, geometry_type
+    geometry_types = {
+        geometry_type
+        for feature in features
+        for geometry_type in [_feature_geometry_type(feature.get("geometry"))]
+        if geometry_type
+    }
+    if geometry_types <= {"LineString", "MultiLineString"}:
+        return [_with_gpkg_geometry(feature, _as_multiline(feature.get("geometry"))) for feature in features], "MultiLineString"
+    if geometry_types <= {"Polygon", "MultiPolygon"}:
+        return [_with_gpkg_geometry(feature, _as_multipolygon(feature.get("geometry"))) for feature in features], "MultiPolygon"
+    return features, geometry_type
+
+
+def _with_gpkg_geometry(feature: dict[str, Any], geometry: Any) -> dict[str, Any]:
+    return {**feature, "geometry": geometry}
+
+
+def _as_multiline(geometry: Any) -> Any:
+    if isinstance(geometry, LineString):
+        return MultiLineString([geometry])
+    if isinstance(geometry, dict) and geometry.get("type") == "LineString":
+        return mapping(MultiLineString([shape(geometry)]))
+    return geometry
+
+
+def _as_multipolygon(geometry: Any) -> Any:
+    if isinstance(geometry, Polygon):
+        return MultiPolygon([geometry])
+    if isinstance(geometry, dict) and geometry.get("type") == "Polygon":
+        return mapping(MultiPolygon([shape(geometry)]))
+    return geometry
+
+
+def _feature_geometry_type(geometry: Any) -> str:
+    if isinstance(geometry, BaseGeometry):
+        return "" if geometry.is_empty else geometry.geom_type
+    if isinstance(geometry, dict):
+        return str(geometry.get("type") or "")
+    return ""
 
 
 def _notify_output_progress(progress: Callable[[str, str, Path], None] | None, fmt: str, status: str, path: Path) -> None:

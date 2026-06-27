@@ -125,6 +125,36 @@ def test_dual_graph_retry_keeps_two_directed_corridors_that_cross_50m_core() -> 
     assert outcome.source_reason == f"{DUAL_GRAPH_FIRST_RETRY_RECOMMENDATION}:rcsd_not_bidirectional_for_swsd_dual"
 
 
+def test_dual_graph_retry_avoids_external_semantic_nodes_when_clean_path_exists() -> None:
+    retry = SingleGraphConnectivityRetry(
+        rcsd_road_features=[
+            {"properties": {"id": "dirty_a", "snodeid": 10, "enodeid": 30, "direction": 2}, "geometry": LineString([(0, 0), (50, 0)])},
+            {"properties": {"id": "dirty_b", "snodeid": 30, "enodeid": 20, "direction": 2}, "geometry": LineString([(50, 0), (100, 0)])},
+            {"properties": {"id": "clean_a", "snodeid": 10, "enodeid": 11, "direction": 2}, "geometry": LineString([(0, 10), (50, 10)])},
+            {"properties": {"id": "clean_b", "snodeid": 11, "enodeid": 20, "direction": 2}, "geometry": LineString([(50, 10), (100, 10)])},
+            {"properties": {"id": "reverse_a", "snodeid": 20, "enodeid": 12, "direction": 2}, "geometry": LineString([(100, 20), (50, 20)])},
+            {"properties": {"id": "reverse_b", "snodeid": 12, "enodeid": 10, "direction": 2}, "geometry": LineString([(50, 20), (0, 20)])},
+        ],
+        rcsd_node_features=_nodes([10, 11, 12, 20, 30]),
+    )
+
+    outcome = retry.retry_dual_bidirectional(
+        LineString([(0, 0), (100, 0)]),
+        RelationCheck(True, ["10", "20"], []),
+        [],
+        {"30"},
+        "0-0双",
+        _failed_result("rcsd_not_bidirectional_for_swsd_dual"),
+        {"full_graph_status": "required_nodes_connected", "directional_status": "full=bidirectional;candidate=reverse_only"},
+        BufferExtractionConfig(),
+        2.5,
+    )
+
+    assert outcome is not None
+    assert set(outcome.buffer_result.retained_road_ids) == {"clean_a", "clean_b", "reverse_a", "reverse_b"}
+    assert outcome.buffer_result.unexpected_mapped_semantic_node_ids == []
+
+
 def test_dual_graph_retry_rejects_reverse_detour_over_length_ratio() -> None:
     retry = SingleGraphConnectivityRetry(
         rcsd_road_features=[

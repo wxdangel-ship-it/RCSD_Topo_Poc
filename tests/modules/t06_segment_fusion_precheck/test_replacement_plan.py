@@ -158,8 +158,12 @@ def test_replacement_plan_excludes_blocked_path_corridor_segments() -> None:
 
     assert len(rows) == 1
     props = rows[0]["properties"]
+    assert props["plan_status"] == "ready"
+    assert props["execution_action"] == "replace"
     assert props["execution_scope"] == "path_corridor_group"
+    assert props["source_reason"] == "passed"
     assert props["group_segment_ids"] == ["s2"]
+    assert "path_corridor_source_segment_blocked" in props["risk_flags"]
 
 
 def test_replacement_plan_marks_group_probe_buffer_risk_without_holding() -> None:

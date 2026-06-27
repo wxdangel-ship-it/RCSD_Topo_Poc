@@ -97,11 +97,19 @@ class SingleGraphConnectivityRetry:
         if len(set(required_nodes)) != 2 or len(directed_nodes) != 2:
             return None
 
+        optional_nodes = _canonical_ids([*relation.rcsd_junc_nodes, *optional_allowed_rcsd_nodes], self.node_canonicalizer)
+        blocked_nodes = _blocked_external_semantic_nodes(
+            unexpected_relation_base_ids,
+            required_nodes=required_nodes,
+            optional_nodes=optional_nodes,
+            node_canonicalizer=self.node_canonicalizer,
+        )
         path_edges = self._directed_path_edges(
             directed_source=directed_nodes[0],
             directed_target=directed_nodes[1],
             required_nodes=required_nodes,
             segment_geometry=segment_geometry,
+            blocked_nodes=blocked_nodes,
         )
         if not path_edges:
             return None
@@ -143,7 +151,6 @@ class SingleGraphConnectivityRetry:
         if coverage_status is None or reference_distance_m is None:
             return None
 
-        optional_nodes = _canonical_ids([*relation.rcsd_junc_nodes, *optional_allowed_rcsd_nodes], self.node_canonicalizer)
         retained_nodes = _nodes_from_edges(path_edges)
         unexpected_base_ids = (
             set(_canonical_ids(list(unexpected_relation_base_ids or set()), self.node_canonicalizer))
@@ -233,17 +240,26 @@ class SingleGraphConnectivityRetry:
         if len(set(required_nodes)) != 2:
             return None
         source, target = required_nodes
+        optional_nodes = _canonical_ids([*relation.rcsd_junc_nodes, *optional_allowed_rcsd_nodes], self.node_canonicalizer)
+        blocked_nodes = _blocked_external_semantic_nodes(
+            unexpected_relation_base_ids,
+            required_nodes=required_nodes,
+            optional_nodes=optional_nodes,
+            node_canonicalizer=self.node_canonicalizer,
+        )
         forward_edges = self._directed_path_edges(
             directed_source=source,
             directed_target=target,
             required_nodes=required_nodes,
             segment_geometry=segment_geometry,
+            blocked_nodes=blocked_nodes,
         )
         reverse_edges = self._directed_path_edges(
             directed_source=target,
             directed_target=source,
             required_nodes=required_nodes,
             segment_geometry=segment_geometry,
+            blocked_nodes=blocked_nodes,
         )
         if not forward_edges or not reverse_edges:
             return None
@@ -255,7 +271,6 @@ class SingleGraphConnectivityRetry:
             return None
 
         path_edges = _unique_edges([*forward_edges, *reverse_edges])
-        optional_nodes = _canonical_ids([*relation.rcsd_junc_nodes, *optional_allowed_rcsd_nodes], self.node_canonicalizer)
         retained_nodes = _nodes_from_edges(path_edges)
         unexpected_base_ids = (
             set(_canonical_ids(list(unexpected_relation_base_ids or set()), self.node_canonicalizer))
@@ -367,13 +382,15 @@ class SingleGraphConnectivityRetry:
         directed_target: str,
         required_nodes: list[str],
         segment_geometry: BaseGeometry,
+        blocked_nodes: set[str] | None = None,
     ) -> list[Edge]:
         for edges, edge_by_id in (
             (self.non_advance_edges, self.non_advance_edge_by_id),
             (self.all_edges, self.all_edge_by_id),
         ):
+            scoped_edges = _without_blocked_nodes(edges, blocked_nodes)
             path = _shortest_directed_path_covering_nodes(
-                edges,
+                scoped_edges,
                 directed_source,
                 directed_target,
                 required_nodes,
@@ -404,6 +421,26 @@ def _full_graph_supports_bidirectional_retry(diagnostic: dict[str, Any]) -> bool
 
 def _reference_distances(base_buffer_distance_m: float) -> tuple[float, ...]:
     return tuple(distance for distance in (75.0, 100.0) if distance > base_buffer_distance_m)
+
+
+def _blocked_external_semantic_nodes(
+    unexpected_relation_base_ids: set[str] | None,
+    *,
+    required_nodes: list[str],
+    optional_nodes: list[str],
+    node_canonicalizer: NodeCanonicalizer,
+) -> set[str]:
+    return (
+        set(_canonical_ids(list(unexpected_relation_base_ids or set()), node_canonicalizer))
+        - set(required_nodes)
+        - set(optional_nodes)
+    )
+
+
+def _without_blocked_nodes(edges: list[Edge], blocked_nodes: set[str] | None) -> list[Edge]:
+    if not blocked_nodes:
+        return edges
+    return [edge for edge in edges if edge.source not in blocked_nodes and edge.target not in blocked_nodes]
 
 
 def _edge_geometry(edges: list[Edge]) -> BaseGeometry:

@@ -278,13 +278,14 @@ Step3 输出目录：
 - `t06_step3_surface_topology_audit.gpkg/csv/json`（仅调用方提供 T03/T04/T05/T07 surface 或 T04 audit 时输出）
 - `t06_step3_surface_topology_summary.json`（仅调用方提供 T03/T04/T05/T07 surface 或 T04 audit 时输出）
 - `t06_step3_surface_aware_plan_release_audit.json`（仅调用方提供 T03/T04/T05/T07 surface 或 T04 audit 且存在 retained-junction gate 释放候选时输出）
+- `t06_step3_progress.jsonl / t06_step3_heartbeat.json / t06_step3_stackdump.log`（仅 `--progress` 执行时输出；用于长耗时 Step3 的阶段心跳、主线程栈采样与 `SIGUSR1` 手工 stack dump，不参与业务判定）
 - `t06_step3_summary.json`
 
 F-RCSD Road / Node 必须包含 `source` 字段：RCSD 来源为 `1`，SWSD 来源为 `2`。
 F-RCSD Node 可包含 `semantic_junction_group_id` 字段：当 T05 已发布有效 `target_id -> base_id` 语义路口关系，但最终 F-RCSD 中仍保留 SWSD node 与 RCSD node 两类物理节点时，相关节点必须写入同一 `semantic_junction_group_id`。该字段不代表几何合并，也不强制改写 `mainnodeid`；它表达物理分离、语义同一路口的下游可消费分组。
 F-RCSD Road 中由 T06 替换发布的 RCSD Road 必须包含 `t06_swsd_segment_ids` 多值字段，记录该最终 Road 承载的 SWSD Segment id 集合；`path_corridor_group` 等组级替换允许一条 RCSD Road 同时承载多个 SWSD Segment，因此不得用单值 `segmentid` 覆盖该多值归属。
 SWSD 与 RCSD 原始 `id` 冲突时保留原 id，依赖 `source` 区分，并写入 `t06_step3_id_collision_audit.*`。
-`t06_step3_unreplaced_rcsd_roads` 是 RCSD 视角审计输出，保留原始 RCSDRoad 几何与属性，并增加 `replacement_status / audit_reason / source / length_m` 等字段，用于定位未进入最终替换结果的 RCSDRoad。
+`t06_step3_unreplaced_rcsd_roads` 是 RCSD 视角审计输出，保留原始 RCSDRoad 几何与属性，并增加 `replacement_status / audit_reason / source / length_m` 等字段，用于定位未进入最终替换结果的 RCSDRoad。该产物以 RCSDRoad 为审计主键，不替代 SWSD Segment relation；若要统计 RCSD Base 替换率，应以 T05 `rcsdroad_out.gpkg` 去重 Road / 里程为分母，以 Step3 relation 中最终 `source=1` F-RCSD carrier 的原始 RCSDRoad 集合作为正式落地口径，并可同时保留 Step2 replaceable 引用集合作为 reference 口径。
 `t06_step3_semantic_junction_groups` 是语义路口组审计输出，字段至少包含 `semantic_junction_group_id / t05_base_id / swsd_node_ids / rcsd_node_ids / frcsd_node_ids / evidence_source / max_pairwise_distance_m / risk_reason / affected_segment_ids / relation_statuses / source_mixes`。该输出基于 T05 `intersection_match_all.geojson` 中 `status=0 / base_id>0` 的有效关系构建，允许 `many_target_to_one_base` 形成同一组；距离不设硬阈值，只作为风险审计字段。
 Step3 默认从 Step2 replaceable 同目录读取 `t06_segment_replacement_plan.*`：优先读取 `json`（若存在），再兼容读取 `geojson/gpkg`；内网 no-json 模式下，GPKG/CSV 是完整执行计划的稳定载体，JSON feature dump 不是必需产物。调用方也可以通过独立脚本参数显式指定特殊路口组审计文件或 group replacement 审计文件作为旧结果兼容输入。summary 必须记录 `step2_replacement_plan_path / input_replacement_plan_count / input_standard_replacement_plan_count / replacement_plan_source / special_junction_group_consumed_count / special_junction_added_rcsd_road_count / special_junction_added_rcsd_node_count`，以及 `group_replacement_audit_input_row_count / group_replacement_passed_row_count / group_replacement_plan_count / group_replacement_assignment_segment_count / group_replacement_created_unit_count / group_replacement_skipped_row_count`。当 surface-aware retained-junction gate 释放被触发时，summary 还必须记录 `surface_aware_plan_release`，包括释放数、回退数、内部 topology 新增 fail 数、外部 baseline 对照路径和相对外部 baseline 的新增 fail keys。
 `t06_step3_swsd_frcsd_segment_relation` 是下游稳定关系索引，覆盖所有输入 SWSD Segment：

@@ -15,6 +15,8 @@ if str(SRC_ROOT) not in sys.path:
 from rcsd_topo_poc.modules.t06_segment_fusion_precheck import (  # noqa: E402
     run_t06_step3_segment_replacement,
 )
+from rcsd_topo_poc.modules.t06_segment_fusion_precheck.schemas import STEP3_DIR  # noqa: E402
+from rcsd_topo_poc.modules.t06_segment_fusion_precheck.step3_progress import Step3ProgressWatchdog  # noqa: E402
 from rcsd_topo_poc.modules.t06_segment_fusion_precheck.step3_surface_aware_plan_release import (  # noqa: E402
     run_surface_aware_step3_segment_replacement,
 )
@@ -64,42 +66,51 @@ def main() -> int:
     }
 
     print("[T06 Step3] run segment replacement from Step2 replaceable outputs", flush=True)
+    diag = Step3ProgressWatchdog(out_root / run_id / STEP3_DIR, enabled=args.progress)
+    diag.start(run_id=run_id, out_root=str(out_root), t06_run_root=str(t06_run_root))
     surface_inputs = {
         key: inputs[key]
         for key in ("t07_surface_path", "t03_surface_path", "t04_surface_path", "t04_audit_path", "t05_surface_path")
     }
-    if any(surface_inputs.values()):
-        artifacts, surface_topology = run_surface_aware_step3_segment_replacement(
-            step2_replaceable_path=inputs["step2_replaceable_path"],
-            step2_special_junction_group_audit_path=inputs["step2_special_junction_group_audit_path"],
-            step2_group_replacement_audit_path=inputs["step2_group_replacement_audit_path"],
-            swsd_segment_path=inputs["swsd_segment_path"],
-            swsd_roads_path=inputs["swsd_roads_path"],
-            swsd_nodes_path=inputs["swsd_nodes_path"],
-            rcsdroad_path=inputs["rcsdroad_path"],
-            rcsdnode_path=inputs["rcsdnode_path"],
-            out_root=out_root,
-            run_id=run_id,
-            surface_inputs=surface_inputs,
-            surface_topology_closure=args.surface_topology_closure,
-            progress=args.progress,
-        )
-    else:
-        artifacts = run_t06_step3_segment_replacement(
-            step2_replaceable_path=inputs["step2_replaceable_path"],
-            step2_special_junction_group_audit_path=inputs["step2_special_junction_group_audit_path"],
-            step2_group_replacement_audit_path=inputs["step2_group_replacement_audit_path"],
-            swsd_segment_path=inputs["swsd_segment_path"],
-            swsd_roads_path=inputs["swsd_roads_path"],
-            swsd_nodes_path=inputs["swsd_nodes_path"],
-            rcsdroad_path=inputs["rcsdroad_path"],
-            rcsdnode_path=inputs["rcsdnode_path"],
-            out_root=out_root,
-            run_id=run_id,
-            progress=args.progress,
-        )
-        surface_topology = None
-    summary = _read_json(artifacts.summary_path)
+    try:
+        if any(surface_inputs.values()):
+            diag.stage("run_surface_aware_step3")
+            artifacts, surface_topology = run_surface_aware_step3_segment_replacement(
+                step2_replaceable_path=inputs["step2_replaceable_path"],
+                step2_special_junction_group_audit_path=inputs["step2_special_junction_group_audit_path"],
+                step2_group_replacement_audit_path=inputs["step2_group_replacement_audit_path"],
+                swsd_segment_path=inputs["swsd_segment_path"],
+                swsd_roads_path=inputs["swsd_roads_path"],
+                swsd_nodes_path=inputs["swsd_nodes_path"],
+                rcsdroad_path=inputs["rcsdroad_path"],
+                rcsdnode_path=inputs["rcsdnode_path"],
+                out_root=out_root,
+                run_id=run_id,
+                surface_inputs=surface_inputs,
+                surface_topology_closure=args.surface_topology_closure,
+                progress=args.progress,
+            )
+        else:
+            diag.stage("run_standard_step3")
+            artifacts = run_t06_step3_segment_replacement(
+                step2_replaceable_path=inputs["step2_replaceable_path"],
+                step2_special_junction_group_audit_path=inputs["step2_special_junction_group_audit_path"],
+                step2_group_replacement_audit_path=inputs["step2_group_replacement_audit_path"],
+                swsd_segment_path=inputs["swsd_segment_path"],
+                swsd_roads_path=inputs["swsd_roads_path"],
+                swsd_nodes_path=inputs["swsd_nodes_path"],
+                rcsdroad_path=inputs["rcsdroad_path"],
+                rcsdnode_path=inputs["rcsdnode_path"],
+                out_root=out_root,
+                run_id=run_id,
+                progress=args.progress,
+            )
+            surface_topology = None
+        diag.stage("read_summary", summary_path=str(artifacts.summary_path))
+        summary = _read_json(artifacts.summary_path)
+    except Exception as exc:
+        diag.finish("error", error=repr(exc))
+        raise
     print(
         json.dumps(
             {
@@ -134,6 +145,7 @@ def main() -> int:
         ),
         flush=True,
     )
+    diag.finish("done", summary_path=str(artifacts.summary_path))
     return 0
 
 

@@ -23,7 +23,7 @@
 | `architecture/04-evidence-and-audit.md` | manifest、summary、logs、T06 funnel、visual check、feedback 和 text bundle 审计。 |
 | `architecture/05-quality-requirements.md` | 质量要求、GIS / 拓扑 / 性能检查和回归要求。 |
 | `architecture/06-risks-and-technical-debt.md` | 当前风险、技术债和治理缺口。 |
-| `architecture/statistical-baseline.md` | 补充材料：2026-06-25 / `72b27f2` 四 Case 端到端统计基线、冻结路径、T06 漏斗、旧基线废止状态和后续复用边界。 |
+| `architecture/statistical-baseline.md` | 补充材料：2026-06-27 / `d1fa27f` 四 Case T06/T09/T10 刷新统计基线、冻结路径、T06 漏斗、旧基线清理状态和后续复用边界。 |
 | `history/` | 历史阶段材料，只用于追溯。 |
 
 ## 3. 当前入口位置

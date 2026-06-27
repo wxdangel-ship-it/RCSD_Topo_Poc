@@ -65,7 +65,7 @@ def backfill_relation_node_maps_from_attachment_audit(
             )
             stats["relation_node_map_backfilled_entry_count"] += 1
             row_changed = True
-        for entry in node_map:
+        for entry in list(node_map):
             swsd_node_id = str(entry.get("swsd_node_id") or "")
             rcsd_node_ids = attachment_node_ids.get(swsd_node_id) or peer_node_ids.get(swsd_node_id, [])
             retained_topology_endpoint = topology_supplement and swsd_node_id in retained_nodes
@@ -164,6 +164,8 @@ def sync_retained_swsd_carrier_mainnodes(
         pair_endpoint_map = _retained_pair_endpoint_map(
             _parse_id_list(props.get("swsd_pair_nodes")),
             retained_roads,
+            node_by_key=node_by_key,
+            swsd_source=swsd_source,
         )
         row_changed = False
         row_mainnode_synced = False
@@ -171,7 +173,7 @@ def sync_retained_swsd_carrier_mainnodes(
         row_semantic_endpoint_remapped = False
         row_peer_gap_review = False
         node_map = _node_map_entries(props.get("swsd_to_frcsd_node_map"))
-        for entry in node_map:
+        for entry in list(node_map):
             swsd_node_id = _safe_id(entry.get("swsd_node_id"))
             retained_node_id = swsd_node_id if swsd_node_id in retained_endpoint_nodes else pair_endpoint_map.get(swsd_node_id, "")
             if retained_node_id not in retained_endpoint_nodes:
@@ -217,6 +219,10 @@ def sync_retained_swsd_carrier_mainnodes(
                 continue
             stats["retained_swsd_carrier_mainnode_candidate_count"] += 1
             swsd_props = swsd_node.setdefault("properties", {})
+            if retained_node_id != swsd_node_id and not mapping_status.startswith("identity"):
+                if _upsert_retained_endpoint_node_map(node_map, retained_node_id, rcsd_node_ids, entry):
+                    row_semantic_endpoint_remapped = True
+                    row_changed = True
             if _safe_id(swsd_props.get("mainnodeid")) == target_mainnodeid:
                 continue
             swsd_props["mainnodeid"] = target_mainnodeid
@@ -303,13 +309,103 @@ def _retained_topology_endpoint_nodes_by_segment(
     return dict(result)
 
 
-def _retained_pair_endpoint_map(pair_nodes: list[str], retained_roads: list[dict[str, Any]]) -> dict[str, str]:
+def _retained_pair_endpoint_map(
+    pair_nodes: list[str],
+    retained_roads: list[dict[str, Any]],
+    *,
+    node_by_key: dict[tuple[str, str], dict[str, Any]] | None = None,
+    swsd_source: str = "2",
+) -> dict[str, str]:
     if len(pair_nodes) < 2:
         return {}
     endpoints = _ordered_retained_terminal_nodes(retained_roads)
     if len(endpoints) != 2:
         return {}
-    return {pair_nodes[0]: endpoints[0], pair_nodes[1]: endpoints[1]}
+    result: dict[str, str] = {}
+    remaining_pairs: list[str] = []
+    remaining_endpoints = set(endpoints)
+    for pair_node in pair_nodes[:2]:
+        if pair_node in remaining_endpoints:
+            result[pair_node] = pair_node
+            remaining_endpoints.remove(pair_node)
+        else:
+            remaining_pairs.append(pair_node)
+    for pair_node in list(remaining_pairs):
+        matches = [
+            endpoint
+            for endpoint in remaining_endpoints
+            if _retained_endpoint_belongs_to_pair(
+                endpoint,
+                pair_node,
+                node_by_key=node_by_key or {},
+                swsd_source=swsd_source,
+            )
+        ]
+        if len(matches) != 1:
+            continue
+        endpoint = matches[0]
+        result[pair_node] = endpoint
+        remaining_pairs.remove(pair_node)
+        remaining_endpoints.remove(endpoint)
+    ordered_remaining_endpoints = [endpoint for endpoint in endpoints if endpoint in remaining_endpoints]
+    for pair_node, endpoint in zip(remaining_pairs, ordered_remaining_endpoints):
+        result[pair_node] = endpoint
+    return result
+
+
+def _retained_endpoint_belongs_to_pair(
+    endpoint_node_id: str,
+    pair_node_id: str,
+    *,
+    node_by_key: dict[tuple[str, str], dict[str, Any]],
+    swsd_source: str,
+) -> bool:
+    endpoint_node = node_by_key.get((swsd_source, endpoint_node_id))
+    if endpoint_node is not None:
+        endpoint_props = endpoint_node.get("properties") or {}
+        if _safe_id(endpoint_props.get("mainnodeid")) == pair_node_id:
+            return True
+    pair_node = node_by_key.get((swsd_source, pair_node_id))
+    if pair_node is not None:
+        pair_props = pair_node.get("properties") or {}
+        if endpoint_node_id in _parse_id_list(pair_props.get("subnodeid")):
+            return True
+    return False
+
+
+def _upsert_retained_endpoint_node_map(
+    node_map: list[dict[str, Any]],
+    retained_node_id: str,
+    rcsd_node_ids: list[str],
+    source_entry: dict[str, Any],
+) -> bool:
+    if not retained_node_id or not rcsd_node_ids:
+        return False
+    for entry in node_map:
+        if _safe_id(entry.get("swsd_node_id")) != retained_node_id:
+            continue
+        before_ids = _parse_id_list(entry.get("frcsd_node_ids"))
+        after_ids = unique_preserve_order([*before_ids, *rcsd_node_ids])
+        changed = after_ids != before_ids
+        if changed:
+            entry["frcsd_node_ids"] = after_ids
+        if str(entry.get("mapping_status") or "") in {"", "missing"}:
+            entry["mapping_status"] = "retained_endpoint_mainnode_synced"
+            changed = True
+        if not str(entry.get("node_role") or ""):
+            entry["node_role"] = "retained_endpoint_node"
+            changed = True
+        return changed
+    node_map.append(
+        {
+            "swsd_node_id": retained_node_id,
+            "frcsd_node_ids": unique_preserve_order(rcsd_node_ids),
+            "node_role": "retained_endpoint_node",
+            "mapping_status": "retained_endpoint_mainnode_synced",
+            "mapped_from_swsd_node_id": _safe_id(source_entry.get("swsd_node_id")),
+        }
+    )
+    return True
 
 
 def _ordered_retained_terminal_nodes(roads: list[dict[str, Any]]) -> list[str]:

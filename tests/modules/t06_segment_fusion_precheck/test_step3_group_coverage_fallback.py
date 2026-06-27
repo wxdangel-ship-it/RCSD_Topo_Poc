@@ -103,6 +103,14 @@ def test_group_path_corridor_local_coverage_gap_retains_swsd_carrier() -> None:
     assert removed_nodes == {}
     assert units[0].swsd_road_ids == []
     assert units[0].retained_detached_swsd_road_ids == ["S1"]
+    retained_nodes = {
+        row["properties"]["id"]: row["properties"]
+        for row in frcsd_nodes
+        if row["properties"].get("source") == 2
+    }
+    assert retained_nodes["A"]["mainnodeid"] == "RA"
+    assert retained_nodes["B"]["mainnodeid"] == "RB"
+    assert "retained_swsd_carrier_mainnode_synced" in relation["risk_flags"]
 
 
 def test_split_original_road_refs_are_synced_to_final_materialized_roads() -> None:

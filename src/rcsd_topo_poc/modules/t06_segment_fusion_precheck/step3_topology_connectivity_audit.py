@@ -58,6 +58,7 @@ TOPOLOGY_CONNECTIVITY_AUDIT_LAYERS = [
     "formal_replacement_source_consistency",
     "segment_internal_connectivity",
     "segment_road_connectivity",
+    "retained_swsd_endpoint_closure",
     "segment_junction_connectivity",
     "patch_road_attachment",
     "advance_right_endpoint_connectivity",
@@ -150,6 +151,15 @@ def build_topology_connectivity_audit_rows(
             rcsd_source_value=rcsd_source_value,
             swsd_source_value=swsd_source_value,
             attachment_refs_by_node=attachment_refs_by_node,
+        )
+    )
+    rows.extend(
+        _retained_swsd_endpoint_closure_rows(
+            relation_props=relation_props,
+            road_index=road_index,
+            node_index=node_index,
+            swsd_source_value=swsd_source_value,
+            rcsd_source_value=rcsd_source_value,
         )
     )
     rows.extend(
@@ -1017,6 +1027,142 @@ def _segment_junction_rows(
     return rows
 
 
+def _retained_swsd_endpoint_closure_rows(
+    *,
+    relation_props: list[dict[str, Any]],
+    road_index: "_RoadIndex",
+    node_index: "_NodeIndex",
+    swsd_source_value: int,
+    rcsd_source_value: int,
+) -> list[dict[str, Any]]:
+    swsd_source = str(swsd_source_value)
+    rcsd_source = str(rcsd_source_value)
+    rows: list[dict[str, Any]] = []
+    for props in relation_props:
+        relation_status = str(props.get("relation_status") or "")
+        if relation_status != "replaced+retained_swsd":
+            continue
+        segment_id = str(props.get("swsd_segment_id") or "")
+        if not segment_id:
+            continue
+        retained_road_ids = _as_id_list(props.get("retained_detached_swsd_road_ids"))
+        if not retained_road_ids:
+            continue
+        for road_id in retained_road_ids:
+            for road_source, road in road_index.roads_for_id(road_id):
+                if road_source != swsd_source:
+                    continue
+                endpoint_ids = _road_endpoint_node_id_pair(road)
+                endpoint_points = _road_endpoint_points(road)
+                for index, swsd_node_id in enumerate(endpoint_ids[:2]):
+                    swsd_ref = _NodeRef(swsd_source, swsd_node_id)
+                    swsd_node = node_index.exact_node(swsd_source, swsd_node_id)
+                    mapped_refs = [
+                        ref
+                        for ref in _mapped_node_refs_for_swsd_node(
+                            props,
+                            swsd_node_id,
+                            rcsd_source_value,
+                            swsd_source_value,
+                        )
+                        if ref.source == rcsd_source
+                    ]
+                    mapped_node_ids = unique_preserve_order([ref.node_id for ref in mapped_refs])
+                    mapped_mainnode_roots = unique_preserve_order(
+                        [
+                            root
+                            for ref in mapped_refs
+                            for root in [node_index.mainnode_root_for_ref(ref)]
+                            if root
+                        ]
+                    )
+                    mapped_semantic_groups = unique_preserve_order(
+                        [
+                            group_id
+                            for ref in mapped_refs
+                            for group_id in [_semantic_junction_group_id(node_index.node_for_ref(ref))]
+                            if group_id
+                        ]
+                    )
+                    swsd_mainnode = _valid_mainnode_id(swsd_node)
+                    swsd_mainnode_root = node_index.mainnode_root_for_ref(swsd_ref) if swsd_mainnode else ""
+                    swsd_semantic_group = _semantic_junction_group_id(swsd_node)
+                    has_swsd_semantic_group = bool(swsd_semantic_group)
+                    semantic_group_matches = bool(
+                        swsd_semantic_group and swsd_semantic_group in set(mapped_semantic_groups)
+                    )
+                    status = "pass"
+                    reason = "retained_swsd_endpoint_mainnode_closed_to_mapped_rcsd"
+                    owner = ""
+                    if swsd_node is None:
+                        status = "fail"
+                        reason = "retained_swsd_endpoint_node_missing_in_final"
+                    elif not mapped_refs:
+                        status = "fail"
+                        reason = "retained_swsd_endpoint_missing_relation_node_map"
+                    elif not mapped_mainnode_roots:
+                        status = "fail"
+                        reason = "retained_swsd_endpoint_mapped_rcsd_mainnode_missing"
+                    elif not swsd_mainnode:
+                        status = "fail"
+                        reason = (
+                            "semantic_group_only_mainnode_not_closed"
+                            if has_swsd_semantic_group
+                            else "retained_swsd_endpoint_mainnode_blank"
+                        )
+                    elif swsd_mainnode not in mapped_mainnode_roots and swsd_mainnode_root not in mapped_mainnode_roots:
+                        status = "fail"
+                        reason = (
+                            "semantic_group_matches_but_mainnode_mismatch"
+                            if semantic_group_matches
+                            else "retained_swsd_endpoint_mainnode_mismatch"
+                        )
+                    if status == "fail":
+                        owner = "T06_step3_retained_swsd_endpoint_closure"
+                    rows.append(
+                        feature(
+                            {
+                                "audit_layer": "retained_swsd_endpoint_closure",
+                                "audit_status": status,
+                                "audit_reason": reason,
+                                "recommended_owner": owner,
+                                "swsd_segment_id": segment_id,
+                                "swsd_segment_ids": [segment_id],
+                                "swsd_node_id": swsd_node_id,
+                                "swsd_road_id": road_id,
+                                "frcsd_road_id": "",
+                                "frcsd_node_ids": mapped_node_ids,
+                                "relation_status": relation_status,
+                                "source_mix": props.get("source_mix") or "",
+                                "directionality": f"road_endpoint_{index}",
+                                "pair_nodes": endpoint_ids[:2],
+                                "path_forward": None,
+                                "path_reverse": None,
+                                "undirected_connected": None,
+                                "mapped_node_count": len(mapped_refs),
+                                "missing_mapping_count": 0 if mapped_refs else 1,
+                                "max_pairwise_distance_m": None,
+                                "coverage_buffer_m": None,
+                                "uncovered_ratio": None,
+                                "uncovered_length_m": None,
+                                "corridor_buffer_m": None,
+                                "corridor_uncovered_ratio": None,
+                                "corridor_uncovered_length_m": None,
+                                "final_path_forward": None,
+                                "final_path_reverse": None,
+                                "final_undirected_connected": status == "pass",
+                                "final_corridor_uncovered_ratio": None,
+                                "final_corridor_uncovered_length_m": None,
+                                "projected_gap_m": None,
+                                "action": "verify_retained_swsd_endpoint_mainnode_closure",
+                                "action_reason": "+".join(mapped_mainnode_roots),
+                            },
+                            endpoint_points[index] if index < len(endpoint_points) else node_index.point_for_ref(swsd_ref),
+                        )
+                    )
+    return rows
+
+
 def _patch_attachment_rows(
     *,
     advance_right_audit_rows: list[dict[str, Any]],
@@ -1290,6 +1436,19 @@ def _retained_swsd_identity_refs_by_node(
                 if ref not in result[node_id]:
                     result[node_id].append(ref)
     return dict(result)
+
+
+def _valid_mainnode_id(node: dict[str, Any] | None) -> str:
+    if node is None:
+        return ""
+    mainnode_id = _safe_text((node.get("properties") or {}).get("mainnodeid"))
+    return "" if mainnode_id in {"", "0"} else mainnode_id
+
+
+def _semantic_junction_group_id(node: dict[str, Any] | None) -> str:
+    if node is None:
+        return ""
+    return _safe_text((node.get("properties") or {}).get("semantic_junction_group_id"))
 
 
 def _relation_roads(props: dict[str, Any], road_index: "_RoadIndex") -> list[dict[str, Any]]:

@@ -4,6 +4,7 @@ from typing import Any
 
 from .parsing import ParseError, normalize_id, parse_id_list, unique_preserve_order
 from .schemas import feature
+from .step3_relation_node_map import sync_retained_swsd_carrier_mainnodes
 from .step3_topology_connectivity_audit import build_topology_connectivity_audit_rows
 
 
@@ -46,7 +47,7 @@ def retain_group_coverage_fallback(
     )
     fallback_segments = _fallback_segment_ids(audit_rows)
     if not fallback_segments:
-        return _stats([], [], [], split_sync_stats)
+        return _stats([], [], [], split_sync_stats, {})
 
     swsd_road_by_id = {_feature_id(road): road for road in swsd_roads}
     swsd_node_by_id = {_feature_id(node): node for node in swsd_nodes}
@@ -99,7 +100,15 @@ def retain_group_coverage_fallback(
         _mark_unit(unit_by_segment.get(segment_id), present_roads, segment_retained_nodes)
         _mark_relation(props, present_roads, swsd_source_value)
 
-    return _stats(retained_segments, retained_roads, retained_nodes, split_sync_stats)
+    mainnode_sync_stats = sync_retained_swsd_carrier_mainnodes(
+        segment_relation_rows,
+        frcsd_roads,
+        frcsd_nodes,
+        source_field_name=source_field_name,
+        swsd_source_value=swsd_source_value,
+        rcsd_source_value=rcsd_source_value,
+    )
+    return _stats(retained_segments, retained_roads, retained_nodes, split_sync_stats, mainnode_sync_stats)
 
 
 def _sync_split_road_refs(
@@ -296,6 +305,7 @@ def _stats(
     roads: list[str],
     nodes: list[str],
     split_sync_stats: dict[str, int],
+    mainnode_sync_stats: dict[str, int],
 ) -> dict[str, Any]:
     return {
         "group_path_corridor_coverage_fallback_segment_count": len(unique_preserve_order(segments)),
@@ -303,4 +313,8 @@ def _stats(
         "group_path_corridor_coverage_fallback_swsd_node_count": len(unique_preserve_order(nodes)),
         "group_path_corridor_coverage_fallback_segments": unique_preserve_order(segments),
         **split_sync_stats,
+        **{
+            f"group_path_corridor_coverage_fallback_{key}": value
+            for key, value in mainnode_sync_stats.items()
+        },
     }

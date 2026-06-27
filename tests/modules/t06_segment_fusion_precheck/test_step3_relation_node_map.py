@@ -491,6 +491,78 @@ def test_sync_retained_swsd_segment_remaps_semantic_pair_to_retained_endpoint() 
     ]
 
 
+def test_sync_retained_swsd_carrier_maps_exact_endpoint_before_semantic_parent() -> None:
+    relation_rows = [
+        {
+            "properties": {
+                "swsd_segment_id": "mixed",
+                "relation_status": "replaced+retained_swsd",
+                "swsd_pair_nodes": ["parent", "endpoint_b"],
+                "retained_detached_swsd_road_ids": ["retained"],
+                "swsd_to_frcsd_node_map": [
+                    {
+                        "swsd_node_id": "parent",
+                        "frcsd_node_ids": ["rcsd_parent"],
+                        "node_role": "pair_node",
+                        "mapping_status": "mapped",
+                    },
+                    {
+                        "swsd_node_id": "endpoint_b",
+                        "frcsd_node_ids": ["rcsd_b"],
+                        "node_role": "pair_node",
+                        "mapping_status": "mapped",
+                    },
+                ],
+                "risk_flags": ["retained_swsd_topology_supplement"],
+            }
+        }
+    ]
+    roads = [
+        {
+            "properties": {
+                "id": "retained",
+                "snodeid": "endpoint_b",
+                "enodeid": "child_of_parent",
+                "source": 2,
+            }
+        }
+    ]
+    nodes = [
+        {
+            "properties": {"id": "child_of_parent", "source": 2, "mainnodeid": "parent"},
+            "geometry": Point(0, 0),
+        },
+        {"properties": {"id": "endpoint_b", "source": 2, "mainnodeid": "endpoint_b"}, "geometry": Point(100, 0)},
+        {"properties": {"id": "rcsd_parent", "source": 1, "mainnodeid": "rcsd_main_parent"}, "geometry": Point(0, 0)},
+        {"properties": {"id": "rcsd_b", "source": 1, "mainnodeid": "rcsd_main_b"}, "geometry": Point(100, 0)},
+    ]
+
+    stats = sync_retained_swsd_carrier_mainnodes(relation_rows, roads, nodes)
+
+    retained_props = relation_rows[0]["properties"]
+    endpoint_entries = {
+        entry["swsd_node_id"]: entry
+        for entry in retained_props["swsd_to_frcsd_node_map"]
+    }
+    assert stats == {
+        "retained_swsd_carrier_mainnode_candidate_count": 2,
+        "retained_swsd_carrier_mainnode_synced_count": 2,
+        "retained_swsd_carrier_rcsd_mainnode_filled_count": 0,
+        "retained_swsd_carrier_mainnode_row_count": 1,
+    }
+    assert nodes[0]["properties"]["mainnodeid"] == "rcsd_main_parent"
+    assert nodes[1]["properties"]["mainnodeid"] == "rcsd_main_b"
+    assert endpoint_entries["parent"]["frcsd_node_ids"] == ["rcsd_parent"]
+    assert endpoint_entries["child_of_parent"]["frcsd_node_ids"] == ["rcsd_parent"]
+    assert endpoint_entries["child_of_parent"]["mapping_status"] == "retained_endpoint_mainnode_synced"
+    assert endpoint_entries["child_of_parent"]["mapped_from_swsd_node_id"] == "parent"
+    assert retained_props["risk_flags"] == [
+        "retained_swsd_topology_supplement",
+        "retained_swsd_carrier_mainnode_synced",
+        "retained_swsd_semantic_endpoint_remapped",
+    ]
+
+
 def test_sync_retained_swsd_segment_keeps_identity_when_peer_gap_is_large() -> None:
     relation_rows = [
         {

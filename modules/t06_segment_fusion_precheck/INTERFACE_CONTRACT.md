@@ -285,6 +285,7 @@ Step3 输出目录：
 
 F-RCSD Road / Node 必须包含 `source` 字段：RCSD 来源为 `1`，SWSD 来源为 `2`。
 F-RCSD Node 可包含 `semantic_junction_group_id` 字段：当 T05 已发布有效 `target_id -> base_id` 语义路口关系，但最终 F-RCSD 中仍保留 SWSD node 与 RCSD node 两类物理节点时，相关节点必须写入同一 `semantic_junction_group_id`。该字段不代表几何合并，也不强制改写 `mainnodeid`；它表达物理分离、语义同一路口的下游可消费分组。
+`semantic_junction_group_id` 不能替代最终拓扑闭合。`relation_status=replaced+retained_swsd` 且 `retained_detached_swsd_road_ids` 中保留的 `source=2` SWSD carrier endpoint 若已有 `swsd_to_frcsd_node_map` 指向 `source=1` RCSD endpoint，则最终 F-RCSD 中该 SWSD endpoint 必须通过有效 `mainnodeid` 与映射 RCSD endpoint 的 `mainnodeid` / mainnode root 闭合；只写 `semantic_junction_group_id` 但未闭合 `mainnodeid` 必须由 `t06_step3_topology_connectivity_audit.*` 输出 hard fail。
 F-RCSD Road 中由 T06 替换发布的 RCSD Road 必须包含 `t06_swsd_segment_ids` 多值字段，记录该最终 Road 承载的 SWSD Segment id 集合；`path_corridor_group` 等组级替换允许一条 RCSD Road 同时承载多个 SWSD Segment，因此不得用单值 `segmentid` 覆盖该多值归属。
 SWSD 与 RCSD 原始 `id` 冲突时保留原 id，依赖 `source` 区分，并写入 `t06_step3_id_collision_audit.*`。
 `t06_step3_unreplaced_rcsd_roads` 是 RCSD 视角审计输出，保留原始 RCSDRoad 几何与属性，并增加 `replacement_status / audit_reason / source / length_m` 等字段，用于定位未进入最终替换结果的 RCSDRoad。该产物以 RCSDRoad 为审计主键，不替代 SWSD Segment relation；若要统计 RCSD Base 替换率，应以 T05 `rcsdroad_out.gpkg` 去重 Road / 里程为分母，以 Step3 relation 中最终 `source=1` F-RCSD carrier 的原始 RCSDRoad 集合作为正式落地口径，并可同时保留 Step2 replaceable 引用集合作为 reference 口径。
@@ -629,6 +630,8 @@ Step3 提供独立脚本，优先消费 Step2 replacement plan，不改变 `scri
 当 Step3 调用方提供 surface 输入时，脚本可在不改变调用参数的前提下对 `source_reason=junction_alignment_to_retained_swsd_exceeds_topology_gate` 的 Step2 replacement plan 行执行 surface-aware 条件释放。释放条件只接受两类证据：触发超距节点在 surface topology audit 中为 pass，且 reason 属于 `auto_closed / auto_closed_surface_1v1 / auto_closed_t04_patch_1v1 / auto_closed_step2_junc_1v1 / auto_closed_relation_mapped_boundary_1v1 / auto_closed_selected_replacement_endpoint`；或触发超距节点是 plan 的 `swsd_pair_nodes -> original_rcsd_pair_nodes` 原始端点映射。T04 reject、Patch 冲突、多候选、缺少可解释 endpoint、以及非该 gate 的 blocked plan 都不能被释放。释放后的 plan 必须重跑 Step3 与 topology audit；若候选释放只引入 T05 有效语义路口关系可解释的 `junction_incident_segment_mapped_points_diverged / junction_incident_semantic_mainnode_not_closed`，该 fail 降级为 warn，写入 `semantic_junction_group_id` 并进入 `t06_step3_semantic_junction_groups.*` 风险审计。其它新增 hard fail 仍必须回退为 `plan_status=blocked / execution_action=hold`，并记录 `source_reason=junction_alignment_surface_release_failed_topology_gate`。若相对传入 `--t06-run-root` 下已有 Step3 baseline 仍存在不可降级新增 fail，必须写入 `external_final_added_fail_count / external_final_added_fail_keys`，不得把内部 release 回退通过误表述为外部 baseline 零新增。
 
 当 Step3 调用方提供 `--t05-surface` 时，正式 replacement unit 的 coverage 兜底可使用当前 unit 的 `pair_nodes / junc_nodes` 命中的 T05 junction anchor surface 解释端点路口面内长度差异。释放只扣除落在对应 surface 内的 uncovered geometry，不改变原始 CRS 与道路几何，不新增替换道路，不释放 Step2 rejected plan，也不绕过 topology connectivity audit；释放证据必须通过风险标记和 summary 保持可追溯。
+
+当局部 coverage / topology 兜底需要保留原 SWSD Road 为 `replaced+retained_swsd` carrier 时，Step3 必须把保留 carrier endpoint 的 `mainnodeid` 与已存在的 `source=1` RCSD relation node map 同步闭合，并通过 `risk_flags` / summary 暴露同步结果。若端点缺少可解释的 RCSD 映射、映射 RCSD mainnode 无效，或最终 SWSD endpoint 只有 `semantic_junction_group_id` 而没有 `mainnodeid` 闭合，`t06_step3_topology_connectivity_audit.*` 必须在 `retained_swsd_endpoint_closure` 层输出 fail，不得把该 Segment 误记为 topology pass。
 
 内网脚本入口：
 

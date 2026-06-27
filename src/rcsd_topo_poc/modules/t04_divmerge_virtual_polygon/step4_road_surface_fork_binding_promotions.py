@@ -35,6 +35,7 @@ from .step4_road_surface_fork_geometry import (
     _road_geometries,
     _union_geometries,
 )
+from .step4_road_surface_fork_binding_swsd_rcsdroad import _score_single_rcsdroad
 from .step4_road_surface_fork_rcsd import (
     _aggregate_ids,
     _first_hit_ids,
@@ -241,6 +242,63 @@ def _direct_first_hit_fallback_roads(
 ) -> tuple[str, ...]:
     allowed = set(_dedupe(allowed_roads))
     return _dedupe(road_id for road_id in first_hit if not allowed or road_id in allowed)
+
+
+def _score_doc(score: dict[str, Any]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key in (
+        "road_id",
+        "road_support_count",
+        "unit_support_count",
+        "support_mode",
+    ):
+        if key in score:
+            result[key] = score.get(key)
+    for key in (
+        "mean_supported_road_distance_m",
+        "max_supported_road_distance_m",
+        "min_road_distance_m",
+        "max_unit_distance_m",
+        "support_distance_threshold_m",
+        "unit_distance_threshold_m",
+        "max_direction_delta_deg",
+    ):
+        value = score.get(key)
+        if value is not None:
+            result[key] = round(float(value), 6)
+    return result
+
+
+def _direct_surface_fallback_roads(
+    case_result: T04CaseResult,
+    event_unit: T04EventUnitResult,
+    first_hit: tuple[str, ...],
+) -> tuple[tuple[str, ...], dict[str, Any]]:
+    direct_first_hit = _direct_first_hit_fallback_roads(first_hit)
+    score = _score_single_rcsdroad(case_result, event_unit)
+    if score is None:
+        return direct_first_hit, {
+            "fallback_selection_mode": "direct_first_hit",
+            "direct_first_hit_rcsdroad_ids": list(direct_first_hit),
+        }
+    road_id = str(score.get("road_id") or "").strip()
+    if not road_id:
+        return direct_first_hit, {
+            "fallback_selection_mode": "direct_first_hit",
+            "direct_first_hit_rcsdroad_ids": list(direct_first_hit),
+        }
+    mode = (
+        "direct_first_hit_representative_confirmed"
+        if road_id in set(direct_first_hit)
+        else "representative_supported_single_rcsdroad"
+    )
+    return (road_id,), {
+        "fallback_selection_mode": mode,
+        "direct_first_hit_rcsdroad_ids": list(direct_first_hit),
+        "representative_supported_rcsdroad_ids": [road_id],
+        "representative_supported_score": _score_doc(score),
+    }
+
 
 def _local_rcsd_unit_support(
     audit: dict[str, Any],
@@ -1286,7 +1344,7 @@ def _retain_surface_direct_rcsdroad_fallback_only(
     first_hit: tuple[str, ...],
     decision_reason: str,
 ) -> tuple[T04EventUnitResult | None, dict[str, Any] | None]:
-    fallback_roads = _direct_first_hit_fallback_roads(first_hit)
+    fallback_roads, fallback_selection = _direct_surface_fallback_roads(case_result, event_unit, first_hit)
     if not fallback_roads:
         return None, None
     support_detail = {
@@ -1300,7 +1358,7 @@ def _retain_surface_direct_rcsdroad_fallback_only(
         "aggregated_rcsd_unit_id": aggregate_id,
         "primary_node_id": primary_node,
         "required_rcsd_node": None,
-        "direct_first_hit_rcsdroad_ids": list(fallback_roads),
+        **fallback_selection,
         "demoted_aggregate_rcsdroad_ids": list(selected_roads),
         "demoted_aggregate_rcsdnode_ids": list(selected_nodes),
         "rcsd_decision_reason": decision_reason,
@@ -1334,7 +1392,7 @@ def _retain_surface_direct_rcsdroad_fallback_only(
             "aggregated_rcsd_unit_ids": [],
             "primary_main_rc_node": None,
             "primary_main_rc_node_id": None,
-            "rcsd_alignment_type": RCSD_ALIGNMENT_NONE,
+            "rcsd_alignment_type": RCSD_ALIGNMENT_ROAD_ONLY,
             "rcsd_selection_mode": PARTIAL_SURFACE_DIRECT_FALLBACK_REASON,
             "rcsd_decision_reason": PARTIAL_SURFACE_DIRECT_FALLBACK_REASON,
         }
@@ -1366,7 +1424,7 @@ def _retain_surface_direct_rcsdroad_fallback_only(
             "local_rcsd_unit_kind": None,
             "aggregated_rcsd_unit_id": None,
             "aggregated_rcsd_unit_ids": [],
-            "rcsd_alignment_type": RCSD_ALIGNMENT_NONE,
+            "rcsd_alignment_type": RCSD_ALIGNMENT_ROAD_ONLY,
             "rcsd_selection_mode": PARTIAL_SURFACE_DIRECT_FALLBACK_REASON,
             "rcsd_decision_reason": PARTIAL_SURFACE_DIRECT_FALLBACK_REASON,
         }
@@ -1386,6 +1444,7 @@ def _retain_surface_direct_rcsdroad_fallback_only(
             selected_rcsdroad_ids=fallback_roads,
             selected_rcsdnode_ids=(),
             primary_main_rc_node_id=None,
+            rcsd_alignment_type=RCSD_ALIGNMENT_ROAD_ONLY,
             local_rcsd_unit_id=None,
             local_rcsd_unit_kind=None,
             aggregated_rcsd_unit_id=None,
@@ -1423,6 +1482,7 @@ def _retain_surface_direct_rcsdroad_fallback_only(
         selected_rcsdroad_ids=fallback_roads,
         selected_rcsdnode_ids=(),
         primary_main_rc_node_id=None,
+        rcsd_alignment_type=RCSD_ALIGNMENT_ROAD_ONLY,
         local_rcsd_unit_id=None,
         local_rcsd_unit_kind=None,
         aggregated_rcsd_unit_id=None,

@@ -224,9 +224,12 @@ def classify_evidence(evidence: Phase2Evidence, *, junction_type: str) -> SceneD
     if source == SOURCE_T04 and road_ids and _t04_fallback_scene(row):
         scene_type = _t04_fallback_scene(row)
         alignment_type = _text(row.get("rcsd_alignment_type"))
-        if alignment_type and alignment_type != "rcsdroad_only_alignment":
+        fallback_handoff = _t04_road_fallback_handoff(row)
+        if alignment_type and alignment_type not in {"rcsdroad_only_alignment", "no_rcsd_alignment"}:
             return _failure_or_no_rcsd(evidence, f"unsupported_t04_alignment:{alignment_type}")
-        if not alignment_type:
+        if alignment_type == "no_rcsd_alignment" and not fallback_handoff:
+            return _failure_or_no_rcsd(evidence, "unsupported_t04_alignment:no_rcsd_alignment")
+        if not alignment_type and not fallback_handoff:
             return _failure_or_no_rcsd(evidence, "missing_t04_rcsd_alignment_type")
         return SceneDecision(
             scene=SCENE_ROAD_SPLIT,
@@ -340,6 +343,14 @@ def _t04_fallback_scene(row: dict[str, Any]) -> str | None:
         if value in T04_FALLBACK_SCENES:
             return value
     return None
+
+
+def _t04_road_fallback_handoff(row: dict[str, Any]) -> bool:
+    if _text(row.get("rcsd_match_type")) == "rcsdroad_fallback":
+        return True
+    if _truthy(row.get("fallback_rcsdroad_localized")):
+        return True
+    return bool(_split_values(row.get("fallback_rcsdroad_ids")))
 
 
 def _t04_relation_only_success(row: dict[str, Any]) -> bool:

@@ -4,8 +4,10 @@ import ast
 import json
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
+from shapely.geometry import LineString, Point
 
 from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon._step4_arbiter import (
     apply_step4_arbitration_to_case_result,
@@ -37,6 +39,9 @@ from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.step4_final_conflict_res
 )
 from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.step4_road_surface_fork_binding import (
     apply_road_surface_fork_binding,
+)
+from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.step4_road_surface_fork_binding_promotions import (
+    _direct_surface_fallback_roads,
 )
 from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.surface_scenario import (
     SCENARIO_NO_MAIN_WITH_RCSDROAD_AND_SWSD,
@@ -257,6 +262,48 @@ def test_arbiter_preserves_trimmed_swsd_rcsdroad_fallback_706347() -> None:
     assert scenario_doc["surface_scenario_type"] == SCENARIO_NO_MAIN_WITH_RCSDROAD_AND_SWSD
     assert scenario_doc["rcsd_alignment_type"] == RCSD_ALIGNMENT_ROAD_ONLY
     assert scenario_doc["fallback_rcsdroad_ids"] == ["5384371838321302"]
+
+
+def test_direct_surface_fallback_prefers_representative_supported_rcsdroad() -> None:
+    def road(road_id: str, coords: list[tuple[float, float]]):
+        return SimpleNamespace(road_id=road_id, geometry=LineString(coords))
+
+    case_result = SimpleNamespace(
+        case_bundle=SimpleNamespace(
+            roads=(
+                road("sw_1", [(-5.0, 0.0), (5.0, 0.0)]),
+                road("sw_2", [(0.0, -5.0), (0.0, 5.0)]),
+                road("sw_3", [(-5.0, 1.0), (5.0, 1.0)]),
+            ),
+            rcsd_roads=(
+                road("far_first_hit", [(20.0, 20.0), (30.0, 20.0)]),
+                road("near_supported", [(-5.0, 0.2), (5.0, 0.2)]),
+            ),
+        )
+    )
+    event_unit = SimpleNamespace(
+        unit_envelope=SimpleNamespace(
+            branch_road_memberships={
+                "road_1": ("sw_1",),
+                "road_2": ("sw_2",),
+                "road_3": ("sw_3",),
+            }
+        ),
+        unit_context=SimpleNamespace(
+            representative_node=SimpleNamespace(geometry=Point(0.0, 0.0))
+        ),
+    )
+
+    fallback_roads, detail = _direct_surface_fallback_roads(
+        case_result,
+        event_unit,
+        ("far_first_hit",),
+    )
+
+    assert fallback_roads == ("near_supported",)
+    assert detail["fallback_selection_mode"] == "representative_supported_single_rcsdroad"
+    assert detail["direct_first_hit_rcsdroad_ids"] == ["far_first_hit"]
+    assert detail["representative_supported_score"]["road_support_count"] == 3
 
 
 def test_scenario_reads_from_arbiter_not_derives(tmp_path) -> None:

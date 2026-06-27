@@ -1417,6 +1417,39 @@ def test_t04_fact_reference_fallback_reads_case_event_evidence_point(tmp_path: P
     assert _relation_features(artifacts.relation_geojson_path)[0]["properties"]["status"] == 0
 
 
+def test_t04_fallback_handoff_without_alignment_type_splits(tmp_path: Path) -> None:
+    artifacts = _run_phase2(
+        tmp_path,
+        surface_features=[_surface("525")],
+        swsd_nodes=[_node(525, 0, 10, mainnodeid="525")],
+        rcsd_roads=[_road(1, (0, 0), (100, 0))],
+        rcsd_nodes=[_node(1, 0, 0), _node(2, 100, 0)],
+        t04_rows=[
+            {
+                "target_id": "525",
+                "case_id": "525",
+                "junction_type": "merge",
+                "surface_scenario_type": "main_evidence_with_rcsdroad_fallback",
+                "final_state": "accepted",
+                "fallback_rcsdroad_ids": "1",
+                "relation_state": "rcsd_present_not_junction",
+                "status_suggested": 1,
+                "fact_reference_x": 50,
+                "fact_reference_y": 5,
+            }
+        ],
+    )
+
+    generated_feature = read_vector_layer(artifacts.rcsdnode_generated_path).features[0]
+    assert round(generated_feature.geometry.x, 6) == 50
+    assert round(generated_feature.geometry.y, 6) == 0
+    relation = _relation_features(artifacts.relation_geojson_path)[0]
+    assert relation["properties"]["status"] == 0
+    audit = list(csv.DictReader(artifacts.relation_audit_csv_path.open("r", encoding="utf-8")))[0]
+    assert audit["source_module"] == "T04"
+    assert audit["reason"] == "main_evidence_with_rcsdroad_fallback"
+
+
 def test_t04_surface_scenario_fallback_splits_even_when_evidence_state_is_no_related_rcsd(tmp_path: Path) -> None:
     artifacts = _run_phase2(
         tmp_path,

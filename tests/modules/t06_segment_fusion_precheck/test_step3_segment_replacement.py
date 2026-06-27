@@ -577,6 +577,7 @@ def test_step3_retained_swsd_boundary_uses_semantic_rcsd_node_when_projection_is
     retained_node_map = {item["swsd_node_id"]: item for item in relations["s_retained"]["swsd_to_frcsd_node_map"]}
     assert retained_node_map["2"]["frcsd_node_ids"] == ["2"]
     assert retained_node_map["2"]["mapping_status"] == "identity"
+    assert relations["s_retained"]["risk_flags"] == ["retained_swsd_endpoint_relation_gap_manual_review"]
 
     nodes = _props(artifacts.frcsd_node_gpkg_path)
     by_source_id = {(str(item["source"]), str(item["id"])): item for item in nodes}
@@ -1193,7 +1194,7 @@ def test_step3_consumes_path_corridor_group_from_replacement_plan(tmp_path: Path
     summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
     assert summary["replacement_plan_source"] == "step2_replacement_plan"
     assert summary["input_replacement_plan_count"] == 2
-    assert summary["group_replacement_assignment_segment_count"] == 2
+    assert summary["group_replacement_assignment_segment_count"] == 1
     assert summary["group_replacement_created_unit_count"] == 1
 
     relations = {item["swsd_segment_id"]: item for item in _props(artifacts.swsd_frcsd_segment_relation_gpkg_path)}

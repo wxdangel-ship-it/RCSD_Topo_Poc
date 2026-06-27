@@ -191,10 +191,15 @@ def sync_retained_swsd_carrier_mainnodes(
                 for rcsd_node in [node_by_key.get((rcsd_source, rcsd_node_id))]
                 if rcsd_node is not None
             ]
+            peer_gap_exceeds = False
             if mapping_status.startswith("identity"):
                 peer_gap_m = _min_peer_gap_m(swsd_node, rcsd_nodes)
                 if peer_gap_m is not None and peer_gap_m > RETAINED_SWSD_PEER_MAINNODE_MAX_GAP_M:
                     row_peer_gap_review = True
+                    peer_gap_exceeds = True
+            if peer_gap_exceeds:
+                row_changed = True
+                continue
             target_mainnode_ids: list[str] = []
             for rcsd_node in rcsd_nodes:
                 target, _ = _mainnode_or_id(rcsd_node)

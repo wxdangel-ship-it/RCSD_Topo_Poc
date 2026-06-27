@@ -78,17 +78,21 @@ def _relation(
     *,
     status: str = "replaced",
     source_values: list[int] | None = None,
+    relation_reason: str = "",
+    risk_flags: list[str] | None = None,
 ) -> dict:
     return {
         "properties": {
             "swsd_segment_id": segment_id,
             "relation_status": status,
+            "relation_reason": relation_reason,
             "swsd_pair_nodes": pair_nodes,
             "swsd_junc_nodes": [],
             "frcsd_road_ids": frcsd_road_ids,
             "frcsd_road_source_values": source_values or [1],
             "swsd_to_frcsd_node_map": node_map,
             "source_mix": "+".join(f"source_{value}" for value in (source_values or [1])),
+            "risk_flags": risk_flags or [],
         },
         "geometry": None,
     }
@@ -242,6 +246,50 @@ def test_topology_audit_accepts_surface_split_original_rcsd_road() -> None:
     ][0]
     assert formal["audit_status"] == "pass"
     assert formal["audit_reason"] == "formal_replacement_uses_rcsd_source_only"
+
+
+def test_topology_audit_warns_group_path_corridor_retained_swsd_source() -> None:
+    rows = build_topology_connectivity_audit_rows(
+        swsd_segments=[_segment("s1", ["1", "2"], LineString([(0, 0), (20, 0)]), roads=["sr1"])],
+        swsd_roads=[_road("sr1", "1", "2", LineString([(0, 0), (20, 0)]), source=2, direction=2)],
+        frcsd_roads=[
+            _road("r1", "10", "20", LineString([(0, 0), (20, 0)]), direction=2),
+            _road("sr1", "1", "2", LineString([(0, 0), (20, 0)]), source=2, direction=2),
+        ],
+        frcsd_nodes=[
+            _node("1", Point(0, 0), source=2),
+            _node("2", Point(20, 0), source=2),
+            _node("10", Point(0, 0)),
+            _node("20", Point(20, 0)),
+        ],
+        segment_relation_rows=[
+            _relation(
+                "s1",
+                ["1", "2"],
+                ["r1", "sr1"],
+                [
+                    {"swsd_node_id": "1", "frcsd_node_ids": ["10"], "mapping_status": "mapped"},
+                    {"swsd_node_id": "2", "frcsd_node_ids": ["20"], "mapping_status": "mapped"},
+                ],
+                status="replaced+retained_swsd",
+                source_values=[1, 2],
+                relation_reason="group_path_corridor_local_coverage_retained_swsd",
+                risk_flags=["group_path_corridor_replacement", "group_path_corridor_local_coverage_retained_swsd"],
+            )
+        ],
+        advance_right_audit_rows=[],
+        source_field_name="source",
+        swsd_source_value=2,
+        rcsd_source_value=1,
+    )
+
+    formal = [
+        row["properties"]
+        for row in rows
+        if row["properties"]["audit_layer"] == "formal_replacement_source_consistency"
+    ][0]
+    assert formal["audit_status"] == "warn"
+    assert formal["audit_reason"] == "group_path_corridor_contains_retained_swsd_source_review"
 
 
 def test_topology_audit_treats_retained_detached_swsd_road_as_carrier() -> None:

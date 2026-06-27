@@ -118,6 +118,7 @@ def exclude_retained_swsd_carriers_from_formal_replacements(
         "duplicate_unsegmented_advance_right_road_count": 0,
     }
     deactivated_segment_ids: set[str] = set()
+    group_corridor_unavailable_segment_ids: set[str] = set()
     group_unit_ids: set[str] = set()
     for group_units in _path_corridor_group_units(units).values():
         group_unit_ids.update(str(getattr(unit, "segment_id", "")) for unit in group_units)
@@ -131,14 +132,11 @@ def exclude_retained_swsd_carriers_from_formal_replacements(
         stats["group_corridor_unavailable_group_count"] += 1
         for unit in group_units:
             segment_id = str(getattr(unit, "segment_id", ""))
-            if not segment_id or segment_id in deactivated_segment_ids:
-                continue
-            stats["deactivated_segment_count"] += 1
-            stats["corridor_unavailable_segment_count"] += 1
-            stats["group_corridor_unavailable_segment_count"] += 1
-            unit.status = "failed"
-            unit.reason = GROUP_FORMAL_REPLACEMENT_CORRIDOR_UNAVAILABLE_REASON
-            deactivated_segment_ids.add(segment_id)
+            if segment_id and segment_id not in group_corridor_unavailable_segment_ids:
+                stats["group_corridor_unavailable_segment_count"] += 1
+                group_corridor_unavailable_segment_ids.add(segment_id)
+            _append_group_corridor_review_risk(unit)
+        continue
     for unit in units:
         if str(getattr(unit, "segment_id", "")) in group_unit_ids:
             continue
@@ -227,6 +225,11 @@ def append_junction_surface_release_risk(unit: Any) -> None:
 def _append_surface_aware_formal_corridor_release_risk(unit: Any) -> None:
     current = parse_id_list(getattr(unit, "risk_flags", []), allow_empty=True)
     setattr(unit, "risk_flags", unique_preserve_order([*current, *SURFACE_AWARE_FORMAL_CORRIDOR_RELEASE_RISK_FLAGS]))
+
+
+def _append_group_corridor_review_risk(unit: Any) -> None:
+    current = parse_id_list(getattr(unit, "risk_flags", []), allow_empty=True)
+    setattr(unit, "risk_flags", unique_preserve_order([*current, "group_formal_replacement_corridor_coverage_review"]))
 
 
 def coverage_failed_after_junction_surface_release(

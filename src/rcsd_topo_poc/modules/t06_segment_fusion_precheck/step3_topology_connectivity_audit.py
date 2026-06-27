@@ -313,14 +313,31 @@ def _formal_replacement_source_rows(
         status = "pass"
         reason = "formal_replacement_uses_rcsd_source_only"
         owner = ""
+        is_group_path_corridor = _is_group_path_corridor_relation(props)
         if swsd_derived_ids:
-            status = "fail"
-            reason = "formal_replacement_contains_swsd_topology_supplement"
-            owner = "T06_step3_relation_source_boundary"
+            status = "warn" if is_group_path_corridor else "fail"
+            reason = (
+                "group_path_corridor_contains_swsd_topology_supplement_review"
+                if is_group_path_corridor
+                else "formal_replacement_contains_swsd_topology_supplement"
+            )
+            owner = (
+                "T06_step3_group_replacement_manual_audit"
+                if is_group_path_corridor
+                else "T06_step3_relation_source_boundary"
+            )
         elif non_rcsd_ids:
-            status = "fail"
-            reason = "formal_replacement_contains_non_rcsd_source"
-            owner = "T06_step3_relation_source_boundary"
+            status = "warn" if is_group_path_corridor else "fail"
+            reason = (
+                "group_path_corridor_contains_retained_swsd_source_review"
+                if is_group_path_corridor
+                else "formal_replacement_contains_non_rcsd_source"
+            )
+            owner = (
+                "T06_step3_group_replacement_manual_audit"
+                if is_group_path_corridor
+                else "T06_step3_relation_source_boundary"
+            )
         elif missing_ids:
             status = "fail"
             reason = "formal_replacement_road_missing_in_frcsd"

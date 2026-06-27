@@ -7,6 +7,7 @@
 | 文档 | 当前角色 |
 |---|---|
 | `ARTIFACT_PROTOCOL_RETIRED.md` | 已退役的早期文本粘贴回传协议说明 |
+| `2026-06-27-t06-1885118-funnel-audit-conclusion.md` | T06 case `1885118` 第一层漏斗人工目视审计结论归档 |
 
 ## 边界
 

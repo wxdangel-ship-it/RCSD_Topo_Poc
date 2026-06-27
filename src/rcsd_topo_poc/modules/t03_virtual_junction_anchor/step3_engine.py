@@ -27,6 +27,12 @@ from rcsd_topo_poc.modules.t03_virtual_junction_anchor.case_models import (
     Step3NegativeMasks,
 )
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.id_utils import normalize_id
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.line_geometry import (
+    endpoint_point,
+    multipart_road_handling_fields,
+    nearest_line,
+    substring_from_endpoint,
+)
 
 
 ROAD_BUFFER_M = 8.0
@@ -233,7 +239,10 @@ def _point_like(geometry: BaseGeometry) -> Point:
 
 
 def _road_vector_from_reference(road: RoadRecord, reference: Point) -> tuple[float, float]:
-    coords = list(road.geometry.coords)
+    line = nearest_line(road.geometry, reference)
+    if line is None:
+        return (1.0, 0.0)
+    coords = list(line.coords)
     start = Point(coords[0])
     end = Point(coords[-1])
     if start.distance(reference) <= end.distance(reference):
@@ -249,7 +258,10 @@ def _road_vector_from_reference(road: RoadRecord, reference: Point) -> tuple[flo
 
 
 def _geometry_axis_vector(geometry: BaseGeometry) -> tuple[float, float]:
-    coords = list(geometry.coords)
+    line = nearest_line(geometry, _line_midpoint(geometry))
+    if line is None:
+        return (1.0, 0.0)
+    coords = list(line.coords)
     if len(coords) < 2:
         return (1.0, 0.0)
     start_x, start_y = float(coords[0][0]), float(coords[0][1])
@@ -282,14 +294,17 @@ def _point_along_road_from_reference(
     reference: Point,
     offset_m: float,
 ) -> Point:
-    coords = list(road.geometry.coords)
+    line = nearest_line(road.geometry, reference)
+    if line is None:
+        return reference
+    coords = list(line.coords)
     start = Point(coords[0])
     end = Point(coords[-1])
-    offset = min(max(offset_m, 0.0), max(road.geometry.length, 0.0))
+    offset = min(max(offset_m, 0.0), max(line.length, 0.0))
     if start.distance(reference) <= end.distance(reference):
-        point = road.geometry.interpolate(offset)
+        point = line.interpolate(offset)
     else:
-        point = road.geometry.interpolate(max(road.geometry.length - offset, 0.0))
+        point = line.interpolate(max(line.length - offset, 0.0))
     return point if isinstance(point, Point) else _point_like(point)
 
 
@@ -298,7 +313,11 @@ def _road_pair_distance_trend_from_reference(
     second: RoadRecord,
     reference: Point,
 ) -> float | None:
-    min_length = min(first.geometry.length, second.geometry.length)
+    first_line = nearest_line(first.geometry, reference)
+    second_line = nearest_line(second.geometry, reference)
+    if first_line is None or second_line is None:
+        return None
+    min_length = min(first_line.length, second_line.length)
     if min_length <= 2.0:
         return None
     near_offset = min(5.0, max(1.0, min_length * 0.2))
@@ -400,11 +419,13 @@ def _clip_road_to_cap(
         return None
     pieces: list[BaseGeometry] = []
     if d_start <= cap_m and (road.snodeid, road.enodeid) in directed_pairs:
-        keep_len = min(road.geometry.length, max(0.0, cap_m - d_start))
-        pieces.append(substring(road.geometry, 0.0, keep_len))
+        keep_len = max(0.0, cap_m - d_start)
+        if piece := substring_from_endpoint(road.geometry, "start", keep_len):
+            pieces.append(piece)
     if d_end <= cap_m and (road.enodeid, road.snodeid) in directed_pairs:
-        keep_len = min(road.geometry.length, max(0.0, cap_m - d_end))
-        pieces.append(substring(road.geometry, max(0.0, road.geometry.length - keep_len), road.geometry.length))
+        keep_len = max(0.0, cap_m - d_end)
+        if piece := substring_from_endpoint(road.geometry, "end", keep_len):
+            pieces.append(piece)
     if not pieces:
         return None
     return _extract_line_geometry(unary_union(pieces))
@@ -613,10 +634,9 @@ def _reverse_mask_strip_in_drivezone(
     clipped_line = _largest_line_string(_extract_line_geometry(road.geometry.intersection(drivezone_geometry)))
     if clipped_line is None:
         return None
-    original_coords = list(road.geometry.coords)
-    if len(original_coords) < 2:
+    original_endpoint = endpoint_point(road.geometry, endpoint)
+    if original_endpoint is None:
         return None
-    original_endpoint = Point(original_coords[0] if endpoint == "start" else original_coords[-1])
     clipped_start = Point(clipped_line.coords[0])
     clipped_end = Point(clipped_line.coords[-1])
     clipped_endpoint = "start" if clipped_start.distance(original_endpoint) <= clipped_end.distance(original_endpoint) else "end"
@@ -2191,6 +2211,7 @@ def build_step3_case_result(
     audit_doc = {
         "input_gate": input_gate,
         "rules": rules,
+        **multipart_road_handling_fields(context.roads, context.rcsd_roads),
         "adjacent_junction_cuts": adjacent_records,
         "adjacent_junction_cut_suppressed": adjacent_suppressed_records,
         "foreign_object_masks": foreign_object_records,

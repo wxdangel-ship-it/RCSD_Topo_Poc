@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
-from shapely.geometry import LineString, Point, Polygon
+from shapely.geometry import LineString, MultiLineString, Point, Polygon
 
 from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import write_vector
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.case_loader import load_case_specs
@@ -97,6 +97,18 @@ def _road_feature(*, road_id: str, snodeid: str, enodeid: str, coords: list[tupl
         },
         "geometry": LineString(coords),
     }
+
+
+def _multi_road_feature(
+    *,
+    road_id: str,
+    snodeid: str,
+    enodeid: str,
+    parts: list[list[tuple[float, float]]],
+) -> dict:
+    feature = _road_feature(road_id=road_id, snodeid=snodeid, enodeid=enodeid, coords=parts[0])
+    feature["geometry"] = MultiLineString(parts)
+    return feature
 
 
 @pytest.mark.parametrize(
@@ -220,3 +232,78 @@ def test_step3_reachable_road_support_preserves_clipped_lines(tmp_path: Path) ->
 
     assert result.key_metrics["selected_road_count"] == 1
     assert result.audit_doc["growth_limits"][0]["road_id"] == "road_1"
+
+
+def test_step3_reachable_road_support_handles_multipart_target_road(tmp_path: Path) -> None:
+    suite_root = tmp_path / "suite"
+    case_id = "500001"
+    case_root = suite_root / case_id
+    _write_case_package(
+        case_root,
+        case_id,
+        roads=[
+            _multi_road_feature(
+                road_id="road_multi",
+                snodeid=case_id,
+                enodeid="missing_remote",
+                parts=[
+                    [(0.0, 0.0), (80.0, 0.0)],
+                    [(120.0, 20.0), (150.0, 20.0)],
+                ],
+            )
+        ],
+    )
+
+    result = _run_case(suite_root)
+
+    assert result.step3_state == "established"
+    assert result.key_metrics["selected_road_count"] == 1
+    assert result.audit_doc["growth_limits"][0]["road_id"] == "road_multi"
+    assert result.audit_doc["multipart_road_handling"]["strategy"] == (
+        "endpoint_or_reference_line_part_without_global_geometry_mutation"
+    )
+    assert result.audit_doc["multipart_road_handling"]["swsd_roads"] == [
+        {"road_id": "road_multi", "line_part_count": 2}
+    ]
+
+
+def test_step3_adjacent_reverse_mask_handles_multipart_road(tmp_path: Path) -> None:
+    suite_root = tmp_path / "suite"
+    case_id = "500002"
+    case_root = suite_root / case_id
+    _write_case_package(
+        case_root,
+        case_id,
+        roads=[
+            _multi_road_feature(
+                road_id="road_multi_adjacent",
+                snodeid=case_id,
+                enodeid="foreign_1",
+                parts=[
+                    [(0.0, 0.0), (15.0, 0.0)],
+                    [(15.0, 0.0), (30.0, 0.0)],
+                ],
+            )
+        ],
+        extra_nodes=[
+            {
+                "properties": {
+                    "id": "foreign_1",
+                    "mainnodeid": "foreign_1",
+                    "has_evd": "yes",
+                    "is_anchor": "no",
+                    "kind_2": 4,
+                    "grade_2": 1,
+                },
+                "geometry": Point(30.0, 0.0),
+            }
+        ],
+    )
+
+    result = _run_case(suite_root)
+
+    assert result.audit_doc["adjacent_junction_cuts"][0]["road_id"] == "road_multi_adjacent"
+    assert result.negative_masks.adjacent_junction_geometry is not None
+    assert result.audit_doc["multipart_road_handling"]["swsd_roads"] == [
+        {"road_id": "road_multi_adjacent", "line_part_count": 2}
+    ]

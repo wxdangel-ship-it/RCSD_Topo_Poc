@@ -19,6 +19,8 @@ T01 的运行结果必须能解释“为什么这个 road 被构成某个 Segmen
 | `oneway_segment_*` | 单向补段成果和统计。 |
 | `unsegmented_roads.*` | 全阶段后仍未构段 road 的显式审计。 |
 
+Step2 rejected 证据必须能解释 trunk gate 失败原因。内部语义路口转向角 gate 命中时，`support_info` 至少保留 `internal_turn_angle_node_id`、`internal_turn_angle_incoming_road_id`、`internal_turn_angle_outgoing_road_id`、`internal_turn_angle_deg`、`internal_turn_angle_threshold_deg`、`internal_turn_angle_incident_road_ids`。
+
 ## 3. 最终输出审计
 
 Step6 输出 `segment.gpkg` 后，必须同步保留内部节点和冲突审计。内部高等级节点、`sgrade` 冲突、grade/kind 冲突不能静默修正；允许豁免的场景必须有来源字段解释，例如 Step4 高等级 terminal demotion 的来源标记。

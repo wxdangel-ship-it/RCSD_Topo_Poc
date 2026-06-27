@@ -179,6 +179,12 @@
   - `MAX_SIDE_ACCESS_DISTANCE_M = 50.0`
 - 双向主干 road-body 间距有效门限为 `max(MAX_DUAL_CARRIAGEWAY_SEPARATION_M, pair 两端语义路口内部成员节点最大距离)`。
 - 测距前剔除 forward / reverse path 两端 `5m` 短挂接区，避免 T 型路口端点八字挂接误触发主干超距；剔除后仍超过有效门限时返回 `dual_carriageway_separation_exceeded`。
+- Step2 / Step4 / Step5A / Step5B / Step5C 的 trunk candidate 必须通过内部语义路口转向角 gate：
+  - 仅检查 trunk path 内部节点，不检查当前 pair 两端 endpoint；
+  - 仅当内部节点为 `closed_con in {2,3}`、`grade_2 >= 1`、`kind_2 in {4,64,128,2048}` 且剔除右转专用等配置排除项后 incident road 数不少于 `3` 时生效；
+  - 进入 road 与离开 road 的方向夹角大于 `60°` 时，该 trunk candidate 以 `internal_turn_angle_conflict` rejected；
+  - 二度普通几何弯曲不触发该 gate，不得据此把自然曲线切碎；
+  - rejected `support_info` 必须记录内部节点、进入 / 离开 road、角度、阈值和 incident road 列表。
 
 ### 5.2 T 型路口竖向阻断
 - 仅对应 `kind_2 = 2048`
@@ -221,7 +227,7 @@
 - Step2 对复杂 `kind_2 = 128` 组合优先采用 `kind2_128_local_corridor` 局部 port 判定：只基于 Step1 已确认的进入 / 退出支持路径及其局部门禁判断，不在复杂路口内部展开全局 simple-path 追溯。
 - 当局部 corridor 本身未形成可终止的复杂组合，仍允许回退到既有精确判定；当局部 corridor 命中可终止复杂组合且门禁失败时，该 pair 以明确 reject reason 进入 rejected 输出，不再回退到复杂路口内部全局追溯。
 - trunk search budget 保留为兜底保护；预算超限时，该 pair 必须以 `trunk_search_budget_exceeded` 进入 rejected 输出，不生成 segment body，并在 `pair_validation_table.csv` 的 `support_info` 与 `segment_summary.json` 中保留预算配置、消耗、candidate/pruned road 数和 `kind_2 = 128` 节点数。
-- `pair_validation_table.csv / validated_pairs.csv / rejected_pair_candidates.csv / segment_summary.json` 必须保留 candidate 穿越标记、节点列表、`kind2_128_local_corridor` 命中 / 终止统计和 validated / rejected 分组统计。
+- `pair_validation_table.csv / validated_pairs.csv / rejected_pair_candidates.csv / segment_summary.json` 必须保留 candidate 穿越标记、节点列表、`kind2_128_local_corridor` 命中 / 终止统计、`internal_turn_angle_conflict` 审计和 validated / rejected 分组统计。
 - 输出：
   - `validated`
   - `rejected`

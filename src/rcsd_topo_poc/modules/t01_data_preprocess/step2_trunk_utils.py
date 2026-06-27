@@ -4,15 +4,26 @@ from collections import defaultdict, deque
 from dataclasses import dataclass
 from heapq import heappop, heappush
 from itertools import count
-from math import ceil, hypot
-from typing import Any, Iterable, Optional
-
-from shapely.geometry import LineString, MultiLineString, Point
-from shapely.geometry.base import BaseGeometry
-from shapely.ops import linemerge, substring
+from typing import Any, Optional
 
 from rcsd_topo_poc.modules.t01_data_preprocess.road_kind_continuity import (
     choose_preferred_continuation_edges,
+)
+from rcsd_topo_poc.modules.t01_data_preprocess.step2_candidate_gates import (
+    counterclockwise_mixed_kind_wedge_gate_info,
+)
+from rcsd_topo_poc.modules.t01_data_preprocess.step2_geometry_utils import (
+    geometry_coords as _geometry_coords,
+    geometry_length as _geometry_length,
+    line_geometry_from_coords as _line_geometry_from_coords,
+    line_geometry_from_road_ids as _line_geometry_from_road_ids,
+    max_nearest_distance_m as _max_nearest_distance_m,
+    max_sampled_distance_m as _raw_max_sampled_distance_m,
+    trimmed_line_body_geometry as _trimmed_line_body_geometry,
+)
+from rcsd_topo_poc.modules.t01_data_preprocess.step2_internal_turn_gate import (
+    internal_turn_angle_gate_info,
+    split_internal_turn_angle_candidates,
 )
 from rcsd_topo_poc.modules.t01_data_preprocess.step1_pair_poc import (
     PairRecord,
@@ -91,121 +102,12 @@ class _PathSearchBudget:
     exhausted_reason: str = ""
 
 
-def _geometry_length(geometry: BaseGeometry) -> float:
-    return float(geometry.length) if geometry is not None else 0.0
-
-
-def _geometry_coords(geometry: BaseGeometry) -> list[tuple[float, float]]:
-    if geometry.geom_type == "LineString":
-        return [(float(x), float(y)) for x, y in geometry.coords]
-
-    merged = linemerge(geometry)
-    if merged.geom_type == "LineString":
-        return [(float(x), float(y)) for x, y in merged.coords]
-
-    coords: list[tuple[float, float]] = []
-    for part in merged.geoms:
-        part_coords = [(float(x), float(y)) for x, y in part.coords]
-        if not coords:
-            coords.extend(part_coords)
-            continue
-        if coords[-1] == part_coords[0]:
-            coords.extend(part_coords[1:])
-        else:
-            coords.extend(part_coords)
-    return coords
-
-
-def _line_geometry_from_coords(coords: list[tuple[float, float]]) -> Optional[BaseGeometry]:
-    if len(coords) < 2:
-        return None
-    return LineString(coords)
-
-
-def _line_geometry_from_road_ids(
-    road_ids: tuple[str, ...],
-    *,
-    roads: dict[str, RoadRecord],
-) -> Optional[BaseGeometry]:
-    parts: list[LineString] = []
-    for road_id in road_ids:
-        coords = _geometry_coords(roads[road_id].geometry)
-        if len(coords) < 2:
-            continue
-        parts.append(LineString(coords))
-    if not parts:
-        return None
-    if len(parts) == 1:
-        return parts[0]
-    return MultiLineString(parts)
-
-
-def _max_nearest_distance_m(
-    source_geometry: Optional[BaseGeometry],
-    target_geometry: Optional[BaseGeometry],
-) -> Optional[float]:
-    if source_geometry is None or target_geometry is None:
-        return None
-    if source_geometry.is_empty or target_geometry.is_empty:
-        return None
-    return float(source_geometry.hausdorff_distance(target_geometry))
-
-
-def _dual_carriageway_body_geometry(geometry: Optional[BaseGeometry]) -> Optional[BaseGeometry]:
-    if geometry is None or geometry.is_empty:
-        return geometry
-    line = _line_geometry_from_coords(_geometry_coords(geometry))
-    if line is None:
-        return geometry
-    trim_m = MAX_DIRECT_ONEWAY_TAIL_RELAXATION_M
-    length_m = _geometry_length(line)
-    if length_m <= trim_m * 2.0:
-        return line
-    return substring(line, trim_m, length_m - trim_m)
-
-
-def _iter_sample_points(geometry: Optional[BaseGeometry]) -> Iterable[Point]:
-    if geometry is None or geometry.is_empty:
-        return
-
-    if isinstance(geometry, LineString):
-        parts = (geometry,)
-    elif isinstance(geometry, MultiLineString):
-        parts = tuple(part for part in geometry.geoms if not part.is_empty)
-    else:
-        return
-
-    for part in parts:
-        coords = _geometry_coords(part)
-        if len(coords) < 2:
-            continue
-        for start, end in zip(coords, coords[1:]):
-            dx = end[0] - start[0]
-            dy = end[1] - start[1]
-            segment_length = hypot(dx, dy)
-            if segment_length <= 0.0:
-                continue
-            sample_count = max(3, ceil(segment_length / SIDE_ACCESS_SAMPLE_STEP_M) + 1)
-            for sample_index in range(sample_count):
-                fraction = sample_index / (sample_count - 1)
-                yield Point(start[0] + dx * fraction, start[1] + dy * fraction)
-
-
-def _max_sampled_distance_m(
-    source_geometry: Optional[BaseGeometry],
-    target_geometry: Optional[BaseGeometry],
-) -> Optional[float]:
-    if source_geometry is None or target_geometry is None:
-        return None
-    if source_geometry.is_empty or target_geometry.is_empty:
-        return None
-
-    max_distance_m: Optional[float] = None
-    for sample_point in _iter_sample_points(source_geometry):
-        distance_m = float(sample_point.distance(target_geometry))
-        if max_distance_m is None or distance_m > max_distance_m:
-            max_distance_m = distance_m
-    return max_distance_m
+def _max_sampled_distance_m(source_geometry: Any, target_geometry: Any) -> Optional[float]:
+    return _raw_max_sampled_distance_m(
+        source_geometry,
+        target_geometry,
+        sample_step_m=SIDE_ACCESS_SAMPLE_STEP_M,
+    )
 
 
 def _single_road_direct_oneway_pair_sampled_separation_m(
@@ -261,8 +163,8 @@ def _dual_carriageway_separation_m(
     reverse_geometry = _line_geometry_from_road_ids(reverse_path.road_ids, roads=roads)
     raw_distance_m = _max_nearest_distance_m(forward_geometry, reverse_geometry) or 0.0
     body_distance_m = _max_nearest_distance_m(
-        _dual_carriageway_body_geometry(forward_geometry),
-        _dual_carriageway_body_geometry(reverse_geometry),
+        _trimmed_line_body_geometry(forward_geometry, trim_m=MAX_DIRECT_ONEWAY_TAIL_RELAXATION_M),
+        _trimmed_line_body_geometry(reverse_geometry, trim_m=MAX_DIRECT_ONEWAY_TAIL_RELAXATION_M),
     )
     distance_m = min(raw_distance_m, body_distance_m) if body_distance_m is not None else raw_distance_m
 
@@ -1108,56 +1010,6 @@ def _bidirectional_minimal_loop_lasso_gate_info(
     }
 
 
-def _counterclockwise_mixed_kind_wedge_gate_info(
-    pair: PairRecord,
-    *,
-    candidate: TrunkCandidate,
-    context: Step1GraphContext,
-) -> Optional[dict[str, Any]]:
-    if candidate.is_bidirectional_minimal_loop or candidate.is_semantic_node_group_closure:
-        return None
-    if len(candidate.road_ids) != 3:
-        return None
-
-    path_lengths = sorted((len(candidate.forward_path.road_ids), len(candidate.reverse_path.road_ids)))
-    if path_lengths != [1, 2]:
-        return None
-
-    short_path = candidate.forward_path if len(candidate.forward_path.road_ids) == 1 else candidate.reverse_path
-    long_path = candidate.reverse_path if short_path is candidate.forward_path else candidate.forward_path
-    if len(long_path.node_ids) != 3 or len(set(long_path.node_ids[1:-1])) != 1:
-        return None
-
-    short_road_id = short_path.road_ids[0]
-    short_road = context.roads.get(short_road_id)
-    if short_road is None:
-        return None
-    short_kind = int(short_road.road_kind or 0)
-    if short_kind < 3:
-        return None
-
-    long_road_ids = tuple(long_path.road_ids)
-    long_road_kinds = []
-    for road_id in long_road_ids:
-        road = context.roads.get(road_id)
-        if road is None:
-            return None
-        long_road_kinds.append(int(road.road_kind or 0))
-    if set(long_road_kinds) != {2}:
-        return None
-
-    internal_node_id = long_path.node_ids[1]
-    return {
-        **_dual_separation_support_info(candidate),
-        "counterclockwise_mixed_kind_wedge_blocked": True,
-        "counterclockwise_mixed_kind_wedge_direct_road_id": short_road_id,
-        "counterclockwise_mixed_kind_wedge_direct_road_kind": short_kind,
-        "counterclockwise_mixed_kind_wedge_detour_road_ids": list(long_road_ids),
-        "counterclockwise_mixed_kind_wedge_detour_road_kinds": long_road_kinds,
-        "counterclockwise_mixed_kind_wedge_internal_node_id": internal_node_id,
-    }
-
-
 def _prefer_bidirectional_minimal_loop_candidates(
     candidates: list[TrunkCandidate],
 ) -> list[TrunkCandidate]:
@@ -1717,12 +1569,28 @@ def _split_counterclockwise_mixed_kind_wedge_candidates(
     kept: list[TrunkCandidate] = []
     blocked: list[tuple[TrunkCandidate, dict[str, Any]]] = []
     for candidate in candidates:
-        gate_info = _counterclockwise_mixed_kind_wedge_gate_info(pair, candidate=candidate, context=context)
+        gate_info = counterclockwise_mixed_kind_wedge_gate_info(pair, candidate=candidate, context=context)
         if gate_info is None:
             kept.append(candidate)
         else:
-            blocked.append((candidate, gate_info))
+            blocked.append((candidate, {**_dual_separation_support_info(candidate), **gate_info}))
     return kept, blocked
+
+
+def _split_internal_turn_angle_candidates(
+    *,
+    candidates: list[TrunkCandidate],
+    context: Step1GraphContext,
+    road_endpoints: dict[str, tuple[str, str]],
+    exclude_formway_bits_any: tuple[int, ...],
+) -> tuple[list[TrunkCandidate], list[tuple[TrunkCandidate, dict[str, Any]]]]:
+    kept, blocked = split_internal_turn_angle_candidates(
+        candidates=candidates,
+        context=context,
+        road_endpoints=road_endpoints,
+        exclude_formway_bits_any=exclude_formway_bits_any,
+    )
+    return kept, [(candidate, {**_dual_separation_support_info(candidate), **info}) for candidate, info in blocked]
 
 
 def _split_minimal_loop_long_branch_candidates(
@@ -1965,6 +1833,12 @@ def _evaluate_kind_2_128_local_corridor_choices(
         candidates=passed_candidates,
         context=context,
     )
+    passed_candidates, internal_turn_blocked = _split_internal_turn_angle_candidates(
+        candidates=passed_candidates,
+        context=context,
+        road_endpoints={road_id: (road.snodeid, road.enodeid) for road_id, road in context.roads.items()},
+        exclude_formway_bits_any=(),
+    )
     if passed_candidates:
         choice = _TrunkEvaluationChoice(
             candidate=passed_candidates[0],
@@ -1992,6 +1866,13 @@ def _evaluate_kind_2_128_local_corridor_choices(
         return [], "counterclockwise_mixed_kind_wedge", (), {
             **support_info,
             **mixed_kind_wedge_blocked[0][1],
+        }
+    if internal_turn_blocked:
+        if not terminal_local_corridor:
+            return None
+        return [], "internal_turn_angle_conflict", (), {
+            **support_info,
+            **internal_turn_blocked[0][1],
         }
     if failed_candidates:
         if not terminal_local_corridor:
@@ -2047,6 +1928,17 @@ def _evaluate_trunk_choices(
         )
 
     if collapsed_candidate is not None:
+        collapsed_turn_gate = internal_turn_angle_gate_info(
+            collapsed_candidate,
+            context=context,
+            road_endpoints=road_endpoints,
+            exclude_formway_bits_any=through_rule.incident_degree_exclude_formway_bits_any,
+        )
+        if collapsed_turn_gate is not None:
+            return [], "internal_turn_angle_conflict", (), {
+                **_dual_separation_support_info(collapsed_candidate, gate_limit_m=dual_gate_limit_m),
+                **collapsed_turn_gate,
+            }
         return [
             _TrunkEvaluationChoice(
                 candidate=collapsed_candidate,
@@ -2058,6 +1950,17 @@ def _evaluate_trunk_choices(
             gate_limit_m=dual_gate_limit_m,
         )
     if mirrored_candidate is not None:
+        mirrored_turn_gate = internal_turn_angle_gate_info(
+            mirrored_candidate,
+            context=context,
+            road_endpoints=road_endpoints,
+            exclude_formway_bits_any=through_rule.incident_degree_exclude_formway_bits_any,
+        )
+        if mirrored_turn_gate is not None:
+            return [], "internal_turn_angle_conflict", (), {
+                **_dual_separation_support_info(mirrored_candidate, gate_limit_m=dual_gate_limit_m),
+                **mirrored_turn_gate,
+            }
         return [
             _TrunkEvaluationChoice(
                 candidate=mirrored_candidate,
@@ -2251,6 +2154,18 @@ def _evaluate_trunk_choices(
             candidates=base_passed_candidates,
             context=context,
         )
+        strict_passed_candidates, strict_internal_turn_blocked = _split_internal_turn_angle_candidates(
+            candidates=strict_passed_candidates,
+            context=context,
+            road_endpoints=road_endpoints,
+            exclude_formway_bits_any=through_rule.incident_degree_exclude_formway_bits_any,
+        )
+        base_passed_candidates, base_internal_turn_blocked = _split_internal_turn_angle_candidates(
+            candidates=base_passed_candidates,
+            context=context,
+            road_endpoints=road_endpoints,
+            exclude_formway_bits_any=through_rule.incident_degree_exclude_formway_bits_any,
+        )
         if strict_passed_candidates:
             choices = [
                 _TrunkEvaluationChoice(
@@ -2287,6 +2202,9 @@ def _evaluate_trunk_choices(
         if strict_mixed_kind_wedge_blocked or base_mixed_kind_wedge_blocked:
             support_info = (strict_mixed_kind_wedge_blocked or base_mixed_kind_wedge_blocked)[0][1]
             return [], "counterclockwise_mixed_kind_wedge", (), support_info
+        if strict_internal_turn_blocked or base_internal_turn_blocked:
+            support_info = (strict_internal_turn_blocked or base_internal_turn_blocked)[0][1]
+            return [], "internal_turn_angle_conflict", (), support_info
         if strict_failed_candidates or base_failed_candidates or collapsed_failed_candidate is not None:
             failure_candidate = _best_dual_separation_failure(
                 strict_failed_candidates
@@ -2336,6 +2254,12 @@ def _evaluate_trunk_choices(
         candidates=base_passed_candidates,
         context=context,
     )
+    base_passed_candidates, base_internal_turn_blocked = _split_internal_turn_angle_candidates(
+        candidates=base_passed_candidates,
+        context=context,
+        road_endpoints=road_endpoints,
+        exclude_formway_bits_any=through_rule.incident_degree_exclude_formway_bits_any,
+    )
     if not base_passed_candidates:
         budget_audit = _trunk_search_budget_audit(
             pair=pair,
@@ -2355,6 +2279,8 @@ def _evaluate_trunk_choices(
             return [], "bidirectional_minimal_loop_lasso", (), base_lasso_blocked[0][1]
         if base_mixed_kind_wedge_blocked:
             return [], "counterclockwise_mixed_kind_wedge", (), base_mixed_kind_wedge_blocked[0][1]
+        if base_internal_turn_blocked:
+            return [], "internal_turn_angle_conflict", (), base_internal_turn_blocked[0][1]
         if base_failed_candidates or collapsed_failed_candidate is not None:
             failure_candidate = _best_dual_separation_failure(
                 base_failed_candidates or ([collapsed_failed_candidate] if collapsed_failed_candidate else [])

@@ -85,6 +85,10 @@
 | `src/rcsd_topo_poc/modules/t06_segment_fusion_precheck/single_graph_connectivity_retry.py` | `20749` bytes | 新拆出的高等级单向 RCSD graph-first 纵向联通 helper，负责全图有向 path、50m core、长度与几何参考门槛，并输出可审计的连通性风险 | 保持只承接 single 纵向联通，不承接 Step2 输出行编排 |
 | `src/rcsd_topo_poc/modules/t06_segment_fusion_precheck/single_direction_semantic_retry.py` | `8081` bytes | 单向 Segment 特殊语义端点 subnode 本地 corridor 释放 helper，负责在初始有向 corridor 不可追溯时保持原方向检查本地无向 corridor，并仅允许短 connector / 提前右转 Road 解释方向缺口 | 保持只承接特殊语义端点本地释放，不承接 Step2 输出编排、普通方向推导或 relation 修正 |
 | `src/rcsd_topo_poc/modules/t06_segment_fusion_precheck/buffer_failure_diagnostics.py` | `13363` bytes | 新拆出的 Step2 buffer 失败归因、失败 metric 与 canonical RCSD id helper | 保持只承接失败诊断与 summary/audit helper，不承接 replaceable 构建主流程 |
+| `src/rcsd_topo_poc/modules/t01_data_preprocess/step2_trunk_utils.py` | `98408` bytes | T01 Step2 trunk 编排文件从临近阈值拆出几何 primitive、候选 gate 与内部转向 gate 后回到 100 KB 以下 | 后续 trunk gate / 几何采样 / 路口转向规则扩展优先落到 `step2_geometry_utils.py`、`step2_candidate_gates.py` 或 `step2_internal_turn_gate.py`，不得回填主编排文件 |
+| `src/rcsd_topo_poc/modules/t01_data_preprocess/step2_geometry_utils.py` | `4218` bytes | 新拆出的 Step2 trunk 低层几何 helper，承接 geometry coords、line assembly、距离与采样函数 | 保持只承接通用几何 primitive，不承接 pair validation 编排 |
+| `src/rcsd_topo_poc/modules/t01_data_preprocess/step2_candidate_gates.py` | `2021` bytes | 新拆出的 Step2 trunk 候选 gate helper，当前承接 mixed-kind wedge 判定 | 后续候选级 gate 可继续下沉到此文件，避免 `step2_trunk_utils.py` 膨胀 |
+| `src/rcsd_topo_poc/modules/t01_data_preprocess/step2_internal_turn_gate.py` | `8693` bytes | 新拆出的内部语义路口转向角 gate helper，用于阻断多路口面内明显非直行 continuation 的 Segment trunk 候选 | 保持只承接内部路口转向角、incident road 与审计字段，不承接 T06 替换逻辑 |
 
 说明：
 

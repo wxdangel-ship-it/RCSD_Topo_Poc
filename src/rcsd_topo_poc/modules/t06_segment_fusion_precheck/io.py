@@ -48,7 +48,7 @@ def write_feature_triplet(
     json_path = step_root / f"{stem}.json"
     paths = {"gpkg": gpkg_path, "csv": csv_path}
     _notify_output_progress(progress, "gpkg", "start", gpkg_path)
-    write_gpkg(gpkg_path, features, empty_fields=fieldnames, geometry_type="Unknown")
+    write_gpkg(gpkg_path, features, empty_fields=fieldnames, geometry_type=_infer_gpkg_geometry_type(features))
     _notify_output_progress(progress, "gpkg", "end", gpkg_path)
     _notify_output_progress(progress, "csv", "start", csv_path)
     write_csv(csv_path, (feature.get("properties") or {} for feature in features), fieldnames)
@@ -67,6 +67,18 @@ def write_feature_triplet(
     else:
         _notify_output_progress(progress, "json", "skipped", json_path)
     return paths
+
+
+def _infer_gpkg_geometry_type(features: list[dict[str, Any]]) -> str:
+    geometry_types = {
+        geometry.geom_type
+        for feature in features
+        for geometry in [feature.get("geometry")]
+        if isinstance(geometry, BaseGeometry) and not geometry.is_empty
+    }
+    if len(geometry_types) == 1:
+        return next(iter(geometry_types))
+    return "Unknown"
 
 
 def _notify_output_progress(progress: Callable[[str, str, Path], None] | None, fmt: str, status: str, path: Path) -> None:

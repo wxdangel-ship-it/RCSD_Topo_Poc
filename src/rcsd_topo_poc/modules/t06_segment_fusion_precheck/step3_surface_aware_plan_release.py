@@ -57,20 +57,25 @@ def run_surface_aware_step3_segment_replacement(
     surface_topology_closure: bool,
     progress: bool,
 ) -> tuple[T06Step3Artifacts, dict[str, Any] | None]:
+    has_surface_inputs = any(surface_inputs.values())
+    initial_step3_kwargs = {
+        "step2_replaceable_path": step2_replaceable_path,
+        "step2_special_junction_group_audit_path": step2_special_junction_group_audit_path,
+        "step2_group_replacement_audit_path": step2_group_replacement_audit_path,
+        "step2_replacement_plan_path": None,
+        "swsd_segment_path": swsd_segment_path,
+        "swsd_roads_path": swsd_roads_path,
+        "swsd_nodes_path": swsd_nodes_path,
+        "rcsdroad_path": rcsdroad_path,
+        "rcsdnode_path": rcsdnode_path,
+        "out_root": out_root,
+        "run_id": run_id,
+        "junction_surface_path": surface_inputs.get("t05_surface_path"),
+        "progress": progress,
+    }
     artifacts = _run_step3(
-        step2_replaceable_path=step2_replaceable_path,
-        step2_special_junction_group_audit_path=step2_special_junction_group_audit_path,
-        step2_group_replacement_audit_path=step2_group_replacement_audit_path,
-        step2_replacement_plan_path=None,
-        swsd_segment_path=swsd_segment_path,
-        swsd_roads_path=swsd_roads_path,
-        swsd_nodes_path=swsd_nodes_path,
-        rcsdroad_path=rcsdroad_path,
-        rcsdnode_path=rcsdnode_path,
-        out_root=out_root,
-        run_id=run_id,
-        junction_surface_path=surface_inputs.get("t05_surface_path"),
-        progress=progress,
+        **initial_step3_kwargs,
+        write_feature_json_outputs=not has_surface_inputs,
     )
     surface_summary = _run_surface(
         artifacts,
@@ -78,12 +83,23 @@ def run_surface_aware_step3_segment_replacement(
         swsd_roads_path=swsd_roads_path,
         surface_inputs=surface_inputs,
         surface_topology_closure=surface_topology_closure,
+        write_feature_json_outputs=not has_surface_inputs,
     )
-    if not any(surface_inputs.values()):
+    if not has_surface_inputs:
         return artifacts, surface_summary
 
     original_plan_path = _summary_input_path(artifacts.summary_path, "step2_replacement_plan_path")
     if original_plan_path is None or not original_plan_path.is_file():
+        artifacts = _run_step3(
+            **initial_step3_kwargs,
+        )
+        surface_summary = _run_surface(
+            artifacts,
+            swsd_segment_path=swsd_segment_path,
+            swsd_roads_path=swsd_roads_path,
+            surface_inputs=surface_inputs,
+            surface_topology_closure=surface_topology_closure,
+        )
         _write_release_audit(artifacts.step_root, {"status": "skipped", "reason": "missing_replacement_plan"})
         return artifacts, surface_summary
 
@@ -99,6 +115,16 @@ def run_surface_aware_step3_segment_replacement(
         rcsdnode_path=rcsdnode_path,
     )
     if not released:
+        artifacts = _run_step3(
+            **initial_step3_kwargs,
+        )
+        surface_summary = _run_surface(
+            artifacts,
+            swsd_segment_path=swsd_segment_path,
+            swsd_roads_path=swsd_roads_path,
+            surface_inputs=surface_inputs,
+            surface_topology_closure=surface_topology_closure,
+        )
         _write_release_audit(
             artifacts.step_root,
             {
@@ -227,6 +253,7 @@ def run_surface_aware_step3_segment_replacement(
             run_id=run_id,
             junction_surface_path=surface_inputs.get("t05_surface_path"),
             progress=progress,
+            write_feature_json_outputs=False,
         )
         surface_summary = _run_surface(
             artifacts,
@@ -234,6 +261,7 @@ def run_surface_aware_step3_segment_replacement(
             swsd_roads_path=swsd_roads_path,
             surface_inputs=surface_inputs,
             surface_topology_closure=surface_topology_closure,
+            write_feature_json_outputs=False,
         )
         visual_candidate_fail_keys = _topology_fail_keys(artifacts.step_root)
         visual_added_fail_keys = visual_candidate_fail_keys - visual_baseline_fail_keys
@@ -252,6 +280,29 @@ def run_surface_aware_step3_segment_replacement(
                 step2_special_junction_group_audit_path=step2_special_junction_group_audit_path,
                 step2_group_replacement_audit_path=step2_group_replacement_audit_path,
                 step2_replacement_plan_path=visual_safe_plan,
+                swsd_segment_path=swsd_segment_path,
+                swsd_roads_path=swsd_roads_path,
+                swsd_nodes_path=swsd_nodes_path,
+                rcsdroad_path=rcsdroad_path,
+                rcsdnode_path=rcsdnode_path,
+                out_root=out_root,
+                run_id=run_id,
+                junction_surface_path=surface_inputs.get("t05_surface_path"),
+                progress=progress,
+            )
+            surface_summary = _run_surface(
+                artifacts,
+                swsd_segment_path=swsd_segment_path,
+                swsd_roads_path=swsd_roads_path,
+                surface_inputs=surface_inputs,
+                surface_topology_closure=surface_topology_closure,
+            )
+        else:
+            artifacts = _run_step3(
+                step2_replaceable_path=step2_replaceable_path,
+                step2_special_junction_group_audit_path=step2_special_junction_group_audit_path,
+                step2_group_replacement_audit_path=step2_group_replacement_audit_path,
+                step2_replacement_plan_path=visual_candidate_plan,
                 swsd_segment_path=swsd_segment_path,
                 swsd_roads_path=swsd_roads_path,
                 swsd_nodes_path=swsd_nodes_path,

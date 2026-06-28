@@ -24,6 +24,10 @@ from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.case_loader import (
     load_case_specs,
 )
 from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.event_interpretation import build_case_result
+from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon._event_interpretation_core import (
+    ROAD_SURFACE_STRUCTURAL_REQUIRED_HANDOFF_REASON,
+    _structural_required_rcsd_handoff_detail,
+)
 from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.outputs import (
     write_case_outputs,
     write_review_index,
@@ -304,6 +308,137 @@ def test_direct_surface_fallback_prefers_representative_supported_rcsdroad() -> 
     assert detail["fallback_selection_mode"] == "representative_supported_single_rcsdroad"
     assert detail["direct_first_hit_rcsdroad_ids"] == ["far_first_hit"]
     assert detail["representative_supported_score"]["road_support_count"] == 3
+
+
+def test_direct_surface_fallback_uses_main_axis_support_for_single_rcsdroad() -> None:
+    def road(road_id: str, coords: list[tuple[float, float]]):
+        return SimpleNamespace(road_id=road_id, geometry=LineString(coords))
+
+    case_result = SimpleNamespace(
+        case_bundle=SimpleNamespace(
+            roads=(
+                road("sw_main_in", [(-8.0, 0.0), (8.0, 0.0)]),
+                road("sw_main_out", [(-8.0, 1.0), (8.0, 1.0)]),
+                road("sw_diverge", [(0.0, 0.0), (2.0, 4.0), (4.0, 8.0)]),
+            ),
+            rcsd_roads=(road("main_axis_rcsd", [(-8.0, 3.2), (8.0, 3.2)]),),
+        )
+    )
+    event_unit = SimpleNamespace(
+        pair_local_summary={
+            "pair_local_rcsd_empty": True,
+            "main_branch_ids": ["road_1", "road_2"],
+            "branch_road_memberships": {
+                "road_1": ["sw_main_in"],
+                "road_2": ["sw_main_out"],
+                "road_3": ["sw_diverge"],
+            },
+        },
+        unit_envelope=SimpleNamespace(
+            branch_road_memberships={
+                "road_1": ("sw_main_in",),
+                "road_2": ("sw_main_out",),
+                "road_3": ("sw_diverge",),
+            }
+        ),
+        unit_context=SimpleNamespace(
+            representative_node=SimpleNamespace(geometry=Point(0.0, 0.0))
+        ),
+    )
+
+    fallback_roads, detail = _direct_surface_fallback_roads(case_result, event_unit, ())
+
+    assert fallback_roads == ("main_axis_rcsd",)
+    score = detail["representative_supported_score"]
+    assert score["support_scope"] == "main_branch_ids"
+    assert score["support_branch_ids"] == ["road_1", "road_2"]
+    assert score["road_support_count"] == 2
+    assert score["support_mode"] == "relaxed_directional"
+
+
+def test_structural_required_rcsd_handoff_accepts_unique_semantic_group() -> None:
+    decision = SimpleNamespace(
+        positive_rcsd_present=True,
+        required_rcsd_node="5395533217795583",
+        required_rcsd_node_source="aggregated_structural_required",
+        positive_rcsd_consistency_level="B",
+        selected_rcsdroad_ids=("road-a", "road-b"),
+        selected_rcsdnode_ids=("node-a", "5395533217795583"),
+    )
+    aggregate = {
+        "semantic_group_ids": ["5395533217795583"],
+        "required_node_id": "5395533217795583",
+        "support_level": "secondary_support",
+        "road_ids": ["road-a", "road-b"],
+        "node_ids": ["node-a", "5395533217795583"],
+    }
+    audit = {
+        "published_rcsdroad_ids": ["road-a", "road-b"],
+        "published_rcsdnode_ids": ["node-a", "5395533217795583"],
+        "selected_unit_role_assignments": [
+            {"road_id": "road-a", "role": "entering"},
+            {"road_id": "road-b", "role": "exiting"},
+        ],
+        "rcsd_semantic_junction": {
+            "paired_swsd_arm_mapping": {
+                "rcsd_arm_01": "arm_01",
+                "rcsd_arm_02": "arm_02",
+            },
+            "pairing_ambiguous_arm_ids": [],
+            "alignment_partial_missing_swsd_arm_ids": [],
+        },
+    }
+
+    detail = _structural_required_rcsd_handoff_detail(
+        decision=decision,
+        positive_audit=audit,
+        selected_aggregate_doc=aggregate,
+        semantic_anchor_distance_m=43.49,
+        degraded_reasons=("pair_local_scope_roads_empty",),
+        exact_aggregate_without_exact_local=False,
+        relaxed_aggregate_too_far=False,
+        relaxed_multi_group_single_first_hit=False,
+    )
+
+    assert detail is not None
+    assert detail["reason"] == ROAD_SURFACE_STRUCTURAL_REQUIRED_HANDOFF_REASON
+    assert detail["required_rcsd_node"] == "5395533217795583"
+    assert detail["assignment_roles"] == ["entering", "exiting"]
+
+
+def test_structural_required_rcsd_handoff_rejects_multi_semantic_group() -> None:
+    decision = SimpleNamespace(
+        positive_rcsd_present=True,
+        required_rcsd_node="group-a",
+        required_rcsd_node_source="aggregated_structural_required",
+        positive_rcsd_consistency_level="B",
+        selected_rcsdroad_ids=("road-a", "road-b"),
+        selected_rcsdnode_ids=("group-a",),
+    )
+
+    detail = _structural_required_rcsd_handoff_detail(
+        decision=decision,
+        positive_audit={
+            "published_rcsdroad_ids": ["road-a", "road-b"],
+            "published_rcsdnode_ids": ["group-a"],
+            "selected_unit_role_assignments": [
+                {"road_id": "road-a", "role": "entering"},
+                {"road_id": "road-b", "role": "exiting"},
+            ],
+        },
+        selected_aggregate_doc={
+            "semantic_group_ids": ["group-a", "group-b"],
+            "required_node_id": "group-a",
+            "support_level": "secondary_support",
+        },
+        semantic_anchor_distance_m=10.0,
+        degraded_reasons=(),
+        exact_aggregate_without_exact_local=False,
+        relaxed_aggregate_too_far=False,
+        relaxed_multi_group_single_first_hit=False,
+    )
+
+    assert detail is None
 
 
 def test_scenario_reads_from_arbiter_not_derives(tmp_path) -> None:

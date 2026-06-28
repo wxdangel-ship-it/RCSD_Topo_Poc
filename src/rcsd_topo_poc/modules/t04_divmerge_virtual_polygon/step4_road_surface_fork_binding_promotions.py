@@ -251,9 +251,12 @@ def _score_doc(score: dict[str, Any]) -> dict[str, Any]:
         "road_support_count",
         "unit_support_count",
         "support_mode",
+        "support_scope",
     ):
         if key in score:
             result[key] = score.get(key)
+    if score.get("support_branch_ids"):
+        result["support_branch_ids"] = list(score.get("support_branch_ids") or ())
     for key in (
         "mean_supported_road_distance_m",
         "max_supported_road_distance_m",

@@ -25,6 +25,7 @@ SINGLE_RCSDROAD_RELAXED_MAX_ROAD_DISTANCE_M = 8.0
 SINGLE_RCSDROAD_RELAXED_MAX_UNIT_DISTANCE_M = 8.0
 SINGLE_RCSDROAD_MAX_DIRECTION_DELTA_DEG = 30.0
 SINGLE_RCSDROAD_MIN_SWSD_ROAD_SUPPORT = 3
+SINGLE_RCSDROAD_MIN_MAIN_AXIS_SUPPORT = 2
 SINGLE_RCSDROAD_REASON = "single_swsd_rcsdroad_alignment"
 SWSD_WINDOW_NO_RCSD_MODE = "swsd_junction_window_no_rcsd"
 
@@ -120,6 +121,38 @@ def _related_swsd_roads(
         and getattr(road, "geometry", None) is not None
         and not road.geometry.is_empty
     )
+
+
+def _main_axis_related_swsd_roads(
+    case_result: T04CaseResult,
+    unit: T04EventUnitResult,
+) -> tuple[tuple[Any, ...], tuple[str, ...]]:
+    summary = getattr(unit, "pair_local_summary", None) or {}
+    if not isinstance(summary, dict) or not bool(summary.get("pair_local_rcsd_empty")):
+        return (), ()
+    main_branch_ids = _clean_ids(summary.get("main_branch_ids"))
+    if len(main_branch_ids) < SINGLE_RCSDROAD_MIN_MAIN_AXIS_SUPPORT:
+        return (), ()
+    branch_memberships = dict(getattr(getattr(unit, "unit_envelope", None), "branch_road_memberships", {}) or {})
+    if not branch_memberships:
+        branch_memberships = dict(summary.get("branch_road_memberships") or {})
+    road_ids: list[str] = []
+    for branch_id in main_branch_ids:
+        for road_id in _clean_ids(branch_memberships.get(branch_id)):
+            if road_id not in road_ids:
+                road_ids.append(road_id)
+    roads_by_id = _road_lookup(case_result)
+    roads = tuple(
+        road
+        for road_id in road_ids
+        for road in (roads_by_id.get(road_id),)
+        if road is not None
+        and getattr(road, "geometry", None) is not None
+        and not road.geometry.is_empty
+    )
+    if len(roads) < SINGLE_RCSDROAD_MIN_MAIN_AXIS_SUPPORT:
+        return (), ()
+    return roads, main_branch_ids
 
 
 def _unit_points(units: tuple[T04EventUnitResult, ...]) -> tuple[Any, ...]:
@@ -276,6 +309,38 @@ def _score_single_rcsdroad(
         max(SINGLE_RCSDROAD_MIN_SWSD_ROAD_SUPPORT, 1),
         len(related_roads),
     )
+    score = _score_single_rcsdroad_for_support_roads(
+        case_result,
+        related_roads=related_roads,
+        unit_point=unit_point,
+        min_road_support=min_road_support,
+        support_scope="all_branch_roads",
+    )
+    if score is not None:
+        return score
+
+    main_axis_roads, main_branch_ids = _main_axis_related_swsd_roads(case_result, unit)
+    if not main_axis_roads or len(related_roads) <= len(main_axis_roads):
+        return None
+    return _score_single_rcsdroad_for_support_roads(
+        case_result,
+        related_roads=main_axis_roads,
+        unit_point=unit_point,
+        min_road_support=min(SINGLE_RCSDROAD_MIN_MAIN_AXIS_SUPPORT, len(main_axis_roads)),
+        support_scope="main_branch_ids",
+        support_branch_ids=main_branch_ids,
+    )
+
+
+def _score_single_rcsdroad_for_support_roads(
+    case_result: T04CaseResult,
+    *,
+    related_roads: tuple[Any, ...],
+    unit_point: Any,
+    min_road_support: int,
+    support_scope: str,
+    support_branch_ids: tuple[str, ...] = (),
+) -> dict[str, Any] | None:
     scores: list[dict[str, Any]] = []
     for road in case_result.case_bundle.rcsd_roads:
         geometry = getattr(road, "geometry", None)
@@ -334,6 +399,8 @@ def _score_single_rcsdroad(
                 "min_road_distance_m": min(road_distances),
                 "max_unit_distance_m": unit_distance,
                 "support_mode": support_mode,
+                "support_scope": support_scope,
+                "support_branch_ids": list(support_branch_ids),
                 "support_distance_threshold_m": support_distance_threshold_m,
                 "unit_distance_threshold_m": unit_distance_threshold_m,
                 "max_direction_delta_deg": (
@@ -400,6 +467,8 @@ def _shared_rcsdroad_audit(
             else None
         ),
         "support_mode": str(score.get("support_mode") or ""),
+        "support_scope": str(score.get("support_scope") or ""),
+        "support_branch_ids": list(score.get("support_branch_ids") or ()),
         "support_distance_threshold_m": (
             round(float(score["support_distance_threshold_m"]), 6)
             if score.get("support_distance_threshold_m") is not None
@@ -432,6 +501,8 @@ def _shared_rcsdroad_audit(
                 "decision_reason": reason,
                 "road_support_count": int(score["road_support_count"]),
                 "unit_support_count": int(score["unit_support_count"]),
+                "support_scope": str(score.get("support_scope") or ""),
+                "support_branch_ids": list(score.get("support_branch_ids") or ()),
             }
         ],
         "aggregated_rcsd_units": [],
@@ -473,6 +544,8 @@ def _promote_unit_to_shared_rcsdroad(
         "road_support_count": int(score["road_support_count"]),
         "unit_support_count": int(score["unit_support_count"]),
         "support_mode": str(score.get("support_mode") or ""),
+        "support_scope": str(score.get("support_scope") or ""),
+        "support_branch_ids": list(score.get("support_branch_ids") or ()),
         "support_distance_threshold_m": (
             round(float(score["support_distance_threshold_m"]), 6)
             if score.get("support_distance_threshold_m") is not None
@@ -672,6 +745,8 @@ def align_single_swsd_unit_to_rcsdroad(
                 ),
                 "max_unit_distance_m": round(float(score["max_unit_distance_m"]), 6),
                 "support_mode": str(score.get("support_mode") or ""),
+                "support_scope": str(score.get("support_scope") or ""),
+                "support_branch_ids": list(score.get("support_branch_ids") or ()),
                 "support_distance_threshold_m": round(
                     float(score["support_distance_threshold_m"]),
                     6,

@@ -91,6 +91,11 @@ from .rcsd_selection import resolve_positive_rcsd_selection
 
 
 ROAD_SURFACE_RELAXED_RCSD_MAX_SEMANTIC_DISTANCE_M = 60.0
+ROAD_SURFACE_STRUCTURAL_REQUIRED_HANDOFF_REASON = (
+    "road_surface_fork_structural_required_rcsd_handoff"
+)
+_STRUCTURAL_REQUIRED_MIN_CONSISTENCY_LEVELS = {"A", "B"}
+_STRUCTURAL_REQUIRED_MIN_SUPPORT_LEVELS = {"primary_support", "secondary_support"}
 from .step4_road_surface_fork_geometry import (
     _ordered_line_from_point,
     _surface_fork_boundary_apex_point,
@@ -191,6 +196,116 @@ def _positive_rcsd_geometry(geometries: Iterable[BaseGeometry | None]):
 
 def _sorted_id_tuple(values: Iterable[Any]) -> tuple[str, ...]:
     return tuple(sorted({str(value) for value in values if str(value)}))
+
+
+def _structural_required_rcsd_handoff_detail(
+    *,
+    decision: Any,
+    positive_audit: dict[str, Any],
+    selected_aggregate_doc: dict[str, Any],
+    semantic_anchor_distance_m: float | None,
+    degraded_reasons: Iterable[Any],
+    exact_aggregate_without_exact_local: bool,
+    relaxed_aggregate_too_far: bool,
+    relaxed_multi_group_single_first_hit: bool,
+) -> dict[str, Any] | None:
+    required_node = str(getattr(decision, "required_rcsd_node", None) or "").strip()
+    if not (
+        getattr(decision, "positive_rcsd_present", False)
+        and required_node
+        and str(getattr(decision, "required_rcsd_node_source", "") or "").strip()
+        == "aggregated_structural_required"
+    ):
+        return None
+    if str(getattr(decision, "positive_rcsd_consistency_level", "") or "").strip().upper() not in (
+        _STRUCTURAL_REQUIRED_MIN_CONSISTENCY_LEVELS
+    ):
+        return None
+    support_level = str(selected_aggregate_doc.get("support_level") or "").strip()
+    if support_level not in _STRUCTURAL_REQUIRED_MIN_SUPPORT_LEVELS:
+        return None
+    semantic_group_ids = _sorted_id_tuple(selected_aggregate_doc.get("semantic_group_ids") or ())
+    if len(semantic_group_ids) != 1 or required_node not in semantic_group_ids:
+        return None
+    if str(selected_aggregate_doc.get("required_node_id") or "").strip() != required_node:
+        return None
+    if semantic_anchor_distance_m is None:
+        return None
+    if semantic_anchor_distance_m > ROAD_SURFACE_RELAXED_RCSD_MAX_SEMANTIC_DISTANCE_M:
+        return None
+    if exact_aggregate_without_exact_local or relaxed_aggregate_too_far or relaxed_multi_group_single_first_hit:
+        return None
+    degraded_texts = {
+        str(reason or "").strip()
+        for reason in degraded_reasons
+        if str(reason or "").strip()
+    }
+    if any("outside_drivezone" in reason for reason in degraded_texts):
+        return None
+    published_roads = _sorted_id_tuple(
+        positive_audit.get("published_rcsdroad_ids")
+        or selected_aggregate_doc.get("road_ids")
+        or getattr(decision, "selected_rcsdroad_ids", ())
+    )
+    published_nodes = _sorted_id_tuple(
+        positive_audit.get("published_rcsdnode_ids")
+        or selected_aggregate_doc.get("node_ids")
+        or getattr(decision, "selected_rcsdnode_ids", ())
+    )
+    if not published_roads or required_node not in published_nodes:
+        return None
+    assignments = [
+        assignment
+        for assignment in (
+            positive_audit.get("selected_unit_role_assignments")
+            or selected_aggregate_doc.get("role_assignments")
+            or ()
+        )
+        if isinstance(assignment, dict)
+    ]
+    assignment_roles = {
+        str(assignment.get("role") or "").strip()
+        for assignment in assignments
+        if str(assignment.get("role") or "").strip()
+    }
+    if not {"entering", "exiting"}.issubset(assignment_roles):
+        return None
+    semantic_junction = positive_audit.get("rcsd_semantic_junction")
+    paired_swsd_arm_count = None
+    if isinstance(semantic_junction, dict):
+        if semantic_junction.get("pairing_ambiguous_arm_ids"):
+            return None
+        if semantic_junction.get("alignment_partial_missing_swsd_arm_ids"):
+            return None
+        mapping = semantic_junction.get("paired_swsd_arm_mapping")
+        if isinstance(mapping, dict):
+            paired_swsd_arm_count = len(
+                {
+                    str(swsd_arm_id or "").strip()
+                    for swsd_arm_id in mapping.values()
+                    if str(swsd_arm_id or "").strip()
+                }
+            )
+            if paired_swsd_arm_count < 2:
+                return None
+    return {
+        "reason": ROAD_SURFACE_STRUCTURAL_REQUIRED_HANDOFF_REASON,
+        "required_rcsd_node": required_node,
+        "required_rcsd_node_source": "aggregated_structural_required",
+        "semantic_group_ids": list(semantic_group_ids),
+        "semantic_anchor_distance_m": round(float(semantic_anchor_distance_m), 6),
+        "max_semantic_anchor_distance_m": ROAD_SURFACE_RELAXED_RCSD_MAX_SEMANTIC_DISTANCE_M,
+        "support_level": support_level,
+        "consistency_level": str(
+            getattr(decision, "positive_rcsd_consistency_level", "") or ""
+        ).strip().upper(),
+        "published_rcsdroad_ids": list(published_roads),
+        "published_rcsdnode_ids": list(published_nodes),
+        "role_assignment_count": len(assignments),
+        "assignment_roles": sorted(assignment_roles),
+        "paired_swsd_arm_count": paired_swsd_arm_count,
+        "degraded_reasons": sorted(degraded_texts),
+    }
 
 
 def _apply_positive_rcsd_audit_to_summary(
@@ -1195,7 +1310,17 @@ def _build_result_from_interpretation(
         and selected_aggregate_semantic_group_count > 1
         and selected_aggregate_first_hit_count < 2
     )
-    positive_rcsd_bound_to_junction = bool(
+    structural_required_handoff_detail = _structural_required_rcsd_handoff_detail(
+        decision=positive_rcsd_decision,
+        positive_audit=positive_audit,
+        selected_aggregate_doc=selected_aggregate_doc,
+        semantic_anchor_distance_m=aggregate_semantic_anchor_distance,
+        degraded_reasons=prepared.pair_local_summary.get("degraded_reasons") or (),
+        exact_aggregate_without_exact_local=exact_aggregate_without_exact_local,
+        relaxed_aggregate_too_far=relaxed_aggregate_too_far,
+        relaxed_multi_group_single_first_hit=relaxed_multi_group_single_first_hit,
+    )
+    node_centric_bound_to_junction = bool(
         positive_rcsd_decision.positive_rcsd_present
         and positive_rcsd_decision.required_rcsd_node
         and positive_rcsd_decision.required_rcsd_node_source == "aggregated_node_centric"
@@ -1204,6 +1329,41 @@ def _build_result_from_interpretation(
         and not relaxed_aggregate_too_far
         and not relaxed_multi_group_single_first_hit
     )
+    positive_rcsd_bound_to_junction = bool(
+        node_centric_bound_to_junction or structural_required_handoff_detail
+    )
+    if structural_required_handoff_detail:
+        review_reasons = list(result.all_review_reasons())
+        if ROAD_SURFACE_STRUCTURAL_REQUIRED_HANDOFF_REASON not in review_reasons:
+            review_reasons.append(ROAD_SURFACE_STRUCTURAL_REQUIRED_HANDOFF_REASON)
+        summary = dict(result.selected_candidate_summary)
+        summary.update(
+            {
+                "road_surface_fork_structural_required_rcsd_handoff": structural_required_handoff_detail,
+                "rcsd_relation_handoff_reason": ROAD_SURFACE_STRUCTURAL_REQUIRED_HANDOFF_REASON,
+                "review_reasons": review_reasons,
+            }
+        )
+        rcsd_audit = dict(result.positive_rcsd_audit)
+        rcsd_audit.pop("road_surface_fork_without_bound_target_rcsd", None)
+        rcsd_audit["road_surface_fork_structural_required_rcsd_handoff"] = (
+            structural_required_handoff_detail
+        )
+        rcsd_audit["rcsd_relation_handoff_reason"] = ROAD_SURFACE_STRUCTURAL_REQUIRED_HANDOFF_REASON
+        result = replace_step4_pre_arbiter_candidate(
+            result,
+            review_reasons=tuple(review_reasons),
+            selected_candidate_summary=summary,
+            selected_evidence_summary=dict(summary),
+            positive_rcsd_audit=rcsd_audit,
+        )
+        result = append_dual_write_candidate(
+            result,
+            case_id=prepared.case_bundle.case_spec.case_id,
+            source_stage="event_interpretation_structural_required_rcsd_handoff",
+            source_audit_blob=structural_required_handoff_detail,
+            replacement_reason=ROAD_SURFACE_STRUCTURAL_REQUIRED_HANDOFF_REASON,
+        )
     no_bound_target_rcsd = bool(
         road_surface_fork_candidate
         and not positive_rcsd_bound_to_junction

@@ -354,6 +354,7 @@ def _group_replacement_plan_rows(
     rcsd_node_canonicalizer: NodeCanonicalizer,
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
+    hard_blocked_source_ids = _hard_blocked_group_source_ids(group_rows)
     for row in group_rows:
         props = dict(row.get("properties") or {})
         if props.get("group_probe_status") != "passed":
@@ -361,10 +362,11 @@ def _group_replacement_plan_rows(
         if props.get("group_probe_repair_owner") != "T06_path_corridor_group_replacement":
             continue
         segment_id = _safe_id(props.get("swsd_segment_id"))
-        group_segment_ids = _path_corridor_replacement_segment_ids(props)
         blocked_segment_ids = set(_parse_list(props.get("path_corridor_blocked_segment_ids")))
+        excluded_segment_ids = {*blocked_segment_ids, *hard_blocked_source_ids}
+        group_segment_ids = _path_corridor_replacement_segment_ids(props, excluded_segment_ids=excluded_segment_ids)
         rcsd_road_ids = _parse_list(props.get("group_probe_rcsd_road_ids"))
-        if not segment_id or not group_segment_ids or not rcsd_road_ids:
+        if not segment_id or not rcsd_road_ids:
             continue
         audit_props = failure_business_audit_by_segment.get(segment_id, {})
         rcsd_junc_nodes = _parse_list(audit_props.get("optional_junc_rcsd_nodes")) or _parse_list(
@@ -379,26 +381,32 @@ def _group_replacement_plan_rows(
                 *([GROUP_BUFFER_EXCEEDS_REASON] if buffer_distance_risk else []),
             ]
         )
+        hold_reasons = risk_reasons if source_blocked and not group_segment_ids else []
+        plan_status = "blocked" if hold_reasons else "ready"
+        action = "hold" if hold_reasons else "replace"
+        reason = hold_reasons[0] if hold_reasons else props.get("group_probe_reason")
         notes = props.get("notes") or "path-corridor group replacement plan"
         if source_blocked:
-            notes = f"{notes}; source segment is blocked in path-corridor audit; flagged for manual review"
+            notes = f"{notes}; source segment is blocked in path-corridor audit and excluded from group action"
         if buffer_distance_risk:
             notes = (
                 f"{notes}; group probe buffer exceeds {MAX_FORMAL_REPLACEMENT_BUFFER_M:g}m "
                 "topology connectivity audit threshold; released as risk audit only"
             )
+        if hold_reasons:
+            notes = f"{notes}; no eligible path-corridor group members remain after hard-gate filtering"
         rows.append(
             feature(
                 {
                     "replacement_plan_id": f"group_path_corridor:{segment_id}",
                     "swsd_segment_id": segment_id,
-                    "plan_status": "ready",
-                    "execution_action": "replace",
+                    "plan_status": plan_status,
+                    "execution_action": action,
                     "execution_scope": "path_corridor_group",
                     "plan_owner": "T06_STEP2",
                     "upstream_owner": "T03/T04/T05_feedback_candidate",
                     "source_artifact": "t06_segment_group_replacement_audit",
-                    "source_reason": props.get("group_probe_reason"),
+                    "source_reason": reason,
                     "replacement_strategy": "path_corridor_group_replacement",
                     "special_junction_id": "",
                     "special_junction_type": "",
@@ -1663,10 +1671,31 @@ def _pair_key(pair_nodes: list[str]) -> tuple[str, str] | None:
     return (str(pair_nodes[0]), str(pair_nodes[1]))
 
 
-def _path_corridor_replacement_segment_ids(props: dict[str, Any]) -> list[str]:
+def _hard_blocked_group_source_ids(rows: list[dict[str, Any]]) -> set[str]:
+    result: set[str] = set()
+    for row in rows:
+        props = dict(row.get("properties") or {})
+        if props.get("group_probe_status") != "passed":
+            continue
+        if props.get("group_probe_repair_owner") != "T06_path_corridor_group_replacement":
+            continue
+        segment_id = _safe_id(props.get("swsd_segment_id"))
+        if not segment_id:
+            continue
+        blocked_segment_ids = set(_parse_list(props.get("path_corridor_blocked_segment_ids")))
+        if segment_id in blocked_segment_ids:
+            result.add(segment_id)
+    return result
+
+
+def _path_corridor_replacement_segment_ids(
+    props: dict[str, Any],
+    *,
+    excluded_segment_ids: set[str] | None = None,
+) -> list[str]:
     group_segment_ids = _parse_list(props.get("path_corridor_group_segment_ids"))
-    blocked_segment_ids = set(_parse_list(props.get("path_corridor_blocked_segment_ids")))
-    return [segment_id for segment_id in group_segment_ids if segment_id not in blocked_segment_ids]
+    excluded_segment_ids = excluded_segment_ids or set(_parse_list(props.get("path_corridor_blocked_segment_ids")))
+    return [segment_id for segment_id in group_segment_ids if segment_id not in excluded_segment_ids]
 
 
 def _problem_status(props: dict[str, Any], covered_scopes: list[str]) -> str:

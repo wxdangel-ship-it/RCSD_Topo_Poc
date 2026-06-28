@@ -399,6 +399,63 @@ def test_topology_audit_fails_retained_swsd_endpoint_without_mainnode_closure() 
     assert summary["topology_connectivity_retained_swsd_endpoint_closure_fail_count"] == 2
 
 
+def test_topology_audit_warns_retained_swsd_endpoint_without_rcsd_mapping() -> None:
+    rows = build_topology_connectivity_audit_rows(
+        swsd_segments=[
+            _segment("s1", ["1", "2"], LineString([(0, 0), (20, 0)]), roads=["sr1"])
+        ],
+        swsd_roads=[_road("sr1", "1", "2", LineString([(0, 0), (20, 0)]), source=2, direction=2)],
+        frcsd_roads=[
+            _road("r1", "10", "20", LineString([(0, 10), (20, 10)]), direction=2),
+            _road("sr1", "1", "2", LineString([(0, 0), (20, 0)]), source=2, direction=2),
+        ],
+        frcsd_nodes=[
+            {"properties": {"id": "1", "source": 2}, "geometry": Point(0, 0)},
+            {"properties": {"id": "2", "source": 2}, "geometry": Point(20, 0)},
+            _node("10", Point(0, 10), source=1, mainnodeid="10"),
+            _node("20", Point(20, 10), source=1, mainnodeid="20"),
+        ],
+        segment_relation_rows=[
+            {
+                "properties": {
+                    "swsd_segment_id": "s1",
+                    "relation_status": "replaced+retained_swsd",
+                    "swsd_pair_nodes": ["1", "2"],
+                    "frcsd_road_ids": ["r1", "sr1"],
+                    "retained_detached_swsd_road_ids": ["sr1"],
+                    "frcsd_road_source_values": [1, 2],
+                    "swsd_to_frcsd_node_map": [
+                        {
+                            "swsd_node_id": "1",
+                            "frcsd_node_ids": ["1"],
+                            "mapping_status": "identity_retained_swsd",
+                        }
+                    ],
+                    "source_mix": "source_1+source_2",
+                },
+                "geometry": None,
+            }
+        ],
+        advance_right_audit_rows=[],
+        source_field_name="source",
+        swsd_source_value=2,
+        rcsd_source_value=1,
+    )
+
+    endpoint_rows = [
+        row["properties"]
+        for row in rows
+        if row["properties"]["audit_layer"] == "retained_swsd_endpoint_closure"
+    ]
+    assert {row["audit_status"] for row in endpoint_rows} == {"warn"}
+    assert {row["audit_reason"] for row in endpoint_rows} == {
+        "retained_swsd_endpoint_without_rcsd_mapping_review"
+    }
+    summary = summarize_topology_connectivity_audit(rows)
+    assert summary["topology_connectivity_retained_swsd_endpoint_closure_fail_count"] == 0
+    assert summary["topology_connectivity_retained_swsd_endpoint_closure_warn_count"] == 2
+
+
 def test_topology_audit_warns_when_corridor_gap_is_manual_review_scale() -> None:
     rows = build_topology_connectivity_audit_rows(
         swsd_segments=[_segment("s1", ["1", "2"], LineString([(0, 0), (200, 0)]), sgrade="0-1单")],

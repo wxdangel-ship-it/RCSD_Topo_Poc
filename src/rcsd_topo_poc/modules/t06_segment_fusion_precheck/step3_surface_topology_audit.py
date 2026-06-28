@@ -20,6 +20,7 @@ from .schemas import (
     STEP3_SWSD_FRCSD_SEGMENT_RELATION_FIELDS,
     STEP3_SWSD_FRCSD_SEGMENT_RELATION_STEM,
 )
+from .step3_relation_node_map import sync_retained_swsd_carrier_mainnodes
 from .step3_topology_connectivity_audit import (
     STEP3_TOPOLOGY_CONNECTIVITY_AUDIT_FIELDS,
     STEP3_TOPOLOGY_CONNECTIVITY_AUDIT_STEM,
@@ -1360,10 +1361,34 @@ def _rebuild_topology_connectivity_audit(
 ) -> None:
     swsd_segments = read_features(swsd_segment_path)
     swsd_roads = read_features(swsd_roads_path)
-    frcsd_roads = read_features(step_root / "t06_frcsd_road.gpkg")
-    frcsd_nodes = read_features(step_root / "t06_frcsd_node.gpkg")
-    relation_rows = read_features(step_root / "t06_step3_swsd_frcsd_segment_relation.gpkg")
+    road_path = step_root / "t06_frcsd_road.gpkg"
+    node_path = step_root / "t06_frcsd_node.gpkg"
+    relation_path = step_root / "t06_step3_swsd_frcsd_segment_relation.gpkg"
+    frcsd_roads = read_features(road_path)
+    frcsd_nodes = read_features(node_path)
+    relation_rows = read_features(relation_path)
     advance_rows = read_features(step_root / "t06_step3_advance_right_attachment_audit.gpkg")
+    retained_sync_stats = sync_retained_swsd_carrier_mainnodes(
+        relation_rows,
+        frcsd_roads,
+        frcsd_nodes,
+        source_field_name=source_field_name,
+        swsd_source_value=swsd_source_value,
+        rcsd_source_value=rcsd_source_value,
+    )
+    if retained_sync_stats.get("retained_swsd_carrier_mainnode_row_count", 0) > 0:
+        write_feature_triplet(
+            step_root=step_root,
+            stem=STEP3_SWSD_FRCSD_SEGMENT_RELATION_STEM,
+            features=relation_rows,
+            fieldnames=STEP3_SWSD_FRCSD_SEGMENT_RELATION_FIELDS,
+        )
+        write_feature_triplet(
+            step_root=step_root,
+            stem=STEP3_FRCSD_NODE_STEM,
+            features=frcsd_nodes,
+            fieldnames=_fieldnames_from_gpkg(node_path),
+        )
     rows = build_topology_connectivity_audit_rows(
         swsd_segments=swsd_segments,
         swsd_roads=swsd_roads,
@@ -1385,6 +1410,9 @@ def _rebuild_topology_connectivity_audit(
     if summary_path.is_file():
         payload = json.loads(summary_path.read_text(encoding="utf-8"))
         payload.update(summarize_topology_connectivity_audit(rows))
+        for key, value in retained_sync_stats.items():
+            payload_key = f"surface_topology_{key}"
+            payload[payload_key] = int(payload.get(payload_key, 0) or 0) + int(value or 0)
         write_json(summary_path, payload)
 
 

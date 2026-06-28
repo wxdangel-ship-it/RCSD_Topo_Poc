@@ -563,6 +563,77 @@ def test_sync_retained_swsd_carrier_maps_exact_endpoint_before_semantic_parent()
     ]
 
 
+def test_sync_retained_swsd_carrier_prefers_direct_endpoint_map_over_pair_fallback() -> None:
+    relation_rows = [
+        {
+            "properties": {
+                "swsd_segment_id": "mixed",
+                "relation_status": "replaced+retained_swsd",
+                "swsd_pair_nodes": ["pair_a", "pair_b"],
+                "retained_detached_swsd_road_ids": ["retained"],
+                "swsd_to_frcsd_node_map": [
+                    {
+                        "swsd_node_id": "pair_b",
+                        "frcsd_node_ids": ["rcsd_pair_b"],
+                        "node_role": "pair_node",
+                        "mapping_status": "mapped",
+                    },
+                    {
+                        "swsd_node_id": "endpoint_b",
+                        "frcsd_node_ids": ["rcsd_endpoint_b"],
+                        "node_role": "junc_node",
+                        "mapping_status": "step2_optional_junc_plan_map",
+                    },
+                ],
+                "risk_flags": ["retained_swsd_topology_supplement"],
+            }
+        }
+    ]
+    roads = [
+        {
+            "properties": {
+                "id": "retained",
+                "snodeid": "endpoint_a",
+                "enodeid": "endpoint_b",
+                "source": 2,
+            }
+        }
+    ]
+    nodes = [
+        {
+            "properties": {"id": "endpoint_a", "source": 2, "mainnodeid": "pair_a"},
+            "geometry": Point(0, 0),
+        },
+        {
+            "properties": {"id": "endpoint_b", "source": 2, "mainnodeid": "pair_b_main"},
+            "geometry": Point(10, 0),
+        },
+        {"properties": {"id": "pair_b", "source": 2, "subnodeid": "endpoint_b"}, "geometry": Point(10, 0)},
+        {
+            "properties": {"id": "rcsd_pair_b", "source": 1, "mainnodeid": "rcsd_pair_main_b"},
+            "geometry": Point(10, 0),
+        },
+        {
+            "properties": {"id": "rcsd_endpoint_b", "source": 1, "mainnodeid": "rcsd_endpoint_main_b"},
+            "geometry": Point(10, 0),
+        },
+    ]
+
+    stats = sync_retained_swsd_carrier_mainnodes(relation_rows, roads, nodes)
+
+    assert stats == {
+        "retained_swsd_carrier_mainnode_candidate_count": 1,
+        "retained_swsd_carrier_mainnode_synced_count": 1,
+        "retained_swsd_carrier_rcsd_mainnode_filled_count": 0,
+        "retained_swsd_carrier_mainnode_row_count": 1,
+    }
+    assert nodes[1]["properties"]["mainnodeid"] == "rcsd_endpoint_main_b"
+    assert relation_rows[0]["properties"]["risk_flags"] == [
+        "retained_swsd_topology_supplement",
+        "retained_swsd_carrier_mainnode_synced",
+    ]
+
+
 def test_sync_retained_swsd_segment_keeps_identity_when_peer_gap_is_large() -> None:
     relation_rows = [
         {

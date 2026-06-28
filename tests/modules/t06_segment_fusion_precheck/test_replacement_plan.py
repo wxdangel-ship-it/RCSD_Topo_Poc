@@ -164,6 +164,7 @@ def test_replacement_plan_excludes_blocked_path_corridor_segments() -> None:
     assert props["source_reason"] == "passed"
     assert props["group_segment_ids"] == ["s2"]
     assert "path_corridor_source_segment_blocked" in props["risk_flags"]
+    assert "excluded from group action" in props["notes"]
 
 
 def test_replacement_plan_marks_group_probe_buffer_risk_without_holding() -> None:
@@ -193,11 +194,44 @@ def test_replacement_plan_marks_group_probe_buffer_risk_without_holding() -> Non
     assert props["plan_status"] == "ready"
     assert props["execution_action"] == "replace"
     assert props["source_reason"] == "passed"
+    assert props["group_segment_ids"] == ["s_wide", "s_peer"]
     assert props["risk_flags"] == [
         "group_path_corridor_replacement",
         "group_probe_buffer_exceeds_topology_connectivity_audit_threshold",
     ]
     assert "released as risk audit only" in props["notes"]
+
+
+def test_replacement_plan_holds_source_blocked_group_when_no_members_remain() -> None:
+    rows = build_replacement_plan_rows(
+        replaceable_rows=[],
+        special_group_rows=[],
+        group_replacement_audit_rows=[
+            _feature(
+                {
+                    "swsd_segment_id": "s_wide",
+                    "group_probe_status": "passed",
+                    "group_probe_repair_owner": "T06_path_corridor_group_replacement",
+                    "group_probe_reason": "passed",
+                    "group_probe_buffer_distance_m": 50.0,
+                    "path_corridor_group_segment_ids": ["s_wide"],
+                    "path_corridor_blocked_segment_ids": ["s_wide"],
+                    "group_probe_rcsd_road_ids": ["rr1", "rr2"],
+                    "swsd_pair_nodes": [1, 2],
+                    "rcsd_pair_nodes": [10, 20],
+                }
+            )
+        ],
+        rcsd_roads=[_road("rr1", 10, 15), _road("rr2", 15, 20)],
+        rcsd_node_canonicalizer=NodeCanonicalizer({}, frozenset({"10", "15", "20"})),
+    )
+
+    props = rows[0]["properties"]
+    assert props["plan_status"] == "blocked"
+    assert props["execution_action"] == "hold"
+    assert props["source_reason"] == "path_corridor_source_segment_blocked"
+    assert props["group_segment_ids"] == []
+    assert "no eligible path-corridor group members remain" in props["notes"]
 
 
 def test_replacement_plan_does_not_block_group_for_member_adaptive_buffer_risk() -> None:

@@ -191,7 +191,7 @@ def _candidate_from_row(
     segment_ids = _candidate_segment_ids(
         source_segment_id,
         member_segment_ids,
-        include_source=_source_carrier_junction_mapping_ready(props) or source_segment_id in set(member_segment_ids),
+        include_source=source_segment_id in set(member_segment_ids),
     )
     rcsd_road_ids = _parse_list(props.get("group_probe_rcsd_road_ids"))
     if not source_segment_id or not segment_ids or not rcsd_road_ids:
@@ -271,7 +271,7 @@ def _candidate_from_plan_row(
     segment_ids = _candidate_segment_ids(
         source_segment_id,
         member_segment_ids,
-        include_source=_source_carrier_junction_mapping_ready(props) or source_segment_id in set(member_segment_ids),
+        include_source=source_segment_id in set(member_segment_ids),
     )
     rcsd_road_ids = _parse_list(props.get("rcsd_road_ids"))
     if not source_segment_id or not segment_ids or not rcsd_road_ids:
@@ -456,16 +456,6 @@ def _standard_ready_segment_ids(rows: list[dict[str, Any]]) -> set[str]:
 
 def _candidate_segment_ids(source_segment_id: str, segment_ids: list[str], *, include_source: bool) -> list[str]:
     return unique_preserve_order([source_segment_id, *segment_ids]) if source_segment_id and include_source else segment_ids
-
-
-def _source_carrier_junction_mapping_ready(props: dict[str, Any]) -> bool:
-    swsd_junc_nodes = _parse_list(props.get("swsd_junc_nodes"))
-    if not swsd_junc_nodes:
-        return True
-    mapped_junc_nodes = _parse_list(props.get("optional_junc_rcsd_nodes")) or _parse_list(props.get("rcsd_junc_nodes"))
-    if not mapped_junc_nodes:
-        return False
-    return bool(_parse_list(props.get("optional_junc_nodes")) or _parse_list(props.get("rcsd_junc_nodes")))
 
 
 def _safe_id(value: Any) -> str:

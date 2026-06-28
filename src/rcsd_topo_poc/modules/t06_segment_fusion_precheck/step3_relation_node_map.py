@@ -173,10 +173,16 @@ def sync_retained_swsd_carrier_mainnodes(
         row_semantic_endpoint_remapped = False
         row_peer_gap_review = False
         node_map = _node_map_entries(props.get("swsd_to_frcsd_node_map"))
+        direct_endpoint_rcsd_node_ids = _direct_retained_endpoint_rcsd_node_ids(
+            node_map,
+            retained_endpoint_nodes,
+        )
         for entry in list(node_map):
             swsd_node_id = _safe_id(entry.get("swsd_node_id"))
             retained_node_id = swsd_node_id if swsd_node_id in retained_endpoint_nodes else pair_endpoint_map.get(swsd_node_id, "")
             if retained_node_id not in retained_endpoint_nodes:
+                continue
+            if retained_node_id != swsd_node_id and retained_node_id in direct_endpoint_rcsd_node_ids:
                 continue
             mapping_status = str(entry.get("mapping_status") or "")
             if mapping_status == "missing":
@@ -273,6 +279,27 @@ def _peer_rcsd_node_ids_by_swsd_node(rows: list[dict[str, Any]], *, include_mixe
                 [*result[swsd_node_id], *_parse_id_list(entry.get("frcsd_node_ids"))]
             )
     return dict(result)
+
+
+def _direct_retained_endpoint_rcsd_node_ids(
+    node_map: list[dict[str, Any]],
+    retained_endpoint_nodes: set[str],
+) -> dict[str, list[str]]:
+    result: dict[str, list[str]] = {}
+    for entry in node_map:
+        swsd_node_id = _safe_id(entry.get("swsd_node_id"))
+        if swsd_node_id not in retained_endpoint_nodes:
+            continue
+        mapping_status = str(entry.get("mapping_status") or "")
+        if mapping_status == "missing" or mapping_status.startswith("identity"):
+            continue
+        rcsd_node_ids = _parse_id_list(entry.get("frcsd_node_ids"))
+        if not rcsd_node_ids:
+            continue
+        result[swsd_node_id] = unique_preserve_order(
+            [*result.get(swsd_node_id, []), *rcsd_node_ids]
+        )
+    return result
 
 
 def _attachment_node_ids_by_swsd_node(rows: list[dict[str, Any]]) -> dict[str, list[str]]:

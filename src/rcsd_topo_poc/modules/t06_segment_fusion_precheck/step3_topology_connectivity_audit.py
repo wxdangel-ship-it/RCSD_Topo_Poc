@@ -1098,8 +1098,8 @@ def _retained_swsd_endpoint_closure_rows(
                         status = "fail"
                         reason = "retained_swsd_endpoint_node_missing_in_final"
                     elif not mapped_refs:
-                        status = "fail"
-                        reason = "retained_swsd_endpoint_missing_relation_node_map"
+                        status = "warn"
+                        reason = "retained_swsd_endpoint_without_rcsd_mapping_review"
                     elif not mapped_mainnode_roots:
                         status = "fail"
                         reason = "retained_swsd_endpoint_mapped_rcsd_mainnode_missing"
@@ -1119,6 +1119,8 @@ def _retained_swsd_endpoint_closure_rows(
                         )
                     if status == "fail":
                         owner = "T06_step3_retained_swsd_endpoint_closure"
+                    elif status == "warn":
+                        owner = "T06_step3_retained_swsd_endpoint_closure_review"
                     rows.append(
                         feature(
                             {

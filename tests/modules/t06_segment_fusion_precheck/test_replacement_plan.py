@@ -33,6 +33,16 @@ def test_replacement_plan_combines_standard_group_and_special_rows() -> None:
                     "rcsd_road_ids": ["rr1"],
                     "retained_node_ids": [10, 20],
                 }
+            ),
+            _feature(
+                {
+                    "swsd_segment_id": "s2",
+                    "replacement_strategy": "buffer_segment_extraction",
+                    "swsd_pair_nodes": [2, 3],
+                    "rcsd_pair_nodes": [20, 30],
+                    "rcsd_road_ids": ["rr2"],
+                    "retained_node_ids": [20, 30],
+                }
             )
         ],
         special_group_rows=[
@@ -82,7 +92,7 @@ def test_replacement_plan_combines_standard_group_and_special_rows() -> None:
     )
 
     scopes = [row["properties"]["execution_scope"] for row in rows]
-    assert scopes == ["standard_segment", "path_corridor_group", "special_junction_group_internal"]
+    assert scopes == ["standard_segment", "standard_segment", "path_corridor_group", "special_junction_group_internal"]
     group = [row for row in rows if row["properties"]["execution_scope"] == "path_corridor_group"][0]["properties"]
     assert group["rcsd_road_ids"] == ["rr1", "rr2"]
     assert group["retained_node_ids"] == ["10", "20", "30"]
@@ -134,7 +144,26 @@ def test_replacement_plan_adds_pair_anchor_bridge_roads_to_standard_plan() -> No
 
 def test_replacement_plan_excludes_blocked_path_corridor_segments() -> None:
     rows = build_replacement_plan_rows(
-        replaceable_rows=[],
+        replaceable_rows=[
+            _feature(
+                {
+                    "swsd_segment_id": "s1",
+                    "replacement_strategy": "buffer_segment_extraction",
+                    "swsd_pair_nodes": [1, 2],
+                    "rcsd_pair_nodes": [10, 20],
+                    "rcsd_road_ids": ["rr1"],
+                }
+            ),
+            _feature(
+                {
+                    "swsd_segment_id": "s2",
+                    "replacement_strategy": "buffer_segment_extraction",
+                    "swsd_pair_nodes": [2, 3],
+                    "rcsd_pair_nodes": [20, 30],
+                    "rcsd_road_ids": ["rr2"],
+                }
+            ),
+        ],
         special_group_rows=[],
         group_replacement_audit_rows=[
             _feature(
@@ -156,8 +185,7 @@ def test_replacement_plan_excludes_blocked_path_corridor_segments() -> None:
         rcsd_node_canonicalizer=NodeCanonicalizer({}, frozenset({"10", "15", "20"})),
     )
 
-    assert len(rows) == 1
-    props = rows[0]["properties"]
+    props = [row["properties"] for row in rows if row["properties"]["execution_scope"] == "path_corridor_group"][0]
     assert props["plan_status"] == "ready"
     assert props["execution_action"] == "replace"
     assert props["execution_scope"] == "path_corridor_group"
@@ -167,9 +195,70 @@ def test_replacement_plan_excludes_blocked_path_corridor_segments() -> None:
     assert "excluded from group action" in props["notes"]
 
 
+def test_replacement_plan_marks_path_corridor_group_when_source_not_formal_replaceable() -> None:
+    rows = build_replacement_plan_rows(
+        replaceable_rows=[
+            _feature(
+                {
+                    "swsd_segment_id": "s_peer",
+                    "replacement_strategy": "buffer_segment_extraction",
+                    "swsd_pair_nodes": [2, 3],
+                    "rcsd_pair_nodes": [20, 30],
+                    "rcsd_road_ids": ["rr2"],
+                }
+            )
+        ],
+        special_group_rows=[],
+        group_replacement_audit_rows=[
+            _feature(
+                {
+                    "swsd_segment_id": "s_rejected",
+                    "group_probe_status": "passed",
+                    "group_probe_repair_owner": "T06_path_corridor_group_replacement",
+                    "group_probe_reason": "passed",
+                    "group_probe_buffer_distance_m": 50.0,
+                    "path_corridor_group_segment_ids": ["s_rejected", "s_peer"],
+                    "group_probe_rcsd_road_ids": ["rr1", "rr2"],
+                    "swsd_pair_nodes": [1, 2],
+                    "rcsd_pair_nodes": [10, 20],
+                }
+            )
+        ],
+        rcsd_roads=[_road("rr1", 10, 15), _road("rr2", 15, 20)],
+        rcsd_node_canonicalizer=NodeCanonicalizer({}, frozenset({"10", "15", "20"})),
+    )
+
+    props = [row["properties"] for row in rows if row["properties"]["execution_scope"] == "path_corridor_group"][0]
+    assert props["plan_status"] == "ready"
+    assert props["execution_action"] == "replace"
+    assert props["source_reason"] == "passed"
+    assert props["group_segment_ids"] == ["s_rejected", "s_peer"]
+    assert "path_corridor_source_segment_not_formal_replaceable" in props["risk_flags"]
+    assert "did not pass formal single-segment RCSD extraction" in props["notes"]
+
+
 def test_replacement_plan_marks_group_probe_buffer_risk_without_holding() -> None:
     rows = build_replacement_plan_rows(
-        replaceable_rows=[],
+        replaceable_rows=[
+            _feature(
+                {
+                    "swsd_segment_id": "s_wide",
+                    "replacement_strategy": "buffer_segment_extraction",
+                    "swsd_pair_nodes": [1, 2],
+                    "rcsd_pair_nodes": [10, 20],
+                    "rcsd_road_ids": ["rr1"],
+                }
+            ),
+            _feature(
+                {
+                    "swsd_segment_id": "s_peer",
+                    "replacement_strategy": "buffer_segment_extraction",
+                    "swsd_pair_nodes": [2, 3],
+                    "rcsd_pair_nodes": [20, 30],
+                    "rcsd_road_ids": ["rr2"],
+                }
+            ),
+        ],
         special_group_rows=[],
         group_replacement_audit_rows=[
             _feature(
@@ -190,7 +279,7 @@ def test_replacement_plan_marks_group_probe_buffer_risk_without_holding() -> Non
         rcsd_node_canonicalizer=NodeCanonicalizer({}, frozenset({"10", "15", "20"})),
     )
 
-    props = rows[0]["properties"]
+    props = [row["properties"] for row in rows if row["properties"]["execution_scope"] == "path_corridor_group"][0]
     assert props["plan_status"] == "ready"
     assert props["execution_action"] == "replace"
     assert props["source_reason"] == "passed"
@@ -204,7 +293,17 @@ def test_replacement_plan_marks_group_probe_buffer_risk_without_holding() -> Non
 
 def test_replacement_plan_holds_source_blocked_group_when_no_members_remain() -> None:
     rows = build_replacement_plan_rows(
-        replaceable_rows=[],
+        replaceable_rows=[
+            _feature(
+                {
+                    "swsd_segment_id": "s_wide",
+                    "replacement_strategy": "buffer_segment_extraction",
+                    "swsd_pair_nodes": [1, 2],
+                    "rcsd_pair_nodes": [10, 20],
+                    "rcsd_road_ids": ["rr1"],
+                }
+            )
+        ],
         special_group_rows=[],
         group_replacement_audit_rows=[
             _feature(
@@ -226,7 +325,7 @@ def test_replacement_plan_holds_source_blocked_group_when_no_members_remain() ->
         rcsd_node_canonicalizer=NodeCanonicalizer({}, frozenset({"10", "15", "20"})),
     )
 
-    props = rows[0]["properties"]
+    props = [row["properties"] for row in rows if row["properties"]["execution_scope"] == "path_corridor_group"][0]
     assert props["plan_status"] == "blocked"
     assert props["execution_action"] == "hold"
     assert props["source_reason"] == "path_corridor_source_segment_blocked"
@@ -237,6 +336,16 @@ def test_replacement_plan_holds_source_blocked_group_when_no_members_remain() ->
 def test_replacement_plan_does_not_block_group_for_member_adaptive_buffer_risk() -> None:
     rows = build_replacement_plan_rows(
         replaceable_rows=[
+            _feature(
+                {
+                    "swsd_segment_id": "s_group",
+                    "replacement_strategy": "buffer_segment_extraction",
+                    "swsd_pair_nodes": ["a", "c"],
+                    "rcsd_pair_nodes": [1, 3],
+                    "rcsd_road_ids": ["rr_group"],
+                    "retained_node_ids": [1, 3],
+                }
+            ),
             _feature(
                 {
                     "swsd_segment_id": "s_member",
@@ -282,6 +391,16 @@ def test_replacement_plan_does_not_block_group_for_member_adaptive_buffer_risk()
 def test_group_plan_absorbs_internal_member_visual_road_conflict() -> None:
     rows = build_replacement_plan_rows(
         replaceable_rows=[
+            _feature(
+                {
+                    "swsd_segment_id": "s_group",
+                    "replacement_strategy": "buffer_segment_extraction",
+                    "swsd_pair_nodes": ["a", "c"],
+                    "rcsd_pair_nodes": [1, 3],
+                    "rcsd_road_ids": ["rr_group"],
+                    "retained_node_ids": [1, 3],
+                }
+            ),
             _feature(
                 {
                     "swsd_segment_id": "s_owner",
@@ -731,6 +850,16 @@ def test_visual_consistency_member_does_not_conflict_with_own_path_group_plan() 
         replaceable_rows=[
             _feature(
                 {
+                    "swsd_segment_id": "s_group",
+                    "replacement_strategy": "buffer_segment_extraction",
+                    "swsd_pair_nodes": ["g1", "g2"],
+                    "rcsd_pair_nodes": ["30", "40"],
+                    "rcsd_road_ids": ["rr_group"],
+                    "retained_node_ids": ["30", "40"],
+                }
+            ),
+            _feature(
+                {
                     "swsd_segment_id": "s_member",
                     "replacement_strategy": "buffer_segment_extraction",
                     "geometry_buffer_coverage_issue": "retained_geometry_outside_swsd_visual_consistency_scope",
@@ -759,8 +888,8 @@ def test_visual_consistency_member_does_not_conflict_with_own_path_group_plan() 
                 }
             )
         ],
-        rcsd_roads=[_road("rr_member", 10, 20, [(0, 0), (100, 0)])],
-        rcsd_node_canonicalizer=NodeCanonicalizer({}, frozenset({"10", "20"})),
+        rcsd_roads=[_road("rr_member", 10, 20, [(0, 0), (100, 0)]), _road("rr_group", 30, 40)],
+        rcsd_node_canonicalizer=NodeCanonicalizer({}, frozenset({"10", "20", "30", "40"})),
         swsd_segments=[_feature({"id": "s_member"}, LineString([(0, 0), (100, 0)]))],
     )
 

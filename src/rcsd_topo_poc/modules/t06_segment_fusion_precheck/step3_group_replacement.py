@@ -10,6 +10,9 @@ from .io import read_features
 from .parsing import ParseError, normalize_id, parse_id_list, unique_preserve_order
 
 
+_GROUP_SOURCE_NOT_FORMAL_REPLACEABLE_REASON = "path_corridor_source_segment_not_formal_replaceable"
+
+
 @dataclass(frozen=True)
 class GroupReplacementAssignment:
     segment_id: str
@@ -21,6 +24,7 @@ class GroupReplacementAssignment:
     source_segment_ids: list[str]
     group_segment_ids: list[str]
     buffer_distances_m: list[float]
+    risk_flags: list[str]
 
 
 @dataclass(frozen=True)
@@ -41,6 +45,7 @@ class _Candidate:
     rcsd_pair_nodes: list[str]
     rcsd_junc_nodes: list[str]
     buffer_distance_m: float
+    risk_flags: list[str]
 
 
 def read_group_replacement_assignments(
@@ -167,6 +172,7 @@ def apply_group_replacement_assignments(
         unit.group_replacement_buffer_distances_m = sorted(
             {*unit.group_replacement_buffer_distances_m, *assignment.buffer_distances_m}
         )
+        unit.risk_flags = unique_preserve_order([*unit.risk_flags, *assignment.risk_flags])
         if unit.status == "failed" and unit.reason == "missing_rcsd_road_ids" and unit.rcsd_road_ids:
             unit.status = "passed"
         if unit.status == "passed":
@@ -212,6 +218,7 @@ def _candidate_from_row(
         rcsd_pair_nodes=rcsd_pair_nodes,
         rcsd_junc_nodes=rcsd_junc_nodes,
         buffer_distance_m=_float_or_zero(props.get("group_probe_buffer_distance_m")),
+        risk_flags=[],
     )
 
 
@@ -294,7 +301,15 @@ def _candidate_from_plan_row(
         rcsd_pair_nodes=_parse_list(props.get("rcsd_pair_nodes")),
         rcsd_junc_nodes=_parse_list(props.get("optional_junc_rcsd_nodes")) or _parse_list(props.get("rcsd_junc_nodes")),
         buffer_distance_m=_first_float(props.get("buffer_distances_m")),
+        risk_flags=_group_assignment_risk_flags(props.get("risk_flags")),
     )
+
+
+def _group_assignment_risk_flags(value: Any) -> list[str]:
+    risk_flags = _parse_list(value)
+    if _GROUP_SOURCE_NOT_FORMAL_REPLACEABLE_REASON in risk_flags:
+        return [_GROUP_SOURCE_NOT_FORMAL_REPLACEABLE_REASON]
+    return []
 
 
 def _component_assignments(
@@ -357,6 +372,9 @@ def _component_assignments(
             if candidate.rcsd_junc_nodes
         }
         distances = sorted({candidate.buffer_distance_m for _, candidate in component_rows})
+        risk_flags = unique_preserve_order(
+            risk_flag for _, candidate in component_rows for risk_flag in candidate.risk_flags
+        )
         for segment_id in component_segment_ids:
             if segment_id in standard_ready_segment_ids:
                 continue
@@ -370,6 +388,7 @@ def _component_assignments(
                 source_segment_ids=source_segment_ids,
                 group_segment_ids=component_segment_ids,
                 buffer_distances_m=distances,
+                risk_flags=risk_flags,
             )
     return assignments
 

@@ -914,12 +914,12 @@ def test_step3_excludes_detached_junc_swsd_roads_from_formal_replacement(tmp_pat
         if item["mapping_status"] == "identity_retained_swsd"
     ]
     assert identity_maps == [
-        {
-            "swsd_node_id": "3",
-            "frcsd_node_ids": ["3"],
-            "node_role": "detached_junc_retained_swsd_node",
-            "mapping_status": "identity_retained_swsd",
-        }
+            {
+                "swsd_node_id": "3",
+                "frcsd_node_ids": ["3", "10"],
+                "node_role": "detached_junc_retained_swsd_node",
+                "mapping_status": "identity_retained_swsd",
+            }
     ]
 
 

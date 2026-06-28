@@ -14,6 +14,7 @@ from .schemas import feature
 
 MAX_FORMAL_REPLACEMENT_BUFFER_M = 75.0
 GROUP_SOURCE_BLOCKED_REASON = "path_corridor_source_segment_blocked"
+GROUP_SOURCE_NOT_FORMAL_REPLACEABLE_REASON = "path_corridor_source_segment_not_formal_replaceable"
 GROUP_BUFFER_EXCEEDS_REASON = "group_probe_buffer_exceeds_topology_connectivity_audit_threshold"
 MIN_VISUAL_REPAIR_GEOMETRY_OVERLAP_RATIO = 0.65
 MAX_CONTROLLED_VISUAL_SWSD_UNCOVERED_RATIO = 0.1
@@ -74,6 +75,7 @@ def build_replacement_plan_rows(
             failure_business_audit_by_segment=_props_by_segment(failure_business_audit_rows or []),
             rcsd_road_by_id=rcsd_road_by_id,
             rcsd_node_canonicalizer=rcsd_node_canonicalizer,
+            formal_replaceable_segment_ids=replaceable_segment_ids,
         )
     )
     rows.extend(
@@ -352,6 +354,7 @@ def _group_replacement_plan_rows(
     failure_business_audit_by_segment: dict[str, dict[str, Any]],
     rcsd_road_by_id: dict[str, dict[str, Any]],
     rcsd_node_canonicalizer: NodeCanonicalizer,
+    formal_replaceable_segment_ids: set[str],
 ) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     hard_blocked_source_ids = _hard_blocked_group_source_ids(group_rows)
@@ -363,7 +366,10 @@ def _group_replacement_plan_rows(
             continue
         segment_id = _safe_id(props.get("swsd_segment_id"))
         blocked_segment_ids = set(_parse_list(props.get("path_corridor_blocked_segment_ids")))
-        excluded_segment_ids = {*blocked_segment_ids, *hard_blocked_source_ids}
+        excluded_segment_ids = {
+            *blocked_segment_ids,
+            *hard_blocked_source_ids,
+        }
         group_segment_ids = _path_corridor_replacement_segment_ids(props, excluded_segment_ids=excluded_segment_ids)
         rcsd_road_ids = _parse_list(props.get("group_probe_rcsd_road_ids"))
         if not segment_id or not rcsd_road_ids:
@@ -375,19 +381,25 @@ def _group_replacement_plan_rows(
         buffer_distances = _parse_float_list(props.get("group_probe_buffer_distance_m"))
         buffer_distance_risk = bool(buffer_distances and max(buffer_distances) > MAX_FORMAL_REPLACEMENT_BUFFER_M)
         source_blocked = segment_id in blocked_segment_ids
+        source_not_formal = segment_id not in formal_replaceable_segment_ids
         risk_reasons = unique_preserve_order(
             [
                 *([GROUP_SOURCE_BLOCKED_REASON] if source_blocked else []),
+                *([GROUP_SOURCE_NOT_FORMAL_REPLACEABLE_REASON] if source_not_formal else []),
                 *([GROUP_BUFFER_EXCEEDS_REASON] if buffer_distance_risk else []),
             ]
         )
-        hold_reasons = risk_reasons if source_blocked and not group_segment_ids else []
+        hold_reasons = []
+        if source_blocked and not group_segment_ids:
+            hold_reasons.append(GROUP_SOURCE_BLOCKED_REASON)
         plan_status = "blocked" if hold_reasons else "ready"
         action = "hold" if hold_reasons else "replace"
         reason = hold_reasons[0] if hold_reasons else props.get("group_probe_reason")
         notes = props.get("notes") or "path-corridor group replacement plan"
         if source_blocked:
             notes = f"{notes}; source segment is blocked in path-corridor audit and excluded from group action"
+        if source_not_formal:
+            notes = f"{notes}; source segment did not pass formal single-segment RCSD extraction"
         if buffer_distance_risk:
             notes = (
                 f"{notes}; group probe buffer exceeds {MAX_FORMAL_REPLACEMENT_BUFFER_M:g}m "

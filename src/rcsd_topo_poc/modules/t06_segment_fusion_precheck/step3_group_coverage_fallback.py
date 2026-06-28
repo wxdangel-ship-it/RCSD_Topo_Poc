@@ -12,6 +12,7 @@ GROUP_COVERAGE_FALLBACK_RISK = "group_path_corridor_local_coverage_retained_swsd
 GROUP_COVERAGE_FALLBACK_REASON = "group_path_corridor_local_coverage_retained_swsd"
 GROUP_DIRECTIONALITY_FALLBACK_RISK = "group_path_corridor_directionality_retained_swsd"
 GROUP_DIRECTIONALITY_FALLBACK_REASON = "group_path_corridor_directionality_retained_swsd"
+GROUP_SOURCE_NOT_FORMAL_REPLACEABLE_REASON = "path_corridor_source_segment_not_formal_replaceable"
 _GROUP_LOCAL_COVERAGE_REASON = "group_path_corridor_segment_local_coverage_review"
 _GROUP_DIRECTIONALITY_REASON = "dual_segment_pair_nodes_not_bidirectional"
 _GROUP_REPLACEMENT_RISK = "group_path_corridor_replacement"
@@ -64,6 +65,7 @@ def retain_group_coverage_fallback(
     retained_nodes: list[str] = []
     retained_segments: list[str] = []
     blocked_missing_maps: list[str] = []
+    source_not_formal_retained: list[str] = []
     for segment_id, fallback_reason in fallback_reasons.items():
         relation = relation_by_segment.get(segment_id)
         if relation is None:
@@ -73,40 +75,63 @@ def retain_group_coverage_fallback(
         present_roads = [road_id for road_id in road_ids if road_id in swsd_road_by_id]
         if not present_roads:
             continue
-        if fallback_reason == GROUP_COVERAGE_FALLBACK_REASON and not _has_retained_endpoint_relation_maps(
-            props, present_roads, swsd_road_by_id
-        ):
+        unit = unit_by_segment.get(segment_id)
+        has_retained_endpoint_maps = _has_retained_endpoint_relation_maps(props, present_roads, swsd_road_by_id)
+        if fallback_reason == GROUP_COVERAGE_FALLBACK_REASON and not has_retained_endpoint_maps:
             blocked_missing_maps.append(segment_id)
             continue
-        retained_segments.append(segment_id)
-        segment_retained_nodes: list[str] = []
-        for road_id in present_roads:
-            road = _ensure_feature(
-                road_id,
+        if fallback_reason == GROUP_COVERAGE_FALLBACK_REASON and _unit_has_risk(
+            unit, GROUP_SOURCE_NOT_FORMAL_REPLACEABLE_REASON
+        ):
+            segment_retained_nodes = _retain_swsd_features(
+                segment_id,
+                present_roads,
                 swsd_road_by_id,
+                swsd_node_by_id,
                 final_roads,
+                final_nodes,
                 frcsd_roads,
+                frcsd_nodes,
+                removed_road_to_segments,
+                removed_node_to_segments,
                 source_field_name,
                 swsd_source_value,
-                segment_id,
             )
-            if road is not None:
-                retained_roads.append(road_id)
-                removed_road_to_segments.pop(road_id, None)
-                for node_id in _road_endpoint_node_ids(road):
-                    node = _ensure_feature(
-                        node_id,
-                        swsd_node_by_id,
-                        final_nodes,
-                        frcsd_nodes,
-                        source_field_name,
-                        swsd_source_value,
-                        segment_id,
-                    )
-                    if node is not None:
-                        segment_retained_nodes.append(node_id)
-                        retained_nodes.append(node_id)
-                        removed_node_to_segments.pop(node_id, None)
+            _release_unreferenced_rcsd_roads(
+                segment_id,
+                _ids(props.get("frcsd_road_ids")),
+                segment_relation_rows,
+                frcsd_roads,
+                final_roads,
+                source_field_name,
+                rcsd_source_value,
+            )
+            _mark_unit_retained_swsd(unit, present_roads, segment_retained_nodes, GROUP_SOURCE_NOT_FORMAL_REPLACEABLE_REASON)
+            _mark_relation_retained_swsd(
+                props,
+                present_roads,
+                swsd_source_value,
+                GROUP_SOURCE_NOT_FORMAL_REPLACEABLE_REASON,
+            )
+            source_not_formal_retained.append(segment_id)
+            continue
+        retained_segments.append(segment_id)
+        segment_retained_nodes = _retain_swsd_features(
+            segment_id,
+            present_roads,
+            swsd_road_by_id,
+            swsd_node_by_id,
+            final_roads,
+            final_nodes,
+            frcsd_roads,
+            frcsd_nodes,
+            removed_road_to_segments,
+            removed_node_to_segments,
+            source_field_name,
+            swsd_source_value,
+        )
+        retained_roads.extend(present_roads)
+        retained_nodes.extend(segment_retained_nodes)
         fallback_risk = _fallback_risk(fallback_reason)
         _mark_unit(unit_by_segment.get(segment_id), present_roads, segment_retained_nodes, fallback_risk)
         _mark_relation(props, present_roads, swsd_source_value, fallback_reason, fallback_risk)
@@ -119,6 +144,10 @@ def retain_group_coverage_fallback(
         swsd_source_value=swsd_source_value,
         rcsd_source_value=rcsd_source_value,
     )
+    source_not_formal_risk_pruned_count = _prune_source_not_formal_relation_risk(
+        segment_relation_rows,
+        source_not_formal_retained,
+    )
     return _stats(
         retained_segments,
         retained_roads,
@@ -127,6 +156,8 @@ def retain_group_coverage_fallback(
         mainnode_sync_stats,
         fallback_reasons,
         blocked_missing_maps,
+        source_not_formal_retained,
+        source_not_formal_risk_pruned_count,
     )
 
 
@@ -238,6 +269,12 @@ def _has_retained_endpoint_relation_maps(
     return set(endpoint_nodes).issubset(_mapped_swsd_node_ids(props.get("swsd_to_frcsd_node_map")))
 
 
+def _unit_has_risk(unit: Any | None, risk_flag: str) -> bool:
+    if unit is None:
+        return False
+    return risk_flag in set(_ids(getattr(unit, "risk_flags", [])))
+
+
 def _mapped_swsd_node_ids(value: Any) -> set[str]:
     if isinstance(value, str):
         try:
@@ -252,6 +289,80 @@ def _mapped_swsd_node_ids(value: Any) -> set[str]:
         if node_id and _ids(item.get("frcsd_node_ids")):
             result.add(node_id)
     return result
+
+
+def _retain_swsd_features(
+    segment_id: str,
+    present_roads: list[str],
+    swsd_road_by_id: dict[str, dict[str, Any]],
+    swsd_node_by_id: dict[str, dict[str, Any]],
+    final_roads: dict[tuple[str, str], dict[str, Any]],
+    final_nodes: dict[tuple[str, str], dict[str, Any]],
+    frcsd_roads: list[dict[str, Any]],
+    frcsd_nodes: list[dict[str, Any]],
+    removed_road_to_segments: dict[str, list[str]],
+    removed_node_to_segments: dict[str, list[str]],
+    source_field_name: str,
+    swsd_source_value: int,
+) -> list[str]:
+    retained_nodes: list[str] = []
+    for road_id in present_roads:
+        road = _ensure_feature(
+            road_id,
+            swsd_road_by_id,
+            final_roads,
+            frcsd_roads,
+            source_field_name,
+            swsd_source_value,
+            segment_id,
+        )
+        if road is None:
+            continue
+        removed_road_to_segments.pop(road_id, None)
+        for node_id in _road_endpoint_node_ids(road):
+            node = _ensure_feature(
+                node_id,
+                swsd_node_by_id,
+                final_nodes,
+                frcsd_nodes,
+                source_field_name,
+                swsd_source_value,
+                segment_id,
+            )
+            if node is None:
+                continue
+            retained_nodes.append(node_id)
+            removed_node_to_segments.pop(node_id, None)
+    return unique_preserve_order(retained_nodes)
+
+
+def _release_unreferenced_rcsd_roads(
+    segment_id: str,
+    rcsd_road_ids: list[str],
+    segment_relation_rows: list[dict[str, Any]],
+    frcsd_roads: list[dict[str, Any]],
+    final_roads: dict[tuple[str, str], dict[str, Any]],
+    source_field_name: str,
+    rcsd_source_value: int,
+) -> None:
+    if not rcsd_road_ids:
+        return
+    referenced_elsewhere = {
+        road_id
+        for row in segment_relation_rows
+        if str((row.get("properties") or {}).get("swsd_segment_id") or "") != segment_id
+        for road_id in _ids((row.get("properties") or {}).get("frcsd_road_ids"))
+    }
+    remove_row_ids: set[int] = set()
+    for road_id in rcsd_road_ids:
+        if road_id in referenced_elsewhere:
+            continue
+        key = (str(rcsd_source_value), road_id)
+        row = final_roads.pop(key, None)
+        if row is not None:
+            remove_row_ids.add(id(row))
+    if remove_row_ids:
+        frcsd_roads[:] = [row for row in frcsd_roads if id(row) not in remove_row_ids]
 
 
 def _ensure_feature(
@@ -313,6 +424,47 @@ def _mark_relation(
     )
 
 
+def _mark_relation_retained_swsd(
+    props: dict[str, Any],
+    retained_road_ids: list[str],
+    swsd_source_value: int,
+    reason: str,
+) -> None:
+    retained = unique_preserve_order(retained_road_ids)
+    props["retained_detached_swsd_road_ids"] = []
+    props["removed_swsd_road_ids"] = []
+    props["frcsd_road_ids"] = retained
+    props["frcsd_road_source_values"] = [swsd_source_value] if retained else []
+    props["relation_status"] = "retained_swsd"
+    props["relation_reason"] = reason
+    props["source_mix"] = f"source_{swsd_source_value}" if retained else ""
+    props["swsd_to_frcsd_node_map"] = _identity_pair_node_map(props)
+    props["rcsd_pair_nodes"] = []
+    props["rcsd_junc_nodes"] = []
+    props["risk_flags"] = unique_preserve_order([*_ids(props.get("risk_flags")), reason])
+
+
+def _prune_source_not_formal_relation_risk(
+    segment_relation_rows: list[dict[str, Any]],
+    retained_segment_ids: list[str],
+) -> int:
+    retained_segment_set = set(retained_segment_ids)
+    pruned_count = 0
+    for row in segment_relation_rows:
+        props = row.get("properties") or {}
+        segment_id = str(props.get("swsd_segment_id") or "")
+        if segment_id in retained_segment_set:
+            continue
+        risk_flags = _ids(props.get("risk_flags"))
+        if GROUP_SOURCE_NOT_FORMAL_REPLACEABLE_REASON not in risk_flags:
+            continue
+        props["risk_flags"] = [
+            risk_flag for risk_flag in risk_flags if risk_flag != GROUP_SOURCE_NOT_FORMAL_REPLACEABLE_REASON
+        ]
+        pruned_count += 1
+    return pruned_count
+
+
 def _identity_pair_node_map(props: dict[str, Any]) -> list[dict[str, Any]]:
     nodes = unique_preserve_order([*_ids(props.get("swsd_pair_nodes")), *_ids(props.get("swsd_junc_nodes"))])
     return [
@@ -337,6 +489,18 @@ def _mark_unit(unit: Any | None, retained_road_ids: list[str], retained_node_ids
         [*getattr(unit, "retained_detached_swsd_road_ids", []), *retained_road_ids]
     )
     unit.risk_flags = unique_preserve_order([*getattr(unit, "risk_flags", []), fallback_risk])
+
+
+def _mark_unit_retained_swsd(unit: Any | None, retained_road_ids: list[str], retained_node_ids: list[str], reason: str) -> None:
+    if unit is None:
+        return
+    unit.reason = reason
+    unit.rcsd_road_ids = []
+    unit.rcsd_node_ids = []
+    unit.retained_node_ids = []
+    unit.removed_swsd_node_ids = [node_id for node_id in getattr(unit, "removed_swsd_node_ids", []) if node_id not in set(retained_node_ids)]
+    unit.retained_detached_swsd_road_ids = []
+    unit.risk_flags = unique_preserve_order([*getattr(unit, "risk_flags", []), reason])
 
 
 def _append_segment(row: dict[str, Any], segment_id: str) -> None:
@@ -404,8 +568,11 @@ def _stats(
     mainnode_sync_stats: dict[str, int],
     fallback_reasons: dict[str, str],
     blocked_missing_maps: list[str] | None = None,
+    source_not_formal_retained: list[str] | None = None,
+    source_not_formal_risk_pruned_count: int = 0,
 ) -> dict[str, Any]:
     blocked_missing_maps = blocked_missing_maps or []
+    source_not_formal_retained = source_not_formal_retained or []
     directionality_segments = [
         segment_id
         for segment_id in unique_preserve_order(segments)
@@ -424,6 +591,11 @@ def _stats(
         "group_path_corridor_coverage_fallback_blocked_missing_relation_node_map_segments": unique_preserve_order(
             blocked_missing_maps
         ),
+        "group_path_corridor_source_not_formal_retained_segment_count": len(
+            unique_preserve_order(source_not_formal_retained)
+        ),
+        "group_path_corridor_source_not_formal_retained_segments": unique_preserve_order(source_not_formal_retained),
+        "group_path_corridor_source_not_formal_relation_risk_pruned_count": source_not_formal_risk_pruned_count,
         **split_sync_stats,
         **{
             f"group_path_corridor_coverage_fallback_{key}": value

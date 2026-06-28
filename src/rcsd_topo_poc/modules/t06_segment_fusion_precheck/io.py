@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import json
 from collections.abc import Callable
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
@@ -14,6 +15,19 @@ from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import read_vector_layer
 from rcsd_topo_poc.modules.t05_junction_surface_fusion.phase2_io import write_gpkg
 
 from .schemas import PROCESS_CRS_TEXT
+
+
+_SUPPRESS_FEATURE_JSON_DEPTH = 0
+
+
+@contextmanager
+def suppress_feature_json_outputs() -> Iterable[None]:
+    global _SUPPRESS_FEATURE_JSON_DEPTH
+    _SUPPRESS_FEATURE_JSON_DEPTH += 1
+    try:
+        yield
+    finally:
+        _SUPPRESS_FEATURE_JSON_DEPTH -= 1
 
 
 def default_run_id() -> str:
@@ -54,7 +68,8 @@ def write_feature_triplet(
     _notify_output_progress(progress, "csv", "start", csv_path)
     write_csv(csv_path, (feature.get("properties") or {} for feature in features), fieldnames)
     _notify_output_progress(progress, "csv", "end", csv_path)
-    if write_json_output:
+    effective_write_json_output = write_json_output and _SUPPRESS_FEATURE_JSON_DEPTH <= 0
+    if effective_write_json_output:
         _notify_output_progress(progress, "json", "start", json_path)
         write_json(
             json_path,

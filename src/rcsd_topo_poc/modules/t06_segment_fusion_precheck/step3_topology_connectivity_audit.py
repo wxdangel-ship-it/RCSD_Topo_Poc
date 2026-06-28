@@ -8,6 +8,7 @@ from typing import Any
 from shapely.geometry import LineString, MultiLineString, MultiPoint, Point
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import linemerge, unary_union
+from shapely.strtree import STRtree
 
 from .graph_builders import NodeCanonicalizer
 from .parsing import ParseError, directionality_from_sgrade, normalize_id, parse_id_list, unique_preserve_order
@@ -93,6 +94,7 @@ def build_topology_connectivity_audit_rows(
     road_index = _RoadIndex(frcsd_roads, source_field_name=source_field_name)
     canonicalizer = NodeCanonicalizer.from_node_features(frcsd_nodes)
     final_graph = _DirectedRoadGraph(frcsd_roads, canonicalizer=canonicalizer)
+    final_road_index = _RoadLineSpatialIndex(frcsd_roads)
     relation_props = [dict(row.get("properties") or {}) for row in segment_relation_rows]
     relation_by_segment = {str(props.get("swsd_segment_id")): props for props in relation_props}
     attachment_refs_by_node = _attachment_refs_by_swsd_node(
@@ -122,6 +124,7 @@ def build_topology_connectivity_audit_rows(
             relation_props=relation_props,
             road_index=road_index,
             final_roads=frcsd_roads,
+            final_road_index=final_road_index,
             final_graph=final_graph,
             canonicalizer=canonicalizer,
             rcsd_source_value=rcsd_source_value,
@@ -136,6 +139,7 @@ def build_topology_connectivity_audit_rows(
             relation_props=relation_props,
             road_index=road_index,
             final_roads=frcsd_roads,
+            final_road_index=final_road_index,
             final_graph=final_graph,
             canonicalizer=canonicalizer,
             rcsd_source_value=rcsd_source_value,
@@ -510,6 +514,7 @@ def _segment_internal_rows(
     relation_props: list[dict[str, Any]],
     road_index: "_RoadIndex",
     final_roads: list[dict[str, Any]],
+    final_road_index: "_RoadLineSpatialIndex",
     final_graph: "_DirectedRoadGraph",
     canonicalizer: NodeCanonicalizer,
     rcsd_source_value: int,
@@ -607,6 +612,7 @@ def _segment_internal_rows(
                 segment,
                 final_roads,
                 buffer_m=SEGMENT_CORRIDOR_BUFFER_M,
+                road_spatial_index=final_road_index,
             )
             if is_group_path_corridor:
                 status = "warn"
@@ -688,6 +694,7 @@ def _segment_road_rows(
     relation_props: list[dict[str, Any]],
     road_index: "_RoadIndex",
     final_roads: list[dict[str, Any]],
+    final_road_index: "_RoadLineSpatialIndex",
     final_graph: "_DirectedRoadGraph",
     canonicalizer: NodeCanonicalizer,
     rcsd_source_value: int,
@@ -841,6 +848,7 @@ def _segment_road_rows(
                     swsd_road,
                     final_roads,
                     buffer_m=SEGMENT_CORRIDOR_BUFFER_M,
+                    road_spatial_index=final_road_index,
                 )
                 if not _coverage_failed(final_corridor_uncovered_ratio, final_corridor_uncovered_length):
                     status = "warn"
@@ -1583,6 +1591,22 @@ class _RoadIndex:
         return (str(source), str(source_road_id)) in self.materialized_source_road_ids
 
 
+class _RoadLineSpatialIndex:
+    def __init__(self, roads: list[dict[str, Any]]) -> None:
+        self._lines = [
+            line
+            for road in roads
+            for line in [_feature_line(road)]
+            if line is not None and not line.is_empty
+        ]
+        self._tree = STRtree(self._lines) if self._lines else None
+
+    def query_intersecting(self, geometry: BaseGeometry) -> list[LineString]:
+        if self._tree is None:
+            return []
+        return [self._lines[int(index)] for index in self._tree.query(geometry, predicate="intersects")]
+
+
 class _NodeIndex:
     def __init__(self, nodes: list[dict[str, Any]], *, source_field_name: str) -> None:
         self.source_field_name = source_field_name
@@ -1733,21 +1757,25 @@ def _segment_nearby_uncovered_metrics(
     roads: list[dict[str, Any]],
     *,
     buffer_m: float,
+    road_spatial_index: _RoadLineSpatialIndex | None = None,
 ) -> tuple[float | None, float | None]:
     segment_geometry = (segment or {}).get("geometry")
     if not isinstance(segment_geometry, BaseGeometry) or segment_geometry.is_empty or segment_geometry.length <= 0:
         return None, None
     search_geometry = segment_geometry.buffer(buffer_m)
-    segment_bounds = search_geometry.bounds
-    road_geometries: list[LineString] = []
-    for road in roads:
-        line = _feature_line(road)
-        if line is None or line.is_empty:
-            continue
-        if not _bounds_intersect(segment_bounds, line.bounds):
-            continue
-        if line.intersects(search_geometry):
-            road_geometries.append(line)
+    if road_spatial_index is not None:
+        road_geometries = road_spatial_index.query_intersecting(search_geometry)
+    else:
+        segment_bounds = search_geometry.bounds
+        road_geometries = []
+        for road in roads:
+            line = _feature_line(road)
+            if line is None or line.is_empty:
+                continue
+            if not _bounds_intersect(segment_bounds, line.bounds):
+                continue
+            if line.intersects(search_geometry):
+                road_geometries.append(line)
     if not road_geometries:
         return 1.0, float(segment_geometry.length)
     road_union = unary_union(road_geometries)

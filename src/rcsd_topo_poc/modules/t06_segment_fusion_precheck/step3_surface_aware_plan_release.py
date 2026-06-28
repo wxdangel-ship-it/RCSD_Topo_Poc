@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .io import read_features, write_json
+from .io import read_features, suppress_feature_json_outputs, write_json
 from .parsing import parse_id_list, unique_preserve_order
 from .schemas import STEP3_SWSD_FRCSD_SEGMENT_RELATION_STEM
 from .step3_semantic_junction_groups import (
@@ -111,6 +111,7 @@ def run_surface_aware_step3_segment_replacement(
         return artifacts, surface_summary
 
     released_plan = _write_plan_json(artifacts.step_root, release_rows, "candidate")
+    visual_release_pending = _has_visual_conflict_release_candidate(release_rows)
     artifacts = _run_step3(
         step2_replaceable_path=step2_replaceable_path,
         step2_special_junction_group_audit_path=step2_special_junction_group_audit_path,
@@ -125,6 +126,7 @@ def run_surface_aware_step3_segment_replacement(
         run_id=run_id,
         junction_surface_path=surface_inputs.get("t05_surface_path"),
         progress=progress,
+        write_feature_json_outputs=not visual_release_pending,
     )
     surface_summary = _run_surface(
         artifacts,
@@ -132,6 +134,7 @@ def run_surface_aware_step3_segment_replacement(
         swsd_roads_path=swsd_roads_path,
         surface_inputs=surface_inputs,
         surface_topology_closure=surface_topology_closure,
+        write_feature_json_outputs=not visual_release_pending,
     )
     rollback_reference_fail_keys = external_baseline_fail_keys if external_baseline_root else baseline_fail_keys
     added_fail_keys = _topology_fail_keys(artifacts.step_root) - rollback_reference_fail_keys
@@ -140,6 +143,7 @@ def run_surface_aware_step3_segment_replacement(
     if rollback_plan_ids:
         safe_rows = _rollback_release_rows(safe_rows, rollback_plan_ids)
         final_plan = _write_plan_json(artifacts.step_root, safe_rows, "topology_safe")
+        visual_release_pending = _has_visual_conflict_release_candidate(safe_rows)
         artifacts = _run_step3(
             step2_replaceable_path=step2_replaceable_path,
             step2_special_junction_group_audit_path=step2_special_junction_group_audit_path,
@@ -154,6 +158,7 @@ def run_surface_aware_step3_segment_replacement(
             run_id=run_id,
             junction_surface_path=surface_inputs.get("t05_surface_path"),
             progress=progress,
+            write_feature_json_outputs=not visual_release_pending,
         )
         surface_summary = _run_surface(
             artifacts,
@@ -161,6 +166,7 @@ def run_surface_aware_step3_segment_replacement(
             swsd_roads_path=swsd_roads_path,
             surface_inputs=surface_inputs,
             surface_topology_closure=surface_topology_closure,
+            write_feature_json_outputs=not visual_release_pending,
         )
 
     final_fail_keys = _topology_fail_keys(artifacts.step_root)
@@ -175,6 +181,7 @@ def run_surface_aware_step3_segment_replacement(
         rollback_plan_ids.update(external_rollback_plan_ids)
         safe_rows = _rollback_release_rows(safe_rows, external_rollback_plan_ids)
         final_plan = _write_plan_json(artifacts.step_root, safe_rows, "topology_safe")
+        visual_release_pending = _has_visual_conflict_release_candidate(safe_rows)
         artifacts = _run_step3(
             step2_replaceable_path=step2_replaceable_path,
             step2_special_junction_group_audit_path=step2_special_junction_group_audit_path,
@@ -189,6 +196,7 @@ def run_surface_aware_step3_segment_replacement(
             run_id=run_id,
             junction_surface_path=surface_inputs.get("t05_surface_path"),
             progress=progress,
+            write_feature_json_outputs=not visual_release_pending,
         )
         surface_summary = _run_surface(
             artifacts,
@@ -196,6 +204,7 @@ def run_surface_aware_step3_segment_replacement(
             swsd_roads_path=swsd_roads_path,
             surface_inputs=surface_inputs,
             surface_topology_closure=surface_topology_closure,
+            write_feature_json_outputs=not visual_release_pending,
         )
         final_fail_keys = _topology_fail_keys(artifacts.step_root)
         external_added_fail_keys = final_fail_keys - external_baseline_fail_keys if external_baseline_root else set()
@@ -298,8 +307,11 @@ def run_surface_aware_step3_segment_replacement(
     return artifacts, surface_summary
 
 
-def _run_step3(**kwargs: Any) -> T06Step3Artifacts:
-    return run_t06_step3_segment_replacement(**kwargs)
+def _run_step3(*, write_feature_json_outputs: bool = True, **kwargs: Any) -> T06Step3Artifacts:
+    if write_feature_json_outputs:
+        return run_t06_step3_segment_replacement(**kwargs)
+    with suppress_feature_json_outputs():
+        return run_t06_step3_segment_replacement(**kwargs)
 
 
 def _run_surface(
@@ -309,10 +321,42 @@ def _run_surface(
     swsd_roads_path: str | Path,
     surface_inputs: dict[str, Path | None],
     surface_topology_closure: bool,
+    write_feature_json_outputs: bool = True,
 ) -> dict[str, Any] | None:
     if not any(surface_inputs.values()):
         return None
-    summary = run_surface_topology_postprocess(
+    if write_feature_json_outputs:
+        summary = _run_surface_topology_postprocess(
+            artifacts=artifacts,
+            swsd_segment_path=swsd_segment_path,
+            swsd_roads_path=swsd_roads_path,
+            surface_inputs=surface_inputs,
+            surface_topology_closure=surface_topology_closure,
+        )
+    else:
+        with suppress_feature_json_outputs():
+            summary = _run_surface_topology_postprocess(
+                artifacts=artifacts,
+                swsd_segment_path=swsd_segment_path,
+                swsd_roads_path=swsd_roads_path,
+                surface_inputs=surface_inputs,
+                surface_topology_closure=surface_topology_closure,
+            )
+    semantic_stats = refresh_semantic_junction_topology_audit(step_root=artifacts.step_root, summary_path=artifacts.summary_path)
+    if summary is not None:
+        summary["semantic_junction_topology_refresh"] = semantic_stats
+    return summary
+
+
+def _run_surface_topology_postprocess(
+    *,
+    artifacts: T06Step3Artifacts,
+    swsd_segment_path: str | Path,
+    swsd_roads_path: str | Path,
+    surface_inputs: dict[str, Path | None],
+    surface_topology_closure: bool,
+) -> dict[str, Any]:
+    return run_surface_topology_postprocess(
         step_root=artifacts.step_root,
         swsd_segment_path=swsd_segment_path,
         swsd_roads_path=swsd_roads_path,
@@ -323,10 +367,6 @@ def _run_surface(
         t05_surface_path=surface_inputs.get("t05_surface_path"),
         apply_closure=surface_topology_closure,
     )
-    semantic_stats = refresh_semantic_junction_topology_audit(step_root=artifacts.step_root, summary_path=artifacts.summary_path)
-    if summary is not None:
-        summary["semantic_junction_topology_refresh"] = semantic_stats
-    return summary
 
 
 def _surface_release_plan_rows(
@@ -577,6 +617,14 @@ def _visual_conflict_release_plan_rows(rows: list[dict[str, Any]]) -> tuple[list
             }
         )
     return result, released
+
+
+def _has_visual_conflict_release_candidate(rows: list[dict[str, Any]]) -> bool:
+    for row in rows:
+        props = row.get("properties") or {}
+        if props.get("source_reason") == VISUAL_CONFLICT_REASON and props.get("plan_status") != "ready":
+            return True
+    return False
 
 
 def _release_visual_conflict_plan_row(props: dict[str, Any]) -> None:

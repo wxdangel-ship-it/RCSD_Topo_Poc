@@ -387,6 +387,7 @@ if section == "outputs" and value in (None, ""):
         "t04_relation_evidence": ("t04", "relation_evidence"),
         "t04_summary": ("t04", "summary"),
         "t04_audit": ("t04", "audit"),
+        "t05_junction_surface": ("t05", "junction_surface"),
         "t05_intersection_match_all": ("t05", "intersection_match_all"),
         "t05_rcsdroad_out": ("t05", "rcsdroad_out"),
         "t05_rcsdnode_out": ("t05", "rcsdnode_out"),
@@ -396,6 +397,7 @@ if section == "outputs" and value in (None, ""):
         "t06_frcsd_road": ("t06_step3", "frcsd_road"),
         "t06_frcsd_node": ("t06_step3", "frcsd_node"),
         "t06_segment_relation": ("t06_step3", "segment_relation"),
+        "t06_surface_topology_audit": ("t06_step3", "surface_topology_audit"),
         "t09_frcsd_restriction": ("t09", "frcsd_restriction"),
     }
     stage_key = stage_output_keys.get(key)
@@ -1038,13 +1040,17 @@ if should_run_stage t05; then
       --readonly-workers "${T05_READONLY_WORKERS:-4}"
 fi
 T05_PHASE2_ROOT="$T05_OUT_ROOT/t05_phase2_innernet"
+T05_PHASE1_ROOT="$T05_OUT_ROOT/t05_phase1_innernet"
+T05_JUNCTION_SURFACE="$(manifest_get outputs t05_junction_surface "$T05_PHASE1_ROOT/junction_anchor_surface.gpkg")"
 T05_INTERSECTION_MATCH_ALL="$(manifest_get outputs t05_intersection_match_all "$T05_PHASE2_ROOT/intersection_match_all.geojson")"
 T05_RCSDROAD_OUT="$(manifest_get outputs t05_rcsdroad_out "$T05_PHASE2_ROOT/rcsdroad_out.gpkg")"
 T05_RCSDNODE_OUT="$(manifest_get outputs t05_rcsdnode_out "$T05_PHASE2_ROOT/rcsdnode_out.gpkg")"
+require_file T05_JUNCTION_SURFACE "$T05_JUNCTION_SURFACE"
 require_file T05_INTERSECTION_MATCH_ALL "$T05_INTERSECTION_MATCH_ALL"
 require_file T05_RCSDROAD_OUT "$T05_RCSDROAD_OUT"
 require_file T05_RCSDNODE_OUT "$T05_RCSDNODE_OUT"
 if should_run_stage t05; then
+  manifest_set outputs t05_junction_surface "$T05_JUNCTION_SURFACE"
   manifest_set outputs t05_intersection_match_all "$T05_INTERSECTION_MATCH_ALL"
   manifest_set outputs t05_rcsdroad_out "$T05_RCSDROAD_OUT"
   manifest_set outputs t05_rcsdnode_out "$T05_RCSDNODE_OUT"
@@ -1063,6 +1069,7 @@ if should_run_stage t05; then
     "inputs.t04_evidence=$T04_EVIDENCE" \
     "inputs.t04_summary=$T04_SUMMARY" \
     "inputs.t04_audit=$T04_AUDIT" \
+    "outputs.junction_surface=$T05_JUNCTION_SURFACE" \
     "outputs.intersection_match_all=$T05_INTERSECTION_MATCH_ALL" \
     "outputs.rcsdroad_out=$T05_RCSDROAD_OUT" \
     "outputs.rcsdnode_out=$T05_RCSDNODE_OUT" \
@@ -1154,6 +1161,12 @@ if should_run_stage t06_step3; then
       --t05-phase2-root "$T05_PHASE2_ROOT" \
       --rcsdroad "$T05_RCSDROAD_OUT" \
       --rcsdnode "$T05_RCSDNODE_OUT" \
+      --t07-surface "$T07_STEP2_SURFACE" \
+      --t03-surface "$T03_SURFACE" \
+      --t04-surface "$T04_SURFACE" \
+      --t04-audit "$T04_AUDIT" \
+      --t05-surface "$T05_JUNCTION_SURFACE" \
+      --surface-topology-closure \
       --out-root "$T06_OUT_ROOT" \
       --run-id "$T06_RUN_ID"
 fi
@@ -1161,13 +1174,18 @@ T06_STEP3_ROOT="$T06_RUN_ROOT/step3_segment_replacement"
 T06_FRCSD_ROAD="$(manifest_get outputs t06_frcsd_road "$T06_STEP3_ROOT/t06_frcsd_road.gpkg")"
 T06_FRCSD_NODE="$(manifest_get outputs t06_frcsd_node "$T06_STEP3_ROOT/t06_frcsd_node.gpkg")"
 T06_SEGMENT_RELATION="$(manifest_get outputs t06_segment_relation "$T06_STEP3_ROOT/t06_step3_swsd_frcsd_segment_relation.gpkg")"
+T06_SURFACE_TOPOLOGY_AUDIT="$(manifest_get outputs t06_surface_topology_audit "$T06_STEP3_ROOT/t06_step3_surface_topology_audit.gpkg")"
 require_file T06_FRCSD_ROAD "$T06_FRCSD_ROAD"
 require_file T06_FRCSD_NODE "$T06_FRCSD_NODE"
 require_file T06_SEGMENT_RELATION "$T06_SEGMENT_RELATION"
 if should_run_stage t06_step3; then
+  require_file T06_SURFACE_TOPOLOGY_AUDIT "$T06_SURFACE_TOPOLOGY_AUDIT"
+fi
+if should_run_stage t06_step3; then
   manifest_set outputs t06_frcsd_road "$T06_FRCSD_ROAD"
   manifest_set outputs t06_frcsd_node "$T06_FRCSD_NODE"
   manifest_set outputs t06_segment_relation "$T06_SEGMENT_RELATION"
+  manifest_set outputs t06_surface_topology_audit "$T06_SURFACE_TOPOLOGY_AUDIT"
   manifest_stage_record t06_step3 T06 passed "$LOG_ROOT/t06_step3.log" \
     "inputs.t06_run_root=$T06_RUN_ROOT" \
     "inputs.swsd_segment=$T01_SEGMENT" \
@@ -1176,9 +1194,15 @@ if should_run_stage t06_step3; then
     "inputs.t05_phase2_root=$T05_PHASE2_ROOT" \
     "inputs.rcsdroad=$T05_RCSDROAD_OUT" \
     "inputs.rcsdnode=$T05_RCSDNODE_OUT" \
+    "inputs.t07_surface=$T07_STEP2_SURFACE" \
+    "inputs.t03_surface=$T03_SURFACE" \
+    "inputs.t04_surface=$T04_SURFACE" \
+    "inputs.t04_audit=$T04_AUDIT" \
+    "inputs.t05_surface=$T05_JUNCTION_SURFACE" \
     "outputs.frcsd_road=$T06_FRCSD_ROAD" \
     "outputs.frcsd_node=$T06_FRCSD_NODE" \
     "outputs.segment_relation=$T06_SEGMENT_RELATION" \
+    "outputs.surface_topology_audit=$T06_SURFACE_TOPOLOGY_AUDIT" \
     "outputs.summary=$T06_STEP3_ROOT/t06_step3_summary.json" \
     "execution_context.run_root=$T06_STEP3_ROOT"
 fi

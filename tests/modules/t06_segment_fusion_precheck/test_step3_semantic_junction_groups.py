@@ -14,6 +14,7 @@ from rcsd_topo_poc.modules.t06_segment_fusion_precheck.step3_semantic_junction_g
     STEP3_SEMANTIC_JUNCTION_GROUP_FIELDS,
     STEP3_SEMANTIC_JUNCTION_GROUPS_STEM,
     build_semantic_junction_groups,
+    discover_intersection_match_path,
     downgrade_semantic_junction_topology_rows,
     refresh_semantic_junction_topology_audit,
 )
@@ -206,6 +207,42 @@ def test_t05_relation_release_ignores_distance_gate() -> None:
     assert trigger is not None
     assert trigger["ok"] is True
     assert trigger["surface_status"][1] == T05_SEMANTIC_JUNCTION_RELEASE_REASON
+
+
+def test_discover_intersection_match_path_resolves_cli_relative_path_from_cwd(tmp_path: Path, monkeypatch) -> None:
+    repo_root = tmp_path / "repo"
+    step2_root = tmp_path / "run" / "step2_extract_rcsd_segments"
+    relation_path = repo_root / "outputs" / "baseline" / "intersection_match_all.geojson"
+    step2_root.mkdir(parents=True)
+    relation_path.parent.mkdir(parents=True)
+    relation_path.write_text("{}", encoding="utf-8")
+    (step2_root / "t06_step2_summary.json").write_text(
+        json.dumps({"input_paths": {"intersection_match_path": "outputs/baseline/intersection_match_all.geojson"}}),
+        encoding="utf-8",
+    )
+    replaceable_path = step2_root / "t06_rcsd_segment_replaceable.gpkg"
+    replaceable_path.write_text("", encoding="utf-8")
+    monkeypatch.chdir(repo_root)
+
+    assert discover_intersection_match_path(replaceable_path) == relation_path.resolve()
+
+
+def test_discover_intersection_match_path_keeps_summary_relative_fallback(tmp_path: Path, monkeypatch) -> None:
+    step2_root = tmp_path / "step2_extract_rcsd_segments"
+    other_cwd = tmp_path / "other"
+    relation_path = step2_root / "intersection_match_all.geojson"
+    step2_root.mkdir()
+    other_cwd.mkdir()
+    relation_path.write_text("{}", encoding="utf-8")
+    (step2_root / "t06_step2_summary.json").write_text(
+        json.dumps({"input_paths": {"intersection_match_path": "intersection_match_all.geojson"}}),
+        encoding="utf-8",
+    )
+    replaceable_path = step2_root / "t06_rcsd_segment_replaceable.gpkg"
+    replaceable_path.write_text("", encoding="utf-8")
+    monkeypatch.chdir(other_cwd)
+
+    assert discover_intersection_match_path(replaceable_path) == relation_path.resolve()
 
 
 def test_refresh_semantic_junction_topology_audit_rewrites_surface_output(tmp_path: Path) -> None:

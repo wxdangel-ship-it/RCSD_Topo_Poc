@@ -1409,7 +1409,7 @@ def run_t06_step2_extract_rcsd_segments(
                 "swsd_segment_path": str(swsd_segment_path),
                 "swsd_roads_path": str(swsd_roads_path),
                 "swsd_nodes_path": str(swsd_nodes_path),
-                "intersection_match_path": str(intersection_match_path),
+                "intersection_match_path": str(Path(intersection_match_path).resolve()),
                 "rcsdroad_path": str(rcsdroad_path),
                 "rcsdnode_path": str(rcsdnode_path),
             },

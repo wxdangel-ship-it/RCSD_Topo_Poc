@@ -396,6 +396,9 @@ def _release_allowed(
     t05_relation_by_target: dict[str, str] | None = None,
     rcsd_semantic_ids_by_node: dict[str, set[str]] | None = None,
 ) -> tuple[bool, list[dict[str, Any]]]:
+    scope = props.get("execution_scope")
+    if scope and scope != "standard_segment":
+        return False, []
     if not _is_retained_junction_gate_plan(props):
         return False, []
     swsd_anchor_nodes = swsd_anchor_nodes or set()

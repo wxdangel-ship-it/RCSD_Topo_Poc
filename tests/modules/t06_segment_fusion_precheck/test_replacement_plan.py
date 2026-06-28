@@ -1417,6 +1417,27 @@ def test_surface_aware_release_rollback_keeps_t05_semantic_release_as_risk(tmp_p
     assert _rollback_plan_ids(added_fail_keys, released, [], segment_path) == set()
 
 
+def test_surface_aware_release_does_not_promote_path_corridor_group_scope() -> None:
+    allow, triggers = _release_allowed(
+        {
+            "source_reason": "junction_alignment_to_retained_swsd_exceeds_topology_gate",
+            "execution_scope": "path_corridor_group",
+            "swsd_pair_nodes": ["A"],
+            "rcsd_pair_nodes": ["R"],
+        },
+        surface_status={},
+        swsd_points={"A": Point(0, 0)},
+        rcsd_points={"R": Point(50, 0)},
+        incident={"A": ["A_B"]},
+        ready_segments=set(),
+        t05_relation_by_target={"A": "R"},
+        rcsd_semantic_ids_by_node={"R": {"R"}},
+    )
+
+    assert allow is False
+    assert triggers == []
+
+
 def test_visual_conflict_release_keeps_source_reason_and_adds_release_risk() -> None:
     rows = [
         _feature(

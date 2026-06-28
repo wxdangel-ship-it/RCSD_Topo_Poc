@@ -383,6 +383,26 @@ def test_t10_t06_step3_uses_replaceable_file_not_run_root_input(tmp_path: Path, 
     assert record["missing_outputs"] == []
 
 
+def test_t10_innernet_full_pipeline_passes_surface_inputs_to_t06_step3() -> None:
+    repo_root = Path(__file__).resolve().parents[3]
+    script_path = repo_root / "scripts" / "t10_run_innernet_full_pipeline.sh"
+    script = script_path.read_text(encoding="utf-8")
+    t06_step3_region = script.split("if should_run_stage t06_step3; then", 1)[1].split("T09_OUT_ROOT=", 1)[0]
+
+    assert 'T05_JUNCTION_SURFACE="$(manifest_get outputs t05_junction_surface' in script
+    assert '"outputs.junction_surface=$T05_JUNCTION_SURFACE"' in script
+    assert '        "t05_junction_surface": ("t05", "junction_surface"),' in script
+    assert '        "t06_surface_topology_audit": ("t06_step3", "surface_topology_audit"),' in script
+    assert '--t07-surface "$T07_STEP2_SURFACE"' in t06_step3_region
+    assert '--t03-surface "$T03_SURFACE"' in t06_step3_region
+    assert '--t04-surface "$T04_SURFACE"' in t06_step3_region
+    assert '--t04-audit "$T04_AUDIT"' in t06_step3_region
+    assert '--t05-surface "$T05_JUNCTION_SURFACE"' in t06_step3_region
+    assert "--surface-topology-closure" in t06_step3_region
+    assert '"inputs.t05_surface=$T05_JUNCTION_SURFACE"' in t06_step3_region
+    assert '"outputs.surface_topology_audit=$T06_SURFACE_TOPOLOGY_AUDIT"' in t06_step3_region
+
+
 def test_t10_planning_outputs_keep_t08_outside_v1_chain(tmp_path: Path) -> None:
     artifacts = write_t10_planning_outputs(
         manifest=_complete_manifest(tmp_path),

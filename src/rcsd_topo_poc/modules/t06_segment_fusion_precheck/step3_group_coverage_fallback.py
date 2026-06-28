@@ -63,6 +63,7 @@ def retain_group_coverage_fallback(
     retained_roads: list[str] = []
     retained_nodes: list[str] = []
     retained_segments: list[str] = []
+    blocked_missing_maps: list[str] = []
     for segment_id, fallback_reason in fallback_reasons.items():
         relation = relation_by_segment.get(segment_id)
         if relation is None:
@@ -71,6 +72,11 @@ def retain_group_coverage_fallback(
         road_ids = _ids(props.get("swsd_road_ids")) or _ids(props.get("removed_swsd_road_ids"))
         present_roads = [road_id for road_id in road_ids if road_id in swsd_road_by_id]
         if not present_roads:
+            continue
+        if fallback_reason == GROUP_COVERAGE_FALLBACK_REASON and not _has_retained_endpoint_relation_maps(
+            props, present_roads, swsd_road_by_id
+        ):
+            blocked_missing_maps.append(segment_id)
             continue
         retained_segments.append(segment_id)
         segment_retained_nodes: list[str] = []
@@ -113,7 +119,15 @@ def retain_group_coverage_fallback(
         swsd_source_value=swsd_source_value,
         rcsd_source_value=rcsd_source_value,
     )
-    return _stats(retained_segments, retained_roads, retained_nodes, split_sync_stats, mainnode_sync_stats, fallback_reasons)
+    return _stats(
+        retained_segments,
+        retained_roads,
+        retained_nodes,
+        split_sync_stats,
+        mainnode_sync_stats,
+        fallback_reasons,
+        blocked_missing_maps,
+    )
 
 
 def _sync_split_road_refs(
@@ -209,6 +223,35 @@ def _fallback_risk(fallback_reason: str) -> str:
     if fallback_reason == GROUP_DIRECTIONALITY_FALLBACK_REASON:
         return GROUP_DIRECTIONALITY_FALLBACK_RISK
     return GROUP_COVERAGE_FALLBACK_RISK
+
+
+def _has_retained_endpoint_relation_maps(
+    props: dict[str, Any],
+    retained_road_ids: list[str],
+    swsd_road_by_id: dict[str, dict[str, Any]],
+) -> bool:
+    endpoint_nodes: list[str] = []
+    for road_id in retained_road_ids:
+        endpoint_nodes.extend(_road_endpoint_node_ids(swsd_road_by_id.get(road_id, {})))
+    if not endpoint_nodes:
+        return False
+    return set(endpoint_nodes).issubset(_mapped_swsd_node_ids(props.get("swsd_to_frcsd_node_map")))
+
+
+def _mapped_swsd_node_ids(value: Any) -> set[str]:
+    if isinstance(value, str):
+        try:
+            value = parse_id_list(value, allow_empty=True)
+        except ParseError:
+            return set()
+    result: set[str] = set()
+    for item in value if isinstance(value, list) else []:
+        if not isinstance(item, dict):
+            continue
+        node_id = _safe_id(item.get("swsd_node_id"))
+        if node_id and _ids(item.get("frcsd_node_ids")):
+            result.add(node_id)
+    return result
 
 
 def _ensure_feature(
@@ -360,7 +403,9 @@ def _stats(
     split_sync_stats: dict[str, int],
     mainnode_sync_stats: dict[str, int],
     fallback_reasons: dict[str, str],
+    blocked_missing_maps: list[str] | None = None,
 ) -> dict[str, Any]:
+    blocked_missing_maps = blocked_missing_maps or []
     directionality_segments = [
         segment_id
         for segment_id in unique_preserve_order(segments)
@@ -373,6 +418,12 @@ def _stats(
         "group_path_corridor_coverage_fallback_segments": unique_preserve_order(segments),
         "group_path_corridor_directionality_fallback_segment_count": len(directionality_segments),
         "group_path_corridor_directionality_fallback_segments": directionality_segments,
+        "group_path_corridor_coverage_fallback_blocked_missing_relation_node_map_count": len(
+            unique_preserve_order(blocked_missing_maps)
+        ),
+        "group_path_corridor_coverage_fallback_blocked_missing_relation_node_map_segments": unique_preserve_order(
+            blocked_missing_maps
+        ),
         **split_sync_stats,
         **{
             f"group_path_corridor_coverage_fallback_{key}": value

@@ -115,6 +115,93 @@ def test_group_path_corridor_local_coverage_gap_retains_swsd_carrier() -> None:
     assert "retained_swsd_carrier_mainnode_synced" in relation["risk_flags"]
 
 
+def test_group_path_corridor_local_coverage_requires_endpoint_relation_maps() -> None:
+    segment_id = "A_B"
+    units = [_Unit(segment_id=segment_id, swsd_road_ids=["S1", "S2"], removed_swsd_node_ids=["A", "X", "B"])]
+    swsd_segments = [
+        feature(
+            {
+                "id": segment_id,
+                "swsd_segment_id": segment_id,
+                "pair_nodes": ["A", "B"],
+                "junc_nodes": [],
+                "roads": ["S1", "S2"],
+                "sgrade": 2,
+            },
+            LineString([(0, 0), (100, 0)]),
+        )
+    ]
+    swsd_roads = [
+        feature({"id": "S1", "snodeid": "A", "enodeid": "X", "direction": 0}, LineString([(0, 0), (50, 0)])),
+        feature({"id": "S2", "snodeid": "X", "enodeid": "B", "direction": 0}, LineString([(50, 0), (100, 0)])),
+    ]
+    swsd_nodes = [
+        feature({"id": "A", "mainnodeid": "A"}, Point(0, 0)),
+        feature({"id": "X", "mainnodeid": "X"}, Point(50, 0)),
+        feature({"id": "B", "mainnodeid": "B"}, Point(100, 0)),
+    ]
+    frcsd_roads = [
+        feature(
+            {"id": "R1", "snodeid": "RA", "enodeid": "RB", "source": 1, "t06_swsd_segment_ids": [segment_id]},
+            LineString([(0, 100), (100, 100)]),
+        )
+    ]
+    frcsd_nodes = [feature({"id": "RA", "mainnodeid": "RA", "source": 1}, Point(0, 100)), feature({"id": "RB", "mainnodeid": "RB", "source": 1}, Point(100, 100))]
+    relation_rows = [
+        feature(
+            {
+                "swsd_segment_id": segment_id,
+                "relation_status": "replaced",
+                "relation_reason": "group_path_corridor_replacement",
+                "swsd_pair_nodes": ["A", "B"],
+                "swsd_junc_nodes": [],
+                "swsd_road_ids": ["S1", "S2"],
+                "removed_swsd_road_ids": ["S1", "S2"],
+                "retained_detached_swsd_road_ids": [],
+                "frcsd_road_ids": ["R1"],
+                "frcsd_road_source_values": [1],
+                "rcsd_pair_nodes": ["RA", "RB"],
+                "rcsd_junc_nodes": [],
+                "swsd_to_frcsd_node_map": [
+                    {"swsd_node_id": "A", "frcsd_node_ids": ["RA"], "node_role": "pair_node", "mapping_status": "mapped"},
+                    {"swsd_node_id": "B", "frcsd_node_ids": ["RB"], "node_role": "pair_node", "mapping_status": "mapped"},
+                ],
+                "source_mix": "source_1",
+                "risk_flags": ["group_path_corridor_replacement"],
+            },
+            None,
+        )
+    ]
+    removed_roads = {"S1": [segment_id], "S2": [segment_id]}
+    removed_nodes = {"A": [segment_id], "X": [segment_id], "B": [segment_id]}
+
+    stats = retain_group_coverage_fallback(
+        units=units,
+        swsd_segments=swsd_segments,
+        swsd_roads=swsd_roads,
+        swsd_nodes=swsd_nodes,
+        frcsd_roads=frcsd_roads,
+        frcsd_nodes=frcsd_nodes,
+        segment_relation_rows=relation_rows,
+        advance_right_audit_rows=[],
+        removed_road_to_segments=removed_roads,
+        removed_node_to_segments=removed_nodes,
+        source_field_name="source",
+        swsd_source_value=2,
+        rcsd_source_value=1,
+    )
+
+    relation = relation_rows[0]["properties"]
+    assert stats["group_path_corridor_coverage_fallback_segment_count"] == 0
+    assert stats["group_path_corridor_coverage_fallback_blocked_missing_relation_node_map_count"] == 1
+    assert stats["group_path_corridor_coverage_fallback_blocked_missing_relation_node_map_segments"] == [segment_id]
+    assert relation["relation_status"] == "replaced"
+    assert relation["source_mix"] == "source_1"
+    assert removed_roads == {"S1": [segment_id], "S2": [segment_id]}
+    assert removed_nodes == {"A": [segment_id], "X": [segment_id], "B": [segment_id]}
+    assert not any(row["properties"].get("source") == 2 for row in frcsd_roads)
+
+
 def test_split_original_road_refs_are_synced_to_final_materialized_roads() -> None:
     segment_id = "A_B"
     units = [_Unit(segment_id=segment_id, swsd_road_ids=["S1"])]

@@ -22,6 +22,7 @@
 | `architecture/05-quality-requirements.md` | 替换正确性、GIS / 拓扑 / source 边界、性能和回归要求。 |
 | `architecture/06-risks-and-technical-debt.md` | 当前风险、技术债和端到端修复后的治理缺口。 |
 | `history/` | 历史阶段材料，只用于追溯。 |
+| `history/030-innernet-baseline-metrics.md` | 内网执行基线指标，用于 PPT 指标摘录和后续 summary 级基线比对。 |
 
 ## 3. 当前入口位置
 

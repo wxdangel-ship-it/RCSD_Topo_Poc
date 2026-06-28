@@ -152,9 +152,11 @@ def discover_intersection_match_path(step2_replaceable_path: str | Path) -> Path
     if not value:
         return None
     path = Path(value)
-    if not path.is_absolute():
-        path = summary_path.parent / path
-    return path if path.is_file() else None
+    candidates = [path] if path.is_absolute() else [Path.cwd() / path, summary_path.parent / path]
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate.resolve()
+    return None
 
 
 def valid_t05_relation_targets(path: str | Path) -> dict[str, str]:

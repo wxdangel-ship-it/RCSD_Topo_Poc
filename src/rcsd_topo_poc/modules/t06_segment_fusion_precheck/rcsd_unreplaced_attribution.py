@@ -41,6 +41,12 @@ RELATION_FAILURE_REASONS = {
     "relation_failed",
 }
 
+RELATION_INCOMPLETE_IF_NOT_REPLACEABLE_REASONS = {
+    "required_semantic_nodes_missing_from_buffer_graph",
+    "required_semantic_nodes_not_connected_in_buffer",
+    "rcsd_pair_nodes_not_distinct",
+}
+
 STEP3_FAILURE_STATUSES = {"failed", "topology_failed", "connectivity_failed"}
 STEP3_PARTIAL_STATUSES = {"replaced+retained_swsd", "partial_replaced"}
 STEP3_REPLACED_STATUSES = {"replaced", "replaced+retained_swsd", "failed"}
@@ -53,7 +59,7 @@ MIXED_COMPETING_MAX_DISTANCE_M = 1.0
 MIXED_COMPETING_MIN_PRIMARY_COVER_RATIO = 0.05
 
 PPT_CLASS_SEGMENT_RCSD_QUALITY = "1_segment_rcsd_quality_unreplaceable"
-PPT_CLASS_SEGMENT_RELATION_UNSATISFIED = "2_segment_relation_not_satisfied"
+PPT_CLASS_SEGMENT_PREREQUISITE_UNSATISFIED = "2_segment_replacement_prerequisite_unsatisfied"
 PPT_CLASS_OUTSIDE_SEGMENT_SCOPE = "3_rcsd_outside_segment_scope"
 PPT_CLASS_MANUAL_AUDIT = "6_manual_audit"
 
@@ -209,6 +215,7 @@ def run_t06_rcsd_unreplaced_attribution(
             unit_status_by_segment=unit_status_by_segment,
             evidence_ids=evidence_ids,
             relation_scope_ids=relation_scope_ids,
+            replaceable_scope_ids=replaceable_scope_ids,
             step1_reason_by_segment=step1_reason_by_segment,
             step2_reason_by_segment=step2_reason_by_segment,
             problem_reason_by_segment=problem_reason_by_segment,
@@ -654,6 +661,7 @@ def _finalize_attribution(
     unit_status_by_segment: dict[str, list[str]],
     evidence_ids: set[str],
     relation_scope_ids: set[str],
+    replaceable_scope_ids: set[str],
     step1_reason_by_segment: dict[str, list[str]],
     step2_reason_by_segment: dict[str, list[str]],
     problem_reason_by_segment: dict[str, list[str]],
@@ -770,9 +778,12 @@ def _finalize_attribution(
         primary_match.segment_id,
         evidence_ids=evidence_ids,
         relation_scope_ids=relation_scope_ids,
+        replaceable_scope_ids=replaceable_scope_ids,
         step1_reason_by_segment=step1_reason_by_segment,
         step2_reason_by_segment=step2_reason_by_segment,
         problem_reason_by_segment=problem_reason_by_segment,
+        plan_status_by_segment=plan_status_by_segment,
+        step3_status_by_segment=step3_status_by_segment,
     )
     competing_match = _mixed_competing_match(
         primary_match=primary_match,
@@ -780,9 +791,12 @@ def _finalize_attribution(
         segment_matches=segment_matches,
         evidence_ids=evidence_ids,
         relation_scope_ids=relation_scope_ids,
+        replaceable_scope_ids=replaceable_scope_ids,
         step1_reason_by_segment=step1_reason_by_segment,
         step2_reason_by_segment=step2_reason_by_segment,
         problem_reason_by_segment=problem_reason_by_segment,
+        plan_status_by_segment=plan_status_by_segment,
+        step3_status_by_segment=step3_status_by_segment,
     )
     if competing_match is not None:
         return _final_class_props(
@@ -840,9 +854,12 @@ def _segment_based_final_class(
     *,
     evidence_ids: set[str],
     relation_scope_ids: set[str],
+    replaceable_scope_ids: set[str],
     step1_reason_by_segment: dict[str, list[str]],
     step2_reason_by_segment: dict[str, list[str]],
     problem_reason_by_segment: dict[str, list[str]],
+    plan_status_by_segment: dict[str, list[str]],
+    step3_status_by_segment: dict[str, list[str]],
 ) -> dict[str, str]:
     if segment_id not in evidence_ids:
         return {
@@ -867,6 +884,33 @@ def _segment_based_final_class(
             "owner": "segment_relation_quality",
             "reason": "Segment 有 T06 evidence，但 Relation 不满足正式替换要求。",
         }
+    if _is_relation_incomplete_without_replaceable_primary(
+        segment_id,
+        replaceable_scope_ids=replaceable_scope_ids,
+        step2_reason_by_segment=step2_reason_by_segment,
+        problem_reason_by_segment=problem_reason_by_segment,
+    ):
+        return {
+            "class_code": "3_evidence_scope_relation_incomplete",
+            "subclass": _first_reason(
+                [segment_id],
+                step2_reason_by_segment,
+                fallback_map=problem_reason_by_segment,
+                default="3_relation_or_anchor_incomplete",
+            ),
+            "owner": "segment_relation_quality",
+            "reason": "Segment 有 T06 evidence，但 Relation/anchor 语义闭合未达到正式替换要求。",
+        }
+    if segment_id in replaceable_scope_ids and not _collect(
+        [segment_id],
+        step2_reason_by_segment,
+    ) and not _collect([segment_id], problem_reason_by_segment):
+        return {
+            "class_code": "5_replaceable_scope_unreplaced",
+            "subclass": _class5_subclass([segment_id], plan_status_by_segment, step3_status_by_segment),
+            "owner": "T06_algorithm_strategy",
+            "reason": "RCSDRoad 几何主归属已在可替换范围内，但该 road 未被 replacement unit 或 plan 精确引用并最终未落地。",
+        }
     return {
         "class_code": "4_relation_scope_not_replaceable",
         "subclass": _first_reason(
@@ -887,9 +931,12 @@ def _mixed_competing_match(
     segment_matches: list[SegmentMatch],
     evidence_ids: set[str],
     relation_scope_ids: set[str],
+    replaceable_scope_ids: set[str],
     step1_reason_by_segment: dict[str, list[str]],
     step2_reason_by_segment: dict[str, list[str]],
     problem_reason_by_segment: dict[str, list[str]],
+    plan_status_by_segment: dict[str, list[str]],
+    step3_status_by_segment: dict[str, list[str]],
 ) -> SegmentMatch | None:
     if not primary_class_code.startswith("2_"):
         return None
@@ -900,9 +947,12 @@ def _mixed_competing_match(
             match.segment_id,
             evidence_ids=evidence_ids,
             relation_scope_ids=relation_scope_ids,
+            replaceable_scope_ids=replaceable_scope_ids,
             step1_reason_by_segment=step1_reason_by_segment,
             step2_reason_by_segment=step2_reason_by_segment,
             problem_reason_by_segment=problem_reason_by_segment,
+            plan_status_by_segment=plan_status_by_segment,
+            step3_status_by_segment=step3_status_by_segment,
         )["class_code"]
         if candidate_class == primary_class_code:
             continue
@@ -912,6 +962,20 @@ def _mixed_competing_match(
         ):
             return match
     return None
+
+
+def _is_relation_incomplete_without_replaceable_primary(
+    segment_id: str,
+    *,
+    replaceable_scope_ids: set[str],
+    step2_reason_by_segment: dict[str, list[str]],
+    problem_reason_by_segment: dict[str, list[str]],
+) -> bool:
+    if segment_id in replaceable_scope_ids:
+        return False
+    reasons = set(_collect([segment_id], step2_reason_by_segment))
+    reasons.update(_collect([segment_id], problem_reason_by_segment))
+    return any(reason in RELATION_INCOMPLETE_IF_NOT_REPLACEABLE_REASONS for reason in reasons)
 
 
 def _final_class_props(
@@ -990,10 +1054,10 @@ def _match_metric(match: SegmentMatch | None, attr: str) -> float | str:
 
 def _ppt_class_for_attribution(class_code: str, dominant_source_class: str) -> tuple[str, str]:
     source = dominant_source_class or class_code
-    if source.startswith(("2_", "4_", "5_")):
+    if source.startswith(("4_", "5_")):
         return PPT_CLASS_SEGMENT_RCSD_QUALITY, "Segment下面由于RCSD的质量导致无法被替换"
-    if source.startswith("3_"):
-        return PPT_CLASS_SEGMENT_RELATION_UNSATISFIED, "由于Segment本身的Relation不满足要求，导致无法被替换"
+    if source.startswith(("2_", "3_")):
+        return PPT_CLASS_SEGMENT_PREREQUISITE_UNSATISFIED, "Segment侧替换前提不满足导致无法替换"
     if source.startswith("1_"):
         return PPT_CLASS_OUTSIDE_SEGMENT_SCOPE, "RCSD不在Segment范围内，导致无法被替换"
     return PPT_CLASS_MANUAL_AUDIT, "未归因/人工审计"
@@ -1139,8 +1203,14 @@ def _build_summary(
             "coverage keeps the primary Segment class with low confidence and a PPT review flag."
         ),
         "ppt_class_mapping": {
-            "1_segment_rcsd_quality_unreplaceable": ["2_swsd_scope_no_t06_evidence", "4_relation_scope_not_replaceable", "5_replaceable_scope_unreplaced"],
-            "2_segment_relation_not_satisfied": ["3_evidence_scope_relation_incomplete"],
+            "1_segment_rcsd_quality_unreplaceable": [
+                "4_relation_scope_not_replaceable",
+                "5_replaceable_scope_unreplaced",
+            ],
+            "2_segment_replacement_prerequisite_unsatisfied": [
+                "2_swsd_scope_no_t06_evidence",
+                "3_evidence_scope_relation_incomplete",
+            ],
             "3_rcsd_outside_segment_scope": ["1_outside_swsd_segment_scope"],
             "6_manual_audit": ["6_unattributed_manual_audit_without_dominant_class"],
         },

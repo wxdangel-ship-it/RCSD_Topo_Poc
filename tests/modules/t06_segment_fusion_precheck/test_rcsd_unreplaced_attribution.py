@@ -61,6 +61,10 @@ def test_unreplaced_rcsd_attribution_uses_formal_funnel_priority(tmp_path: Path,
             _segment("s4g", 400, y=30),
             _segment("a_mix2", 500),
             _segment("b_mix4", 500),
+            _segment("s5_plan_blocked_unreferenced", 600),
+            _segment("s3_required_disconnected", 700),
+            _segment("s4_directionality", 800),
+            _segment("s4_required_ready", 900),
         ],
     )
     rcsdroad = _write(
@@ -73,6 +77,10 @@ def test_unreplaced_rcsd_attribution_uses_formal_funnel_priority(tmp_path: Path,
             _road("rr1", 1000),
             _road("rr_geo2", 400),
             _road("rr_mix", 500),
+            _road("rr_plan_blocked_unreferenced", 600),
+            _road("rr_required_disconnected", 700),
+            _road("rr_directionality", 800),
+            _road("rr_required_ready", 900),
         ],
     )
 
@@ -84,6 +92,10 @@ def test_unreplaced_rcsd_attribution_uses_formal_funnel_priority(tmp_path: Path,
             _segment_row("s3"),
             _segment_row("s4g"),
             _segment_row("b_mix4"),
+            _segment_row("s5_plan_blocked_unreferenced"),
+            _segment_row("s3_required_disconnected"),
+            _segment_row("s4_directionality"),
+            _segment_row("s4_required_ready"),
         ],
     )
     _write(
@@ -95,13 +107,19 @@ def test_unreplaced_rcsd_attribution_uses_formal_funnel_priority(tmp_path: Path,
     )
     _write(
         run_root / "step2_extract_rcsd_segments" / "t06_rcsd_segment_replaceable.gpkg",
-        [_segment_row("s5", replacement_ready=True)],
+        [
+            _segment_row("s5", replacement_ready=True),
+            _segment_row("s5_plan_blocked_unreferenced", replacement_ready=True),
+        ],
     )
     _write(
         run_root / "step2_extract_rcsd_segments" / "t06_rcsd_segment_rejected.gpkg",
         [
             _segment_row("s4", reject_reason="required_semantic_nodes_not_connected_in_buffer"),
             _segment_row("s3", reject_reason="invalid_pair_relation_status"),
+            _segment_row("s3_required_disconnected", reject_reason="required_semantic_nodes_not_connected_in_buffer"),
+            _segment_row("s4_directionality", reject_reason="rcsd_not_bidirectional_for_swsd_dual"),
+            _segment_row("s4_required_ready", reject_reason="required_semantic_nodes_not_connected_in_buffer"),
         ],
     )
     _write(
@@ -109,6 +127,12 @@ def test_unreplaced_rcsd_attribution_uses_formal_funnel_priority(tmp_path: Path,
         [
             _segment_row("s5", plan_status="ready", rcsd_road_ids='["rr5"]'),
             _segment_row("s4", plan_status="blocked", rcsd_road_ids='["rr4"]'),
+            _segment_row(
+                "s5_plan_blocked_unreferenced",
+                plan_status="blocked",
+                rcsd_road_ids='["different_road"]',
+            ),
+            _segment_row("s4_required_ready", plan_status="ready", rcsd_road_ids='["different_road"]'),
         ],
     )
     _write(
@@ -129,6 +153,10 @@ def test_unreplaced_rcsd_attribution_uses_formal_funnel_priority(tmp_path: Path,
             _road("rr1", 1000),
             _road("rr_geo2", 400),
             _road("rr_mix", 500),
+            _road("rr_plan_blocked_unreferenced", 600),
+            _road("rr_required_disconnected", 700),
+            _road("rr_directionality", 800),
+            _road("rr_required_ready", 900),
         ],
     )
     (run_root / "step3_segment_replacement" / "t06_step3_summary.json").write_text(
@@ -168,9 +196,10 @@ def test_unreplaced_rcsd_attribution_uses_formal_funnel_priority(tmp_path: Path,
     assert by_id["rr3"]["attribution_class"] == "3_evidence_scope_relation_incomplete"
     assert by_id["rr3"]["attribution_subclass"] == "is_anchor_not_eligible"
     assert by_id["rr3"]["final_attribution_class"] == "3_evidence_scope_relation_incomplete"
-    assert by_id["rr3"]["ppt_attribution_class"] == "2_segment_relation_not_satisfied"
+    assert by_id["rr3"]["ppt_attribution_class"] == "2_segment_replacement_prerequisite_unsatisfied"
     assert by_id["rr2"]["attribution_class"] == "2_swsd_scope_no_t06_evidence"
     assert by_id["rr2"]["final_attribution_class"] == "2_swsd_scope_no_t06_evidence"
+    assert by_id["rr2"]["ppt_attribution_class"] == "2_segment_replacement_prerequisite_unsatisfied"
     assert by_id["rr1"]["attribution_class"] == "1_outside_swsd_segment_scope"
     assert by_id["rr1"]["final_attribution_class"] == "1_outside_swsd_segment_scope"
     assert by_id["rr1"]["ppt_attribution_class"] == "3_rcsd_outside_segment_scope"
@@ -180,29 +209,38 @@ def test_unreplaced_rcsd_attribution_uses_formal_funnel_priority(tmp_path: Path,
     assert by_id["rr_mix"]["final_attribution_class"] == "2_swsd_scope_no_t06_evidence"
     assert by_id["rr_mix"]["final_attribution_subclass"] == "2_no_step1_effective_evidence"
     assert by_id["rr_mix"]["final_attribution_confidence"] == "low"
-    assert by_id["rr_mix"]["ppt_attribution_class"] == "1_segment_rcsd_quality_unreplaceable"
+    assert by_id["rr_mix"]["ppt_attribution_class"] == "2_segment_replacement_prerequisite_unsatisfied"
     assert by_id["rr_mix"]["ppt_review_flag"] == "mixed_partial_segment_coverage"
+    assert by_id["rr_plan_blocked_unreferenced"]["final_attribution_class"] == "5_replaceable_scope_unreplaced"
+    assert by_id["rr_plan_blocked_unreferenced"]["final_attribution_subclass"] == "5_plan_blocked"
+    assert by_id["rr_plan_blocked_unreferenced"]["final_attribution_confidence"] == "approximate"
+    assert by_id["rr_required_disconnected"]["final_attribution_class"] == "3_evidence_scope_relation_incomplete"
+    assert by_id["rr_required_disconnected"]["final_attribution_subclass"] == "required_semantic_nodes_not_connected_in_buffer"
+    assert by_id["rr_directionality"]["final_attribution_class"] == "4_relation_scope_not_replaceable"
+    assert by_id["rr_directionality"]["final_attribution_subclass"] == "rcsd_not_bidirectional_for_swsd_dual"
+    assert by_id["rr_required_ready"]["final_attribution_class"] == "4_relation_scope_not_replaceable"
+    assert by_id["rr_required_ready"]["final_attribution_subclass"] == "required_semantic_nodes_not_connected_in_buffer"
 
     summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
-    assert summary["total_rcsd_road_count"] == 7
-    assert summary["unreplaced_rcsd_road_count"] == 7
+    assert summary["total_rcsd_road_count"] == 11
+    assert summary["unreplaced_rcsd_road_count"] == 11
     assert {item["value"]: item["count"] for item in summary["by_attribution_class"]} == {
         "1_outside_swsd_segment_scope": 1,
         "2_swsd_scope_no_t06_evidence": 1,
         "3_evidence_scope_relation_incomplete": 1,
-        "4_relation_scope_not_replaceable": 2,
-        "5_replaceable_scope_unreplaced": 2,
+        "4_relation_scope_not_replaceable": 4,
+        "5_replaceable_scope_unreplaced": 4,
     }
     assert {item["value"]: item["count"] for item in summary["by_final_attribution_class"]} == {
         "1_outside_swsd_segment_scope": 1,
         "2_swsd_scope_no_t06_evidence": 3,
-        "3_evidence_scope_relation_incomplete": 1,
-        "4_relation_scope_not_replaceable": 1,
-        "5_replaceable_scope_unreplaced": 1,
+        "3_evidence_scope_relation_incomplete": 2,
+        "4_relation_scope_not_replaceable": 3,
+        "5_replaceable_scope_unreplaced": 2,
     }
     assert {item["value"]: item["count"] for item in summary["by_ppt_attribution_class"]} == {
         "1_segment_rcsd_quality_unreplaceable": 5,
-        "2_segment_relation_not_satisfied": 1,
+        "2_segment_replacement_prerequisite_unsatisfied": 5,
         "3_rcsd_outside_segment_scope": 1,
     }
     patched_summary = json.loads(

@@ -79,6 +79,7 @@ def run_surface_topology_postprocess(
     swsd_source_value: int = 2,
     rcsd_source_value: int = 1,
     apply_closure: bool = True,
+    topology_coverage_cache: dict[Any, Any] | None = None,
 ) -> dict[str, Any]:
     resolved_step_root = Path(step_root)
     node_path = resolved_step_root / f"{STEP3_FRCSD_NODE_STEM}.gpkg"
@@ -104,6 +105,9 @@ def run_surface_topology_postprocess(
     t04_rejects = _load_t04_rejects(t04_audit_path)
     step2_junc_mappings = _load_step2_optional_junc_mappings(resolved_step_root)
     step2_dropped_junc_nodes = _load_step2_dropped_junc_nodes(resolved_step_root)
+    topology_coverage_cache = topology_coverage_cache if topology_coverage_cache is not None else {}
+    topology_audit_rows: list[dict[str, Any]] | None = None
+    retained_sync_totals: dict[str, int] = {}
 
     audit_rows: list[dict[str, Any]] = []
     action_audit_rows: list[dict[str, Any]] = []
@@ -114,21 +118,24 @@ def run_surface_topology_postprocess(
         step2_dropped_junc_nodes=step2_dropped_junc_nodes,
     )
     if relation_update_count:
-        _rebuild_topology_connectivity_audit(
+        topology_audit_rows, retained_sync_stats = _rebuild_topology_connectivity_audit(
             step_root=resolved_step_root,
             swsd_segment_path=swsd_segment_path,
             swsd_roads_path=swsd_roads_path,
             source_field_name=source_field_name,
             swsd_source_value=swsd_source_value,
             rcsd_source_value=rcsd_source_value,
+            coverage_cache=topology_coverage_cache,
+            write_outputs=False,
         )
+        _add_retained_sync_stats(retained_sync_totals, retained_sync_stats)
     materialized_updates: list[str] = []
     surface_paths: dict[str, Path] = {}
     for _iteration in range(3):
         relation_by_segment = _relation_props_by_segment(
             resolved_step_root / f"{STEP3_SWSD_FRCSD_SEGMENT_RELATION_STEM}.gpkg"
         )
-        topology_audit = gpd.read_file(topology_path)
+        topology_audit = topology_audit_rows if topology_audit_rows is not None else gpd.read_file(topology_path)
         road_by_id = _road_features_by_id_from_features(road_features)
         pass_rows, pass_closure_updates, pass_relation_updates, pass_materialized_updates = _build_surface_audit_rows(
             topology_audit=topology_audit,
@@ -186,16 +193,26 @@ def run_surface_topology_postprocess(
                 features=road_features,
                 fieldnames=road_fields,
             )
-        _rebuild_topology_connectivity_audit(
+        topology_audit_rows, retained_sync_stats = _rebuild_topology_connectivity_audit(
             step_root=resolved_step_root,
             swsd_segment_path=swsd_segment_path,
             swsd_roads_path=swsd_roads_path,
             source_field_name=source_field_name,
             swsd_source_value=swsd_source_value,
             rcsd_source_value=rcsd_source_value,
+            coverage_cache=topology_coverage_cache,
+            write_outputs=False,
         )
+        _add_retained_sync_stats(retained_sync_totals, retained_sync_stats)
         if not pass_materialized_updates:
             break
+
+    if topology_audit_rows is not None:
+        _write_topology_connectivity_audit_rows(
+            resolved_step_root,
+            topology_audit_rows,
+            retained_sync_totals,
+        )
 
     summary = _surface_summary(audit_rows)
     summary.update(
@@ -215,9 +232,14 @@ def run_surface_topology_postprocess(
     return summary
 
 
+def _add_retained_sync_stats(target: dict[str, int], stats: dict[str, Any]) -> None:
+    for key, value in stats.items():
+        target[key] = int(target.get(key, 0) or 0) + int(value or 0)
+
+
 def _build_surface_audit_rows(
     *,
-    topology_audit: gpd.GeoDataFrame,
+    topology_audit: gpd.GeoDataFrame | list[dict[str, Any]],
     node_by_id: dict[str, dict[str, Any]],
     node_features: list[dict[str, Any]],
     road_features: list[dict[str, Any]],
@@ -236,11 +258,7 @@ def _build_surface_audit_rows(
     closure_updates: list[str] = []
     relation_updates: list[dict[str, Any]] = []
     materialized_updates: list[str] = []
-    failed_junctions = topology_audit[
-        (topology_audit["audit_layer"].astype(str) == "segment_junction_connectivity")
-        & (topology_audit["audit_status"].astype(str) == "fail")
-    ]
-    for _, row in failed_junctions.iterrows():
+    for row in _failed_junction_rows(topology_audit):
         swsd_node_id = _safe_id(row.get("swsd_node_id"))
         node_ids = _parse_id_list(row.get("frcsd_node_ids"))
         node_infos = [_node_info(node_by_id.get(node_id), node_id, source_field_name) for node_id in node_ids]
@@ -589,6 +607,21 @@ def _build_surface_audit_rows(
             }
         )
     return rows, unique_preserve_order(closure_updates), relation_updates, unique_preserve_order(materialized_updates)
+
+
+def _failed_junction_rows(topology_audit: gpd.GeoDataFrame | list[dict[str, Any]]) -> list[Any]:
+    if isinstance(topology_audit, list):
+        return [
+            dict(row.get("properties") or {})
+            for row in topology_audit
+            if str((row.get("properties") or {}).get("audit_layer") or "") == "segment_junction_connectivity"
+            and str((row.get("properties") or {}).get("audit_status") or "") == "fail"
+        ]
+    failed_junctions = topology_audit[
+        (topology_audit["audit_layer"].astype(str) == "segment_junction_connectivity")
+        & (topology_audit["audit_status"].astype(str) == "fail")
+    ]
+    return [row for _, row in failed_junctions.iterrows()]
 
 
 def _classify_surface_junction(
@@ -1358,7 +1391,9 @@ def _rebuild_topology_connectivity_audit(
     source_field_name: str,
     swsd_source_value: int,
     rcsd_source_value: int,
-) -> None:
+    coverage_cache: dict[Any, Any] | None = None,
+    write_outputs: bool = True,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     swsd_segments = read_features(swsd_segment_path)
     swsd_roads = read_features(swsd_roads_path)
     road_path = step_root / "t06_frcsd_road.gpkg"
@@ -1399,18 +1434,29 @@ def _rebuild_topology_connectivity_audit(
         source_field_name=source_field_name,
         swsd_source_value=swsd_source_value,
         rcsd_source_value=rcsd_source_value,
+        coverage_cache=coverage_cache,
     )
+    if write_outputs:
+        _write_topology_connectivity_audit_rows(step_root, rows, retained_sync_stats)
+    return rows, retained_sync_stats
+
+
+def _write_topology_connectivity_audit_rows(
+    step_root: Path,
+    rows: list[dict[str, Any]],
+    retained_sync_stats: dict[str, Any] | None = None,
+) -> None:
+    summary_path = step_root / "t06_step3_summary.json"
     write_feature_triplet(
         step_root=step_root,
         stem=STEP3_TOPOLOGY_CONNECTIVITY_AUDIT_STEM,
         features=rows,
         fieldnames=STEP3_TOPOLOGY_CONNECTIVITY_AUDIT_FIELDS,
     )
-    summary_path = step_root / "t06_step3_summary.json"
     if summary_path.is_file():
         payload = json.loads(summary_path.read_text(encoding="utf-8"))
         payload.update(summarize_topology_connectivity_audit(rows))
-        for key, value in retained_sync_stats.items():
+        for key, value in (retained_sync_stats or {}).items():
             payload_key = f"surface_topology_{key}"
             payload[payload_key] = int(payload.get(payload_key, 0) or 0) + int(value or 0)
         write_json(summary_path, payload)

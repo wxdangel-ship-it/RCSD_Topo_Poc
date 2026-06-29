@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from collections import defaultdict, deque
 from itertools import combinations
 from typing import Any
@@ -76,6 +77,8 @@ SEGMENT_MAX_UNCOVERED_RATIO = 0.05
 SEGMENT_CORRIDOR_MANUAL_REVIEW_MAX_UNCOVERED_RATIO = 0.2
 SEGMENT_MIN_UNCOVERED_LENGTH_M = 20.0
 JUNCTION_SURFACE_COVERAGE_RELEASE_RISK = "junction_surface_coverage_release"
+CoverageCacheKey = tuple[float, tuple[tuple[str, str, str], ...]]
+CoverageCache = dict[CoverageCacheKey, BaseGeometry]
 
 
 def build_topology_connectivity_audit_rows(
@@ -89,6 +92,7 @@ def build_topology_connectivity_audit_rows(
     swsd_source_value: int,
     rcsd_source_value: int,
     swsd_roads: list[dict[str, Any]] | None = None,
+    coverage_cache: CoverageCache | None = None,
 ) -> list[dict[str, Any]]:
     node_index = _NodeIndex(frcsd_nodes, source_field_name=source_field_name)
     road_index = _RoadIndex(frcsd_roads, source_field_name=source_field_name)
@@ -101,6 +105,8 @@ def build_topology_connectivity_audit_rows(
         advance_right_audit_rows,
         rcsd_source_value=rcsd_source_value,
     )
+    if coverage_cache is None:
+        coverage_cache = {}
 
     rows: list[dict[str, Any]] = []
     rows.extend(
@@ -130,6 +136,7 @@ def build_topology_connectivity_audit_rows(
             rcsd_source_value=rcsd_source_value,
             swsd_source_value=swsd_source_value,
             attachment_refs_by_node=attachment_refs_by_node,
+            coverage_cache=coverage_cache,
         )
     )
     rows.extend(
@@ -145,6 +152,7 @@ def build_topology_connectivity_audit_rows(
             rcsd_source_value=rcsd_source_value,
             swsd_source_value=swsd_source_value,
             attachment_refs_by_node=attachment_refs_by_node,
+            coverage_cache=coverage_cache,
         )
     )
     rows.extend(
@@ -520,10 +528,10 @@ def _segment_internal_rows(
     rcsd_source_value: int,
     swsd_source_value: int,
     attachment_refs_by_node: dict[str, list["_NodeRef"]],
+    coverage_cache: CoverageCache,
 ) -> list[dict[str, Any]]:
     segment_by_id = {_feature_id(segment): segment for segment in swsd_segments}
     rows: list[dict[str, Any]] = []
-    coverage_cache: dict[tuple[float, tuple[tuple[str, str], ...]], BaseGeometry] = {}
     for props in relation_props:
         segment_id = str(props.get("swsd_segment_id") or "")
         if not segment_id:
@@ -700,11 +708,11 @@ def _segment_road_rows(
     rcsd_source_value: int,
     swsd_source_value: int,
     attachment_refs_by_node: dict[str, list["_NodeRef"]],
+    coverage_cache: CoverageCache,
 ) -> list[dict[str, Any]]:
     segment_by_id = {_feature_id(segment): segment for segment in swsd_segments}
     swsd_road_by_id = {_feature_id(road): road for road in swsd_roads}
     rows: list[dict[str, Any]] = []
-    coverage_cache: dict[tuple[float, tuple[tuple[str, str], ...]], BaseGeometry] = {}
     for props in relation_props:
         segment_id = str(props.get("swsd_segment_id") or "")
         segment = segment_by_id.get(segment_id)
@@ -1701,7 +1709,7 @@ def _segment_uncovered_metrics(
     roads: list[dict[str, Any]],
     *,
     buffer_m: float,
-    coverage_cache: dict[tuple[float, tuple[tuple[str, str], ...]], BaseGeometry] | None = None,
+    coverage_cache: CoverageCache | None = None,
 ) -> tuple[float | None, float | None]:
     segment_geometry = (segment or {}).get("geometry")
     if not isinstance(segment_geometry, BaseGeometry) or segment_geometry.is_empty or segment_geometry.length <= 0:
@@ -1718,7 +1726,7 @@ def _buffered_road_union(
     roads: list[dict[str, Any]],
     *,
     buffer_m: float,
-    coverage_cache: dict[tuple[float, tuple[tuple[str, str], ...]], BaseGeometry] | None,
+    coverage_cache: CoverageCache | None,
 ) -> BaseGeometry | None:
     key = _road_buffer_cache_key(roads, buffer_m=buffer_m)
     if coverage_cache is not None and key in coverage_cache:
@@ -1737,7 +1745,7 @@ def _buffered_road_union(
     return buffered
 
 
-def _road_buffer_cache_key(roads: list[dict[str, Any]], *, buffer_m: float) -> tuple[float, tuple[tuple[str, str], ...]]:
+def _road_buffer_cache_key(roads: list[dict[str, Any]], *, buffer_m: float) -> CoverageCacheKey:
     return (
         float(buffer_m),
         tuple(
@@ -1745,11 +1753,19 @@ def _road_buffer_cache_key(roads: list[dict[str, Any]], *, buffer_m: float) -> t
                 (
                     _source_text((road.get("properties") or {}).get("source")),
                     _feature_id(road),
+                    _feature_line_digest(road),
                 )
                 for road in roads
             )
         ),
     )
+
+
+def _feature_line_digest(feature_item: dict[str, Any]) -> str:
+    line = _feature_line(feature_item)
+    if line is None or line.is_empty:
+        return ""
+    return hashlib.blake2b(line.wkb, digest_size=16).hexdigest()
 
 
 def _segment_nearby_uncovered_metrics(

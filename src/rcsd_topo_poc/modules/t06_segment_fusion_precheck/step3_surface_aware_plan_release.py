@@ -58,6 +58,7 @@ def run_surface_aware_step3_segment_replacement(
     progress: bool,
 ) -> tuple[T06Step3Artifacts, dict[str, Any] | None]:
     has_surface_inputs = any(surface_inputs.values())
+    topology_coverage_cache: dict[Any, Any] = {}
     initial_step3_kwargs = {
         "step2_replaceable_path": step2_replaceable_path,
         "step2_special_junction_group_audit_path": step2_special_junction_group_audit_path,
@@ -84,6 +85,7 @@ def run_surface_aware_step3_segment_replacement(
         surface_inputs=surface_inputs,
         surface_topology_closure=surface_topology_closure,
         write_feature_json_outputs=not has_surface_inputs,
+        topology_coverage_cache=topology_coverage_cache,
     )
     if not has_surface_inputs:
         return artifacts, surface_summary
@@ -99,6 +101,7 @@ def run_surface_aware_step3_segment_replacement(
             swsd_roads_path=swsd_roads_path,
             surface_inputs=surface_inputs,
             surface_topology_closure=surface_topology_closure,
+            topology_coverage_cache=topology_coverage_cache,
         )
         _write_release_audit(artifacts.step_root, {"status": "skipped", "reason": "missing_replacement_plan"})
         return artifacts, surface_summary
@@ -126,6 +129,7 @@ def run_surface_aware_step3_segment_replacement(
             swsd_roads_path=swsd_roads_path,
             surface_inputs=surface_inputs,
             surface_topology_closure=surface_topology_closure,
+            topology_coverage_cache=topology_coverage_cache,
         )
         _write_release_audit(
             artifacts.step_root,
@@ -163,6 +167,7 @@ def run_surface_aware_step3_segment_replacement(
         surface_inputs=surface_inputs,
         surface_topology_closure=surface_topology_closure,
         write_feature_json_outputs=not visual_release_pending,
+        topology_coverage_cache=topology_coverage_cache,
     )
     rollback_reference_fail_keys = external_baseline_fail_keys if external_baseline_root else baseline_fail_keys
     candidate_fail_keys = _topology_fail_keys(artifacts.step_root)
@@ -213,6 +218,7 @@ def run_surface_aware_step3_segment_replacement(
                 surface_inputs=surface_inputs,
                 surface_topology_closure=surface_topology_closure,
                 write_feature_json_outputs=not visual_release_pending,
+                topology_coverage_cache=topology_coverage_cache,
             )
             final_fail_keys = _topology_fail_keys(artifacts.step_root)
 
@@ -252,6 +258,7 @@ def run_surface_aware_step3_segment_replacement(
             surface_inputs=surface_inputs,
             surface_topology_closure=surface_topology_closure,
             write_feature_json_outputs=not visual_release_pending,
+            topology_coverage_cache=topology_coverage_cache,
         )
         final_fail_keys = _topology_fail_keys(artifacts.step_root)
         external_added_fail_keys = final_fail_keys - external_baseline_fail_keys if external_baseline_root else set()
@@ -279,6 +286,7 @@ def run_surface_aware_step3_segment_replacement(
             swsd_roads_path=swsd_roads_path,
             surface_inputs=surface_inputs,
             surface_topology_closure=surface_topology_closure,
+            topology_coverage_cache=topology_coverage_cache,
         )
         final_fail_keys = _topology_fail_keys(artifacts.step_root)
         surface_safe_plan_pending = False
@@ -308,6 +316,7 @@ def run_surface_aware_step3_segment_replacement(
             surface_inputs=surface_inputs,
             surface_topology_closure=surface_topology_closure,
             write_feature_json_outputs=False,
+            topology_coverage_cache=topology_coverage_cache,
         )
         visual_candidate_fail_keys = _topology_fail_keys(artifacts.step_root)
         visual_added_fail_keys = visual_candidate_fail_keys - visual_baseline_fail_keys
@@ -343,6 +352,7 @@ def run_surface_aware_step3_segment_replacement(
                 swsd_roads_path=swsd_roads_path,
                 surface_inputs=surface_inputs,
                 surface_topology_closure=surface_topology_closure,
+                topology_coverage_cache=topology_coverage_cache,
             )
         final_fail_keys = _topology_fail_keys(artifacts.step_root)
         external_added_fail_keys = final_fail_keys - external_baseline_fail_keys if external_baseline_root else set()
@@ -397,6 +407,7 @@ def _run_surface(
     surface_inputs: dict[str, Path | None],
     surface_topology_closure: bool,
     write_feature_json_outputs: bool = True,
+    topology_coverage_cache: dict[Any, Any] | None = None,
 ) -> dict[str, Any] | None:
     if not any(surface_inputs.values()):
         return None
@@ -407,6 +418,7 @@ def _run_surface(
             swsd_roads_path=swsd_roads_path,
             surface_inputs=surface_inputs,
             surface_topology_closure=surface_topology_closure,
+            topology_coverage_cache=topology_coverage_cache,
         )
     else:
         with suppress_feature_json_outputs():
@@ -416,6 +428,7 @@ def _run_surface(
                 swsd_roads_path=swsd_roads_path,
                 surface_inputs=surface_inputs,
                 surface_topology_closure=surface_topology_closure,
+                topology_coverage_cache=topology_coverage_cache,
             )
     semantic_stats = refresh_semantic_junction_topology_audit(step_root=artifacts.step_root, summary_path=artifacts.summary_path)
     if summary is not None:
@@ -430,6 +443,7 @@ def _run_surface_topology_postprocess(
     swsd_roads_path: str | Path,
     surface_inputs: dict[str, Path | None],
     surface_topology_closure: bool,
+    topology_coverage_cache: dict[Any, Any] | None = None,
 ) -> dict[str, Any]:
     return run_surface_topology_postprocess(
         step_root=artifacts.step_root,
@@ -441,6 +455,7 @@ def _run_surface_topology_postprocess(
         t04_audit_path=surface_inputs.get("t04_audit_path"),
         t05_surface_path=surface_inputs.get("t05_surface_path"),
         apply_closure=surface_topology_closure,
+        topology_coverage_cache=topology_coverage_cache,
     )
 
 

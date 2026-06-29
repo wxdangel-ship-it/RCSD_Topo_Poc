@@ -7,6 +7,7 @@ import geopandas as gpd
 from shapely.geometry import LineString
 
 from rcsd_topo_poc.modules.t00_utility_toolbox.common import write_vector
+from rcsd_topo_poc.modules.t06_segment_fusion_precheck import rcsd_unreplaced_attribution as attribution_module
 from rcsd_topo_poc.modules.t06_segment_fusion_precheck.rcsd_unreplaced_attribution import (
     run_t06_rcsd_unreplaced_attribution,
 )
@@ -47,7 +48,7 @@ def _segment_row(segment_id: str, **props) -> dict:
     }
 
 
-def test_unreplaced_rcsd_attribution_uses_formal_funnel_priority(tmp_path: Path) -> None:
+def test_unreplaced_rcsd_attribution_uses_formal_funnel_priority(tmp_path: Path, monkeypatch) -> None:
     run_root = tmp_path / "t06_run"
     swsd_segment = _write(
         tmp_path / "segment.gpkg",
@@ -93,7 +94,11 @@ def test_unreplaced_rcsd_attribution_uses_formal_funnel_priority(tmp_path: Path)
     )
     _write(
         run_root / "step2_extract_rcsd_segments" / "t06_segment_replacement_plan.gpkg",
-        [_segment_row("s5", plan_status="ready")],
+        [_segment_row("s5", plan_status="ready", rcsd_road_ids=["rr5"])],
+    )
+    _write(
+        run_root / "step3_segment_replacement" / "t06_step3_replacement_units.gpkg",
+        [_segment_row("s5", unit_status="failed", rcsd_road_ids=["rr5"])],
     )
     _write(
         run_root / "step3_segment_replacement" / "t06_step3_swsd_frcsd_segment_relation.gpkg",
@@ -113,6 +118,15 @@ def test_unreplaced_rcsd_attribution_uses_formal_funnel_priority(tmp_path: Path)
         json.dumps({"outputs": {}}, ensure_ascii=False),
         encoding="utf-8",
     )
+    match_call_count = 0
+    original_match = attribution_module._match_roads_to_segments
+
+    def counting_match(*args, **kwargs):
+        nonlocal match_call_count
+        match_call_count += 1
+        return original_match(*args, **kwargs)
+
+    monkeypatch.setattr(attribution_module, "_match_roads_to_segments", counting_match)
 
     artifacts = run_t06_rcsd_unreplaced_attribution(
         t06_run_root=run_root,
@@ -121,16 +135,27 @@ def test_unreplaced_rcsd_attribution_uses_formal_funnel_priority(tmp_path: Path)
         audit_buffer_m=5.0,
     )
 
+    assert match_call_count == 1
     rows = gpd.read_file(artifacts.attribution_gpkg_path)
     by_id = {row["id"]: row for _, row in rows.iterrows()}
     assert by_id["rr5"]["attribution_class"] == "5_replaceable_scope_unreplaced"
     assert by_id["rr5"]["attribution_subclass"] == "5_step3_failed"
+    assert by_id["rr5"]["final_attribution_class"] == "5_replaceable_scope_unreplaced"
+    assert by_id["rr5"]["final_attribution_subclass"] == "5_step3_failed"
+    assert by_id["rr5"]["final_attribution_confidence"] == "exact"
+    assert by_id["rr5"]["final_attribution_basis"] == "exact_replacement_unit_failed"
+    assert by_id["rr5"]["final_primary_segment_id"] == "s5"
     assert by_id["rr4"]["attribution_class"] == "4_relation_scope_not_replaceable"
     assert by_id["rr4"]["attribution_subclass"] == "required_semantic_nodes_not_connected_in_buffer"
+    assert by_id["rr4"]["final_attribution_class"] == "4_relation_scope_not_replaceable"
+    assert by_id["rr4"]["final_attribution_confidence"] == "approximate"
     assert by_id["rr3"]["attribution_class"] == "3_evidence_scope_relation_incomplete"
     assert by_id["rr3"]["attribution_subclass"] == "is_anchor_not_eligible"
+    assert by_id["rr3"]["final_attribution_class"] == "3_evidence_scope_relation_incomplete"
     assert by_id["rr2"]["attribution_class"] == "2_swsd_scope_no_t06_evidence"
+    assert by_id["rr2"]["final_attribution_class"] == "2_swsd_scope_no_t06_evidence"
     assert by_id["rr1"]["attribution_class"] == "1_outside_swsd_segment_scope"
+    assert by_id["rr1"]["final_attribution_class"] == "1_outside_swsd_segment_scope"
 
     summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
     assert summary["total_rcsd_road_count"] == 5
@@ -142,7 +167,19 @@ def test_unreplaced_rcsd_attribution_uses_formal_funnel_priority(tmp_path: Path)
         "4_relation_scope_not_replaceable",
         "5_replaceable_scope_unreplaced",
     ]
+    assert [item["value"] for item in summary["by_final_attribution_class"]] == [
+        "1_outside_swsd_segment_scope",
+        "2_swsd_scope_no_t06_evidence",
+        "3_evidence_scope_relation_incomplete",
+        "4_relation_scope_not_replaceable",
+        "5_replaceable_scope_unreplaced",
+    ]
+    assert {item["value"]: item["count"] for item in summary["by_final_attribution_confidence"]} == {
+        "approximate": 4,
+        "exact": 1,
+    }
     patched_summary = json.loads(
         (run_root / "step3_segment_replacement" / "t06_step3_summary.json").read_text(encoding="utf-8")
     )
     assert "unreplaced_rcsd_attribution_gpkg" in patched_summary["outputs"]
+    assert "rcsd_unreplaced_final_attribution_by_class" in patched_summary

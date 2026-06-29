@@ -8,6 +8,8 @@ from rcsd_topo_poc.modules.t06_segment_fusion_precheck.replacement_plan import (
     build_problem_registry_rows,
     build_replacement_plan_rows,
 )
+from rcsd_topo_poc.modules.t06_segment_fusion_precheck.schemas import T06Step3Artifacts
+from rcsd_topo_poc.modules.t06_segment_fusion_precheck import step3_surface_aware_plan_release as release_module
 from rcsd_topo_poc.modules.t06_segment_fusion_precheck.step3_surface_aware_plan_release import (
     _points_by_id,
     _release_allowed,
@@ -1720,6 +1722,168 @@ def test_visual_conflict_non_replaced_release_is_rolled_back(tmp_path: Path) -> 
     ]
 
     assert _visual_conflict_non_replaced_plan_ids(step_root, released) == {"standard:s_retained"}
+
+
+def test_surface_aware_visual_release_reuses_candidate_when_no_rollback(monkeypatch, tmp_path) -> None:
+    step_root = tmp_path / "run" / "step3_segment_replacement"
+    step_root.mkdir(parents=True)
+    original_plan = tmp_path / "replacement_plan.gpkg"
+    original_plan.write_text("plan", encoding="utf-8")
+    summary_path = step_root / "t06_step3_summary.json"
+    summary_path.write_text(
+        '{"input_paths": {"step2_replacement_plan_path": "' + str(original_plan).replace("\\", "\\\\") + '"}}',
+        encoding="utf-8",
+    )
+    calls = []
+
+    def fake_run_step3(*, write_feature_json_outputs=True, **kwargs):
+        calls.append((write_feature_json_outputs, kwargs.get("step2_replacement_plan_path")))
+        return T06Step3Artifacts(
+            run_id="run",
+            run_root=tmp_path / "run",
+            step_root=step_root,
+            frcsd_road_gpkg_path=step_root / "road.gpkg",
+            frcsd_node_gpkg_path=step_root / "node.gpkg",
+            replacement_units_gpkg_path=step_root / "units.gpkg",
+            swsd_frcsd_segment_relation_gpkg_path=step_root / "relation.gpkg",
+            junction_rebuild_audit_gpkg_path=step_root / "junction.gpkg",
+            summary_path=summary_path,
+        )
+
+    def fake_write_plan_json(step_root_arg, rows, suffix):
+        path = step_root_arg / f"plan_{suffix}.json"
+        path.write_text("[]", encoding="utf-8")
+        return path
+
+    monkeypatch.setattr(release_module, "_run_step3", fake_run_step3)
+    monkeypatch.setattr(release_module, "_run_surface", lambda *args, **kwargs: {})
+    monkeypatch.setattr(release_module, "_topology_fail_keys", lambda *args, **kwargs: set())
+    monkeypatch.setattr(release_module, "_external_baseline_step3_root", lambda *args, **kwargs: None)
+    monkeypatch.setattr(release_module, "read_features", lambda *_args, **_kwargs: [_feature({"replacement_plan_id": "standard:s1"})])
+    monkeypatch.setattr(
+        release_module,
+        "_surface_release_plan_rows",
+        lambda *args, **kwargs: ([_feature({"replacement_plan_id": "standard:s1"})], [{"plan_id": "standard:s1"}]),
+    )
+    monkeypatch.setattr(release_module, "_has_visual_conflict_release_candidate", lambda _rows: True)
+    monkeypatch.setattr(
+        release_module,
+        "_visual_conflict_release_plan_rows",
+        lambda rows: (rows, [{"plan_id": "standard:s1", "segment_id": "s1", "group_segment_ids": []}]),
+    )
+    monkeypatch.setattr(release_module, "_write_plan_json", fake_write_plan_json)
+    monkeypatch.setattr(release_module, "_rollback_plan_ids", lambda *args, **kwargs: set())
+    monkeypatch.setattr(release_module, "_visual_conflict_non_replaced_plan_ids", lambda *args, **kwargs: set())
+    monkeypatch.setattr(release_module, "_visual_conflict_rollback_plan_ids", lambda *args, **kwargs: set())
+
+    release_module.run_surface_aware_step3_segment_replacement(
+        step2_replaceable_path=tmp_path / "replaceable.gpkg",
+        step2_special_junction_group_audit_path=None,
+        step2_group_replacement_audit_path=None,
+        swsd_segment_path=tmp_path / "segment.gpkg",
+        swsd_roads_path=tmp_path / "roads.gpkg",
+        swsd_nodes_path=tmp_path / "nodes.gpkg",
+        rcsdroad_path=tmp_path / "rcsdroad.gpkg",
+        rcsdnode_path=tmp_path / "rcsdnode.gpkg",
+        out_root=tmp_path,
+        run_id="run",
+        surface_inputs={"t05_surface_path": tmp_path / "surface.gpkg"},
+        surface_topology_closure=True,
+        progress=False,
+    )
+
+    assert len(calls) == 3
+    assert [call[0] for call in calls] == [False, False, False]
+
+
+def test_surface_aware_visual_release_skips_surface_safe_intermediate_rerun(monkeypatch, tmp_path) -> None:
+    step_root = tmp_path / "run" / "step3_segment_replacement"
+    step_root.mkdir(parents=True)
+    original_plan = tmp_path / "replacement_plan.gpkg"
+    original_plan.write_text("plan", encoding="utf-8")
+    summary_path = step_root / "t06_step3_summary.json"
+    summary_path.write_text(
+        '{"input_paths": {"step2_replacement_plan_path": "' + str(original_plan).replace("\\", "\\\\") + '"}}',
+        encoding="utf-8",
+    )
+    calls = []
+    current_plan = {"name": None}
+
+    def fake_run_step3(*, write_feature_json_outputs=True, **kwargs):
+        plan = kwargs.get("step2_replacement_plan_path")
+        current_plan["name"] = plan.name if plan else None
+        calls.append((write_feature_json_outputs, current_plan["name"]))
+        return T06Step3Artifacts(
+            run_id="run",
+            run_root=tmp_path / "run",
+            step_root=step_root,
+            frcsd_road_gpkg_path=step_root / "road.gpkg",
+            frcsd_node_gpkg_path=step_root / "node.gpkg",
+            replacement_units_gpkg_path=step_root / "units.gpkg",
+            swsd_frcsd_segment_relation_gpkg_path=step_root / "relation.gpkg",
+            junction_rebuild_audit_gpkg_path=step_root / "junction.gpkg",
+            summary_path=summary_path,
+        )
+
+    baseline_fail = ("segment_junction_connectivity", "s_base", "", "", "base_fail")
+    surface_fail = ("segment_junction_connectivity", "s_surface", "", "", "surface_fail")
+    visual_fail = ("segment_junction_connectivity", "s_visual", "", "", "visual_fail")
+
+    def fake_topology_fail_keys(_step_root):
+        if current_plan["name"] == "t06_step3_surface_aware_replacement_plan_candidate.json":
+            return {baseline_fail, surface_fail}
+        if current_plan["name"] == "t06_step3_surface_aware_replacement_plan_visual_candidate.json":
+            return {baseline_fail, visual_fail}
+        return {baseline_fail}
+
+    monkeypatch.setattr(release_module, "_run_step3", fake_run_step3)
+    monkeypatch.setattr(release_module, "_run_surface", lambda *args, **kwargs: {})
+    monkeypatch.setattr(release_module, "_topology_fail_keys", fake_topology_fail_keys)
+    monkeypatch.setattr(release_module, "_external_baseline_step3_root", lambda *args, **kwargs: None)
+    monkeypatch.setattr(release_module, "read_features", lambda *_args, **_kwargs: [_feature({"replacement_plan_id": "standard:s1"})])
+    monkeypatch.setattr(release_module, "_incident_segments_by_node", lambda _rows: {})
+    monkeypatch.setattr(
+        release_module,
+        "_surface_release_plan_rows",
+        lambda *args, **kwargs: (
+            [_feature({"replacement_plan_id": "standard:s_surface"})],
+            [{"plan_id": "standard:s_surface", "segment_id": "s_surface", "group_segment_ids": []}],
+        ),
+    )
+    monkeypatch.setattr(release_module, "_rollback_plan_ids", lambda *args, **kwargs: {"standard:s_surface"})
+    monkeypatch.setattr(release_module, "_has_visual_conflict_release_candidate", lambda _rows: True)
+    monkeypatch.setattr(
+        release_module,
+        "_visual_conflict_release_plan_rows",
+        lambda rows: (rows, [{"plan_id": "standard:s_visual", "segment_id": "s_visual", "group_segment_ids": []}]),
+    )
+    monkeypatch.setattr(release_module, "_visual_conflict_non_replaced_plan_ids", lambda *args, **kwargs: set())
+    monkeypatch.setattr(release_module, "_visual_conflict_rollback_plan_ids", lambda *args, **kwargs: {"standard:s_visual"})
+
+    release_module.run_surface_aware_step3_segment_replacement(
+        step2_replaceable_path=tmp_path / "replaceable.gpkg",
+        step2_special_junction_group_audit_path=None,
+        step2_group_replacement_audit_path=None,
+        swsd_segment_path=tmp_path / "segment.gpkg",
+        swsd_roads_path=tmp_path / "roads.gpkg",
+        swsd_nodes_path=tmp_path / "nodes.gpkg",
+        rcsdroad_path=tmp_path / "rcsdroad.gpkg",
+        rcsdnode_path=tmp_path / "rcsdnode.gpkg",
+        out_root=tmp_path,
+        run_id="run",
+        surface_inputs={"t05_surface_path": tmp_path / "surface.gpkg"},
+        surface_topology_closure=True,
+        progress=False,
+    )
+
+    assert [call[1] for call in calls] == [
+        None,
+        "t06_step3_surface_aware_replacement_plan_candidate.json",
+        "t06_step3_surface_aware_replacement_plan_visual_candidate.json",
+        "t06_step3_surface_aware_replacement_plan_visual_topology_safe.json",
+    ]
+    assert "t06_step3_surface_aware_replacement_plan_topology_safe.json" not in [call[1] for call in calls]
+    assert (step_root / "t06_step3_surface_aware_replacement_plan_topology_safe.json").is_file()
 
 
 def test_visual_manual_release_allows_small_pair_attachment_gap_to_retained_incident_segment() -> None:

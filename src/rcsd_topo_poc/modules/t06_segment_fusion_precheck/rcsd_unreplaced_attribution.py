@@ -26,6 +26,7 @@ STEP2_REPLACEABLE_STEM = "t06_rcsd_segment_replaceable"
 STEP2_REJECTED_STEM = "t06_rcsd_segment_rejected"
 STEP2_PLAN_STEM = "t06_segment_replacement_plan"
 STEP2_PROBLEM_REGISTRY_STEM = "t06_segment_replacement_problem_registry"
+STEP3_REPLACEMENT_UNITS_STEM = "t06_step3_replacement_units"
 STEP3_RELATION_STEM = "t06_step3_swsd_frcsd_segment_relation"
 STEP3_UNREPLACED_RCSD_STEM = "t06_step3_unreplaced_rcsd_roads"
 ATTRIBUTION_STEM = "t06_step3_unreplaced_rcsd_attribution"
@@ -100,6 +101,7 @@ def run_t06_rcsd_unreplaced_attribution(
     step2_plan = _read_gdf(step2_root / f"{STEP2_PLAN_STEM}.gpkg")
     step2_registry = _read_gdf(step2_root / f"{STEP2_PROBLEM_REGISTRY_STEM}.gpkg")
     step2_summary = _read_optional_json(step2_root / "t06_step2_summary.json")
+    step3_units = _read_gdf(step3_root / f"{STEP3_REPLACEMENT_UNITS_STEM}.gpkg")
     step3_relation = _read_gdf(step3_root / f"{STEP3_RELATION_STEM}.gpkg")
 
     all_segment_ids = _ids_from_column(swsd_segments, "id")
@@ -113,17 +115,26 @@ def run_t06_rcsd_unreplaced_attribution(
     step2_reason_by_segment = _reason_map(step2_rejected)
     problem_reason_by_segment = _problem_reason_map(step2_registry)
     plan_status_by_segment = _plan_status_map(step2_plan)
+    unit_status_by_segment = _status_map(step3_units, "unit_status")
     step3_status_by_segment = _step3_status_map(step3_relation)
+    ready_plan_segments_by_road = _road_segment_map(
+        step2_plan,
+        road_column="rcsd_road_ids",
+        status_column="plan_status",
+        include_statuses={"ready"},
+    )
+    blocked_plan_segments_by_road = _road_segment_map(
+        step2_plan,
+        road_column="rcsd_road_ids",
+        status_column="plan_status",
+        exclude_statuses={"ready"},
+    )
+    unit_segments_by_road = _road_segment_map(step3_units, road_column="rcsd_road_ids")
 
     matches_all = _match_roads_to_segments(unreplaced_roads, swsd_segments, all_segment_ids, audit_buffer_m)
-    matches_evidence = _match_roads_to_segments(unreplaced_roads, swsd_segments, evidence_ids, audit_buffer_m)
-    matches_relation = _match_roads_to_segments(unreplaced_roads, swsd_segments, relation_scope_ids, audit_buffer_m)
-    matches_replaceable = _match_roads_to_segments(
-        unreplaced_roads,
-        swsd_segments,
-        replaceable_scope_ids,
-        audit_buffer_m,
-    )
+    matches_evidence = _filter_matches_by_segment_scope(matches_all, evidence_ids)
+    matches_relation = _filter_matches_by_segment_scope(matches_all, relation_scope_ids)
+    matches_replaceable = _filter_matches_by_segment_scope(matches_all, replaceable_scope_ids)
 
     features: list[dict[str, Any]] = []
     for _, road in unreplaced_roads.iterrows():
@@ -143,8 +154,26 @@ def run_t06_rcsd_unreplaced_attribution(
             plan_status_by_segment=plan_status_by_segment,
             step3_status_by_segment=step3_status_by_segment,
         )
+        final_classification = _finalize_attribution(
+            road_id=road_id,
+            coarse_classification=classification,
+            replaceable_ids=replaceable_ids,
+            relation_ids=relation_ids,
+            evidence_ids=evidence_match_ids,
+            all_ids=all_ids,
+            ready_plan_segments_by_road=ready_plan_segments_by_road,
+            blocked_plan_segments_by_road=blocked_plan_segments_by_road,
+            unit_segments_by_road=unit_segments_by_road,
+            unit_status_by_segment=unit_status_by_segment,
+            step1_reason_by_segment=step1_reason_by_segment,
+            step2_reason_by_segment=step2_reason_by_segment,
+            problem_reason_by_segment=problem_reason_by_segment,
+            plan_status_by_segment=plan_status_by_segment,
+            step3_status_by_segment=step3_status_by_segment,
+        )
         props = _road_properties(road)
         props.update(classification)
+        props.update(final_classification)
         props.update(
             {
                 "audit_buffer_m": float(audit_buffer_m),
@@ -331,6 +360,45 @@ def _problem_reason_map(frame: gpd.GeoDataFrame) -> dict[str, list[str]]:
     return out
 
 
+def _status_map(frame: gpd.GeoDataFrame, column: str) -> dict[str, list[str]]:
+    out: dict[str, list[str]] = defaultdict(list)
+    if frame.empty or column not in frame.columns:
+        return out
+    for _, row in frame.iterrows():
+        segment_id = _segment_id(row)
+        status = _norm(row.get(column))
+        if segment_id and status and status not in out[segment_id]:
+            out[segment_id].append(status)
+    return out
+
+
+def _road_segment_map(
+    frame: gpd.GeoDataFrame,
+    *,
+    road_column: str,
+    status_column: str | None = None,
+    include_statuses: set[str] | None = None,
+    exclude_statuses: set[str] | None = None,
+) -> dict[str, list[str]]:
+    out: dict[str, list[str]] = defaultdict(list)
+    if frame.empty or road_column not in frame.columns:
+        return out
+    for _, row in frame.iterrows():
+        segment_id = _segment_id(row)
+        if not segment_id:
+            continue
+        status = _norm(row.get(status_column)) if status_column else ""
+        if include_statuses is not None and status not in include_statuses:
+            continue
+        if exclude_statuses is not None and status in exclude_statuses:
+            continue
+        for road_id in parse_id_list(row.get(road_column)):
+            road_id = _norm(road_id)
+            if road_id and segment_id not in out[road_id]:
+                out[road_id].append(segment_id)
+    return {road_id: sorted(segment_ids) for road_id, segment_ids in out.items()}
+
+
 def _plan_status_map(frame: gpd.GeoDataFrame) -> dict[str, list[str]]:
     out: dict[str, list[str]] = defaultdict(list)
     if frame.empty:
@@ -387,6 +455,21 @@ def _match_roads_to_segments(
         if road_id and segment_id and segment_id not in matches[road_id]:
             matches[road_id].append(segment_id)
     return {road_id: sorted(ids) for road_id, ids in matches.items()}
+
+
+def _filter_matches_by_segment_scope(
+    matches: dict[str, list[str]],
+    segment_ids: set[str],
+) -> dict[str, list[str]]:
+    if not matches or not segment_ids:
+        return {}
+    scope = {_norm(segment_id) for segment_id in segment_ids if _norm(segment_id)}
+    scoped: dict[str, list[str]] = {}
+    for road_id, matched_segment_ids in matches.items():
+        filtered = sorted(segment_id for segment_id in matched_segment_ids if _norm(segment_id) in scope)
+        if filtered:
+            scoped[road_id] = filtered
+    return scoped
 
 
 def _classify_road(
@@ -454,6 +537,255 @@ def _classify_road(
         reason="RCSD不在SWSD Segment范围内，按SWSD时效性或质量导致无法替换归因。",
         subclass="1_outside_swsd_segment_scope",
     )
+
+
+def _finalize_attribution(
+    *,
+    road_id: str,
+    coarse_classification: dict[str, Any],
+    replaceable_ids: list[str],
+    relation_ids: list[str],
+    evidence_ids: list[str],
+    all_ids: list[str],
+    ready_plan_segments_by_road: dict[str, list[str]],
+    blocked_plan_segments_by_road: dict[str, list[str]],
+    unit_segments_by_road: dict[str, list[str]],
+    unit_status_by_segment: dict[str, list[str]],
+    step1_reason_by_segment: dict[str, list[str]],
+    step2_reason_by_segment: dict[str, list[str]],
+    problem_reason_by_segment: dict[str, list[str]],
+    plan_status_by_segment: dict[str, list[str]],
+    step3_status_by_segment: dict[str, list[str]],
+) -> dict[str, Any]:
+    unit_ids = unit_segments_by_road.get(road_id, [])
+    ready_plan_ids = ready_plan_segments_by_road.get(road_id, [])
+    blocked_plan_ids = blocked_plan_segments_by_road.get(road_id, [])
+    competing_classes = _competing_classes(
+        unit_ids=unit_ids,
+        ready_plan_ids=ready_plan_ids,
+        blocked_plan_ids=blocked_plan_ids,
+        relation_ids=relation_ids,
+        evidence_ids=evidence_ids,
+        all_ids=all_ids,
+    )
+    if unit_ids:
+        primary_segment_id = unit_ids[0]
+        unit_statuses = _collect(unit_ids, unit_status_by_segment)
+        if any(status != "passed" for status in unit_statuses):
+            basis = "exact_replacement_unit_failed"
+            subclass = "5_step3_failed"
+        else:
+            basis = "exact_replacement_unit_road_not_in_frcsd"
+            subclass = "5_replacement_unit_road_not_consumed"
+        return _final_class_props(
+            coarse_classification,
+            class_code="5_replaceable_scope_unreplaced",
+            subclass=subclass,
+            owner="T06_algorithm_strategy",
+            reason="未替换RCSDRoad已被Step3 replacement unit 精确引用，但最终未进入 F-RCSD。",
+            confidence="exact",
+            basis=basis,
+            primary_segment_id=primary_segment_id,
+            primary_scope="replacement_unit_rcsd_road_ids",
+            competing_classes=competing_classes,
+            plan_statuses=_joined_reasons([primary_segment_id], plan_status_by_segment),
+            step3_statuses=_joined_reasons([primary_segment_id], step3_status_by_segment),
+            step1_reasons=_joined_reasons([primary_segment_id], step1_reason_by_segment),
+            step2_reasons=_joined_reasons([primary_segment_id], step2_reason_by_segment),
+            problem_reasons=_joined_reasons([primary_segment_id], problem_reason_by_segment),
+        )
+    if ready_plan_ids:
+        primary_segment_id = ready_plan_ids[0]
+        return _final_class_props(
+            coarse_classification,
+            class_code="5_replaceable_scope_unreplaced",
+            subclass="5_ready_plan_road_not_consumed",
+            owner="T06_algorithm_strategy",
+            reason="未替换RCSDRoad已被 ready replacement plan 精确引用，但最终未进入 F-RCSD。",
+            confidence="exact",
+            basis="exact_ready_plan_road_not_consumed",
+            primary_segment_id=primary_segment_id,
+            primary_scope="ready_plan_rcsd_road_ids",
+            competing_classes=competing_classes,
+            plan_statuses=_joined_reasons([primary_segment_id], plan_status_by_segment),
+            step3_statuses=_joined_reasons([primary_segment_id], step3_status_by_segment),
+            step1_reasons=_joined_reasons([primary_segment_id], step1_reason_by_segment),
+            step2_reasons=_joined_reasons([primary_segment_id], step2_reason_by_segment),
+            problem_reasons=_joined_reasons([primary_segment_id], problem_reason_by_segment),
+        )
+    if blocked_plan_ids:
+        primary_segment_id = blocked_plan_ids[0]
+        return _final_class_props(
+            coarse_classification,
+            class_code="4_relation_scope_not_replaceable",
+            subclass=_first_reason(
+                blocked_plan_ids,
+                step2_reason_by_segment,
+                fallback_map=problem_reason_by_segment,
+                default="blocked_replacement_plan",
+            ),
+            owner="SWSD_data_quality",
+            reason="未替换RCSDRoad只被 blocked replacement plan 精确引用，表示 relation 后仍未形成可执行替换计划。",
+            confidence="exact",
+            basis="exact_blocked_plan_road_not_replaceable",
+            primary_segment_id=primary_segment_id,
+            primary_scope="blocked_plan_rcsd_road_ids",
+            competing_classes=competing_classes,
+            plan_statuses=_joined_reasons([primary_segment_id], plan_status_by_segment),
+            step3_statuses=_joined_reasons([primary_segment_id], step3_status_by_segment),
+            step1_reasons=_joined_reasons([primary_segment_id], step1_reason_by_segment),
+            step2_reasons=_joined_reasons([primary_segment_id], step2_reason_by_segment),
+            problem_reasons=_joined_reasons([primary_segment_id], problem_reason_by_segment),
+        )
+    if relation_ids:
+        primary_segment_id = relation_ids[0]
+        return _final_class_props(
+            coarse_classification,
+            class_code="4_relation_scope_not_replaceable",
+            subclass=_first_reason(
+                relation_ids,
+                step2_reason_by_segment,
+                fallback_map=problem_reason_by_segment,
+                default="4_relation_complete_not_replaceable",
+            ),
+            owner="SWSD_data_quality",
+            reason="未替换RCSDRoad命中 relation-complete Segment buffer，但未命中可执行 plan 或 replacement unit。",
+            confidence="approximate",
+            basis="approx_relation_scope_buffer",
+            primary_segment_id=primary_segment_id,
+            primary_scope="relation_scope_segment_buffer",
+            competing_classes=competing_classes,
+            plan_statuses=_joined_reasons([primary_segment_id], plan_status_by_segment),
+            step3_statuses=_joined_reasons([primary_segment_id], step3_status_by_segment),
+            step1_reasons=_joined_reasons([primary_segment_id], step1_reason_by_segment),
+            step2_reasons=_joined_reasons([primary_segment_id], step2_reason_by_segment),
+            problem_reasons=_joined_reasons([primary_segment_id], problem_reason_by_segment),
+        )
+    if evidence_ids:
+        primary_segment_id = evidence_ids[0]
+        return _final_class_props(
+            coarse_classification,
+            class_code="3_evidence_scope_relation_incomplete",
+            subclass=_first_reason(
+                evidence_ids,
+                step1_reason_by_segment,
+                fallback_map=step2_reason_by_segment,
+                default="3_relation_incomplete",
+            ),
+            owner="pre_T05_junction_anchor",
+            reason="未替换RCSDRoad命中 T06 evidence Segment buffer，但未命中 relation-complete Segment。",
+            confidence="approximate",
+            basis="approx_evidence_scope_buffer",
+            primary_segment_id=primary_segment_id,
+            primary_scope="evidence_segment_buffer",
+            competing_classes=competing_classes,
+            plan_statuses=_joined_reasons([primary_segment_id], plan_status_by_segment),
+            step3_statuses=_joined_reasons([primary_segment_id], step3_status_by_segment),
+            step1_reasons=_joined_reasons([primary_segment_id], step1_reason_by_segment),
+            step2_reasons=_joined_reasons([primary_segment_id], step2_reason_by_segment),
+            problem_reasons=_joined_reasons([primary_segment_id], problem_reason_by_segment),
+        )
+    if all_ids:
+        primary_segment_id = all_ids[0]
+        return _final_class_props(
+            coarse_classification,
+            class_code="2_swsd_scope_no_t06_evidence",
+            subclass=_first_reason(
+                all_ids,
+                step1_reason_by_segment,
+                default="2_swsd_segment_without_t06_evidence",
+            ),
+            owner="RCSD_patch_version_mismatch",
+            reason="未替换RCSDRoad命中 SWSD Segment buffer，但未命中 T06 evidence Segment。",
+            confidence="approximate",
+            basis="approx_swsd_segment_scope_buffer",
+            primary_segment_id=primary_segment_id,
+            primary_scope="swsd_segment_buffer",
+            competing_classes=competing_classes,
+            plan_statuses=_joined_reasons([primary_segment_id], plan_status_by_segment),
+            step3_statuses=_joined_reasons([primary_segment_id], step3_status_by_segment),
+            step1_reasons=_joined_reasons([primary_segment_id], step1_reason_by_segment),
+            step2_reasons=_joined_reasons([primary_segment_id], step2_reason_by_segment),
+            problem_reasons=_joined_reasons([primary_segment_id], problem_reason_by_segment),
+        )
+    return _final_class_props(
+        coarse_classification,
+        class_code="1_outside_swsd_segment_scope",
+        subclass="1_outside_swsd_segment_scope",
+        owner="SWSD_timeliness_or_quality",
+        reason="未替换RCSDRoad未命中任何 SWSD Segment buffer。",
+        confidence="approximate",
+        basis="approx_outside_swsd_segment_scope",
+        primary_segment_id="",
+        primary_scope="outside_swsd_segment_buffer",
+        competing_classes=competing_classes,
+        plan_statuses="",
+        step3_statuses="",
+        step1_reasons="",
+        step2_reasons="",
+        problem_reasons="",
+    )
+
+
+def _final_class_props(
+    coarse_classification: dict[str, Any],
+    *,
+    class_code: str,
+    subclass: str,
+    owner: str,
+    reason: str,
+    confidence: str,
+    basis: str,
+    primary_segment_id: str,
+    primary_scope: str,
+    competing_classes: list[str],
+    plan_statuses: str,
+    step3_statuses: str,
+    step1_reasons: str,
+    step2_reasons: str,
+    problem_reasons: str,
+) -> dict[str, Any]:
+    return {
+        "coarse_attribution_class": coarse_classification.get("attribution_class", ""),
+        "coarse_attribution_subclass": coarse_classification.get("attribution_subclass", ""),
+        "final_attribution_class": class_code,
+        "final_attribution_subclass": subclass,
+        "final_attribution_owner": owner,
+        "final_attribution_reason": reason,
+        "final_attribution_confidence": confidence,
+        "final_attribution_basis": basis,
+        "final_primary_segment_id": primary_segment_id,
+        "final_primary_scope": primary_scope,
+        "final_plan_statuses": plan_statuses,
+        "final_step3_relation_statuses": step3_statuses,
+        "final_step1_reject_reasons": step1_reasons,
+        "final_step2_reject_reasons": step2_reasons,
+        "final_problem_registry_reasons": problem_reasons,
+        "competing_final_attribution_classes": "|".join(competing_classes),
+    }
+
+
+def _competing_classes(
+    *,
+    unit_ids: list[str],
+    ready_plan_ids: list[str],
+    blocked_plan_ids: list[str],
+    relation_ids: list[str],
+    evidence_ids: list[str],
+    all_ids: list[str],
+) -> list[str]:
+    classes: list[str] = []
+    if unit_ids or ready_plan_ids:
+        classes.append("5_replaceable_scope_unreplaced")
+    if blocked_plan_ids or relation_ids:
+        classes.append("4_relation_scope_not_replaceable")
+    if evidence_ids:
+        classes.append("3_evidence_scope_relation_incomplete")
+    if all_ids:
+        classes.append("2_swsd_scope_no_t06_evidence")
+    if not all_ids:
+        classes.append("1_outside_swsd_segment_scope")
+    return classes
 
 
 def _class_props(priority: int, class_code: str, owner: str, reason: str, subclass: str) -> dict[str, Any]:
@@ -556,6 +888,10 @@ def _build_summary(
     by_class = _aggregate(rows, "attribution_class", total_length, unreplaced_length)
     by_subclass = _aggregate(rows, "attribution_subclass", total_length, unreplaced_length)
     by_owner = _aggregate(rows, "attribution_owner", total_length, unreplaced_length)
+    by_final_class = _aggregate(rows, "final_attribution_class", total_length, unreplaced_length)
+    by_final_subclass = _aggregate(rows, "final_attribution_subclass", total_length, unreplaced_length)
+    by_final_owner = _aggregate(rows, "final_attribution_owner", total_length, unreplaced_length)
+    by_final_confidence = _aggregate(rows, "final_attribution_confidence", total_length, unreplaced_length)
     return {
         "audit_name": "t06_step3_unreplaced_rcsd_attribution",
         "audit_buffer_m": float(audit_buffer_m),
@@ -578,6 +914,10 @@ def _build_summary(
         "by_attribution_class": by_class,
         "by_attribution_subclass": by_subclass,
         "by_attribution_owner": by_owner,
+        "by_final_attribution_class": by_final_class,
+        "by_final_attribution_subclass": by_final_subclass,
+        "by_final_attribution_owner": by_final_owner,
+        "by_final_attribution_confidence": by_final_confidence,
         "outputs": {
             "gpkg": str(attribution_gpkg_path),
             "csv": str(attribution_csv_path),
@@ -643,6 +983,10 @@ def _patch_step3_summary(
     summary["rcsd_unreplaced_attribution_count"] = attribution_summary["unreplaced_rcsd_road_count"]
     summary["rcsd_unreplaced_attribution_length_m"] = attribution_summary["unreplaced_rcsd_road_length_m"]
     summary["rcsd_unreplaced_attribution_by_class"] = attribution_summary["by_attribution_class"]
+    summary["rcsd_unreplaced_final_attribution_by_class"] = attribution_summary["by_final_attribution_class"]
+    summary["rcsd_unreplaced_final_attribution_by_confidence"] = attribution_summary[
+        "by_final_attribution_confidence"
+    ]
     outputs = summary.setdefault("outputs", {})
     if isinstance(outputs, dict):
         outputs["unreplaced_rcsd_attribution_gpkg"] = str(attribution_gpkg_path)
@@ -666,6 +1010,22 @@ def _attribution_fields() -> list[str]:
         "attribution_subclass",
         "attribution_owner",
         "attribution_reason",
+        "coarse_attribution_class",
+        "coarse_attribution_subclass",
+        "final_attribution_class",
+        "final_attribution_subclass",
+        "final_attribution_owner",
+        "final_attribution_reason",
+        "final_attribution_confidence",
+        "final_attribution_basis",
+        "final_primary_segment_id",
+        "final_primary_scope",
+        "final_plan_statuses",
+        "final_step3_relation_statuses",
+        "final_step1_reject_reasons",
+        "final_step2_reject_reasons",
+        "final_problem_registry_reasons",
+        "competing_final_attribution_classes",
         "audit_buffer_m",
         "matched_segment_count",
         "matched_segment_ids",

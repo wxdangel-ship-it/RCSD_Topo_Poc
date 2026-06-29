@@ -74,7 +74,7 @@ T06 消费 T01 SWSD Segment 与 T05 SWSD-RCSD 语义路口关系，构建 RCSDSe
 | `t06_frcsd_road.* / t06_frcsd_node.*` | Step3 F-RCSD 替换结果；`t06_frcsd_node.*` 可写入 `semantic_junction_group_id`，表达物理节点分离但语义同一路口的分组。 |
 | `t06_step3_semantic_junction_groups.*` | Step3 基于 T05 有效 `target_id -> base_id` 关系输出的语义路口组审计，覆盖远距离 SWSD/RCSD 多源节点分裂风险。 |
 | `t06_step3_unreplaced_rcsd_roads.*` | 未进入替换结果的 RCSDRoad 基础清单。 |
-| `t06_step3_unreplaced_rcsd_attribution.* / t06_step3_unreplaced_rcsd_attribution_summary.json` | 未替换 RCSDRoad 的反向归因审计；按 `5 > 4 > 3 > 2 > 1 > 6` 优先级区分 T06 算法策略质量、SWSD 数据质量 / 匹配质量、T05 前路口锚定、RCSD 与 Patch 版本不一致、SWSD 时效性 / 质量和未归因问题，并输出 total-RCSD 分母下的数量与里程统计。 |
+| `t06_step3_unreplaced_rcsd_attribution.* / t06_step3_unreplaced_rcsd_attribution_summary.json` | 未替换 RCSDRoad 的反向归因审计；保留 `attribution_*` 漏斗粗口径，并以 `final_attribution_*` 输出强证据优先、几何主 Segment 优先后的最终六类归因。PPT 三大类以 `ppt_attribution_*` 输出：`2/4/5 -> Segment下面由于RCSD质量导致无法被替换`、`3 -> Segment本身Relation不满足要求`、`1 -> RCSD不在Segment范围内`；mixed 部分覆盖不新增归因类型，只以低置信与 `ppt_review_flag` 标记。summary 输出 total-RCSD 分母下的数量与里程统计。 |
 | `t06_step3_swsd_frcsd_segment_relation.*` | 所有 SWSD Segment 到 F-RCSD carrier 的稳定关系索引，区分 `replaced / replaced+retained_swsd / retained_swsd / failed`；`frcsd_road_ids` 必须指向最终存在的 F-RCSD Road，按 `source_mix / frcsd_road_source_values` 区分 RCSD 替换 carrier 与保留 SWSD carrier。 |
 | `t06_step3_topology_connectivity_audit.*` | Step3 最终道路-节点完整性、正式替换 source 一致性、Segment 内连通、路口映射和挂接质量审计。 |
 | `t06_step3_surface_topology_audit.*` | 可选 surface-assisted closure 审计，记录 T03/T04/T05/T07 surface 对节点闭合的贡献和阻断原因。 |

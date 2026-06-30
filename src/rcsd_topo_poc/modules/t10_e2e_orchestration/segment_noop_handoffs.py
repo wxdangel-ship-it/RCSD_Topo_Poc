@@ -133,6 +133,8 @@ def _is_no_candidate_stdout(record: Mapping[str, Any]) -> bool:
     text = "\n".join(str(line) for line in record.get("stdout_tail") or [])
     if "RCSDIntersection layer has no non-empty geometry" in text:
         return True
+    if "RCSDNode layer has no usable id/mainnodeid geometry records" in text:
+        return True
     if "No eligible T03 internal full-input cases were discovered" in text:
         return True
     return "No eligible T04 candidates were discovered" in text

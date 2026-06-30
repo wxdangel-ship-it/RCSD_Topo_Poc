@@ -31,7 +31,7 @@
 - Segment scope 类型：`scope.scope_type = swsd_segment`。
 - Segment evidence source：`t10_run_root` + `t01_segment` + T06 evidence artifacts。
 - Segment external input selection：由 T01 Segment 几何、Segment 端点和 matched T06 evidence rows 中的 SWSD/RCSD 节点/道路依赖形成 evidence dependency closure，不暴露 `RADIUS_M`。
-- Segment no-candidate handoff：T07 stdout 明确无 RCSDIntersection 几何，或 T03/T04 stdout 明确无 eligible candidate 时，记录 `segment_no_candidate_handoff=true`、复制上游 nodes、生成空 relation/surface/audit 输出，继续本地 replay。
+- Segment no-candidate handoff：T07 stdout 明确无可用 RCSDIntersection 或 RCSDNode 几何记录，或 T03/T04 stdout 明确无 eligible candidate 时，记录 `segment_no_candidate_handoff=true`、复制上游 nodes、生成空 relation/surface/audit 输出，继续本地 replay。
 - 默认物化模式：`spatial_slice`。
 - 外部输入仍按 `external_inputs/<slot>/<slot>_slice.gpkg` 输出。
 - 多 Segment 包输出：

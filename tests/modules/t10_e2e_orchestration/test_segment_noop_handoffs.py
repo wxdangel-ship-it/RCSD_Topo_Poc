@@ -38,6 +38,28 @@ def test_segment_t07_no_intersection_handoff_writes_explicit_outputs(tmp_path: P
         assert len(src) == 0
 
 
+def test_segment_t07_no_rcsdnode_handoff_writes_explicit_outputs(tmp_path: Path) -> None:
+    source_nodes = tmp_path / "t01_nodes.gpkg"
+    _write_node_fixture(source_nodes)
+    record = {
+        "status": "failed",
+        "stdout_tail": ["T07RunError: RCSDNode layer has no usable id/mainnodeid geometry records."],
+    }
+
+    produced = try_segment_no_candidate_handoff(
+        "t07",
+        "segment_1881693_604644939",
+        tmp_path / "t07_stage",
+        record,
+        {"t01_nodes": source_nodes},
+        {"t07_nodes": "", "t07_surface": "", "t07_relation_evidence": ""},
+    )
+
+    assert produced is not None
+    assert record["status"] == "passed"
+    assert Path(produced["t07_relation_evidence"]).read_text(encoding="utf-8").startswith("target_id,representative_node_id")
+
+
 def test_segment_t03_no_candidate_handoff_writes_explicit_outputs(tmp_path: Path) -> None:
     source_nodes = tmp_path / "t07_nodes.gpkg"
     source_nodes.write_bytes(b"placeholder nodes")

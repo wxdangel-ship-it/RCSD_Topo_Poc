@@ -158,7 +158,7 @@ Case runner 不改变 T01-T09 算法，只负责：
 - 记录每个阶段的 command、env override、输入、输出、stdout log、耗时与状态。
 - 在 T06 可执行时生成 T06 数据漏斗。
 
-Segment package replay 的空 handoff 只适用于合法无候选的 Segment 闭包：T07 stdout 必须明确 `RCSDIntersection layer has no non-empty geometry`，或 T03/T04 stdout 必须明确为无 eligible candidate，且 CaseID 必须为 `segment_*`。该 handoff 必须复制上游 nodes、生成空 relation/surface/audit 文件、记录 `noop_reason=no_eligible_candidates_in_segment_dependency_closure`，并不得用于普通 semantic-junction Case，也不得把失败阶段的部分输出提升为正式 handoff。
+Segment package replay 的空 handoff 只适用于合法无候选的 Segment 闭包：T07 stdout 必须明确无可用 `RCSDIntersection` 或 `RCSDNode` 几何记录，或 T03/T04 stdout 必须明确为无 eligible candidate，且 CaseID 必须为 `segment_*`。该 handoff 必须复制上游 nodes、生成空 relation/surface/audit 文件、记录 `noop_reason=no_eligible_candidates_in_segment_dependency_closure`，并不得用于普通 semantic-junction Case，也不得把失败阶段的部分输出提升为正式 handoff。
 
 T10 的 nodes handoff 规则：
 

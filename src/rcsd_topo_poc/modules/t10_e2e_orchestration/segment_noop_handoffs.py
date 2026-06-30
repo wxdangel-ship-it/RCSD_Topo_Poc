@@ -9,6 +9,24 @@ from typing import Any, Mapping
 import fiona
 
 
+T07_RELATION_FIELDS = (
+    "target_id",
+    "representative_node_id",
+    "relation_source",
+    "relation_target_type",
+    "matched_rcsdintersection_ids",
+    "relation_state",
+    "status_suggested",
+    "base_id_candidate",
+    "reason",
+    "level",
+    "is_highway",
+    "swsd_point_x",
+    "swsd_point_y",
+    "rcsd_point_x",
+    "rcsd_point_y",
+)
+
 T03_RELATION_FIELDS = (
     "target_id",
     "case_id",
@@ -92,7 +110,10 @@ def try_segment_no_candidate_handoff(
         return None
     if not _is_no_candidate_stdout(record):
         return None
-    if stage_id == "t03":
+    if stage_id == "t07":
+        _write_t07_noop(stage_dir=stage_dir, inputs=inputs)
+        result = _t07_outputs(stage_dir)
+    elif stage_id == "t03":
         _write_t03_noop(stage_dir=stage_dir, inputs=inputs)
         result = _t03_outputs(stage_dir)
     elif stage_id == "t04":
@@ -110,9 +131,26 @@ def try_segment_no_candidate_handoff(
 
 def _is_no_candidate_stdout(record: Mapping[str, Any]) -> bool:
     text = "\n".join(str(line) for line in record.get("stdout_tail") or [])
+    if "RCSDIntersection layer has no non-empty geometry" in text:
+        return True
     if "No eligible T03 internal full-input cases were discovered" in text:
         return True
     return "No eligible T04 candidates were discovered" in text
+
+
+def _write_t07_noop(*, stage_dir: Path, inputs: Mapping[str, Path | None]) -> None:
+    run_root = stage_dir / "t07"
+    step1 = run_root / "step1_has_evd"
+    step2 = run_root / "step2_anchor_recognition"
+    step1.mkdir(parents=True, exist_ok=True)
+    step2.mkdir(parents=True, exist_ok=True)
+    _copy_nodes_with_anchor_defaults(inputs.get("t01_nodes"), step1 / "nodes.gpkg")
+    _copy_nodes_with_anchor_defaults(inputs.get("t01_nodes"), step2 / "nodes.gpkg")
+    _write_empty_gpkg(step2 / "t07_rcsdintersection_anchor_surface.gpkg", ("target_id", "status"))
+    _write_csv_header(step2 / "t07_swsd_rcsd_relation_evidence.csv", T07_RELATION_FIELDS)
+    _write_json(step2 / "t07_swsd_rcsd_relation_evidence.json", {"rows": [], "row_count": 0})
+    _write_json(step1 / "t07_step1_summary.json", {"status": "passed", "noop": True})
+    _write_json(step2 / "t07_step2_summary.json", {"status": "passed", "noop": True, "relation_evidence_row_count": 0})
 
 
 def _write_t03_noop(*, stage_dir: Path, inputs: Mapping[str, Path | None]) -> None:
@@ -124,6 +162,17 @@ def _write_t03_noop(*, stage_dir: Path, inputs: Mapping[str, Path | None]) -> No
     _write_json(run_root / "t03_swsd_rcsd_relation_evidence.json", {"rows": [], "row_count": 0})
     _write_empty_geojson(run_root / "intersection_match_t03.geojson")
     _write_json(run_root / "summary.json", {"status": "passed", "noop": True, "candidate_count": 0})
+
+
+def _t07_outputs(stage_dir: Path) -> dict[str, str]:
+    run_root = stage_dir / "t07"
+    step2 = run_root / "step2_anchor_recognition"
+    return {
+        "t07_run_root": str(run_root),
+        "t07_nodes": str(step2 / "nodes.gpkg"),
+        "t07_relation_evidence": str(step2 / "t07_swsd_rcsd_relation_evidence.csv"),
+        "t07_surface": str(step2 / "t07_rcsdintersection_anchor_surface.gpkg"),
+    }
 
 
 def _write_t04_noop(*, stage_dir: Path, inputs: Mapping[str, Path | None]) -> None:
@@ -170,6 +219,34 @@ def _copy_nodes(source: Path | None, target: Path) -> None:
         raise FileNotFoundError(f"missing noop nodes source: {source}")
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source, target)
+
+
+def _copy_nodes_with_anchor_defaults(source: Path | None, target: Path) -> None:
+    if source is None or not Path(source).is_file():
+        raise FileNotFoundError(f"missing noop nodes source: {source}")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.exists():
+        target.unlink()
+    with fiona.open(source) as src:
+        schema = dict(src.schema)
+        properties = dict(schema.get("properties") or {})
+        properties.setdefault("has_evd", "str")
+        properties.setdefault("is_anchor", "str")
+        schema["properties"] = properties
+        with fiona.open(
+            str(target),
+            mode="w",
+            driver="GPKG",
+            layer=target.stem,
+            schema=schema,
+            crs=src.crs,
+            encoding="utf-8",
+        ) as dst:
+            for feature in src:
+                props = dict(feature["properties"] or {})
+                props.setdefault("has_evd", "no")
+                props.setdefault("is_anchor", "no")
+                dst.write({"geometry": feature["geometry"], "properties": props})
 
 
 def _write_empty_gpkg(path: Path, fields: tuple[str, ...]) -> None:

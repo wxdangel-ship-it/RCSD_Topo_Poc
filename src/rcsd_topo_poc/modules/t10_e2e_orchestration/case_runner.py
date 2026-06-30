@@ -770,6 +770,7 @@ def _run_t07(
         "t07_relation_evidence": _path_text(_prefer_path(run_root, "t07_swsd_rcsd_relation_evidence.csv")),
         "t07_surface": _path_text(_prefer_path(run_root, "t07_rcsdintersection_anchor_surface.gpkg")),
     }
+    produced = _seg_noop("t07", case_id, stage_dir, record, inputs, produced) or produced
     _attach_outputs(record, produced)
     return record, produced
 
@@ -815,9 +816,7 @@ def _run_t03(
         "t03_relation_evidence": _path_text(run_root / "t03_swsd_rcsd_relation_evidence.csv"),
         "t03_intersection_match": _path_text(run_root / "intersection_match_t03.geojson"),
     }
-    np = _seg_noop("t03", case_id, stage_dir, record, inputs, produced)
-    if np is not None:
-        produced = np
+    produced = _seg_noop("t03", case_id, stage_dir, record, inputs, produced) or produced
     _attach_outputs(record, produced)
     return record, produced
 
@@ -871,9 +870,7 @@ def _run_t04(
         "t04_audit": _path_text(run_root / "divmerge_virtual_anchor_surface_audit.gpkg"),
         "t04_case_root": _path_text(run_root / "cases"),
     }
-    np = _seg_noop("t04", case_id, stage_dir, record, inputs, produced)
-    if np is not None:
-        produced = np
+    produced = _seg_noop("t04", case_id, stage_dir, record, inputs, produced) or produced
     _attach_outputs(record, produced)
     return record, produced
 

@@ -42,7 +42,7 @@ T10 必须保持连续 nodes handoff：T07 Step2 nodes 进入 T03，T03 downstre
 - `spatial_slice` 局部 GPKG 切片。
 - 文本 bundle 自动分片与解包。
 - Case runner 端到端 replay。
-- Segment replay 中 T03/T04 合法无候选时的显式空 handoff。
+- Segment replay 中 T07/T03/T04 合法无候选时的显式空 handoff。
 - T06 funnel。
 - T06 upstream feedback package。
 - T06 visual check summary。
@@ -101,7 +101,7 @@ T10 必须保持连续 nodes handoff：T07 Step2 nodes 进入 T03，T03 downstre
 | Workflow planning | 检查外部输入和模块 handoff slot 是否存在、是否是文件、是否可被下游消费。 |
 | Case packaging | 按 SWSD 语义路口和半径组织局部证据包，补齐道路端点节点依赖并保留完整道路几何。 |
 | Segment packaging | 按 SWSD SegmentID 从既有 T10 run root 反查 T01/T06 证据，以 evidence dependency closure 组织局部证据包。 |
-| Case replay | 从 Case package 启动 T01-T09 关键链路，每阶段显式记录输入输出和状态；Segment closure 内 T03/T04 合法无候选时登记空 handoff，保持后续链路可执行。 |
+| Case replay | 从 Case package 启动 T01-T09 关键链路，每阶段显式记录输入输出和状态；Segment closure 内 T07/T03/T04 合法无候选时登记空 handoff，保持后续链路可执行。 |
 | T06 funnel | 聚合 T06 Step1/2/3 数量流转、拒绝原因、replacement plan 和 problem registry 状态。 |
 | T06 feedback | 将可回流上游的问题拆成 Segment、relation、side-group endpoint 和 pair-anchor endpoint cluster 等反馈视图。 |
 | Visual check | 索引 T01/T03/T04/T05/T06/T07 关键 GPKP 图层，辅助人工叠加检查 CRS、提右重复和端点缺失。 |
@@ -113,7 +113,7 @@ T10 必须保持连续 nodes handoff：T07 Step2 nodes 进入 T03，T03 downstre
 - 每个 handoff 都有明确文件路径、状态和日志。
 - Case package 优先使用局部切片，manifest-only 时才回退源路径。
 - Segment package 必须记录 `scope_type=swsd_segment`、`swsd_segment_id`、T10 run root、T01 Segment source 和匹配到的 T06 evidence rows。
-- Segment replay 不用半径补上下文；T03/T04 合法无候选时只生成带 `segment_no_candidate_handoff=true` 的空 relation/surface handoff。
+- Segment replay 不用半径补上下文；T07/T03/T04 合法无候选时只生成带 `segment_no_candidate_handoff=true` 的空 relation/surface handoff。
 - T06 feedback 只作为上游迭代输入，不直接驱动 Step3 替换。
 - 顶层 summary 能明确区分 `passed / failed / blocked / skipped`。
 

@@ -9,6 +9,35 @@ from rcsd_topo_poc.modules.t10_e2e_orchestration.segment_noop_handoffs import (
 )
 
 
+def test_segment_t07_no_intersection_handoff_writes_explicit_outputs(tmp_path: Path) -> None:
+    source_nodes = tmp_path / "t01_nodes.gpkg"
+    _write_node_fixture(source_nodes)
+    record = {
+        "status": "failed",
+        "stdout_tail": ["T07RunError: RCSDIntersection layer has no non-empty geometry."],
+    }
+
+    produced = try_segment_no_candidate_handoff(
+        "t07",
+        "segment_520649671_605650271",
+        tmp_path / "t07_stage",
+        record,
+        {"t01_nodes": source_nodes},
+        {"t07_nodes": "", "t07_surface": "", "t07_relation_evidence": ""},
+    )
+
+    assert produced is not None
+    assert record["status"] == "passed"
+    assert Path(produced["t07_relation_evidence"]).read_text(encoding="utf-8").startswith("target_id,representative_node_id")
+    with fiona.open(produced["t07_nodes"]) as src:
+        assert len(src) == 1
+        row = next(iter(src))
+        assert row["properties"]["has_evd"] == "no"
+        assert row["properties"]["is_anchor"] == "no"
+    with fiona.open(produced["t07_surface"]) as src:
+        assert len(src) == 0
+
+
 def test_segment_t03_no_candidate_handoff_writes_explicit_outputs(tmp_path: Path) -> None:
     source_nodes = tmp_path / "t07_nodes.gpkg"
     source_nodes.write_bytes(b"placeholder nodes")
@@ -84,3 +113,17 @@ def test_no_candidate_handoff_is_segment_only(tmp_path: Path) -> None:
 
     assert produced is None
     assert record["status"] == "failed"
+
+
+def _write_node_fixture(path: Path) -> None:
+    schema = {"geometry": "Point", "properties": {"id": "str", "kind_2": "str"}}
+    with fiona.open(
+        path,
+        mode="w",
+        driver="GPKG",
+        layer=path.stem,
+        schema=schema,
+        crs="EPSG:3857",
+        encoding="utf-8",
+    ) as dst:
+        dst.write({"geometry": {"type": "Point", "coordinates": (0.0, 0.0)}, "properties": {"id": "n1", "kind_2": "4"}})

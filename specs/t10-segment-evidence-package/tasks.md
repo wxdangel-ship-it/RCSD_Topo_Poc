@@ -21,7 +21,7 @@
 - [x] 新增 Segment spatial slice 支持。
 - [x] 新增正式脚本 `scripts/t10_pack_innernet_segments.sh`。
 - [x] 更新 T10 模块导出。
-- [x] 新增 Segment replay 的 T03/T04 no-candidate 空 handoff。
+- [x] 新增 Segment replay 的 T07/T03/T04 no-candidate 空 handoff。
 - [x] 更新模块源事实、README、架构和入口 registry。
 
 ## Test

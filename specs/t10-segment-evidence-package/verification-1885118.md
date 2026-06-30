@@ -133,7 +133,61 @@ bash -n scripts/t10_pack_innernet_segments.sh
 git diff --check
 ```
 
-## 6. 结论
+## 6. 随机 5 Segment 扩展验证
+
+按 `problem_status` 以 `requires_` 开头、Step3 relation 不是 `replaced`、T01 `sgrade` 可归为单向/双向筛选，候选池为单向 18 个、双向 241 个。使用固定随机种子 `20260630` 抽样 5 个 Segment：3 个单向、2 个双向。
+
+| SegmentID | direction | sgrade | failure category | reject reason |
+|---|---|---|---|---|
+| `504116202_603116901` | single | `0-0单` | `pair_anchor_mismatch` | `invalid_pair_relation_status` |
+| `520649671_605650271` | single | `0-1单` | `rcsd_data_absent_or_insufficient` | `invalid_pair_relation_status` |
+| `509325342_504116202` | single | `0-0单` | `multi_anchor_ambiguous` | `invalid_pair_relation_status` |
+| `520167700_612699971` | dual | `0-2双` | `multi_anchor_ambiguous` | `required_semantic_nodes_not_connected_in_buffer` |
+| `1901727_12589064` | dual | `0-2双` | `directionality_mismatch_fixable` | `rcsd_not_bidirectional_for_swsd_dual` |
+
+随机 5 Segment package：
+
+- package 目录：`outputs/_work/t10_segment_evidence_verify_1885118_random5_20260630/packages/t10_segments_1885118_random5_20260630`
+- sample 记录：`outputs/_work/t10_segment_evidence_verify_1885118_random5_20260630/sampled_segments.csv`
+- package summary：
+  - `passed = true`
+  - `segment_count = 5`
+  - `materialization_mode = spatial_slice`
+  - `materialized_file_count = 45`
+  - `matched_evidence_artifact_count = 54`
+  - `failed_segment_count = 0`
+- 文本 bundle：2 片，`bundle_size_bytes = 452227`
+- 解包目录：`outputs/_work/t10_segment_evidence_verify_1885118_random5_20260630/decoded/t10_segments_1885118_random5_20260630`
+
+随机 5 Segment 本地 replay：
+
+- replay run root：`outputs/_work/t10_segment_evidence_verify_1885118_random5_20260630/e2e_runs/t10_segments_1885118_random5_t07noop2_20260630_e2e`
+- replay summary：
+  - `status = passed`
+  - `passed = true`
+  - `case_count = 5`
+  - `completed_case_count = 5`
+  - `passed_case_count = 5`
+  - `failed_case_count = 0`
+  - `blocked_case_count = 0`
+  - `duration_seconds = 370.083667`
+  - `t06_visual_check_case_count = 5`
+  - `upstream_feedback_segment_count = 12`
+  - `upstream_pair_anchor_endpoint_cluster_count = 18`
+
+| CaseID | replay status | no-candidate handoff | Step2 replaceable | Step3 replacement success |
+|---|---|---|---:|---:|
+| `segment_1901727_12589064` | passed | `t04` | 3 | 3 |
+| `segment_504116202_603116901` | passed | none | 0 | 0 |
+| `segment_509325342_504116202` | passed | none | 0 | 0 |
+| `segment_520167700_612699971` | passed | `t03,t04` | 2 | 2 |
+| `segment_520649671_605650271` | passed | `t07,t03,t04` | 0 | 0 |
+
+5 个 Case 的 `t10_t06_visual_check_summary.csv` 均记录 `status=passed`、`crs_status=passed`、`missing_visual_layer_count=0`、`spatial_check_status=passed`。
+
+`520649671_605650271` 是本次扩展验证新增覆盖的极端样本：Segment 闭包内 `rcsd_intersection / rcsdnode / rcsdroad` 均为空，T07 使用 `segment_no_candidate_handoff=true` 生成带默认 `has_evd=no / is_anchor=no` 的 nodes 与空 relation/surface handoff，后续 T03/T04 继续以显式空 handoff 完成本地 replay。该处理不引入人工半径，也不复制无关 RCSD 候选。
+
+## 7. 结论
 
 本轮验证确认：
 
@@ -141,6 +195,7 @@ git diff --check
 - 一次输入多个 `SegmentID` 后，每个 Segment 独立形成 `cases/segment_<SegmentID>/` 轻量本地 T10 用例。
 - 当前包可以导出为文本分片，并可解包恢复 multi Segment package。
 - 1885118 抽样 3 个 Segment 的本地 T10 replay 全部通过，且每个 Case 均输出完整阶段状态、T06 visual check 和 upstream feedback。
-- T03/T04 在 Segment 闭包内合法无候选时，以可审计空 handoff 继续链路；这保留了失败 Segment 分析所需的端到端执行形态，同时不扩大打包范围。
+- T07/T03/T04 在 Segment 闭包内合法无候选时，以可审计空 handoff 继续链路；这保留了失败 Segment 分析所需的端到端执行形态，同时不扩大打包范围。
+- 随机 5 Segment 扩展验证覆盖 3 个单向、2 个双向，打包、分片、解包和本地 replay 均通过。
 
 因此，当前 1885118 抽样验证达到 Segment 级无半径打包到本地 T10 完整 replay 的预期。

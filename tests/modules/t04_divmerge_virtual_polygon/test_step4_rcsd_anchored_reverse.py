@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import pytest
 from dataclasses import replace
+from types import SimpleNamespace
+
+from shapely.geometry import LineString, Point
 
 from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.case_loader import load_case_bundle, load_case_specs
 from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.case_models import T04CaseResult, T04EventUnitResult
@@ -11,6 +14,9 @@ from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.step4_final_conflict_res
 )
 from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.step4_rcsd_anchored_reverse import (
     apply_rcsd_anchored_reverse_lookup,
+)
+from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.step4_rcsd_anchored_reverse_graph import (
+    _directional_required_node_recovery,
 )
 from tests.modules.t04_divmerge_virtual_polygon.test_step14_support import REAL_ANCHOR_2_ROOT
 
@@ -128,6 +134,56 @@ def _selected_other(unit: T04EventUnitResult, *, summary: dict, **overrides) -> 
         selected_candidate_summary={"candidate_id": "other:selected", **summary},
         **overrides,
     )
+
+
+def test_rcsd_anchored_reverse_recovers_directional_required_node() -> None:
+    case_result = SimpleNamespace(
+        case_bundle=SimpleNamespace(
+            rcsd_roads=[
+                SimpleNamespace(road_id="r_new", snodeid="new", enodeid="far", geometry=LineString([(5, 0), (15, 0)])),
+                SimpleNamespace(road_id="r_old", snodeid="old", enodeid="side", geometry=LineString([(8, 0), (15, 0)])),
+            ],
+            rcsd_nodes=[
+                SimpleNamespace(node_id="old", geometry=Point(8, 0)),
+                SimpleNamespace(node_id="new", geometry=Point(5, 0)),
+                SimpleNamespace(node_id="far", geometry=Point(15, 0)),
+                SimpleNamespace(node_id="side", geometry=Point(15, 0)),
+            ],
+        )
+    )
+    event_unit = SimpleNamespace(
+        unit_context=SimpleNamespace(representative_node=SimpleNamespace(geometry=Point(5, 0))),
+        interpretation=SimpleNamespace(kind_resolution=SimpleNamespace(operational_kind_2=8)),
+        spec=SimpleNamespace(event_type="merge"),
+    )
+    mother = SimpleNamespace(
+        required_rcsd_node="old",
+        required_rcsd_node_source="aggregated_structural_required",
+        selected_rcsdnode_ids=("old", "new"),
+        pair_local_rcsd_node_ids=(),
+        selected_rcsdroad_ids=("r_new", "r_old"),
+        positive_rcsd_audit={"operational_event_type": "merge"},
+    )
+
+    recovery = _directional_required_node_recovery(
+        case_result,
+        event_unit,
+        mother=mother,
+        axis_context={
+            "axis_branch_id": "axis",
+            "axis_signature": "axis",
+            "axis_line": LineString([(0, 0), (20, 0)]),
+            "origin_s": 0.0,
+        },
+        initial_continuation={"used": False, "skip_reason": "no_directional_terminal_continuation"},
+    )
+
+    assert recovery["used"] is True
+    assert recovery["previous_required_rcsd_node"] == "old"
+    assert recovery["required_rcsd_node"] == "new"
+    assert recovery["required_rcsd_node_source"] == "anchored_reverse_directional_selected_road"
+    assert recovery["original_selected_directional_roads"][0]["road_id"] == "r_old"
+    assert recovery["selected_directional_roads"][0]["road_id"] == "r_new"
 
 
 def test_rcsd_anchored_reverse_triggers_successfully() -> None:

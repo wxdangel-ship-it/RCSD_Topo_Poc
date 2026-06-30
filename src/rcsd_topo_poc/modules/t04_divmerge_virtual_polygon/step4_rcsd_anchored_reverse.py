@@ -162,6 +162,31 @@ def _apply_reverse_to_unit(
         axis_context=axis_context,
         drivezone=drivezone,
     )
+    required_node_recovery = _directional_required_node_recovery(
+        case_result,
+        event_unit,
+        mother=mother,
+        axis_context=axis_context,
+        initial_continuation=continuation,
+    )
+    if required_node_recovery.get("used"):
+        recovered_required_node = str(required_node_recovery.get("required_rcsd_node") or "").strip()
+        mother = replace(
+            mother,
+            required_rcsd_node=recovered_required_node,
+            required_rcsd_node_source=str(
+                required_node_recovery.get("required_rcsd_node_source")
+                or "anchored_reverse_directional_selected_road"
+            ),
+            required_rcsd_node_geometry=_rcsd_node_geometry(case_result, [recovered_required_node]),
+        )
+        continuation = _terminal_continuation_expansion(
+            case_result,
+            event_unit,
+            mother=mother,
+            axis_context=axis_context,
+            drivezone=drivezone,
+        )
     selected_rcsdroad_ids = _dedupe([*mother.selected_rcsdroad_ids, *continuation.get("road_ids", [])])
     selected_rcsdnode_ids = _dedupe([*mother.selected_rcsdnode_ids, *continuation.get("node_ids", [])])
     selected_rcsdroad_ids, selected_rcsdnode_ids, prune_detail = _prune_aggregated_node_centric_reverse_roads(
@@ -208,6 +233,7 @@ def _apply_reverse_to_unit(
             "selected_rcsdroad_ids": list(selected_rcsdroad_ids),
             "selected_rcsdnode_ids": list(selected_rcsdnode_ids),
             "terminal_continuation_expansion": continuation,
+            "rcsd_anchored_reverse_required_node_recovery": required_node_recovery,
             "rcsd_anchored_reverse_prune": prune_detail,
         }
     )
@@ -234,6 +260,7 @@ def _apply_reverse_to_unit(
         "published_rcsdroad_ids": list(selected_rcsdroad_ids),
         "published_rcsdnode_ids": list(selected_rcsdnode_ids),
         "terminal_continuation_expansion": continuation,
+        "rcsd_anchored_reverse_required_node_recovery": required_node_recovery,
         "rcsd_anchored_reverse_prune": prune_detail,
         "rcsd_anchored_reverse": {
             "used": True,
@@ -244,6 +271,7 @@ def _apply_reverse_to_unit(
             "reference_point_mode": reference_mode,
             "reference_point_axis_s": round(float(reference_s), 3),
             "terminal_continuation_expansion": continuation,
+            "required_node_recovery": required_node_recovery,
             "prune": prune_detail,
         },
     }
@@ -314,6 +342,7 @@ def _apply_reverse_to_unit(
         "reference_point_mode": reference_mode,
         "reference_point_axis_s": round(float(reference_s), 3),
         "terminal_continuation_expansion": continuation,
+        "required_node_recovery": required_node_recovery,
     }
     return (
         append_dual_write_candidate(

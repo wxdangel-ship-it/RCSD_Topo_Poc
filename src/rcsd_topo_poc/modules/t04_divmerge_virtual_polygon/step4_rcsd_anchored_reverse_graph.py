@@ -134,6 +134,148 @@ def _terminal_continuation_expansion(
     }
 
 
+def _selected_directional_roads_at_node(
+    *,
+    node_id: str,
+    operation_type: str,
+    selected_rcsdroad_ids: Sequence[str],
+    roads_by_id: dict[str, Any],
+    nodes_by_id: dict[str, Any],
+    axis_context: dict[str, Any],
+) -> list[dict[str, Any]]:
+    matches: list[dict[str, Any]] = []
+    for road_id in selected_rcsdroad_ids:
+        road = roads_by_id.get(str(road_id))
+        if road is None:
+            continue
+        start_node_id, end_node_id = _road_endpoint_ids(road)
+        direction_ok = (
+            start_node_id == node_id
+            if operation_type == "merge"
+            else end_node_id == node_id
+        )
+        if not direction_ok:
+            continue
+        axis_ok, axis_detail = _terminal_continuation_axis_ok(
+            road,
+            required_node_id=node_id,
+            operation_type=operation_type,
+            axis_context=axis_context,
+            nodes_by_id=nodes_by_id,
+        )
+        if not axis_ok:
+            continue
+        matches.append({"road_id": str(road_id), **axis_detail})
+    return matches
+
+
+def _representative_distance_to_rcsd_node(
+    case_result: T04CaseResult,
+    event_unit: T04EventUnitResult,
+    node_id: str,
+    nodes_by_id: dict[str, Any],
+) -> float | None:
+    node = nodes_by_id.get(node_id)
+    point = None if node is None else _as_point(node.geometry)
+    representative = _as_point(getattr(event_unit.unit_context.representative_node, "geometry", None))
+    if point is None or representative is None:
+        return None
+    return float(point.distance(representative))
+
+
+def _directional_required_node_recovery(
+    case_result: T04CaseResult,
+    event_unit: T04EventUnitResult,
+    *,
+    mother: T04CandidateAuditEntry,
+    axis_context: dict[str, Any],
+    initial_continuation: dict[str, Any],
+) -> dict[str, Any]:
+    operation_type = _operation_type(event_unit, mother)
+    required_node_id = str(mother.required_rcsd_node or "").strip()
+    if (
+        operation_type not in {"merge", "diverge"}
+        or not required_node_id
+        or initial_continuation.get("used")
+        or initial_continuation.get("skip_reason") != "no_directional_terminal_continuation"
+        or str(mother.required_rcsd_node_source or "").strip() != "aggregated_structural_required"
+    ):
+        return {"used": False, "skip_reason": "not_applicable"}
+    roads_by_id = _rcsd_road_lookup(case_result)
+    nodes_by_id = _rcsd_node_lookup(case_result)
+    original_matches = _selected_directional_roads_at_node(
+        node_id=required_node_id,
+        operation_type=operation_type,
+        selected_rcsdroad_ids=mother.selected_rcsdroad_ids,
+        roads_by_id=roads_by_id,
+        nodes_by_id=nodes_by_id,
+        axis_context=axis_context,
+    )
+    candidate_node_ids = _dedupe(mother.selected_rcsdnode_ids)
+    candidates: list[dict[str, Any]] = []
+    for node_id in candidate_node_ids:
+        if node_id == required_node_id:
+            continue
+        matches = _selected_directional_roads_at_node(
+            node_id=node_id,
+            operation_type=operation_type,
+            selected_rcsdroad_ids=mother.selected_rcsdroad_ids,
+            roads_by_id=roads_by_id,
+            nodes_by_id=nodes_by_id,
+            axis_context=axis_context,
+        )
+        if not matches:
+            continue
+        distance_m = _representative_distance_to_rcsd_node(case_result, event_unit, node_id, nodes_by_id)
+        candidates.append(
+            {
+                "required_rcsd_node": node_id,
+                "selected_directional_roads": matches,
+                "distance_to_representative_m": None if distance_m is None else round(float(distance_m), 3),
+            }
+        )
+    if len(candidates) != 1:
+        return {
+            "used": False,
+            "skip_reason": "ambiguous_directional_required_node" if candidates else "no_directional_required_node_candidate",
+            "candidates": candidates,
+        }
+    original_distance = _representative_distance_to_rcsd_node(case_result, event_unit, required_node_id, nodes_by_id)
+    candidate = candidates[0]
+    candidate_distance = candidate.get("distance_to_representative_m")
+    if original_distance is not None and candidate_distance is not None and float(candidate_distance) > float(original_distance) + 1e-9:
+        return {
+            "used": False,
+            "skip_reason": "candidate_farther_than_original_required_node",
+            "original_distance_to_representative_m": round(float(original_distance), 3),
+            "candidate": candidate,
+        }
+    if (
+        original_matches
+        and original_distance is not None
+        and candidate_distance is not None
+        and float(candidate_distance) >= float(original_distance) - 1e-9
+    ):
+        return {
+            "used": False,
+            "skip_reason": "candidate_not_closer_than_original_required_node",
+            "required_rcsd_node": required_node_id,
+            "original_selected_directional_roads": original_matches,
+            "original_distance_to_representative_m": round(float(original_distance), 3),
+            "candidate": candidate,
+        }
+    return {
+        "used": True,
+        "previous_required_rcsd_node": required_node_id,
+        "required_rcsd_node": str(candidate["required_rcsd_node"]),
+        "required_rcsd_node_source": "anchored_reverse_directional_selected_road",
+        "operation_type": operation_type,
+        "original_selected_directional_roads": original_matches,
+        "original_distance_to_representative_m": None if original_distance is None else round(float(original_distance), 3),
+        **candidate,
+    }
+
+
 def _shortest_selected_rcsd_path(
     *,
     roads_by_id: dict[str, Any],

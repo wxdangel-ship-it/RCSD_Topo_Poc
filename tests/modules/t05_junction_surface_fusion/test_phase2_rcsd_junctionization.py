@@ -1246,6 +1246,100 @@ def test_t03_road_only_near_endpoint_reuses_existing_rcsdnode(tmp_path: Path) ->
     assert audit_rows[0]["original_rcsdnode_ids"] == "1"
 
 
+def test_t03_road_only_split_groups_near_endpoint_support_node(tmp_path: Path) -> None:
+    artifacts = _run_phase2(
+        tmp_path,
+        surface_features=[_surface("451")],
+        swsd_nodes=[_node(451, 0.5, 0, mainnodeid="451", kind_2=4)],
+        rcsd_roads=[
+            _road(1, (-10, 0), (10, 0), snodeid=1, enodeid=2),
+            _road(2, (0, 10), (10, 10), snodeid=3, enodeid=4),
+        ],
+        rcsd_nodes=[
+            _node(1, -10, 0),
+            _node(2, 10, 0),
+            _node(3, 0, 10),
+            _node(4, 10, 10),
+        ],
+        t03_rows=[
+            {
+                "target_id": "451",
+                "case_id": "451",
+                "junction_type": "center_junction",
+                "association_class": "B",
+                "support_rcsdroad_ids": "1|2",
+                "step7_state": "accepted",
+                "relation_state": "rcsd_present_not_junction",
+                "status_suggested": 1,
+            }
+        ],
+    )
+
+    relation = _relation_features(artifacts.relation_geojson_path)[0]
+    assert relation["properties"]["status"] == 0
+    assert relation["properties"]["base_id"] == 5
+    audit_rows = list(csv.DictReader(artifacts.rcsd_junctionization_audit_csv_path.open("r", encoding="utf-8")))
+    assert audit_rows[0]["original_rcsdnode_ids"] == "3"
+    assert audit_rows[0]["new_rcsdnode_ids"] == "5"
+    assert audit_rows[0]["grouped_rcsdnode_ids"] == "3|5"
+    assert audit_rows[0]["projection_point_count"] == "2"
+    assert audit_rows[0]["split_point_count"] == "1"
+    output_nodes = {
+        feature.properties["id"]: feature.properties.get("mainnodeid")
+        for feature in read_vector_layer(artifacts.rcsdnode_out_path).features
+    }
+    assert str(output_nodes[3]) == "5"
+    assert str(output_nodes[5]) == "5"
+
+
+def test_t03_road_only_split_does_not_group_multiple_near_endpoint_support_nodes(tmp_path: Path) -> None:
+    artifacts = _run_phase2(
+        tmp_path,
+        surface_features=[_surface("452")],
+        swsd_nodes=[_node(452, 0.5, 0, mainnodeid="452", kind_2=4)],
+        rcsd_roads=[
+            _road(1, (-10, 0), (10, 0), snodeid=1, enodeid=2),
+            _road(2, (0, 10), (10, 10), snodeid=3, enodeid=4),
+            _road(3, (0, -10), (10, -10), snodeid=5, enodeid=6),
+        ],
+        rcsd_nodes=[
+            _node(1, -10, 0),
+            _node(2, 10, 0),
+            _node(3, 0, 10),
+            _node(4, 10, 10),
+            _node(5, 0, -10),
+            _node(6, 10, -10),
+        ],
+        t03_rows=[
+            {
+                "target_id": "452",
+                "case_id": "452",
+                "junction_type": "center_junction",
+                "association_class": "B",
+                "support_rcsdroad_ids": "1|2|3",
+                "step7_state": "accepted",
+                "relation_state": "rcsd_present_not_junction",
+                "status_suggested": 1,
+            }
+        ],
+    )
+
+    relation = _relation_features(artifacts.relation_geojson_path)[0]
+    assert relation["properties"]["status"] == 0
+    assert relation["properties"]["base_id"] == 7
+    audit_rows = list(csv.DictReader(artifacts.rcsd_junctionization_audit_csv_path.open("r", encoding="utf-8")))
+    assert audit_rows[0]["original_rcsdnode_ids"] == ""
+    assert audit_rows[0]["new_rcsdnode_ids"] == "7"
+    assert audit_rows[0]["grouped_rcsdnode_ids"] == ""
+    output_nodes = {
+        feature.properties["id"]: feature.properties.get("mainnodeid")
+        for feature in read_vector_layer(artifacts.rcsdnode_out_path).features
+    }
+    assert output_nodes[3] is None
+    assert output_nodes[5] is None
+    assert output_nodes[7] is None
+
+
 def test_t03_road_only_reuses_active_descendant_when_source_road_was_split(tmp_path: Path) -> None:
     artifacts = _run_phase2(
         tmp_path,

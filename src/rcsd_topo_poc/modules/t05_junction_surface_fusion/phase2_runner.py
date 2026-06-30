@@ -574,6 +574,13 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
                         )
                     )
                     continue
+                endpoint_node_ids, _missing_endpoint_node_ids = _endpoint_reuse_node_ids(
+                    projected=projected,
+                    roads_by_id=roads_by_id,
+                    node_features_by_id=node_out_by_id,
+                    min_endpoint_gap_m=min_endpoint_gap_m,
+                )
+                groupable_endpoint_node_ids = _groupable_endpoint_reuse_node_ids(endpoint_node_ids, node_out_by_id)
                 split_source_ids_by_active_road = {
                     road_id: set(source_road_ids_by_active_id.get(road_id, {road_id}))
                     for road_id in split_result.original_road_ids
@@ -610,9 +617,16 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
                         source_road_ids_by_active_id.setdefault(new_road_id, set()).update(source_ids)
                 supplement_node_ids = _t10_supplement_node_ids(actionable, node_out_by_id)
                 supplement_extra_node_ids = [node_id for node_id in supplement_node_ids if node_id not in new_node_ids]
+                endpoint_extra_node_ids = [
+                    node_id
+                    for node_id in groupable_endpoint_node_ids
+                    if node_id not in new_node_ids and node_id not in supplement_extra_node_ids
+                ]
+                if not _should_group_split_endpoint_extras(new_node_ids, endpoint_extra_node_ids):
+                    endpoint_extra_node_ids = []
                 group_node_ids = _group_node_ids(
-                    [*new_node_ids, *supplement_node_ids],
-                    canonical_mainnode_ids([*new_node_ids, *supplement_node_ids], node_out_by_id),
+                    [*new_node_ids, *endpoint_extra_node_ids, *supplement_node_ids],
+                    canonical_mainnode_ids([*new_node_ids, *endpoint_extra_node_ids, *supplement_node_ids], node_out_by_id),
                 )
                 grouped = apply_mainnodeid_grouping(
                     node_ids=group_node_ids,
@@ -630,7 +644,7 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
                         relation=relation,
                         original_road_ids=list(decision.rcsdroad_ids),
                         new_road_ids=new_road_ids,
-                        original_node_ids=supplement_extra_node_ids,
+                        original_node_ids=[*endpoint_extra_node_ids, *supplement_extra_node_ids],
                         new_node_ids=new_node_ids,
                         grouped_node_ids=group_node_ids if len(group_node_ids) > 1 else [],
                         selected_main_node_id=primary,
@@ -1839,6 +1853,26 @@ def _endpoint_reuse_node_ids(
                 seen.add(endpoint_node_id)
                 node_ids.append(endpoint_node_id)
     return node_ids, missing_node_ids
+
+
+def _groupable_endpoint_reuse_node_ids(
+    endpoint_node_ids: list[int],
+    node_features_by_id: dict[int, dict[str, Any]],
+) -> list[int]:
+    groupable: list[int] = []
+    for node_id in endpoint_node_ids:
+        feature = node_features_by_id.get(node_id)
+        if feature is None:
+            continue
+        props = feature.get("properties") or {}
+        if _positive_int_value(_field_value(props, "mainnodeid")) is not None:
+            continue
+        groupable.append(node_id)
+    return groupable
+
+
+def _should_group_split_endpoint_extras(new_node_ids: list[int], endpoint_extra_node_ids: list[int]) -> bool:
+    return len(new_node_ids) == 1 and len(endpoint_extra_node_ids) == 1
 
 
 def _projection_skipped_reasons(

@@ -19,6 +19,7 @@
 - 打包必须基于已有 T10 端到端执行结果反查 Segment 所需证据，避免只靠外部全量输入猜测范围。
 - 每个 Segment 包必须保留证据链：Segment 来源、反查到的 T10/T06 run root、参与打包的外部输入、切片范围、被排除的模块间 handoff、QA 审计和文本 bundle。
 - 打包后的目录必须能被 `scripts/t10_run_e2e_cases.sh` 执行，产出 T10 Case run manifest、T06 funnel、visual check 和 upstream feedback。
+- 如果 Segment evidence dependency closure 内 T03/T04 合法无候选，runner 必须输出带审计标记的空 handoff 并继续完整 T10 replay，不允许通过人工半径或复制无关全量候选来掩盖闭包语义。
 
 ## 3. 架构视角
 
@@ -35,6 +36,7 @@ Segment 打包必须从 T10 端到端 run root 中反查可用证据：
 - 使用 T01 `segment.gpkg` 定位 Segment 几何和端点。
 - 若 T06 problem registry / replacement plan / relation 中存在目标 Segment 行，manifest 必须记录对应 evidence rows 和来源路径。
 - Segment package 仍只物化外部输入 slice；模块间中间产物进入 evidence reference / excluded handoff，不作为 package payload 复制。
+- Segment replay 的 T03/T04 无候选不视为打包遗漏：当模块 stdout 明确为无 eligible candidate 且 CaseID 为 `segment_*` 时，T10 生成空 relation/surface/audit handoff，记录 `segment_no_candidate_handoff=true` 与 `noop_reason=no_eligible_candidates_in_segment_dependency_closure`。
 
 ## 4. 研发视角
 
@@ -44,7 +46,7 @@ Segment 打包必须从 T10 端到端 run root 中反查可用证据：
 - 新增 Segment evidence package builder，支持单 Segment 和多 Segment。
 - 新增正式脚本 `scripts/t10_pack_innernet_segments.sh`。
 - 复用现有 text bundle 导出 / 解包能力。
-- 保持 `scripts/t10_run_e2e_cases.sh` 兼容：runner 按 package manifest 读取 `external_inputs/<slot>/<slot>_slice.gpkg`，不关心 scope 是 semantic junction 还是 Segment。
+- 保持 `scripts/t10_run_e2e_cases.sh` 兼容：runner 按 package manifest 读取 `external_inputs/<slot>/<slot>_slice.gpkg`，并只在 `segment_*` 合法无候选时生成显式空 handoff。
 - 同步 T10 `SPEC.md`、`INTERFACE_CONTRACT.md`、README、架构文档和入口 registry。
 
 ## 5. 测试视角
@@ -55,6 +57,7 @@ Segment 打包必须从 T10 端到端 run root 中反查可用证据：
 - 多 Segment 输入时输出 `cases/segment_<SegmentID>/` 独立目录。
 - Segment package manifest 记录 `scope_type=swsd_segment`、`case_id_semantics=swsd_segment_package_case_id`、`swsd_segment_id`、center、bounds、source evidence。
 - 切片保留道路完整几何和端点节点依赖，不裁断道路几何造成 replay 输入缺节点。
+- 覆盖 Segment replay 中 T03/T04 无 eligible candidate 时的空 handoff 输出和普通 Case 禁用条件。
 - text bundle 能导出并解包恢复多 Segment 目录结构。
 - 脚本 shell 语法验证通过。
 

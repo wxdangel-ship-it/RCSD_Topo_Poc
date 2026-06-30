@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from .contracts import T10_MODULE_ID, T10_T08_POLICY, T10_V1_CHAIN
+from .segment_noop_handoffs import try_segment_no_candidate_handoff as _seg_noop
 from .upstream_feedback import write_t10_upstream_feedback
 
 
@@ -814,6 +815,9 @@ def _run_t03(
         "t03_relation_evidence": _path_text(run_root / "t03_swsd_rcsd_relation_evidence.csv"),
         "t03_intersection_match": _path_text(run_root / "intersection_match_t03.geojson"),
     }
+    np = _seg_noop("t03", case_id, stage_dir, record, inputs, produced)
+    if np is not None:
+        produced = np
     _attach_outputs(record, produced)
     return record, produced
 
@@ -867,6 +871,9 @@ def _run_t04(
         "t04_audit": _path_text(run_root / "divmerge_virtual_anchor_surface_audit.gpkg"),
         "t04_case_root": _path_text(run_root / "cases"),
     }
+    np = _seg_noop("t04", case_id, stage_dir, record, inputs, produced)
+    if np is not None:
+        produced = np
     _attach_outputs(record, produced)
     return record, produced
 

@@ -149,7 +149,7 @@ T10 Case runner 输入：
 - `stop_after`：可选阶段名，用于受控截断执行。允许值为 `t01 / t07 / t03 / t04 / t05 / t06_step12 / t06_step3 / t09_step12 / t09_step3`。
 - `continue_on_error`：是否在某个 Case 阶段失败后继续记录后续 Case 或后续阶段阻断状态。
 
-Case runner 必须优先消费 Case package 中 `external_inputs/<slot>/<slot>_slice.gpkg`。当 package 仅为 manifest-only 时，才回退到 manifest 记录的 source path。Segment package 同样使用该 package layout，因此无需修改 Case runner 阶段顺序或 T01-T09 算法。
+Case runner 必须优先消费 Case package 中 `external_inputs/<slot>/<slot>_slice.gpkg`。当 package 仅为 manifest-only 时，才回退到 manifest 记录的 source path。Segment package 同样使用该 package layout，因此无需修改 Case runner 阶段顺序或 T01-T09 算法；但当 `case_id=segment_*` 且 Segment evidence dependency closure 内 T03/T04 合法无候选时，runner 必须把该阶段登记为 `segment_no_candidate_handoff=true` 的显式空 handoff，继续后续链路，不得回退到人工半径或复制全量无关候选。
 
 Case runner 不改变 T01-T09 算法，只负责：
 
@@ -157,6 +157,8 @@ Case runner 不改变 T01-T09 算法，只负责：
 - 调用已存在的模块脚本或模块 callable。
 - 记录每个阶段的 command、env override、输入、输出、stdout log、耗时与状态。
 - 在 T06 可执行时生成 T06 数据漏斗。
+
+Segment package replay 的 T03/T04 空 handoff 只适用于合法无候选的 Segment 闭包：T03/T04 stdout 必须明确为无 eligible candidate，且 CaseID 必须为 `segment_*`。该 handoff 必须复制上游 nodes、生成空 relation/surface/audit 文件、记录 `noop_reason=no_eligible_candidates_in_segment_dependency_closure`，并不得用于普通 semantic-junction Case，也不得把失败阶段的部分输出提升为正式 handoff。
 
 T10 的 nodes handoff 规则：
 
@@ -471,7 +473,7 @@ bash scripts/t10_run_innernet_full_pipeline.sh
 
 `scripts/t10_pack_innernet_segments.sh` 的输入含义固定为 SWSD SegmentID。脚本必须读取 `T10_RUN_ROOT` 作为证据来源，生成多 Segment package，并导出可自动分片的文本 bundle。解包后目录结构按 `cases/segment_<segment_id>/` 恢复，可直接交给 `scripts/t10_run_e2e_cases.sh` 执行本地 replay。
 
-脚本支持的位置参数与环境变量：
+`scripts/t10_pack_innernet_cases.sh` 支持的位置参数与环境变量：
 
 - `CASE_IDS`：未提供位置参数时使用，支持逗号分隔。
 - `RADIUS_M`：Case 范围半径，默认 `250`。
@@ -582,3 +584,4 @@ from rcsd_topo_poc.modules.t10_e2e_orchestration import (
 15. T06 已运行时必须输出 `t10_t06_funnel.json/csv/md`。
 16. T05 之后不得默认强制执行 `t07_step3`；T06/T09 默认消费 T04 输出的 `final_swsd_nodes`，显式运行可选 T07 Step3 时也只能额外审计 Step3 `nodes.gpkg`，不得覆盖正式节点 handoff。
 17. Case runner 必须输出 `t10_t06_visual_check_summary.csv/json`，用于固定 T06 目视叠加图层索引和提右快速审计指标。
+18. Segment replay 中 T03/T04 合法无候选时必须输出 `segment_no_candidate_handoff=true` 的显式空 handoff 并继续执行；普通 Case 或非无候选失败不得使用该兜底。

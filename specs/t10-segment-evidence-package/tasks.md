@@ -21,6 +21,7 @@
 - [x] 新增 Segment spatial slice 支持。
 - [x] 新增正式脚本 `scripts/t10_pack_innernet_segments.sh`。
 - [x] 更新 T10 模块导出。
+- [x] 新增 Segment replay 的 T03/T04 no-candidate 空 handoff。
 - [x] 更新模块源事实、README、架构和入口 registry。
 
 ## Test
@@ -29,6 +30,7 @@
 - [x] 覆盖多 Segment 独立目录。
 - [x] 覆盖 text bundle 解包结构。
 - [x] 覆盖脚本语法。
+- [x] 覆盖 Segment no-candidate handoff 与普通 Case 禁用条件。
 
 ## QA
 
@@ -37,4 +39,4 @@
 - [x] 几何语义记录 Segment center / bounds / evidence dependency closure。
 - [x] 审计可追溯到 T10 run root、T01 Segment 和 T06 evidence。
 - [x] 性能可通过 feature count、file size 和 materialized count 观察。
-- [x] 1885118 抽样验证结果已记录到 `verification-1885118.md`。
+- [x] 1885118 抽样打包、分片、解包和本地 replay 通过结果已记录到 `verification-1885118.md`。

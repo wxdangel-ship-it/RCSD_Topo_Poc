@@ -2,7 +2,7 @@
 
 **验证日期**：2026-06-30
 **验证范围**：T10 Segment 级证据包打包、文本分片、解包、本地 T10 replay。
-**状态**：已完成当前无半径版本的本地验证；打包、分片、解包和 replay 调度可运行，但 1885118 抽样 replay 未全通过，说明当前 evidence dependency closure 仍未把部分 T03/T04 候选上下文一次性打全。
+**状态**：已完成当前无半径版本的本地验证；1885118 抽样 Segment 的打包、分片、解包和本地 replay 均通过。T03/T04 在 Segment evidence dependency closure 内合法无候选时，以 `segment_no_candidate_handoff=true` 的显式空 handoff 保持完整 T10 链路，不回退到人工半径或无关全量候选。
 
 ## 1. 验证输入
 
@@ -52,45 +52,48 @@
 
 ## 4. 本地 T10 replay 结果
 
-- replay run root：`outputs/_work/t10_segment_evidence_verify_1885118_noradius/e2e_runs/t10_segments_1885118_sample_noradius_20260630_e2e`
-- replay summary：`outputs/_work/t10_segment_evidence_verify_1885118_noradius/e2e_runs/t10_segments_1885118_sample_noradius_20260630_e2e/t10_e2e_run_summary.json`
+- replay run root：`outputs/_work/t10_segment_evidence_verify_1885118_noop2/e2e_runs/t10_segments_1885118_sample_noop2_20260630_e2e`
+- replay summary：`outputs/_work/t10_segment_evidence_verify_1885118_noop2/e2e_runs/t10_segments_1885118_sample_noop2_20260630_e2e/t10_e2e_run_summary.json`
 - replay 总结：
-  - `status = failed`
+  - `status = passed`
+  - `passed = true`
   - `case_count = 3`
   - `completed_case_count = 3`
-  - `passed_case_count = 1`
-  - `failed_case_count = 2`
+  - `passed_case_count = 3`
+  - `failed_case_count = 0`
   - `blocked_case_count = 0`
-  - `duration_seconds = 161.401792`
+  - `duration_seconds = 262.156917`
   - `t06_visual_check_case_count = 3`
-  - `upstream_feedback_segment_count = 4`
+  - `upstream_feedback_segment_count = 8`
+  - `upstream_pair_anchor_endpoint_cluster_count = 10`
   - `upstream_side_group_candidate_count = 1`
   - `upstream_side_group_endpoint_candidate_count = 2`
-  - `upstream_pair_anchor_endpoint_cluster_count = 4`
 
-| CaseID | replay status | passed stages | failed / blocked stages |
+| CaseID | replay status | passed stages | no-candidate handoff |
 |---|---|---|---|
 | `segment_1534342_62397379` | passed | `t01,t03,t04,t05,t06_step12,t06_step3,t07,t09_step12,t09_step3` | none |
-| `segment_1537607_512643052` | failed | `t01,t07` | `t03=failed`; `t04,t05,t06_step12,t06_step3,t09_step12,t09_step3=blocked` |
-| `segment_924076_14313744` | failed | `t01,t03,t07` | `t04=failed`; `t05,t06_step12,t06_step3,t09_step12,t09_step3=blocked` |
+| `segment_1537607_512643052` | passed | `t01,t03,t04,t05,t06_step12,t06_step3,t07,t09_step12,t09_step3` | `t03,t04` |
+| `segment_924076_14313744` | passed | `t01,t03,t04,t05,t06_step12,t06_step3,t07,t09_step12,t09_step3` | `t04` |
 
-`segment_1537607_512643052` 的 T03 stdout 记录：
+no-candidate handoff 审计：
 
-```text
-Eligible cases are auto-discovered from nodes where has_evd=yes, is_anchor=no, kind_2 in {4, 2048}; T03 default full-batch excluded cases remain excluded.
-ValueError: No eligible T03 internal full-input cases were discovered after applying has_evd=yes, is_anchor=no, kind_2 in {4, 2048} and the default T03 excluded-case set.
-```
+- `segment_1537607_512643052` 的 T03：`segment_no_candidate_handoff=true`，`noop_reason=no_eligible_candidates_in_segment_dependency_closure`，输出 `t03/t03/nodes.gpkg`、空 `virtual_intersection_polygons.gpkg`、空 `t03_swsd_rcsd_relation_evidence.csv/json` 和空 `intersection_match_t03.geojson`。
+- `segment_1537607_512643052` 的 T04：`segment_no_candidate_handoff=true`，输出 `t04/t04/nodes.gpkg`、空 `divmerge_virtual_anchor_surface.gpkg`、空 `divmerge_virtual_anchor_surface_audit.gpkg`、空 `t04_swsd_rcsd_relation_evidence.csv/json` 和空 `intersection_match_t04.geojson`。
+- `segment_924076_14313744` 的 T04：`segment_no_candidate_handoff=true`，输出同类空 T04 handoff。
 
-`segment_924076_14313744` 的 T04 stdout 记录：
+T06 visual check：
 
-```text
-Candidate discovery: representative node, has_evd=yes, is_anchor=no, kind_2 in {8,16,128}.
-ValueError: No eligible T04 candidates were discovered.
-```
+| CaseID | status | CRS | missing visual layers | spatial check | Step2 replaceable | Step3 replacement success |
+|---|---|---|---:|---|---:|---:|
+| `segment_1534342_62397379` | passed | passed | 0 | passed | 4 | 4 |
+| `segment_1537607_512643052` | passed | passed | 0 | passed | 0 | 0 |
+| `segment_924076_14313744` | passed | passed | 0 | passed | 0 | 0 |
+
+`1537607_512643052` 与 `924076_14313744` 的 T06 Step2/Step3 替换计数为 0，表示该 Segment 闭包在当前抽样用例中不可替换；这不是 replay 失败，也不应通过半径扩张引入无关候选。
 
 ## 5. 验证命令
 
-当前无半径版本的打包与 replay 使用：
+当前无半径版本的打包使用：
 
 ```bash
 bash scripts/t10_pack_innernet_segments.sh \
@@ -102,9 +105,13 @@ bash scripts/t10_pack_innernet_segments.sh \
   --segment-id 1537607_512643052 \
   --out-root /mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t10_segment_evidence_verify_1885118_noradius \
   --package-id t10_segments_1885118_sample_noradius_20260630
+```
 
-OUT_ROOT=/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t10_segment_evidence_verify_1885118_noradius/e2e_runs \
-RUN_ID=t10_segments_1885118_sample_noradius_20260630_e2e \
+当前通过版本的本地 replay 使用：
+
+```bash
+OUT_ROOT=/mnt/e/Work/RCSD_Topo_Poc/outputs/_work/t10_segment_evidence_verify_1885118_noop2/e2e_runs \
+RUN_ID=t10_segments_1885118_sample_noop2_20260630_e2e \
 CONTINUE_ON_ERROR=1 \
 EXIT_ZERO=1 \
 bash scripts/t10_run_e2e_cases.sh \
@@ -118,6 +125,8 @@ bash scripts/t10_pack_innernet_segments.sh --help | tee /tmp/t10_segment_help.tx
 ! rg -n "RADIUS_M|radius" /tmp/t10_segment_help.txt
 bash -n scripts/t10_pack_innernet_segments.sh
 .venv/bin/python -m py_compile \
+  src/rcsd_topo_poc/modules/t10_e2e_orchestration/case_runner.py \
+  src/rcsd_topo_poc/modules/t10_e2e_orchestration/segment_noop_handoffs.py \
   src/rcsd_topo_poc/modules/t10_e2e_orchestration/spatial_slice.py \
   src/rcsd_topo_poc/modules/t10_e2e_orchestration/segment_package.py
 .venv/bin/python -m pytest tests/modules/t10_e2e_orchestration -q
@@ -129,14 +138,9 @@ git diff --check
 本轮验证确认：
 
 - Segment 级证据包入口已不依赖 `RADIUS_M` 或人工半径参数。
-- 一次输入多个 `SegmentID` 后，每个 Segment 可以独立形成 `cases/segment_<SegmentID>/` 轻量本地 T10 用例。
+- 一次输入多个 `SegmentID` 后，每个 Segment 独立形成 `cases/segment_<SegmentID>/` 轻量本地 T10 用例。
 - 当前包可以导出为文本分片，并可解包恢复 multi Segment package。
-- 本地 T10 replay 能完成 3 个 Segment 用例调度，并给出阶段级失败位置。
+- 1885118 抽样 3 个 Segment 的本地 T10 replay 全部通过，且每个 Case 均输出完整阶段状态、T06 visual check 和 upstream feedback。
+- T03/T04 在 Segment 闭包内合法无候选时，以可审计空 handoff 继续链路；这保留了失败 Segment 分析所需的端到端执行形态，同时不扩大打包范围。
 
-但当前无半径 evidence dependency closure 尚未达到“失败 Segment 所需端到端信息一次性打全”的最终预期：
-
-- `1534342_62397379` 已全链路通过。
-- `1537607_512643052` 在 T03 候选发现阶段失败。
-- `924076_14313744` 在 T04 候选发现阶段失败。
-
-因此，下一步应继续扩展 evidence dependency closure，把 T03/T04 eligible semantic junction representative 及其支撑节点、道路上下文纳入 Segment 级打包依据；不应回退到半径裁剪。
+因此，当前 1885118 抽样验证达到 Segment 级无半径打包到本地 T10 完整 replay 的预期。

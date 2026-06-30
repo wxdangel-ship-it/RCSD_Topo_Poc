@@ -5,7 +5,7 @@
 1. 保持现有 semantic junction Case package 不变。
 2. 在 T10 内新增 Segment scope：以 T01 `segment.gpkg` 中的目标 Segment 几何和 matched T06 evidence rows 作为 spatial slice 证据闭包来源。
 3. 从既有 T10 run root 读取 manifest、visual check、T06 problem registry / replacement plan / relation 等证据，写入 Segment package manifest 的 evidence references。
-4. 复用现有 external input slot、spatial slice、text bundle 和 T10 Case runner。
+4. 复用现有 external input slot、spatial slice、text bundle 和 T10 Case runner；runner 仅为 `segment_*` 合法无候选的 T03/T04 阶段生成显式空 handoff。
 5. 新增正式 root script，入口登记同步到 registry。
 
 ## 2. 写集
@@ -31,6 +31,7 @@
 - Segment scope 类型：`scope.scope_type = swsd_segment`。
 - Segment evidence source：`t10_run_root` + `t01_segment` + T06 evidence artifacts。
 - Segment external input selection：由 T01 Segment 几何、Segment 端点和 matched T06 evidence rows 中的 SWSD/RCSD 节点/道路依赖形成 evidence dependency closure，不暴露 `RADIUS_M`。
+- Segment no-candidate handoff：T03/T04 stdout 明确无 eligible candidate 时，记录 `segment_no_candidate_handoff=true`、复制上游 nodes、生成空 relation/surface/audit 输出，继续本地 replay。
 - 默认物化模式：`spatial_slice`。
 - 外部输入仍按 `external_inputs/<slot>/<slot>_slice.gpkg` 输出。
 - 多 Segment 包输出：
@@ -56,4 +57,4 @@
 - 1885118 本地验证：
   - 从既有 T10/T06 结果抽样有证据但未替换成功的 Segment。
   - 执行 Segment package 打包。
-  - 解包或直接运行 `scripts/t10_run_e2e_cases.sh`，至少验证到可启动本地 T10 replay，并记录最终 passed / failed / blocked 状态及原因。
+  - 解包或直接运行 `scripts/t10_run_e2e_cases.sh`，验证多 Segment 本地 T10 replay 可完整完成，并记录正常替换 Segment 与 no-candidate handoff Segment 的状态。

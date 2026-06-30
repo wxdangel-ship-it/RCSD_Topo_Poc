@@ -16,6 +16,7 @@ from rcsd_topo_poc.modules.t10_e2e_orchestration import (
     build_t10_t06_funnel_summary,
     build_case_evidence_package,
     build_multi_case_evidence_package,
+    build_multi_segment_evidence_package,
     decode_t10_case_evidence_text_bundle,
     export_t10_case_evidence_text_bundle,
     suggest_t10_cases,
@@ -97,6 +98,26 @@ def _complete_vector_manifest(tmp_path: Path) -> dict:
         for requirement in HANDOFF_REQUIREMENTS
     }
     return {"external_inputs": external_inputs, "handoffs": handoffs}
+
+
+def _write_segment_gpkg(path: Path) -> str:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    write_gpkg(
+        path,
+        [
+            {
+                "properties": {"id": "1001_3001", "snodeid": "1001", "enodeid": "3001"},
+                "geometry": LineString([(0.0, 0.0), (400.0, 0.0)]),
+            },
+            {
+                "properties": {"id": "2001_2001", "snodeid": "2001", "enodeid": "2001"},
+                "geometry": LineString([(4900.0, 0.0), (5100.0, 0.0)]),
+            },
+        ],
+        crs_text="EPSG:3857",
+        layer_name="segment",
+    )
+    return str(path)
 
 
 def _write_nodes_geojson(path: Path) -> str:
@@ -558,6 +579,90 @@ def test_multi_case_package_materializes_spatial_slices_by_case_id(tmp_path: Pat
         (artifacts.package_dir / "cases" / "2001" / "t10_case_evidence_manifest.json").read_text(encoding="utf-8")
     )
     assert case_2001_manifest["scope"]["center"] == {"x": 5000.0, "y": 0.0}
+
+
+def test_multi_segment_package_uses_t10_run_evidence_and_segment_scope(tmp_path: Path) -> None:
+    manifest = _complete_vector_manifest(tmp_path)
+    segment_path = _write_segment_gpkg(tmp_path / "t01" / "segment.gpkg")
+    run_root = tmp_path / "t10_run"
+    problem_csv = (
+        run_root
+        / "cases"
+        / "1885118"
+        / "t06_step12"
+        / "t06"
+        / "step2_extract_rcsd_segments"
+        / "t06_segment_replacement_problem_registry.csv"
+    )
+    problem_csv.parent.mkdir(parents=True)
+    problem_csv.write_text(
+        "swsd_segment_id,problem_status,reject_reason\n"
+        "1001_3001,requires_upstream_iteration,missing_pair_relation\n",
+        encoding="utf-8",
+    )
+    (run_root / "t10_t06_visual_check_summary.json").write_text(
+        json.dumps(
+            {
+                "rows": [
+                    {
+                        "case_id": "1885118",
+                        "t01_segment_gpkg": segment_path,
+                        "t06_segment_replacement_problem_registry_gpkg": str(problem_csv),
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    artifacts = build_multi_segment_evidence_package(
+        manifest=manifest,
+        out_root=tmp_path / "packages",
+        swsd_segment_ids=["1001_3001", "2001_2001"],
+        t10_run_root=run_root,
+        radius_m=100.0,
+        package_id="segments_001",
+        include_files=True,
+    )
+
+    case_dir = artifacts.package_dir / "cases" / "segment_1001_3001"
+    case_manifest = json.loads((case_dir / "t10_case_evidence_manifest.json").read_text(encoding="utf-8"))
+    case_summary = json.loads((case_dir / "t10_case_evidence_summary.json").read_text(encoding="utf-8"))
+    assert case_manifest["package_type"] == "t10_segment_evidence"
+    assert case_manifest["scope"]["scope_type"] == "swsd_segment"
+    assert case_manifest["scope"]["case_id"] == "segment_1001_3001"
+    assert case_manifest["scope"]["swsd_segment_id"] == "1001_3001"
+    assert case_manifest["scope"]["center"] == {"x": 200.0, "y": 0.0}
+    assert case_manifest["scope"]["segment_endpoint_node_ids"] == ["1001", "3001"]
+    assert case_summary["matched_evidence_artifact_count"] == 1
+
+    evidence_artifacts = {
+        item["role"]: item for item in case_manifest["segment_evidence"]["artifacts"] if item["matched_row_count"]
+    }
+    assert evidence_artifacts["t06_segment_replacement_problem_registry"]["matched_rows"][0]["reject_reason"] == (
+        "missing_pair_relation"
+    )
+
+    slot_entries = {entry["slot"]: entry for entry in case_manifest["included_external_inputs"]}
+    nodes_slice = case_dir / slot_entries["prepared_swsd_nodes"]["package_path"]
+    roads_slice = case_dir / slot_entries["prepared_swsd_roads"]["package_path"]
+    assert nodes_slice.is_file()
+    assert roads_slice.is_file()
+    assert len(read_vector(nodes_slice, target_epsg=3857).features) == 3
+    assert len(read_vector(roads_slice, target_epsg=3857).features) == 1
+
+    bundle = export_t10_case_evidence_text_bundle(
+        package_dir=artifacts.package_dir,
+        out_txt=tmp_path / "bundle" / "t10_segment_bundle.txt",
+        max_text_size_bytes=6000,
+    )
+    decoded = decode_t10_case_evidence_text_bundle(
+        bundle_txt=bundle.part_txt_paths[-1],
+        out_dir=tmp_path / "decoded_segments",
+    )
+    decoded_manifest = json.loads(decoded.manifest_path.read_text(encoding="utf-8"))
+    assert decoded_manifest["package_type"] == "t10_segment_evidence"
+    assert (decoded.out_dir / "cases" / "segment_1001_3001" / "t10_case_evidence_manifest.json").is_file()
 
 
 def test_t10_t06_funnel_summary_reads_step_summaries(tmp_path: Path) -> None:

@@ -91,6 +91,8 @@ def decode_t10_case_evidence_text_bundle(*, bundle_txt: str | Path, out_dir: str
     _extract_zip_safely(payload_bytes, destination)
     manifest_path = destination / "t10_multi_case_evidence_manifest.json"
     if not manifest_path.is_file():
+        manifest_path = destination / "t10_multi_segment_evidence_manifest.json"
+    if not manifest_path.is_file():
         manifest_path = destination / "t10_case_evidence_manifest.json"
     return T10TextBundleDecodeArtifacts(out_dir=destination, manifest_path=manifest_path)
 

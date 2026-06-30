@@ -12,6 +12,7 @@
 ## 2. GIS 与拓扑要求
 
 - Case spatial slice 必须补齐被选中道路的端点节点依赖，并保留完整道路几何。
+- Segment spatial slice 必须以 T01 Segment 几何 bounds 外扩 `radius_m` 作为窗口，补齐被选中道路的端点节点依赖，并保留完整道路几何。
 - 切片 summary 必须记录 CRS、bounds、输入/输出要素数和 invalid geometry。
 - T06 visual check 只索引图层和快速指标，不修改几何。
 
@@ -23,8 +24,8 @@
 
 ## 4. 回归要求
 
-测试应覆盖 Case package、multi-case layout、text bundle 分片解包、Case runner 阶段状态、T06 funnel、visual check、feedback iteration regression guard、manifest stage order、resume 和 finalize-existing。
+测试应覆盖 Case package、Segment package、multi-case / multi-segment layout、text bundle 分片解包、Case runner 阶段状态、T06 funnel、visual check、feedback iteration regression guard、manifest stage order、resume 和 finalize-existing。
 
 ## 5. 性能要求
 
-T10 应记录每个 Case、每个阶段和 full pipeline 的耗时。Case package 默认使用 spatial slice，避免复制全量输入；`copy_full` 只作为兼容诊断模式。
+T10 应记录每个 Case、每个 Segment、每个阶段和 full pipeline 的耗时。Case / Segment package 默认使用 spatial slice，避免复制全量输入；`copy_full` 只作为 Case 入口兼容诊断模式。

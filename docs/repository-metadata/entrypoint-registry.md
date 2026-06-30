@@ -6,9 +6,9 @@
 
 ## 2. 当前登记摘要
 
-- 当前真实执行入口共 `93` 个。
+- 当前真实执行入口共 `95` 个。
 - 分布概览：
-  - repo 级入口文件：`65`（`Makefile` 1 + `scripts/` 63 + `.venv/bin/python -m rcsd_topo_poc` 1）
+  - repo 级入口文件：`67`（`Makefile` 1 + `scripts/` 65 + `.venv/bin/python -m rcsd_topo_poc` 1）
   - CLI 稳定子命令：`28`
 - 维护口径：
   - CLI 子命令以 `.venv/bin/python -m rcsd_topo_poc --help` 为准。
@@ -119,6 +119,7 @@
 | `t08_tool9_rcsd_cleaning.py` | `scripts/t08_tool9_rcsd_cleaning.py` | repo 级 | T08 Tool9 RCSD 数据清理，读取 RCSDNode、RCSDRoad 与道路面 GPKG，按道路面覆盖语义组、Road 相交与起终点保留状态输出 `rcsdnode_clean_tool9.gpkg / rcsdroad_clean_tool9.gpkg` 与 summary，不改写输入 | `active` | 否 |
 | `t09_export_step3_input_text_bundle_innernet.sh` | `scripts/t09_export_step3_input_text_bundle_innernet.sh` | repo 级 | T09 内网 Step3 输入单文件文本证据包导出脚本；按中心点与 `SIZE_M` / `RADIUS_M` 空间窗口切片 SWSD nodes / roads / Segment、T08 Tool7 / Tool8 输出和 T06 Step3 FRCSD Road / Node，生成 base85 文本 bundle，超过 250KB 自动分片并可立即解包校验 | `active` | 否 |
 | `t10_pack_innernet_cases.sh` | `scripts/t10_pack_innernet_cases.sh` | repo 级 | T10 内网多 Case 证据包正式打包入口；以 SWSD semantic junction id 列表为 CaseID，读取 T10 v1 外部输入 slot，生成 `cases/<case_id>/` 结构的文件证据包并导出可自动分片的文本 bundle，可选立即解包校验 | `active` | 否 |
+| `t10_pack_innernet_segments.sh` | `scripts/t10_pack_innernet_segments.sh` | repo 级 | T10 内网多 Segment 证据包正式打包入口；以 SWSD SegmentID 列表为输入，读取既有 `T10_RUN_ROOT` 反查 T01 Segment 与 T06 证据，生成 `cases/segment_<segment_id>/` 结构的文件证据包并导出可自动分片的文本 bundle，可选立即解包校验 | `active` | 否 |
 | `t10_run_e2e_cases.sh` | `scripts/t10_run_e2e_cases.sh` | repo 级 | T10 Case 级端到端执行入口；从已生成或已解包的 T10 Case package 读取局部外部输入切片，串联 `T01 -> T07 Step1/2 -> T03 -> T04 -> T05 -> T06 -> T09` 的既有脚本或模块 callable，并输出阶段审计与 T06 数据漏斗；可通过 `T10_FEEDBACK_ITERATIONS` 执行 T06 upstream feedback 的 side-group endpoint / pair-anchor endpoint cluster 回灌迭代并启用 replaced Segment 不回退 guard | `active` | 否 |
 | `t10_run_innernet_full_pipeline.sh` | `scripts/t10_run_innernet_full_pipeline.sh` | repo 级 | T10 内网全量端到端总控脚本；不走 Case package，默认串联 `T08 -> T01 -> T07 Step1/2 -> T03 -> T04 -> T05 -> T06 Step1/2 -> T06 Step3 -> T09` 既有模块入口或 callable，所有阶段输出到 `outputs/_work/t10_innernet_full_pipeline/<RUN_ID>/` 并写入 manifest；T07 Step3 仅在 `RUN_T07_STEP3` 且显式 `T07_STEP3_INTERSECTION_MATCH_ALL_PATH` 时作为兼容补锚阶段运行；支持 `FINALIZE_EXISTING` 补写既有 run 完成状态，并支持 `RESUME_RUN_ROOT / RESUME_FROM_STAGE / RUN_STAGES` 从既有 run 的指定阶段续跑 | `active` | 否 |
 

@@ -23,6 +23,7 @@ T10 必须保持连续 nodes handoff：T07 Step2 nodes 进入 T03，T03 downstre
 ## 2. 业务目标
 
 - 以 SWSD 语义路口 ID 组织端到端 Case 证据包，支持本地复现和内外网协作。
+- 以 SWSD SegmentID 组织 Segment 级证据包，支持从既有 T10/T06 端到端结果反查失败 Segment 证据，并生成每 Segment 一个的轻量本地 T10 用例。
 - 将每个模块的输入、输出、日志、状态和耗时显式记录到文件级 handoff，避免下游根据目录猜测产物。
 - 区分节点状态 handoff 与 relation handoff：SWSD 侧最终锚定状态来自 T04 downstream nodes，T05 只发布最终 relation 与 RCSD copy-on-write 成果。
 - 支持 Case 级 replay，复现 `T01 -> T09` 的关键链路并输出每阶段状态。
@@ -37,6 +38,7 @@ T10 必须保持连续 nodes handoff：T07 Step2 nodes 进入 T03，T03 downstre
 
 - workflow plan、handoff audit 和 summary。
 - 单 Case / 多 Case evidence package。
+- 单 Segment / 多 Segment evidence package。
 - `spatial_slice` 局部 GPKG 切片。
 - 文本 bundle 自动分片与解包。
 - Case runner 端到端 replay。
@@ -69,8 +71,10 @@ T10 必须保持连续 nodes handoff：T07 Step2 nodes 进入 T03，T03 downstre
 |---|---|
 | 外部输入 slot | Case package 和 workflow plan 的基础数据来源。 |
 | SWSD semantic junction id | CaseID，用于定位局部 Case 范围。 |
+| SWSD SegmentID | Segment 级证据包主输入；打包后 CaseID 使用 `segment_<SegmentID>`，正式 Segment 身份记录在 `scope.swsd_segment_id`。 |
 | selector evidence | 将问题审计映射回语义路口 Case。 |
 | Case package | Case runner 的端到端 replay 输入。 |
+| 既有 T10 run root | Segment package 反查 T01 Segment、T06 problem registry、replacement plan 和 relation 证据的来源。 |
 | T06 problem registry / relation audit | 生成上游反馈包和 feedback iteration 输入。 |
 | 既有 full pipeline run root | resume 或 finalize-existing 的恢复对象。 |
 
@@ -80,6 +84,7 @@ T10 必须保持连续 nodes handoff：T07 Step2 nodes 进入 T03，T03 downstre
 |---|---|
 | `t10_workflow_plan / t10_handoff_audit / t10_summary` | 工作流规划和 handoff 可用性审计。 |
 | `t10_case_evidence_manifest / summary` | Case 范围、输入、切片和选择状态。 |
+| `t10_multi_segment_evidence_manifest / summary` | 多 Segment 证据包顶层清单、Segment 状态和 evidence 引用。 |
 | `external_inputs/<slot>/<slot>_slice.gpkg` | Case replay 使用的局部外部输入。 |
 | `t10_e2e_run_manifest / summary` | Case runner 顶层状态和完成口径。 |
 | `cases/<case_id>/<stage>/*` | 每个 Case 每阶段的命令、日志、状态和输出。 |
@@ -94,6 +99,7 @@ T10 必须保持连续 nodes handoff：T07 Step2 nodes 进入 T03，T03 downstre
 |---|---|
 | Workflow planning | 检查外部输入和模块 handoff slot 是否存在、是否是文件、是否可被下游消费。 |
 | Case packaging | 按 SWSD 语义路口和半径组织局部证据包，补齐道路端点节点依赖并保留完整道路几何。 |
+| Segment packaging | 按 SWSD SegmentID 从既有 T10 run root 反查 T01/T06 证据，以 Segment 几何 bounds + radius 组织局部证据包。 |
 | Case replay | 从 Case package 启动 T01-T09 关键链路，每阶段显式记录输入输出和状态。 |
 | T06 funnel | 聚合 T06 Step1/2/3 数量流转、拒绝原因、replacement plan 和 problem registry 状态。 |
 | T06 feedback | 将可回流上游的问题拆成 Segment、relation、side-group endpoint 和 pair-anchor endpoint cluster 等反馈视图。 |
@@ -105,6 +111,7 @@ T10 必须保持连续 nodes handoff：T07 Step2 nodes 进入 T03，T03 downstre
 - T10 只编排和记录，不改写 T01-T09 的算法事实。
 - 每个 handoff 都有明确文件路径、状态和日志。
 - Case package 优先使用局部切片，manifest-only 时才回退源路径。
+- Segment package 必须记录 `scope_type=swsd_segment`、`swsd_segment_id`、T10 run root、T01 Segment source 和匹配到的 T06 evidence rows。
 - T06 feedback 只作为上游迭代输入，不直接驱动 Step3 替换。
 - 顶层 summary 能明确区分 `passed / failed / blocked / skipped`。
 

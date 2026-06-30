@@ -17,7 +17,13 @@ from .evidence_package import (
     build_multi_case_evidence_package,
 )
 from .orchestrator import T10PlanningArtifacts, build_workflow_plan, validate_t10_manifest, write_t10_planning_outputs
-from .spatial_slice import T10SpatialSliceResult, build_case_spatial_input_slices
+from .segment_package import (
+    T10MultiSegmentEvidencePackageArtifacts,
+    T10SegmentEvidencePackageArtifacts,
+    build_multi_segment_evidence_package,
+    build_segment_evidence_package,
+)
+from .spatial_slice import T10SpatialSliceResult, build_case_spatial_input_slices, build_segment_spatial_input_slices
 from .text_bundle import (
     T10TextBundleDecodeArtifacts,
     T10TextBundleExportArtifacts,
@@ -32,7 +38,9 @@ __all__ = [
     "T10CaseSuggestionArtifacts",
     "T10SpatialSliceResult",
     "T10MultiCaseEvidencePackageArtifacts",
+    "T10MultiSegmentEvidencePackageArtifacts",
     "T10PlanningArtifacts",
+    "T10SegmentEvidencePackageArtifacts",
     "T10TextBundleDecodeArtifacts",
     "T10UpstreamFeedbackArtifacts",
     "T10TextBundleExportArtifacts",
@@ -46,6 +54,9 @@ __all__ = [
     "build_case_evidence_package",
     "build_case_spatial_input_slices",
     "build_multi_case_evidence_package",
+    "build_multi_segment_evidence_package",
+    "build_segment_evidence_package",
+    "build_segment_spatial_input_slices",
     "build_t10_t06_funnel_summary",
     "build_workflow_plan",
     "decode_t10_case_evidence_text_bundle",

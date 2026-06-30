@@ -12,7 +12,7 @@
 ## 2. GIS 与拓扑要求
 
 - Case spatial slice 必须补齐被选中道路的端点节点依赖，并保留完整道路几何。
-- Segment spatial slice 必须以 T01 Segment 几何 bounds 外扩 `radius_m` 作为窗口，补齐被选中道路的端点节点依赖，并保留完整道路几何。
+- Segment spatial slice 必须以 T01 Segment 几何和 T06 evidence dependency ids 作为证据闭包，补齐被选中道路的端点节点依赖，并保留完整道路几何；不得暴露人工半径参数。
 - 切片 summary 必须记录 CRS、bounds、输入/输出要素数和 invalid geometry。
 - T06 visual check 只索引图层和快速指标，不修改几何。
 

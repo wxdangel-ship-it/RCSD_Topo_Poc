@@ -32,7 +32,7 @@ T10 消费外部输入、T01-T09 模块输出、T06 problem registry、T06 relat
 ## 4. 数据流
 
 1. Workflow planning 检查外部输入和 handoff slot。
-2. Case packaging 按 CaseID 和半径生成 manifest 或 spatial slice；Segment packaging 按 SegmentID 从既有 T10 run root 反查 T01/T06 证据，并按 Segment 几何窗口生成 spatial slice。
+2. Case packaging 按 CaseID 和半径生成 manifest 或 spatial slice；Segment packaging 按 SegmentID 从既有 T10 run root 反查 T01/T06 证据，并按 evidence dependency closure 生成 spatial slice。
 3. Case runner 从 package 启动 T01-T09 关键链路，并记录阶段级结果。
 4. T06 funnel、visual check 和 feedback 从已产出的阶段结果中读取证据。
 5. Innernet full pipeline 脚本串联全量阶段并写入 manifest / summary。

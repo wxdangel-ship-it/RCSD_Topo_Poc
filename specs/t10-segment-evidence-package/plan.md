@@ -3,7 +3,7 @@
 ## 1. 实施策略
 
 1. 保持现有 semantic junction Case package 不变。
-2. 在 T10 内新增 Segment scope：以 T01 `segment.gpkg` 中的目标 Segment 几何作为 spatial slice 窗口来源。
+2. 在 T10 内新增 Segment scope：以 T01 `segment.gpkg` 中的目标 Segment 几何和 matched T06 evidence rows 作为 spatial slice 证据闭包来源。
 3. 从既有 T10 run root 读取 manifest、visual check、T06 problem registry / replacement plan / relation 等证据，写入 Segment package manifest 的 evidence references。
 4. 复用现有 external input slot、spatial slice、text bundle 和 T10 Case runner。
 5. 新增正式 root script，入口登记同步到 registry。
@@ -30,6 +30,7 @@
 - 正式 Segment 身份字段：`scope.swsd_segment_id`。
 - Segment scope 类型：`scope.scope_type = swsd_segment`。
 - Segment evidence source：`t10_run_root` + `t01_segment` + T06 evidence artifacts。
+- Segment external input selection：由 T01 Segment 几何、Segment 端点和 matched T06 evidence rows 中的 SWSD/RCSD 节点/道路依赖形成 evidence dependency closure，不暴露 `RADIUS_M`。
 - 默认物化模式：`spatial_slice`。
 - 外部输入仍按 `external_inputs/<slot>/<slot>_slice.gpkg` 输出。
 - 多 Segment 包输出：

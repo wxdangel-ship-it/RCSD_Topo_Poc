@@ -77,7 +77,6 @@ def build_segment_evidence_package(
     out_root: str | Path,
     swsd_segment_id: str,
     t10_run_root: str | Path,
-    radius_m: float,
     package_id: str | None = None,
     t01_segment_path: str | Path | None = None,
     include_files: bool = True,
@@ -93,7 +92,6 @@ def build_segment_evidence_package(
         package_dir=package_dir,
         swsd_segment_id=segment_id,
         t10_run_root=t10_run_root,
-        radius_m=radius_m,
         package_id=effective_package_id,
         t01_segment_path=t01_segment_path,
         include_files=include_files,
@@ -116,7 +114,6 @@ def build_multi_segment_evidence_package(
     out_root: str | Path,
     swsd_segment_ids: Sequence[str],
     t10_run_root: str | Path,
-    radius_m: float,
     package_id: str | None = None,
     t01_segment_path: str | Path | None = None,
     include_files: bool = True,
@@ -126,8 +123,6 @@ def build_multi_segment_evidence_package(
     segment_ids = [_required_segment_id(segment_id) for segment_id in swsd_segment_ids if str(segment_id).strip()]
     if not segment_ids:
         raise ValueError("swsd_segment_ids must contain at least one non-empty SegmentID.")
-    if radius_m <= 0:
-        raise ValueError("radius_m must be > 0.")
 
     effective_package_id = package_id or _default_multi_segment_package_id(segment_ids)
     package_dir = Path(out_root).expanduser().resolve() / effective_package_id
@@ -144,7 +139,6 @@ def build_multi_segment_evidence_package(
             package_dir=case_dir,
             swsd_segment_id=segment_id,
             t10_run_root=t10_run_root,
-            radius_m=radius_m,
             package_id=effective_package_id,
             t01_segment_path=t01_segment_path,
             include_files=include_files,
@@ -178,7 +172,6 @@ def build_multi_segment_evidence_package(
         "case_id_semantics": "Segment package case id; formal Segment identity is scope.swsd_segment_id.",
         "scope_type": "swsd_segment",
         "segment_count": len(case_summaries),
-        "radius_m": radius_m,
         "selection_crs": f"EPSG:{target_epsg}",
         "materialization_mode": _resolve_materialization_mode(
             include_files=include_files,
@@ -196,7 +189,6 @@ def build_multi_segment_evidence_package(
         "package_type": "t10_segment_evidence",
         "package_id": effective_package_id,
         "segment_count": len(case_summaries),
-        "radius_m": radius_m,
         "materialization_mode": payload["materialization_mode"],
         "passed": all(item["passed"] for item in case_summaries),
         "failed_segment_count": sum(1 for item in case_summaries if not item["passed"]),
@@ -220,7 +212,6 @@ def _segment_payload_and_summary(
     package_dir: Path,
     swsd_segment_id: str,
     t10_run_root: str | Path,
-    radius_m: float,
     package_id: str,
     t01_segment_path: str | Path | None,
     include_files: bool,
@@ -241,7 +232,7 @@ def _segment_payload_and_summary(
             package_dir=package_dir,
             swsd_segment_path=segment_source_path,
             swsd_segment_id=swsd_segment_id,
-            radius_m=radius_m,
+            segment_evidence_rows=_matched_evidence_rows(evidence),
             target_epsg=target_epsg,
         )
         included_inputs = slice_result.included_inputs
@@ -260,7 +251,6 @@ def _segment_payload_and_summary(
         "case_id_semantics": "swsd_segment_package_case_id",
         "scope_type": "swsd_segment",
         "swsd_segment_id": swsd_segment_id,
-        "radius_m": radius_m,
         "selection_crs": f"EPSG:{target_epsg}",
         "selection_status": "spatial_slice_completed" if spatial_slice_summary else "manifest_scope_declared",
     }
@@ -298,7 +288,7 @@ def _segment_payload_and_summary(
                 else f"Segment scope is declared in EPSG:{target_epsg}; no vector materialization was requested."
             ),
             "topology_consistency": "No topology repair or silent fix is performed while building the Segment package.",
-            "geometry_semantics": "The package is keyed by SWSD Segment id and uses T01 Segment geometry bounds expanded by radius.",
+            "geometry_semantics": "The package is keyed by SWSD Segment id and selects local inputs from T01 Segment geometry plus matched T10/T06 evidence dependencies; no radius parameter is used.",
             "audit_traceability": "The manifest records T10 run root, T01 Segment source, T06 evidence paths, external source paths and checksums.",
             "performance_verifiability": "Manifest records input counts and optional materialized file count.",
         },
@@ -311,7 +301,6 @@ def _segment_payload_and_summary(
         "package_id": package_id,
         "case_id": case_id,
         "swsd_segment_id": swsd_segment_id,
-        "radius_m": radius_m,
         "materialization_mode": mode,
         "selection_status": scope_payload["selection_status"],
         "external_input_slot_count": len(EXTERNAL_INPUT_REQUIREMENTS),
@@ -362,6 +351,17 @@ def _discover_segment_evidence(
         "visual_check_row_count": len(visual_rows),
         "artifacts": artifacts,
     }
+
+
+def _matched_evidence_rows(evidence: Mapping[str, Any]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for artifact in evidence.get("artifacts", []):
+        if not isinstance(artifact, Mapping):
+            continue
+        matched_rows = artifact.get("matched_rows")
+        if isinstance(matched_rows, list):
+            rows.extend(dict(row) for row in matched_rows if isinstance(row, Mapping))
+    return rows
 
 
 def _discover_t01_segment_path(t10_run_root: Path) -> Path | None:

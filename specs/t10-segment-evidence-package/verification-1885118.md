@@ -13,7 +13,7 @@
   - `1534342_62397379`
   - `1537607_512643052`
 - package id：`t10_segments_1885118_sample_20260630`
-- 选择半径：`250.0` meters
+- Segment 选择方式：`swsd_segment_e2e_evidence_dependency_closure`，不使用人工半径参数。
 
 本验证使用当前本地可访问的既有 T10/T06 输出与 case package external input slices；未声明或执行内网环境操作。
 

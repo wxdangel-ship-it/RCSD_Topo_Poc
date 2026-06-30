@@ -27,7 +27,7 @@ T10 的职责仍是编排、记录和组织证据，不修改 T01-T09 算法。
 Segment package 在现有 Case package 之上扩展一个新的 scope 类型：
 
 - 旧 `semantic_junction` Case：CaseID 仍为 SWSD semantic junction id。
-- 新 `swsd_segment` Case：CaseID 为 `segment_<SegmentID>`，scope 记录 `swsd_segment_id`，并以 Segment 几何派生中心、bounds 和半径窗口。
+- 新 `swsd_segment` Case：CaseID 为 `segment_<SegmentID>`，scope 记录 `swsd_segment_id`，并以 T01 Segment 几何和 matched T06 evidence dependency ids 形成证据闭包。
 
 Segment 打包必须从 T10 端到端 run root 中反查可用证据：
 
@@ -62,7 +62,7 @@ Segment 打包必须从 T10 端到端 run root 中反查可用证据：
 
 - **CRS 与坐标变换正确性**：所有可读 vector slot 在选择前归一到 `EPSG:3857`，manifest 记录 source CRS 和 output CRS。
 - **拓扑一致性**：打包不做 geometry repair，不 silent fix；只记录 invalid geometry、空几何和端点依赖缺失。
-- **几何语义可解释性**：Segment 窗口来自 T01 Segment 几何 bounds/centroid 加 `radius_m`，不是从局部样本反推字段语义。
+- **几何语义可解释性**：Segment 切片来自 T01 Segment 几何、Segment 端点和 matched T06 evidence rows 中的 SWSD/RCSD 依赖，不接受人工半径参数，也不从局部样本反推字段语义。
 - **审计可追溯性**：manifest 记录 T10 run root、T01 Segment source、T06 evidence path、目标 Segment evidence rows、输入 slot source/output/checksum。
 - **性能可验证性**：summary 记录每个 Segment / slot 的 source count、selected count、materialized file count 和包大小。
 

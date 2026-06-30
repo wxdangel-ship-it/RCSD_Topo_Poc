@@ -99,7 +99,7 @@ T10 必须保持连续 nodes handoff：T07 Step2 nodes 进入 T03，T03 downstre
 |---|---|
 | Workflow planning | 检查外部输入和模块 handoff slot 是否存在、是否是文件、是否可被下游消费。 |
 | Case packaging | 按 SWSD 语义路口和半径组织局部证据包，补齐道路端点节点依赖并保留完整道路几何。 |
-| Segment packaging | 按 SWSD SegmentID 从既有 T10 run root 反查 T01/T06 证据，以 Segment 几何 bounds + radius 组织局部证据包。 |
+| Segment packaging | 按 SWSD SegmentID 从既有 T10 run root 反查 T01/T06 证据，以 evidence dependency closure 组织局部证据包。 |
 | Case replay | 从 Case package 启动 T01-T09 关键链路，每阶段显式记录输入输出和状态。 |
 | T06 funnel | 聚合 T06 Step1/2/3 数量流转、拒绝原因、replacement plan 和 problem registry 状态。 |
 | T06 feedback | 将可回流上游的问题拆成 Segment、relation、side-group endpoint 和 pair-anchor endpoint cluster 等反馈视图。 |

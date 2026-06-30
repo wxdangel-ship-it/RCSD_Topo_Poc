@@ -28,7 +28,6 @@ Common env:
   RCSDNODE                  Default: $TESTDATA_ROOT/RC4/RCSDNode.gpkg
   SW_RESTRICTION_TOOL7      Default: auto-detect t08/T08 sw_restriction_tool7.gpkg
   SW_ARROW_TOOL8            Default: auto-detect t08/T08 sw_arrow_tool8.gpkg
-  RADIUS_M                  Default: 250
   INCLUDE_FILES             Default: 1
   MATERIALIZATION_MODE      Default: spatial_slice when INCLUDE_FILES=1; values: spatial_slice, manifest_only
   OUT_ROOT                  Default: outputs/_work/t10_segment_evidence
@@ -126,7 +125,6 @@ RCSDNODE="$(resolve_input_path RCSDNODE "$RC4_ROOT/RCSDNode.gpkg")"
 SW_RESTRICTION_TOOL7="$(resolve_input_path SW_RESTRICTION_TOOL7 "$FIRST_LAYER_ROOT/t08/sw_restriction_tool7.gpkg" "$FIRST_LAYER_ROOT/T08/sw_restriction_tool7.gpkg")"
 SW_ARROW_TOOL8="$(resolve_input_path SW_ARROW_TOOL8 "$FIRST_LAYER_ROOT/t08/sw_arrow_tool8.gpkg" "$FIRST_LAYER_ROOT/T08/sw_arrow_tool8.gpkg")"
 
-RADIUS_M="${RADIUS_M:-250}"
 INCLUDE_FILES="${INCLUDE_FILES:-1}"
 MATERIALIZATION_MODE="${MATERIALIZATION_MODE:-}"
 OUT_ROOT="${OUT_ROOT:-$REPO_DIR/outputs/_work/t10_segment_evidence}"
@@ -172,7 +170,6 @@ echo "[RUN] PYTHON_BIN=$PYTHON_BIN"
 echo "[RUN] SEGMENT_IDS=${segment_ids[*]}"
 echo "[RUN] T10_RUN_ROOT=$T10_RUN_ROOT"
 echo "[RUN] T01_SEGMENT=${T01_SEGMENT:-<auto>}"
-echo "[RUN] RADIUS_M=$RADIUS_M"
 echo "[RUN] INCLUDE_FILES=$INCLUDE_FILES"
 echo "[RUN] MATERIALIZATION_MODE=${MATERIALIZATION_MODE:-<auto>}"
 echo "[RUN] OUT_ROOT=$OUT_ROOT"
@@ -181,7 +178,7 @@ echo "[RUN] BUNDLE_ROOT=$BUNDLE_ROOT"
 export T10_RUN_ROOT T01_SEGMENT
 export PREPARED_SWSD_NODES PREPARED_SWSD_ROADS DRIVEZONE DIVSTRIPZONE RCSD_INTERSECTION
 export RCSDROAD RCSDNODE SW_RESTRICTION_TOOL7 SW_ARROW_TOOL8
-export OUT_ROOT BUNDLE_ROOT RADIUS_M INCLUDE_FILES MATERIALIZATION_MODE PACKAGE_ID MAX_TEXT_SIZE_BYTES
+export OUT_ROOT BUNDLE_ROOT INCLUDE_FILES MATERIALIZATION_MODE PACKAGE_ID MAX_TEXT_SIZE_BYTES
 export DECODE_AFTER_EXPORT DECODE_ROOT
 
 PYTHONPATH="$REPO_DIR/src${PYTHONPATH:+:$PYTHONPATH}" "$PYTHON_BIN" - "${segment_ids[@]}" <<'PY'
@@ -225,7 +222,6 @@ package = build_multi_segment_evidence_package(
     swsd_segment_ids=segment_ids,
     t10_run_root=Path(os.environ["T10_RUN_ROOT"]),
     t01_segment_path=os.environ.get("T01_SEGMENT") or None,
-    radius_m=float(os.environ["RADIUS_M"]),
     package_id=os.environ.get("PACKAGE_ID") or None,
     include_files=truthy(os.environ["INCLUDE_FILES"]),
     materialization_mode=os.environ.get("MATERIALIZATION_MODE") or None,

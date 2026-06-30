@@ -596,8 +596,9 @@ def test_multi_segment_package_uses_t10_run_evidence_and_segment_scope(tmp_path:
     )
     problem_csv.parent.mkdir(parents=True)
     problem_csv.write_text(
-        "swsd_segment_id,problem_status,reject_reason\n"
-        "1001_3001,requires_upstream_iteration,missing_pair_relation\n",
+        "swsd_segment_id,problem_status,reject_reason,swsd_pair_nodes,rcsd_pair_nodes,pair_anchor_bridge_road_ids\n"
+        "1001_3001,requires_upstream_iteration,missing_pair_relation,"
+        "\"['1001','3001']\",\"['rc1','rc2']\",\"['rcroad_near']\"\n",
         encoding="utf-8",
     )
     (run_root / "t10_t06_visual_check_summary.json").write_text(
@@ -620,7 +621,6 @@ def test_multi_segment_package_uses_t10_run_evidence_and_segment_scope(tmp_path:
         out_root=tmp_path / "packages",
         swsd_segment_ids=["1001_3001", "2001_2001"],
         t10_run_root=run_root,
-        radius_m=100.0,
         package_id="segments_001",
         include_files=True,
     )
@@ -632,8 +632,12 @@ def test_multi_segment_package_uses_t10_run_evidence_and_segment_scope(tmp_path:
     assert case_manifest["scope"]["scope_type"] == "swsd_segment"
     assert case_manifest["scope"]["case_id"] == "segment_1001_3001"
     assert case_manifest["scope"]["swsd_segment_id"] == "1001_3001"
+    assert "radius_m" not in case_manifest["scope"]
     assert case_manifest["scope"]["center"] == {"x": 200.0, "y": 0.0}
     assert case_manifest["scope"]["segment_endpoint_node_ids"] == ["1001", "3001"]
+    assert case_manifest["spatial_slice_summary"]["selection_mode"] == "swsd_segment_e2e_evidence_dependency_closure"
+    assert case_manifest["spatial_slice_summary"]["dependency_context"]["rcsd_node_ids"] == ["rc1", "rc2"]
+    assert case_manifest["spatial_slice_summary"]["dependency_context"]["rcsd_road_ids"] == ["rcroad_near"]
     assert case_summary["matched_evidence_artifact_count"] == 1
 
     evidence_artifacts = {
@@ -648,7 +652,11 @@ def test_multi_segment_package_uses_t10_run_evidence_and_segment_scope(tmp_path:
     roads_slice = case_dir / slot_entries["prepared_swsd_roads"]["package_path"]
     assert nodes_slice.is_file()
     assert roads_slice.is_file()
-    assert len(read_vector(nodes_slice, target_epsg=3857).features) == 3
+    node_ids = {
+        str(feature.properties["id"])
+        for feature in read_vector(nodes_slice, target_epsg=3857).features
+    }
+    assert node_ids == {"1001", "1002", "3001"}
     assert len(read_vector(roads_slice, target_epsg=3857).features) == 1
 
     bundle = export_t10_case_evidence_text_bundle(

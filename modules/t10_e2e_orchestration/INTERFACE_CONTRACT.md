@@ -441,22 +441,24 @@ manifest 至少记录：
 
 该 runner 不生成 Case 级 `t10_t06_funnel.*`；全量替换率和质量审计应消费 T06/T09 阶段正式输出或另行运行全量审计脚本。
 
-### 3.7 Four-case statistical baseline registration
+### 3.7 All-case statistical baseline registration
 
-当前 T10 四 Case 端到端统计基线登记如下：
+当前 T10 全量 Case 端到端统计基线登记如下：
 
-- 当前有效基线目录：`/mnt/e/Work/RCSD_Topo_Poc/outputs/baselines/t10_4cases_d1fa27f_20260627_064205`
-- 当前有效 run root：`/mnt/e/Work/RCSD_Topo_Poc/outputs/baselines/t10_4cases_d1fa27f_20260627_064205/e2e_full`
-- 当前指针文件：`/mnt/e/Work/RCSD_Topo_Poc/outputs/baselines/LATEST_T10_4CASES_BASELINE.txt`
-- 版本：`d1fa27f`，刷新时 `main = origin/main = d1fa27f`。
-- Case 范围：`1885118`、`609214532`、`74155468`、`991176`。
-- 完成口径：T10 `status = passed`，4 个 Case 全部通过，失败 Case 数为 0。
-- 刷新口径：复用冻结基线的 T01/T07/T03/T04/T05 关键 handoff，不重跑前置模块；仅刷新 `t06_step12 / t06_step3 / t09_step12 / t09_step3`，并重写 T10 manifest、summary、T06 funnel、visual check 与 upstream feedback。
-- 基线产物：`case_stage_status_baseline.csv`、`t06_funnel_baseline.csv`、`t06_rcsd_base_replacement_rate_baseline.csv`、`baseline_summary.json`、`BASELINE_REFRESH_NOTE.md`、`BASELINE_FREEZE.md`、`BASELINE_USAGE.md`。
+- 当前有效基线目录：`/mnt/e/work/rcsd_topo_poc/outputs/baselines/t10_all_cases_c5085f0_20260630_181345`
+- 当前有效 run root：`/mnt/e/work/rcsd_topo_poc/outputs/baselines/t10_all_cases_c5085f0_20260630_181345/e2e_full`
+- 当前指针文件：
+  - `/mnt/e/work/rcsd_topo_poc/outputs/baselines/LATEST_T10_ALL_CASES_BASELINE.txt`
+  - `/mnt/e/work/rcsd_topo_poc/outputs/baselines/LATEST_T10_BASELINE.txt`
+- 版本：`c5085f0`，注册时 `main = origin/main = c5085f0`。
+- Case 范围：`1885118`、`605415675`、`609214532`、`706247`、`74155468`、`991176`。
+- 完成口径：T10 `status = passed`，6 个 Case 全部通过，失败 Case 数为 0。
+- 刷新口径：从 `/mnt/e/TestData/POC_Data/T10` 全量端到端重跑，不复用旧基线上游 handoff。
+- 基线产物：`case_stage_status_baseline.csv`、`case_stage_status_compare.csv`、`t06_funnel_baseline.csv`、`t06_funnel_compare.csv`、`t06_rcsd_base_replacement_rate_baseline.csv`、`t06_rcsd_base_replacement_rate_compare.csv`、`baseline_summary.json`、`BASELINE_REFRESH_NOTE.md`、`BASELINE_FREEZE.md`、`BASELINE_USAGE.md`。
 
-旧目录 `outputs/baselines/t10_4cases_72b27f2_20260625_182356` 已被 `d1fa27f` 基线替代并从本地清理；`outputs/baselines/t10_4cases_beb54bf_20260625_055800`、`outputs/baselines/t10_4cases_a2d9a58_20260624_174615` 与 `outputs/baselines/t10_4cases_72b27f2_20260625_172727` 均不再具备当前有效基线身份。后续自动化或人工审计必须优先读取 `LATEST_T10_4CASES_BASELINE.txt`，不得硬编码旧目录。
+旧四 Case 基线 `outputs/baselines/t10_4cases_08aa76c_20260628_155754` 已被本全量基线替代并从本地清理；旧指针 `LATEST_T10_4CASES_BASELINE.txt` 不再作为有效入口保留。后续自动化或人工审计必须优先读取 `LATEST_T10_ALL_CASES_BASELINE.txt` 或通用 `LATEST_T10_BASELINE.txt`，不得硬编码旧目录。
 
-该登记只定义 T10 四 Case 统计对比基线，不新增执行入口，不改变 T01-T09 算法接口。完整漏斗、RCSD Base 替换率、GIS / 拓扑 / 性能审计状态见 `architecture/statistical-baseline.md`。
+该登记只定义 T10 全量 Case 统计对比基线，不新增执行入口，不改变 T01-T09 算法接口。完整漏斗、RCSD Base 替换率、GIS / 拓扑 / 性能审计状态见 `architecture/statistical-baseline.md`。
 
 ## 4. EntryPoints
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
@@ -226,6 +227,173 @@ def _first_required_rcsd_point(case_result: T04CaseResult) -> tuple[float | str,
     return "", ""
 
 
+def _ids_from_value(value: Any) -> tuple[str, ...]:
+    if value in (None, ""):
+        return ()
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return ()
+        parsed: Any = None
+        if text.startswith("[") and text.endswith("]"):
+            try:
+                parsed = ast.literal_eval(text)
+            except (SyntaxError, ValueError):
+                parsed = None
+        if isinstance(parsed, (list, tuple, set)):
+            return tuple(_dedupe_sorted_text(str(item) for item in parsed))
+        for separator in ("|", ";", ","):
+            text = text.replace(separator, "|")
+        return tuple(_dedupe_sorted_text(part.strip(" []'\"") for part in text.split("|")))
+    if isinstance(value, (list, tuple, set)):
+        return tuple(_dedupe_sorted_text(str(item) for item in value))
+    return (str(value).strip(),) if str(value or "").strip() else ()
+
+
+def _int_value(value: Any) -> int | None:
+    if value in (None, ""):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        try:
+            return int(float(str(value).strip()))
+        except (TypeError, ValueError):
+            return None
+
+
+def _rcsd_road_lookup(case_result: T04CaseResult) -> dict[str, Any]:
+    return {
+        str(getattr(road, "road_id", "") or "").strip(): road
+        for road in getattr(case_result.case_bundle, "rcsd_roads", ()) or ()
+        if str(getattr(road, "road_id", "") or "").strip()
+    }
+
+
+def _rcsd_node_lookup(case_result: T04CaseResult) -> dict[str, Any]:
+    return {
+        str(getattr(node, "node_id", "") or "").strip(): node
+        for node in getattr(case_result.case_bundle, "rcsd_nodes", ()) or ()
+        if str(getattr(node, "node_id", "") or "").strip()
+    }
+
+
+def _road_endpoint_ids(road: Any) -> tuple[str, ...]:
+    return tuple(
+        _dedupe_sorted_text(
+            (
+                str(getattr(road, "snodeid", "") or "").strip(),
+                str(getattr(road, "enodeid", "") or "").strip(),
+            )
+        )
+    )
+
+
+def _incident_rcsdroad_ids_by_node(case_result: T04CaseResult) -> dict[str, set[str]]:
+    result: dict[str, set[str]] = {}
+    for road in getattr(case_result.case_bundle, "rcsd_roads", ()) or ():
+        road_id = str(getattr(road, "road_id", "") or "").strip()
+        if not road_id:
+            continue
+        for node_id in _road_endpoint_ids(road):
+            result.setdefault(node_id, set()).add(road_id)
+    return result
+
+
+def _node_lid_count(node: Any) -> int:
+    properties = getattr(node, "properties", {}) or {}
+    return len(_ids_from_value(properties.get("node_lid")))
+
+
+def _is_reusable_rcsd_semantic_endpoint(
+    node: Any,
+    *,
+    incident_road_ids: set[str],
+) -> bool:
+    properties = getattr(node, "properties", {}) or {}
+    kind = _int_value(getattr(node, "kind", None))
+    if kind is None:
+        kind = _int_value(properties.get("kind"))
+    if kind != 8:
+        return False
+    return max(len(incident_road_ids), _node_lid_count(node)) >= 3
+
+
+def _event_unit_fallback_rcsdroad_ids(event_unit: Any) -> tuple[str, ...]:
+    values: list[str] = []
+    sources = [
+        getattr(event_unit, "fallback_rcsdroad_ids", ()) or (),
+        (getattr(event_unit, "selected_evidence_summary", {}) or {}).get("fallback_rcsdroad_ids"),
+        (getattr(event_unit, "selected_candidate_summary", {}) or {}).get("fallback_rcsdroad_ids"),
+        (getattr(event_unit, "positive_rcsd_audit", {}) or {}).get("fallback_rcsdroad_ids"),
+    ]
+    for source in sources:
+        for road_id in _ids_from_value(source):
+            if road_id not in values:
+                values.append(road_id)
+    return tuple(values)
+
+
+def _event_unit_review_reasons(event_unit: Any) -> tuple[str, ...]:
+    values: list[str] = []
+    if hasattr(event_unit, "all_review_reasons"):
+        try:
+            values.extend(str(item) for item in event_unit.all_review_reasons())
+        except TypeError:
+            pass
+    values.extend(str(item) for item in getattr(event_unit, "review_reasons", ()) or ())
+    for summary_name in ("selected_evidence_summary", "selected_candidate_summary", "positive_rcsd_audit"):
+        summary = getattr(event_unit, summary_name, {}) or {}
+        if isinstance(summary, dict):
+            values.extend(str(item) for item in summary.get("review_reasons") or ())
+    return tuple(_dedupe_sorted_text(values))
+
+
+def _allows_fallback_endpoint_reuse(event_unit: Any) -> bool:
+    reasons = set(_event_unit_review_reasons(event_unit))
+    return "road_surface_fork_binding_used" in reasons
+
+
+def _fallback_rcsdroad_semantic_endpoint_node_id(
+    case_result: T04CaseResult,
+    event_unit: Any,
+) -> str | None:
+    if len(getattr(case_result, "event_units", ()) or ()) != 1:
+        return None
+    if str(getattr(event_unit, "required_rcsd_node", "") or "").strip():
+        return None
+    if not _allows_fallback_endpoint_reuse(event_unit):
+        return None
+    fallback_road_ids = _event_unit_fallback_rcsdroad_ids(event_unit)
+    if len(fallback_road_ids) != 1:
+        return None
+    road = _rcsd_road_lookup(case_result).get(fallback_road_ids[0])
+    if road is None:
+        return None
+    nodes_by_id = _rcsd_node_lookup(case_result)
+    incident_by_node = _incident_rcsdroad_ids_by_node(case_result)
+    reusable_node_ids = [
+        node_id
+        for node_id in _road_endpoint_ids(road)
+        for node in (nodes_by_id.get(node_id),)
+        if node is not None
+        and _is_reusable_rcsd_semantic_endpoint(
+            node,
+            incident_road_ids=incident_by_node.get(node_id, set()),
+        )
+    ]
+    if len(reusable_node_ids) != 1:
+        return None
+    return reusable_node_ids[0]
+
+
+def _rcsd_node_geometry(case_result: T04CaseResult, node_id: str | None) -> BaseGeometry | None:
+    if not node_id:
+        return None
+    node = _rcsd_node_lookup(case_result).get(str(node_id))
+    return getattr(node, "geometry", None) if node is not None else None
+
+
 def _local_rcsd_node_id(event_unit: Any) -> str | None:
     unit_id = str(getattr(event_unit, "local_rcsd_unit_id", "") or "").strip()
     if not unit_id:
@@ -237,7 +405,12 @@ def _local_rcsd_node_id(event_unit: Any) -> str | None:
     return None
 
 
-def _relation_handoff_node_id(event_unit: Any, *, swsd_relation_type: str) -> str | None:
+def _relation_handoff_node_id(
+    event_unit: Any,
+    *,
+    case_result: T04CaseResult | None = None,
+    swsd_relation_type: str,
+) -> str | None:
     required_node = str(getattr(event_unit, "required_rcsd_node", "") or "").strip()
     if (
         required_node
@@ -249,7 +422,11 @@ def _relation_handoff_node_id(event_unit: Any, *, swsd_relation_type: str) -> st
         local_node_id = _local_rcsd_node_id(event_unit)
         if local_node_id:
             return local_node_id
-    return required_node or None
+    if required_node:
+        return required_node
+    if case_result is None:
+        return None
+    return _fallback_rcsdroad_semantic_endpoint_node_id(case_result, event_unit)
 
 
 def _relation_handoff_rcsd_node_ids(
@@ -258,7 +435,11 @@ def _relation_handoff_rcsd_node_ids(
     swsd_relation_type: str,
 ) -> list[str]:
     return _dedupe_sorted_text(
-        _relation_handoff_node_id(event_unit, swsd_relation_type=swsd_relation_type)
+        _relation_handoff_node_id(
+            event_unit,
+            case_result=case_result,
+            swsd_relation_type=swsd_relation_type,
+        )
         for event_unit in case_result.event_units
     )
 
@@ -269,8 +450,16 @@ def _first_relation_handoff_rcsd_point(
     swsd_relation_type: str,
 ) -> tuple[float | str, float | str]:
     for event_unit in case_result.event_units:
-        handoff_node_id = _relation_handoff_node_id(event_unit, swsd_relation_type=swsd_relation_type)
+        handoff_node_id = _relation_handoff_node_id(
+            event_unit,
+            case_result=case_result,
+            swsd_relation_type=swsd_relation_type,
+        )
         required_node = str(getattr(event_unit, "required_rcsd_node", "") or "").strip()
+        rcsd_node_geometry = _rcsd_node_geometry(case_result, handoff_node_id)
+        x, y = _point_xy(rcsd_node_geometry)
+        if x != "" and y != "":
+            return x, y
         geometry_field = (
             "local_rcsd_unit_geometry"
             if handoff_node_id and required_node and handoff_node_id != required_node

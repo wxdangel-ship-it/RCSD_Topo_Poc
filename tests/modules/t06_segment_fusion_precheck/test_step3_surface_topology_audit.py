@@ -611,7 +611,7 @@ def test_surface_topology_postprocess_closes_relation_mapped_retained_boundary(t
         stem=STEP3_FRCSD_NODE_STEM,
         fieldnames=["id", "mainnodeid", "source"],
         features=[
-            _feature({"id": "20", "mainnodeid": "200", "source": 1}, Point(10, 0)),
+            _feature({"id": "20", "mainnodeid": "200", "source": 1}, Point(30, 0)),
             _feature({"id": "2", "mainnodeid": "2", "source": 2}, Point(0, 0)),
         ],
     )
@@ -628,7 +628,7 @@ def test_surface_topology_postprocess_closes_relation_mapped_retained_boundary(t
                     "swsd_node_id": "2",
                     "swsd_segment_ids": '["s_replaced", "s_retained"]',
                     "frcsd_node_ids": '["20", "2"]',
-                    "max_pairwise_distance_m": 10.0,
+                    "max_pairwise_distance_m": 30.0,
                 },
                 Point(0, 0),
             )
@@ -646,7 +646,7 @@ def test_surface_topology_postprocess_closes_relation_mapped_retained_boundary(t
                     "swsd_to_frcsd_node_map": [{"swsd_node_id": "2", "frcsd_node_ids": ["20"], "mapping_status": "mapped"}],
                     "risk_flags": [],
                 },
-                LineString([(10, 0), (15, 0)]),
+                LineString([(30, 0), (35, 0)]),
             ),
             _feature(
                 {

@@ -1141,8 +1141,6 @@ def _relation_mapped_boundary_fallback_node(
     candidate_point = feature_item.get("geometry")
     if not isinstance(candidate_point, Point):
         return None
-    if float(candidate_point.distance(swsd_point)) > MAX_RELATION_MAPPED_BOUNDARY_1V1_DISTANCE_M:
-        return None
     return _node_info(feature_item, candidate_id, source_field_name)
 
 

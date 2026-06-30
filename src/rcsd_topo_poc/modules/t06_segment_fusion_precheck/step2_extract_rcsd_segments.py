@@ -1366,6 +1366,7 @@ def run_t06_step2_extract_rcsd_segments(
         swsd_segments=list(segments.values()),
         swsd_nodes=swsd_node_features,
         rcsd_nodes=rcsd_node_features,
+        relation_map=relation_map,
     )
     diag.stage("problem_registry")
     problem_registry_rows = _build_problem_registry_rows(

@@ -119,29 +119,6 @@ def run_surface_aware_step3_segment_replacement(
         rcsdnode_path=rcsdnode_path,
         incident_segments_by_node=incident_segments_by_node,
     )
-    if not released:
-        artifacts = _run_step3(
-            **initial_step3_kwargs,
-        )
-        surface_summary = _run_surface(
-            artifacts,
-            swsd_segment_path=swsd_segment_path,
-            swsd_roads_path=swsd_roads_path,
-            surface_inputs=surface_inputs,
-            surface_topology_closure=surface_topology_closure,
-            topology_coverage_cache=topology_coverage_cache,
-        )
-        _write_release_audit(
-            artifacts.step_root,
-            {
-                "status": "no_release",
-                "baseline_fail_count": len(baseline_fail_keys),
-                "external_baseline_fail_count": len(external_baseline_fail_keys) if external_baseline_root else None,
-                "released_count": 0,
-            },
-        )
-        return artifacts, surface_summary
-
     released_plan = _write_plan_json(artifacts.step_root, release_rows, "candidate")
     visual_release_pending = _has_visual_conflict_release_candidate(release_rows)
     artifacts = _run_step3(
@@ -486,7 +463,7 @@ def _surface_release_plan_rows(
     rows = [{"properties": dict(row.get("properties") or {}), "geometry": row.get("geometry")} for row in plan_rows]
     for row in rows:
         props = row["properties"]
-        if props.get("source_reason") != RETAINED_JUNCTION_GATE_REASON:
+        if not _is_retained_junction_gate_plan(props):
             continue
         allow, triggers = _release_allowed(
             props,

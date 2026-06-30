@@ -8,6 +8,7 @@ from shapely.ops import unary_union
 
 from .graph_builders import NodeCanonicalizer
 from .parsing import ParseError, normalize_id, parse_id_list, unique_preserve_order
+from .relation_mapping import RelationRecord
 from .road_attributes import is_advance_right_turn_road
 from .schemas import feature
 
@@ -24,6 +25,8 @@ MAX_RETAINED_JUNCTION_ATTACHMENT_GAP_M = 20.0
 MAX_VISUAL_MANUAL_RELEASE_PAIR_ATTACHMENT_GAP_M = 25.0
 MAX_REPLACED_JUNCTION_MAPPING_DIVERGENCE_M = 5.0
 MAX_JUNCTION_LOCAL_CONFLICT_ROAD_M = 30.0
+RETAINED_JUNCTION_GATE_REASON = "junction_alignment_to_retained_swsd_exceeds_topology_gate"
+T05_RELATION_JUNCTION_RELEASE_RISK = "junction_alignment_t05_relation_release"
 VISUAL_CONFLICT_SWSD_BUFFER_M = 5.0
 VISUAL_CONFLICT_CORRIDOR_BUFFER_M = 15.0
 MIN_VISUAL_CONFLICT_PRUNE_OUTSIDE_RATIO = 0.5
@@ -46,6 +49,7 @@ def build_replacement_plan_rows(
     swsd_segments: list[dict[str, Any]] | None = None,
     swsd_nodes: list[dict[str, Any]] | None = None,
     rcsd_nodes: list[dict[str, Any]] | None = None,
+    relation_map: dict[str, RelationRecord] | None = None,
 ) -> list[dict[str, Any]]:
     rcsd_road_by_id = _index_by_id(rcsd_roads)
     rcsd_node_by_id = _index_by_id(rcsd_nodes or [])
@@ -102,6 +106,8 @@ def build_replacement_plan_rows(
             swsd_nodes=swsd_nodes or [],
             rcsd_node_by_id=rcsd_node_by_id,
             rcsd_road_by_id=rcsd_road_by_id,
+            rcsd_node_canonicalizer=rcsd_node_canonicalizer,
+            relation_map=relation_map or {},
         )
         _apply_group_member_plan_gate(rows)
     return rows
@@ -1096,6 +1102,8 @@ def _apply_junction_alignment_plan_gate(
     swsd_nodes: list[dict[str, Any]],
     rcsd_node_by_id: dict[str, dict[str, Any]],
     rcsd_road_by_id: dict[str, dict[str, Any]],
+    rcsd_node_canonicalizer: NodeCanonicalizer,
+    relation_map: dict[str, RelationRecord],
 ) -> None:
     if not swsd_segments or not swsd_nodes or not rcsd_node_by_id:
         return
@@ -1113,42 +1121,67 @@ def _apply_junction_alignment_plan_gate(
 
     for swsd_node_id, mappings in mappings_by_node.items():
         incident_segments = incident_segments_by_node.get(swsd_node_id, [])
-        if incident_segments and any(segment_id not in ready_segments for segment_id in incident_segments):
-            swsd_point = _feature_point(swsd_node_by_id.get(swsd_node_id))
-            if swsd_point is not None:
-                for props, rcsd_node_id in mappings:
-                    rcsd_point = _feature_point(rcsd_node_by_id.get(rcsd_node_id))
-                    if rcsd_point is None:
-                        continue
-                    distance_m = float(swsd_point.distance(rcsd_point))
-                    if distance_m > MAX_RETAINED_JUNCTION_ATTACHMENT_GAP_M:
-                        if _allow_visual_manual_release_pair_attachment_gap(
-                            props,
-                            swsd_node_id=swsd_node_id,
-                            distance_m=distance_m,
-                        ):
-                            _mark_plan_row_risk(
-                                props,
-                                reason="visual_manual_release_pair_attachment_gap_requires_manual_review",
-                                risk_flag="visual_manual_release_pair_attachment_gap_accepted",
-                            )
-                            continue
-                        if _allow_pair_anchor_repair_attachment_gap(
-                            props,
-                            swsd_node_id=swsd_node_id,
-                            rcsd_node_id=rcsd_node_id,
-                        ):
-                            _mark_plan_row_risk(
-                                props,
-                                reason="pair_anchor_repair_attachment_gap_requires_manual_review",
-                                risk_flag="pair_anchor_repair_attachment_gap_accepted",
-                            )
-                            continue
-                        _block_plan_row(
-                            props,
-                            reason="junction_alignment_to_retained_swsd_exceeds_topology_gate",
-                            risk_flag="junction_alignment_to_retained_swsd_exceeds_topology_gate",
-                        )
+        has_retained_boundary = bool(incident_segments and any(segment_id not in ready_segments for segment_id in incident_segments))
+        swsd_point = _feature_point(swsd_node_by_id.get(swsd_node_id))
+        if swsd_point is not None:
+            for props, rcsd_node_id in mappings:
+                rcsd_point = _feature_point(rcsd_node_by_id.get(rcsd_node_id))
+                if rcsd_point is None:
+                    continue
+                distance_m = float(swsd_point.distance(rcsd_point))
+                if distance_m <= MAX_RETAINED_JUNCTION_ATTACHMENT_GAP_M:
+                    continue
+                if _allow_t05_relation_attachment_gap(
+                    swsd_node_id=swsd_node_id,
+                    rcsd_node_id=rcsd_node_id,
+                    relation_map=relation_map,
+                    rcsd_node_canonicalizer=rcsd_node_canonicalizer,
+                ):
+                    _mark_plan_row_risk(
+                        props,
+                        reason=RETAINED_JUNCTION_GATE_REASON,
+                        risk_flag=RETAINED_JUNCTION_GATE_REASON,
+                    )
+                    _mark_plan_row_risk(
+                        props,
+                        reason="t05_relation_backed_retained_junction_attachment_gap",
+                        risk_flag=T05_RELATION_JUNCTION_RELEASE_RISK,
+                    )
+                    _mark_plan_row_risk(
+                        props,
+                        reason="t05_relation_backed_retained_junction_attachment_gap_requires_manual_review",
+                        risk_flag="manual_review_required",
+                    )
+                    continue
+                if not has_retained_boundary:
+                    continue
+                if _allow_visual_manual_release_pair_attachment_gap(
+                    props,
+                    swsd_node_id=swsd_node_id,
+                    distance_m=distance_m,
+                ):
+                    _mark_plan_row_risk(
+                        props,
+                        reason="visual_manual_release_pair_attachment_gap_requires_manual_review",
+                        risk_flag="visual_manual_release_pair_attachment_gap_accepted",
+                    )
+                    continue
+                if _allow_pair_anchor_repair_attachment_gap(
+                    props,
+                    swsd_node_id=swsd_node_id,
+                    rcsd_node_id=rcsd_node_id,
+                ):
+                    _mark_plan_row_risk(
+                        props,
+                        reason="pair_anchor_repair_attachment_gap_requires_manual_review",
+                        risk_flag="pair_anchor_repair_attachment_gap_accepted",
+                    )
+                    continue
+                _block_plan_row(
+                    props,
+                    reason=RETAINED_JUNCTION_GATE_REASON,
+                    risk_flag=RETAINED_JUNCTION_GATE_REASON,
+                )
 
         for left_index, (left_props, left_rcsd_node_id) in enumerate(mappings):
             left_point = _feature_point(rcsd_node_by_id.get(left_rcsd_node_id))
@@ -1392,6 +1425,24 @@ def _mark_plan_row_risk(props: dict[str, Any], *, reason: str, risk_flag: str) -
     if suffix in notes:
         return
     props["notes"] = f"{notes}; {suffix}" if notes else suffix
+
+
+def _allow_t05_relation_attachment_gap(
+    *,
+    swsd_node_id: str,
+    rcsd_node_id: str,
+    relation_map: dict[str, RelationRecord],
+    rcsd_node_canonicalizer: NodeCanonicalizer,
+) -> bool:
+    relation = relation_map.get(swsd_node_id)
+    if relation is None or relation.status != 0 or relation.base_id <= 0:
+        return False
+    try:
+        relation_base_id = rcsd_node_canonicalizer.canonicalize(str(relation.base_id))
+        candidate_node_id = rcsd_node_canonicalizer.canonicalize(rcsd_node_id)
+    except ParseError:
+        return False
+    return relation_base_id == candidate_node_id
 
 
 def _incident_segments_by_swsd_node(swsd_segments: list[dict[str, Any]]) -> dict[str, list[str]]:

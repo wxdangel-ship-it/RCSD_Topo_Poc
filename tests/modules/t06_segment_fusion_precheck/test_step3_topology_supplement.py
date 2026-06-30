@@ -871,6 +871,45 @@ def test_surface_aware_release_allows_wide_formal_body_corridor() -> None:
     assert added_road_to_segments == {"rr": ["s1"]}
 
 
+def test_relation_release_allows_wide_formal_body_corridor() -> None:
+    retained_body = _road("body", "a", "d", [(0, 0), (100, 0)])
+    retained_body["properties"]["segmentid"] = "s1"
+    rcsd_road = {
+        "properties": {"id": "rr", "snodeid": "10", "enodeid": "20", "source": 1},
+        "geometry": LineString([(0, 50), (100, 50)]),
+    }
+    unit = SimpleNamespace(
+        status="passed",
+        reason="",
+        segment_id="s1",
+        pair_nodes=["a", "b"],
+        junc_nodes=[],
+        detached_junc_nodes=["d"],
+        swsd_road_ids=[],
+        retained_detached_swsd_road_ids=["body"],
+        rcsd_road_ids=["rr"],
+        risk_flags=[
+            "junction_alignment_to_retained_swsd_exceeds_topology_gate",
+            "junction_alignment_t05_relation_release",
+        ],
+    )
+    added_road_to_segments = {"rr": ["s1"]}
+
+    stats = exclude_retained_swsd_carriers_from_formal_replacements(
+        [unit],
+        added_road_to_segments=added_road_to_segments,
+        removed_road_to_segments={},
+        swsd_road_by_id={"body": retained_body},
+        rcsd_road_by_id={"rr": rcsd_road},
+    )
+
+    assert stats["deactivated_segment_count"] == 0
+    assert unit.status == "passed"
+    assert "surface_aware_formal_corridor_release" in unit.risk_flags
+    assert "manual_review_required" in unit.risk_flags
+    assert added_road_to_segments == {"rr": ["s1"]}
+
+
 def test_wide_formal_body_corridor_still_blocks_without_surface_release() -> None:
     retained_body = _road("body", "a", "d", [(0, 0), (100, 0)])
     retained_body["properties"]["segmentid"] = "s1"

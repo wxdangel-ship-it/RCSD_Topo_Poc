@@ -25,9 +25,10 @@ GROUP_SEGMENT_MAX_UNCOVERED_RATIO = 0.50
 GROUP_SEGMENT_MIN_UNCOVERED_LENGTH_M = 20.0
 EXISTING_ADVANCE_CORRIDOR_BUFFER_M = 5.0
 EXISTING_ADVANCE_CORRIDOR_MIN_COVERAGE_RATIO = 0.85
-SURFACE_AWARE_FORMAL_CORRIDOR_REQUIRED_FLAGS = {
-    "junction_alignment_to_retained_swsd_exceeds_topology_gate",
+T05_RELATION_JUNCTION_RELEASE_RISK = "junction_alignment_t05_relation_release"
+SURFACE_AWARE_FORMAL_CORRIDOR_RELEASE_FLAGS = {
     "junction_alignment_surface_audit_release",
+    T05_RELATION_JUNCTION_RELEASE_RISK,
 }
 SURFACE_AWARE_FORMAL_CORRIDOR_RELEASE_RISK_FLAGS = [
     "surface_aware_formal_corridor_release",
@@ -449,7 +450,9 @@ def _surface_aware_formal_corridor_release_available(
         risk_flags = set(parse_id_list(getattr(unit, "risk_flags", []), allow_empty=True))
     except ParseError:
         return False
-    if not SURFACE_AWARE_FORMAL_CORRIDOR_REQUIRED_FLAGS.issubset(risk_flags):
+    if "junction_alignment_to_retained_swsd_exceeds_topology_gate" not in risk_flags:
+        return False
+    if not risk_flags.intersection(SURFACE_AWARE_FORMAL_CORRIDOR_RELEASE_FLAGS):
         return False
     failed, _ = _corridor_coverage_failed(
         swsd_road,

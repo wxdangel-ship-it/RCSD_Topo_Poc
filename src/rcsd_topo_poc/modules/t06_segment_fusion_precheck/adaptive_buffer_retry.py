@@ -11,6 +11,7 @@ GEOMETRY_BUFFER_RETRY_REASONS = {
     "swsd_geometry_not_covered_by_retained_rcsd",
 }
 CONNECTIVITY_BUFFER_RETRY_REASONS = {
+    "required_semantic_nodes_missing_from_buffer_graph",
     "required_semantic_nodes_not_connected_in_buffer",
     "rcsd_directed_path_missing",
 }

@@ -63,6 +63,25 @@ def test_single_graph_retry_keeps_original_pair_and_uses_50m_core() -> None:
     assert directed_missing_outcome is not None
     assert directed_missing_outcome.source_reason == f"{LONGITUDINAL_RETRY_RECOMMENDATION}:rcsd_directed_path_missing"
 
+    missing_required_node_outcome = retry.retry(
+        LineString([(0, 0), (100, 0)]),
+        RelationCheck(True, ["10", "20"], []),
+        [],
+        set(),
+        ["10", "20"],
+        "0-1单",
+        "single",
+        _failed_result("required_semantic_nodes_missing_from_buffer_graph"),
+        {"full_graph_status": "required_nodes_connected", "directional_status": "full=directed_path_present;candidate=directed_path_missing"},
+        BufferExtractionConfig(),
+        2.5,
+    )
+
+    assert missing_required_node_outcome is not None
+    assert missing_required_node_outcome.source_reason == (
+        f"{LONGITUDINAL_RETRY_RECOMMENDATION}:required_semantic_nodes_missing_from_buffer_graph"
+    )
+
 
 def test_single_graph_retry_rejects_long_detour_even_when_path_touches_50m_buffer() -> None:
     retry = SingleGraphConnectivityRetry(

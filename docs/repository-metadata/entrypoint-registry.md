@@ -6,9 +6,9 @@
 
 ## 2. 当前登记摘要
 
-- 当前真实执行入口共 `96` 个。
+- 当前真实执行入口共 `97` 个。
 - 分布概览：
-  - repo 级入口文件：`68`（`Makefile` 1 + `scripts/` 66 + `.venv/bin/python -m rcsd_topo_poc` 1）
+  - repo 级入口文件：`69`（`Makefile` 1 + `scripts/` 67 + `.venv/bin/python -m rcsd_topo_poc` 1）
   - CLI 稳定子命令：`28`
 - 维护口径：
   - CLI 子命令以 `.venv/bin/python -m rcsd_topo_poc --help` 为准。
@@ -123,6 +123,7 @@
 | `t10_run_e2e_cases.sh` | `scripts/t10_run_e2e_cases.sh` | repo 级 | T10 Case 级端到端执行入口；从已生成或已解包的 T10 Case package 读取局部外部输入切片，串联 `T01 -> T07 Step1/2 -> T03 -> T04 -> T05 -> T06 -> T09` 的既有脚本或模块 callable，并输出阶段审计与 T06 数据漏斗；可通过 `T10_FEEDBACK_ITERATIONS` 执行 T06 upstream feedback 的 side-group endpoint / pair-anchor endpoint cluster 回灌迭代并启用 replaced Segment 不回退 guard | `active` | 否 |
 | `t10_run_innernet_full_pipeline.sh` | `scripts/t10_run_innernet_full_pipeline.sh` | repo 级 | T10 内网全量端到端总控脚本；不走 Case package，默认串联 `T08 -> T01 -> T07 Step1/2 -> T03 -> T04 -> T05 -> T06 Step1/2 -> T06 Step3 -> T09` 既有模块入口或 callable，所有阶段输出到 `outputs/_work/t10_innernet_full_pipeline/<RUN_ID>/` 并写入 manifest；T07 Step3 仅在 `RUN_T07_STEP3` 且显式 `T07_STEP3_INTERSECTION_MATCH_ALL_PATH` 时作为兼容补锚阶段运行；支持 `FINALIZE_EXISTING` 补写既有 run 完成状态，并支持 `RESUME_RUN_ROOT / RESUME_FROM_STAGE / RUN_STAGES` 从既有 run 的指定阶段续跑 | `active` | 否 |
 | `t11_extract_relation_repair_candidates.py` | `scripts/t11_extract_relation_repair_candidates.py` | repo 级 | T11 人工 relation 修复候选抽取入口；读取既有 T10 Case root 中的 T05/T06/T10 证据，输出候选 CSV/GPKG、人工模板 CSV 与 summary JSON，不修改 T05/T06/T09 输入成果 | `active` | 否 |
+| `t11_run_manual_rerun.py` | `scripts/t11_run_manual_rerun.py` | repo 级 | T11 人工 Excel 结果消费与重跑入口；读取三张 Segment 审计 Excel，抽取可执行人工 relation 并合并为 T05 `--t11-manual-relation` CSV，随后串联既有 T05、T06 Step1/2 与 T06 Step3 脚本，输出人工导入 summary 与修复前后指标对比，不修改输入 Case root 或 baseline | `active` | 否 |
 
 ## 4. 新增入口脚本的准入规则
 

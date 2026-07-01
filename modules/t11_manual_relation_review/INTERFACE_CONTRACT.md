@@ -70,6 +70,30 @@ T11 按文件名和常规 T10 layout 探测输入，不要求调用方传入 T05
 
 该脚本只包装 callable，不新增业务规则。
 
+人工 Excel 重跑入口：
+
+```bash
+.venv/bin/python scripts/t11_run_manual_rerun.py \
+  --case-root <T10_CASE_ROOT> \
+  --manual-audit-root <T11_MANUAL_AUDIT_RUN_ROOT> \
+  --out-root outputs/_work/t11_manual_rerun_605415675 \
+  --case-id 605415675
+```
+
+该入口读取 T11 三张 Segment 审计 Excel：
+
+1. `t11_segments_all_1v1_relation_success_but_not_replaced.xlsx`
+2. `t11_unreplaced_segments_all_junctions_have_evidence_relation_gaps.xlsx`
+3. `t11_unreplaced_segments_with_no_evidence_junction_relation_gaps.xlsx`
+
+脚本会把三张 Excel 中可执行的人工 relation 行合并为 `t11_manual_relation_merged.csv`，再串联既有 `scripts/t05_innernet_experiment.py`、`scripts/t06_run_innernet_precheck.py` 与 `scripts/t06_run_step3_segment_replacement.py` 重跑 T05/T06，并输出 `manual_rerun_metric_compare.json`。导入规则：
+
+- 只消费 `manual_relation_type in {1v1_rcsd_junction,1vN_rcsd_junction,1v1_rcsd_road,1vN_rcsd_road}` 且 `selected_ids` 非空、非 `NULL` 的行。
+- 若行存在 `manual_row_consumable=0`，视为重复审计提示行，不进入 T05。
+- 同一 `target_id` 只消费首个可执行人工行，后续重复 target 只计入导入 summary。
+- 表 1 原始设计不要求填写 relation；若人工额外填入上述可执行字段，脚本会纳入导入，否则只作为下游问题审计表保留。
+- 脚本不修改输入 Case root、不覆盖 baseline，所有输出写到新的 `<out-root>/run_<timestamp>/`。
+
 ## 3. 候选主表字段
 
 ```text

@@ -27,13 +27,14 @@ T11 不修改 T05/T06/T09，不重跑 T06/T09，不把候选提升为 T06 白名
 - 固定输出 Segment 级“未替换 Segment 中有效路口没有可消费 1V1 relation”的人工审计 CSV/GPKG/XLSX。该表以 T06 Step3 未替换 Segment 为分母，避免混入已替换成功 Segment。
 - 固定输出三张 Segment 审计拆分表：所有路口均有 Relation、所有路口均有证据但存在 Relation 缺口、存在无证据路口且需按 50m RCSD 上下文排序。
 - 固定输出 Segment 级“全 1V1 relation 成功但 T06 未替换”审计 CSV/GPKG/XLSX，用于快速定位 relation 之外的 corridor、方向性、RCSD 数据质量或 T06 执行问题。
+- 提供人工 Excel 重跑入口，直接读取三张 Segment 审计 Excel 中局部填写的可执行人工 relation，合并为 T05 可消费 CSV 后重跑 T05/T06，并输出修复前后指标对比。
 
 ### 3.2 当前非目标
 
 - 不做人工回灌。
 - 不修改 T05 relation。
 - 不作为 T06 Step2 或 Step3 替换白名单。
-- 不重跑 T06/T09。
+- 候选抽取 callable 不重跑 T06/T09；人工 Excel 重跑入口只在用户明确提供人工标注后串联既有 T05/T06 脚本生成新 `_work` 结果。
 - 不反推上游字段新语义。
 
 ## 4. 候选分类
@@ -67,6 +68,7 @@ Segment Anchor 审计表是当前人工审计主入口：
 - 三表拆分输出按 Segment 互补：表 1 为所有有效路口均有可消费 1V1 relation；表 2 为所有有效路口均有证据但存在 relation 缺口；表 3 为存在无证据有效路口。三者按 Segment 合并后，应等于 T06 Step3 全量 `relation_status != replaced` Segment 集合。
 - 表 2/3 字段完全相同；表 2 是人工审计重点，表 3 通过路口 50m RCSD 查询和 T03/T04 场景提示降低无效审计。
 - 表 2/3 Excel 的 `manual_relation_type` 使用下拉选择；`NULL` 作为人工审计标记，表示事实无 RCSD 可关联或数据复杂无法标注。
+- 人工 Excel 重跑时，三张 Segment 审计表都会被扫描；只有可执行 relation 类型且 `selected_ids` 非空、非 `NULL`、`manual_row_consumable` 非 0 的行会进入 T05。重复 `target_id` 只消费首个可执行行。
 - “全 1V1 relation 成功但未替换”表只收录所有语义节点 relation 均已成功且可消费，但 Step3 未 `replaced` 的 Segment；它不混入 relation 缺失候选。
 - GPKG 保留明确 CRS，T11 不修补、不裁剪、不重构输入几何。
 - 新人工模板不预填人工结论；全量审计表可保留已有人工结论，未填写行保持空值。

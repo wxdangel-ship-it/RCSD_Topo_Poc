@@ -124,11 +124,15 @@ class Step3ProgressWatchdog:
 
     def _write_jsonl(self, path: Path, row: dict[str, Any]) -> None:
         payload = {"ts": datetime.now(timezone.utc).isoformat(), **row}
+        path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(payload, ensure_ascii=False, default=str) + "\n")
 
     def _write_heartbeat(self, fields: dict[str, Any]) -> None:
         payload = {"ts": datetime.now(timezone.utc).isoformat(), **fields}
-        tmp = self.heartbeat_path.with_suffix(".json.tmp")
+        self.heartbeat_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.heartbeat_path.with_name(
+            f".{self.heartbeat_path.name}.{os.getpid()}.{threading.get_ident()}.tmp"
+        )
         tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
         tmp.replace(self.heartbeat_path)

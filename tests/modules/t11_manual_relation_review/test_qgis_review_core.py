@@ -223,6 +223,10 @@ def test_qgis_plugin_structure_and_metadata() -> None:
     assert "all_evidence_path" not in dock_text
     assert "no_evidence_path" not in dock_text
     assert "DEFAULT_LOCATE_SCALE = 1000" in dock_text
+    assert "NO DATA" in dock_text
+    assert "HAS DATA" in dock_text
+    assert "Data: " in dock_text
+    assert "_format_task_tooltip" in dock_text
 
 
 def _write_review_workbooks(root: Path) -> tuple[Path, Path]:

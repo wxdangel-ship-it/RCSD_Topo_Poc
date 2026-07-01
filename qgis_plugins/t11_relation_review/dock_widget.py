@@ -3,7 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from qgis.PyQt.QtCore import QTimer, Qt  # type: ignore
+from qgis.PyQt.QtCore import QSize, QTimer, Qt  # type: ignore
+from qgis.PyQt.QtGui import QColor  # type: ignore
 from qgis.PyQt.QtWidgets import (  # type: ignore
     QComboBox,
     QDockWidget,
@@ -60,6 +61,18 @@ RELATION_TYPES = [
     "uncertain",
 ]
 DEFAULT_LOCATE_SCALE = 1000
+TASK_STATUS_LABELS = {
+    "blank": "NO DATA",
+    "filled": "HAS DATA",
+    "NULL": "NULL CONFIRMED",
+    "uncertain": "UNCERTAIN",
+}
+TASK_STATUS_BACKGROUNDS = {
+    "blank": "#fff8e1",
+    "filled": "#e8f5e9",
+    "NULL": "#f1f3f4",
+    "uncertain": "#e3f2fd",
+}
 
 
 DOCK_STYLE = """
@@ -84,7 +97,8 @@ QLineEdit, QComboBox, QSpinBox {
     min-height: 26px;
 }
 QListWidget::item {
-    min-height: 24px;
+    min-height: 50px;
+    padding: 4px;
 }
 """
 
@@ -223,9 +237,10 @@ class T11RelationReviewDock(QDockWidget):
         end = min(start + self.page_size, len(self.tasks))
         for index in range(start, end):
             task = self.tasks[index]
-            item = QListWidgetItem(
-                f"[{task.status}] {task.target_id} | {task.swsd_segment_id} | {task.segment_length_m:.1f}m"
-            )
+            item = QListWidgetItem(self._format_task_item_text(task))
+            item.setSizeHint(QSize(0, 56))
+            item.setToolTip(self._format_task_tooltip(task))
+            item.setBackground(QColor(TASK_STATUS_BACKGROUNDS.get(task.status, "#ffffff")))
             item.setData(Qt.UserRole, index)
             self.task_list.addItem(item)
         if 0 <= self.current_index < len(self.tasks) and start <= self.current_index < end:
@@ -233,6 +248,37 @@ class T11RelationReviewDock(QDockWidget):
         self.task_list.blockSignals(False)
         max_page = max((len(self.tasks) - 1) // self.page_size + 1, 0)
         self.page_label.setText(f"{self.current_page + 1 if self.tasks else 0} / {max_page}")
+
+    def _format_task_item_text(self, task: ReviewTask) -> str:
+        status = TASK_STATUS_LABELS.get(task.status, task.status.upper())
+        return (
+            f"{status} | target_id: {task.target_id}\n"
+            f"Segment: {task.swsd_segment_id} | Length: {task.segment_length_m:.1f} m | "
+            f"{self._manual_data_summary(task)}"
+        )
+
+    def _manual_data_summary(self, task: ReviewTask) -> str:
+        parts = []
+        if task.manual_relation_type:
+            parts.append("type")
+        if task.selected_ids:
+            parts.append("NULL ids" if task.selected_ids.upper() == "NULL" else "ids")
+        if task.comment:
+            parts.append("comment")
+        return "Data: " + (" + ".join(parts) if parts else "none")
+
+    def _format_task_tooltip(self, task: ReviewTask) -> str:
+        return (
+            f"target_id: {task.target_id}\n"
+            f"swsd_segment_id: {task.swsd_segment_id}\n"
+            f"segment_length_m: {task.segment_length_m:.3f}\n"
+            f"status: {TASK_STATUS_LABELS.get(task.status, task.status)}\n"
+            f"manual_relation_type: {task.manual_relation_type or '(empty)'}\n"
+            f"selected_ids: {task.selected_ids or '(empty)'}\n"
+            f"comment: {task.comment or '(empty)'}\n"
+            f"workbook: {task.workbook_path.name}\n"
+            f"sheet: {task.sheet_name}; row: {task.excel_row}"
+        )
 
     def _task_row_changed(self, row: int) -> None:
         item = self.task_list.item(row)

@@ -129,7 +129,7 @@ src/rcsd_topo_poc/modules/t11_manual_relation_review/qgis_review/
 - `ids.extract_rcsdroad_selected_ids(...)`：从 RCSDRoad selection 写入 `id`。
 - `layer_validation.validate_layer_bindings(...)`：校验绑定图层的数据源、CRS 和必需字段。
 
-插件加载后注册两个 QGIS Dock：左侧 `T11 Relation Tasks` 负责单个 workbook 加载、图层绑定、分页和任务列表；底部 `T11 Relation Processing` 负责当前任务字段、上一条 / 下一条、定位、高亮、selection 写入、清空、`NULL` 与 `uncertain` 标记。点击任务后定位到 SWSD 语义路口或 Segment 上下文，并默认缩放到约 `1:1000`。
+插件加载后注册两个 QGIS Dock：左侧 `T11 Relation Tasks` 负责单个 workbook 加载、图层绑定、分页和任务列表；任务列表以格式化两行展示状态、`target_id`、Segment、长度和人工数据存在性（如 `Data: none` 或 `Data: type + ids + comment`）。底部 `T11 Relation Processing` 负责当前任务字段、上一条 / 下一条、定位、高亮、selection 写入、清空、`NULL` 与 `uncertain` 标记。点击任务后定位到 SWSD 语义路口或 Segment 上下文，并默认缩放到约 `1:1000`。
 
 插件不新增 repo CLI 子命令，不新增 `scripts/` 包装入口；QGIS 图层样式、顺序和渲染仍由 QGIS 图层管理器控制。
 

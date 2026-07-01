@@ -46,6 +46,15 @@ def _node(
     return {"properties": props, "geometry": Point(node_id, 0)}
 
 
+def _write_relation_graph_audit(path: Path, rows: list[dict[str, str]]) -> Path:
+    fieldnames = ["target_id", "base_id", "relation_status", "graph_consumable", "source_modules"]
+    with path.open("w", encoding="utf-8", newline="") as fp:
+        writer = csv.DictWriter(fp, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(rows)
+    return path
+
+
 def test_step1_identifies_evd_fusion_fail4_and_rejections(tmp_path: Path) -> None:
     segment_path = _write(
         tmp_path / "segment.gpkg",
@@ -130,6 +139,74 @@ def test_step1_rejects_missing_node_and_missing_fields(tmp_path: Path) -> None:
     summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
     assert summary["reject_reason_counts"]["missing_node_reference"] == 1
     assert summary["reject_reason_counts"]["is_anchor_missing"] == 1
+
+
+def test_step1_uses_consumable_t11_manual_relation_to_release_fail3_fail4_anchor_gate(tmp_path: Path) -> None:
+    segment_path = _write(
+        tmp_path / "segment.gpkg",
+        [
+            _seg("manual_pair_fail4", [10, 11], []),
+            _seg("manual_junc_fail3", [1, 2], [12]),
+            _seg("non_manual_pair_fail4", [20, 21], []),
+            _seg("manual_not_consumable", [30, 31], []),
+            _seg("manual_has_evd_no", [40, 41], []),
+            _seg("manual_anchor_no", [50, 51], []),
+        ],
+    )
+    nodes_path = _write(
+        tmp_path / "nodes.gpkg",
+        [
+            _node(1, "yes", "yes"),
+            _node(2, "yes", "yes"),
+            _node(10, "yes", "fail4"),
+            _node(11, "yes", "yes"),
+            _node(12, "yes", "fail3"),
+            _node(20, "yes", "fail4"),
+            _node(21, "yes", "yes"),
+            _node(30, "yes", "fail4"),
+            _node(31, "yes", "yes"),
+            _node(40, "no", "fail4"),
+            _node(41, "yes", "yes"),
+            _node(50, "yes", "no"),
+            _node(51, "yes", "yes"),
+        ],
+    )
+    t05_root = tmp_path / "t05"
+    t05_root.mkdir()
+    intersection_match_path = t05_root / "intersection_match_all.geojson"
+    intersection_match_path.write_text('{"type":"FeatureCollection","features":[]}', encoding="utf-8")
+    _write_relation_graph_audit(
+        t05_root / "relation_graph_consumability_audit.csv",
+        [
+            {"target_id": "10", "base_id": "90010", "relation_status": "0", "graph_consumable": "1", "source_modules": "T11_MANUAL"},
+            {"target_id": "12", "base_id": "90012", "relation_status": "0", "graph_consumable": "1", "source_modules": "T11_MANUAL"},
+            {"target_id": "20", "base_id": "90020", "relation_status": "0", "graph_consumable": "1", "source_modules": "T07"},
+            {"target_id": "30", "base_id": "90030", "relation_status": "0", "graph_consumable": "0", "source_modules": "T11_MANUAL"},
+            {"target_id": "40", "base_id": "90040", "relation_status": "0", "graph_consumable": "1", "source_modules": "T11_MANUAL"},
+            {"target_id": "50", "base_id": "90050", "relation_status": "0", "graph_consumable": "1", "source_modules": "T11_MANUAL"},
+        ],
+    )
+
+    artifacts = run_t06_step1_identify_fusion_units(
+        swsd_segment_path=segment_path,
+        swsd_nodes_path=nodes_path,
+        intersection_match_path=intersection_match_path,
+        out_root=tmp_path / "out",
+        run_id="run",
+    )
+
+    summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
+    assert summary["manual_relation_anchor_override_candidate_node_count"] == 4
+    assert summary["manual_relation_anchor_override_node_count"] == 2
+    assert summary["manual_relation_anchor_override_segment_count"] == 2
+    assert summary["manual_relation_anchor_override_node_ids"] == ["10", "12"]
+    assert summary["manual_relation_anchor_override_segment_ids"] == ["manual_junc_fail3", "manual_pair_fail4"]
+    assert summary["reject_reason_counts"]["is_anchor_not_eligible"] == 3
+    assert summary["reject_reason_counts"]["has_evd_not_yes"] == 1
+
+    fusion_payload = json.loads(artifacts.fusion_units_gpkg_path.with_suffix(".json").read_text(encoding="utf-8"))
+    fusion_rows = {item["properties"]["swsd_segment_id"] for item in fusion_payload["features"]}
+    assert fusion_rows == {"manual_pair_fail4", "manual_junc_fail3"}
 
 
 def test_step1_stats_csv_groups_by_sgrade(tmp_path: Path) -> None:

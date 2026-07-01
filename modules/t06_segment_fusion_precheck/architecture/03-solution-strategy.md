@@ -24,6 +24,7 @@ T06 采用三步链路：
 
 - T01 `segment.gpkg`，依赖 `pair_nodes / junc_nodes / roads / sgrade` 等字段。
 - T04 downstream `final_swsd_nodes`，用于读取 `has_evd / is_anchor / kind_2`；这是 T06 Step1 漏斗分母的节点状态来源。
+- T05 Phase 2 audit，作为 T11 人工正向 relation 的可追溯来源。Step1 只读取其中 `T11_MANUAL + status=0 + base_id>0 + graph_consumable=1` 的 target，用于释放 `final_swsd_nodes.is_anchor=fail3/fail4` 的旧锚定失败门禁。
 
 ### 2.3 落地策略
 
@@ -32,6 +33,7 @@ T06 采用三步链路：
 - `junc_nodes.kind_2 in {1,4096,8192}` 不参与 Step1 `has_evd / is_anchor` 判定，但仍保留为后续 optional junc 审计对象。
 - eligibility 集合内所有语义路口 `has_evd=yes` 时进入候选集。
 - 在候选集中，所有 eligibility 语义路口 `is_anchor in {yes, fail4_fallback}` 时进入 final fusion units。
+- 对于 T05 audit 已确认的 T11 人工正向 relation，若对应语义路口旧节点状态为 `is_anchor=fail3/fail4`，Step1 可将该失败视为已由人工 relation 修复并放行到 Step2；`has_evd` 缺失/否、pair 两端不合法、`is_anchor=no/fail1/fail2`、非人工来源 relation、`graph_consumable=0` 不放行。
 
 ### 2.4 输出与审计
 
@@ -43,8 +45,8 @@ T06 采用三步链路：
 
 ### 2.5 对错边界
 
-- 对：`fail4_fallback` 视为可融合 anchor，豁免只作用于 junc eligibility 检查；self-pair fallback 只保留 Step1 审计，不参与 RCSD Segment 替换分母。
-- 错：把 `junc_nodes` 当作 hard-stop，或把 `pair_nodes` 豁免掉。
+- 对：`fail4_fallback` 视为可融合 anchor；T11 人工正向 relation 只释放 `fail3/fail4` 的 Step1 anchor gate；豁免只作用于 junc eligibility 检查；self-pair fallback 只保留 Step1 审计，不参与 RCSD Segment 替换分母。
+- 错：把人工 relation 当作 T06 替换白名单，或用它释放 `has_evd`、pair 合法性、非人工 relation 和 Step2/Step3 硬审计；把 `junc_nodes` 当作 hard-stop，或把 `pair_nodes` 豁免掉。
 
 ## 3. Step2：Relation Mapping
 
@@ -121,7 +123,7 @@ T06 采用三步链路：
 - retained graph 中不得存在 pair required corridor 内部解释节点以外的额外 mapped semantic nodes。
 - `swsd_directionality=dual` 要求 RCSD pair 两端双向可达。
 - `swsd_directionality=single` 要求按推导 source/target 存在同向 RCSD corridor。
-- retained RCSDRoad 必须满足逐 road buffer overlap ratio；整体覆盖不一致比例和绝对长度不能超限。
+- retained RCSDRoad 必须满足逐 road buffer overlap ratio；整体覆盖不一致比例和绝对长度默认不能超限。对于 `swsd_geometry_not_covered_by_retained_rcsd`，若 pair 端点 relation、required graph、candidate graph、方向性全部通过，failure business audit 给出非人工复核高置信 corridor，且 retained RCSD corridor 完全留在 SWSD 50m buffer 内，可作为 `swsd_buffer_corridor_controlled_release` 写入 replacement plan；该路径不放行 RCSD 跑出 buffer 的候选。
 - 宽 50m buffer 覆盖通过后，还必须执行窄通道视觉连续性复核。该复核用于识别“RCSD 在宽 buffer 内，但主线目视连续性断裂或替换结果明显偏离 SWSD 主通道”的场景；失败时不得进入 adaptive buffer 或 graph-first 重审。
 - 高等级受限重审通过的 Segment 仍必须通过单向 / 双向可达、叶子端点、额外 mapped semantic node、几何参考覆盖与特殊组门控；single graph-first 不允许只因全图有向 path 存在直接进入 replaceable，必须经过 50m buffer core 并满足纵向门槛。
 - `kind_2=64 / 128` 的特殊路口按关联 Segment 组执行全组门控：关联 Segment 必须全部可替换，否则该组全部移出 replaceable。

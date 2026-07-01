@@ -30,6 +30,7 @@ def run_t06_segment_fusion_precheck(
     step1 = run_t06_step1_identify_fusion_units(
         swsd_segment_path=swsd_segment_path,
         swsd_nodes_path=swsd_nodes_path,
+        intersection_match_path=intersection_match_path,
         out_root=out_root,
         run_id=run_id,
         progress=progress,

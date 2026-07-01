@@ -20,8 +20,10 @@ SOURCE_T03 = "T03"
 SOURCE_T04 = "T04"
 SOURCE_T10_SIDE_GROUP = "T10_SIDE_GROUP"
 SOURCE_T10_PAIR_ANCHOR_CLUSTER = "T10_PAIR_ANCHOR_CLUSTER"
+SOURCE_T11_MANUAL = "T11_MANUAL"
 SUPPLEMENTAL_SOURCES = {SOURCE_T10_SIDE_GROUP, SOURCE_T10_PAIR_ANCHOR_CLUSTER}
 SOURCE_PRIORITY = {
+    SOURCE_T11_MANUAL: -1,
     SOURCE_T07: 0,
     SOURCE_T02_INPUT: 1,
     SOURCE_T03: 2,
@@ -43,9 +45,11 @@ def build_evidence_rows(
     t04_rows: Iterable[dict[str, Any]],
     t10_side_group_rows: Iterable[dict[str, Any]] = (),
     t10_pair_anchor_cluster_rows: Iterable[dict[str, Any]] = (),
+    t11_manual_rows: Iterable[dict[str, Any]] = (),
 ) -> list[Phase2Evidence]:
     records: list[Phase2Evidence] = []
     for source_module, rows in (
+        (SOURCE_T11_MANUAL, t11_manual_rows),
         (SOURCE_T07, t07_rows),
         (SOURCE_T02_INPUT, t02_rows),
         (SOURCE_T03, t03_rows),
@@ -87,6 +91,41 @@ def classify_evidence(evidence: Phase2Evidence, *, junction_type: str) -> SceneD
     )
     case_id = evidence.case_id
     source = evidence.source_module
+
+    if source == SOURCE_T11_MANUAL:
+        manual_type = _text(row.get("manual_relation_type"))
+        selected_ids = tuple(_int_ids(_split_values(row.get("selected_ids"))))
+        if not selected_ids or _text(row.get("selected_ids")).lower() == "null":
+            return _failure_or_no_rcsd(evidence, "manual_no_valid_rcsd")
+        if manual_type == "1v1_rcsd_junction":
+            return SceneDecision(
+                scene=SCENE_DIRECT,
+                action="direct_relation",
+                reason="t11_manual_1v1_rcsd_junction",
+                source_module=source,
+                source_case_id=case_id,
+                base_id_candidates=selected_ids[:1],
+            )
+        if manual_type == "1vN_rcsd_junction":
+            return SceneDecision(
+                scene=SCENE_GROUP_EXISTING,
+                action="group_existing_rcsd_nodes",
+                reason="t11_manual_1vN_rcsd_junction",
+                source_module=source,
+                source_case_id=case_id,
+                rcsdnode_ids=selected_ids,
+                multi_base_relation=True,
+            )
+        if manual_type in {"1v1_rcsd_road", "1vN_rcsd_road"}:
+            return SceneDecision(
+                scene=SCENE_ROAD_SPLIT,
+                action="split_rcsdroad_generate_rcsdnode",
+                reason=f"t11_manual_{manual_type}",
+                source_module=source,
+                source_case_id=case_id,
+                rcsdroad_ids=selected_ids,
+            )
+        return _failure_or_no_rcsd(evidence, "manual_relation_type_not_actionable")
 
     if source == SOURCE_T10_SIDE_GROUP:
         if len(side_group_nodes) > 1:
@@ -265,6 +304,12 @@ def classify_evidence(evidence: Phase2Evidence, *, junction_type: str) -> SceneD
 
 def choose_actionable_decisions(decisions: list[SceneDecision]) -> list[SceneDecision]:
     successes = [item for item in decisions if item.scene in {SCENE_DIRECT, SCENE_GROUP_EXISTING}]
+    manual_successes = [item for item in successes if item.source_module == SOURCE_T11_MANUAL]
+    if manual_successes:
+        return manual_successes
+    manual_splits = [item for item in decisions if item.source_module == SOURCE_T11_MANUAL and item.scene == SCENE_ROAD_SPLIT]
+    if manual_splits:
+        return manual_splits[:1]
     if successes:
         base_successes = [item for item in successes if item.source_module not in SUPPLEMENTAL_SOURCES]
         supplement_successes = [item for item in successes if item.source_module in SUPPLEMENTAL_SOURCES]

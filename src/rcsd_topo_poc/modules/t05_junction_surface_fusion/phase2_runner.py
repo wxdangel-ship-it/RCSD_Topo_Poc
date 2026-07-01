@@ -44,6 +44,7 @@ from .phase2_scene_classifier import (
     SOURCE_T04,
     SOURCE_T10_PAIR_ANCHOR_CLUSTER,
     SOURCE_T10_SIDE_GROUP,
+    SOURCE_T11_MANUAL,
     SOURCE_T07,
     build_evidence_rows,
     choose_actionable_decisions,
@@ -85,6 +86,7 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
     t07_relation_evidence_path: str | Path | None = None,
     t10_side_group_endpoint_candidate_path: str | Path | None = None,
     t10_pair_anchor_endpoint_cluster_path: str | Path | None = None,
+    t11_manual_relation_path: str | Path | None = None,
     next_road_id_start: int | None = None,
     next_node_id_start: int | None = None,
 ) -> T05Phase2Artifacts:
@@ -167,6 +169,11 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
         if t10_pair_anchor_endpoint_cluster_path is not None
         else []
     )
+    t11_manual_rows = (
+        _actionable_t11_manual_rows(read_table(_required_path(t11_manual_relation_path, "t11_manual_relation_path")))
+        if t11_manual_relation_path is not None
+        else []
+    )
     mark_and_log(
         "read_evidence_tables_sec",
         evidence_started,
@@ -174,6 +181,7 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
         t07=len(t07_rows),
         t03=len(t03_rows),
         t04_base=len(t04_base_rows),
+        t11_manual=len(t11_manual_rows),
     )
     t04_supplement_started = perf_counter()
     log("load_t04_supplements start")
@@ -201,6 +209,7 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
         t04_rows=t04_rows,
         t10_side_group_rows=t10_side_group_rows,
         t10_pair_anchor_cluster_rows=t10_pair_anchor_cluster_rows,
+        t11_manual_rows=t11_manual_rows,
     )
     evidence_by_target: dict[str, list[Any]] = defaultdict(list)
     for evidence in evidence_rows:
@@ -695,6 +704,7 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
             SOURCE_T02_INPUT: len(t02_rows),
             SOURCE_T03: len(t03_rows),
             SOURCE_T04: len(t04_rows),
+            SOURCE_T11_MANUAL: len(t11_manual_rows),
         },
         context_by_target=context_by_target,
         relation_features=relation_features,
@@ -719,6 +729,7 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
             "t04_relation_evidence_path": str(t04_relation_evidence_path) if t04_relation_evidence_path else None,
             "t10_side_group_endpoint_candidate_path": str(t10_side_group_endpoint_candidate_path) if t10_side_group_endpoint_candidate_path else None,
             "t10_pair_anchor_endpoint_cluster_path": str(t10_pair_anchor_endpoint_cluster_path) if t10_pair_anchor_endpoint_cluster_path else None,
+            "t11_manual_relation_path": str(t11_manual_relation_path) if t11_manual_relation_path else None,
             "t04_surface_path": str(t04_surface_path) if t04_surface_path else None,
             "t04_summary_path": str(t04_summary_path) if t04_summary_path else None,
             "t04_audit_path": str(t04_audit_path) if t04_audit_path else None,
@@ -784,6 +795,20 @@ def run_t05_phase2_rcsd_junctionization_and_relation(
     )
 
 
+def _actionable_t11_manual_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    actionable_types = {"1v1_rcsd_junction", "1vN_rcsd_junction", "1v1_rcsd_road", "1vN_rcsd_road"}
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        manual_type = _text(row.get("manual_relation_type"))
+        selected_ids = _text(row.get("selected_ids"))
+        if manual_type not in actionable_types:
+            continue
+        if not selected_ids or selected_ids.lower() == "null":
+            continue
+        result.append(dict(row))
+    return result
+
+
 def _target_contexts(
     surfaces: list[dict[str, Any]],
     swsd_nodes: list[dict[str, Any]],
@@ -828,6 +853,7 @@ def _target_contexts(
             _is_t04_fallback_relation(evidence)
             or _is_t07_relation_only_success(evidence)
             or _is_t07_multi_intersection_relation(evidence)
+            or _is_t11_manual_relation(evidence)
         ):
             continue
         nodes = nodes_by_target.get(evidence.target_id, [])
@@ -888,7 +914,18 @@ def _is_t07_multi_intersection_relation(evidence: Any) -> bool:
     )
 
 
+def _is_t11_manual_relation(evidence: Any) -> bool:
+    row = getattr(evidence, "row", {}) or {}
+    return (
+        getattr(evidence, "source_module", "") == SOURCE_T11_MANUAL
+        and _text(row.get("manual_relation_type")) in {"1v1_rcsd_junction", "1vN_rcsd_junction", "1v1_rcsd_road", "1vN_rcsd_road"}
+        and _text(row.get("selected_ids")).lower() not in {"", "null"}
+    )
+
+
 def _relation_only_surface_id(evidence: Any) -> str:
+    if getattr(evidence, "source_module", "") == SOURCE_T11_MANUAL:
+        return f"T11_MANUAL:{evidence.target_id}"
     if getattr(evidence, "source_module", "") == SOURCE_T07:
         return f"T07_RELATION:{evidence.target_id}"
     return f"T04_FALLBACK:{evidence.target_id}"
@@ -1554,7 +1591,7 @@ def _module_relation_audit_summary(
         "pre_success_rcsdroad_junctionization",
         "pre_success_no_rcsd_overall_failure",
     )
-    source_modules = (SOURCE_T07, SOURCE_T02_INPUT, SOURCE_T03, SOURCE_T04)
+    source_modules = (SOURCE_T11_MANUAL, SOURCE_T07, SOURCE_T02_INPUT, SOURCE_T03, SOURCE_T04)
     classified_counts: Counter[str] = Counter()
     target_input_counts: Counter[str] = Counter()
     counters: dict[tuple[str, str], Counter[str]] = defaultdict(Counter)

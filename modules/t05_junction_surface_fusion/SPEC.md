@@ -51,6 +51,7 @@ T05 是项目“路口 1:1 关系层”的统一发布模块。它汇总 T07 / T
 | T07/T03/T04 relation evidence | Phase 2 relation 与 junctionization 场景分流。 |
 | T10 side-group endpoint candidates | Phase 2 可选补充输入；仅在同 target 已有成功 relation 或 T03/T04 road-only split 决策时补充 RCSDNode grouping，不独立创建 relation，不覆盖 road-only split。 |
 | T10 pair-anchor endpoint clusters | Phase 2 可选补充输入；仅消费 `auto_consumable_by_t05=true` 的短连接 endpoint cluster，并且只能依附已有成功 relation 或 road-only split 补充 RCSDNode grouping。 |
+| T11 manual relation audit CSV | Phase 2 可选人工审计输入；只消费正向人工关系类型，覆盖同 target 的机器 evidence；`NULL`、空白或非正向审计行不进入 T05。 |
 | `nodes.gpkg` | 反查 `mainnodeid / kind_2 / patch_id / grade / closed_con`。 |
 | `RCSDRoad.gpkg / RCSDNode.gpkg` | Phase 2 copy-on-write junctionization 输入。 |
 | optional T02_INPUT | 旧批次兼容输入，不作为新主链来源。 |

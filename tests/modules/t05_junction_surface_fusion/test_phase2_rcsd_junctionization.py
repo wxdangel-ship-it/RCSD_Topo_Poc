@@ -86,6 +86,7 @@ def _run_phase2(
     t04_rows: list[dict] | None = None,
     t10_side_group_rows: list[dict] | None = None,
     t10_pair_anchor_rows: list[dict] | None = None,
+    t11_manual_rows: list[dict] | None = None,
     runner_kwargs: dict | None = None,
 ):
     inputs = tmp_path / "inputs"
@@ -101,6 +102,7 @@ def _run_phase2(
     t04_path = _write_csv(inputs / "t04_swsd_rcsd_relation_evidence.csv", t04_rows or [], _T04_FIELDS)
     t10_side_group_path = _write_csv(inputs / "t10_upstream_side_group_endpoint_candidates.csv", t10_side_group_rows or [], _T10_SIDE_GROUP_FIELDS)
     t10_pair_anchor_path = _write_csv(inputs / "t10_upstream_pair_anchor_endpoint_clusters.csv", t10_pair_anchor_rows or [], _T10_PAIR_ANCHOR_FIELDS)
+    t11_manual_path = _write_csv(inputs / "t11_segment_anchor_manual_audit.csv", t11_manual_rows or [], _T11_MANUAL_FIELDS)
     before = {path: (path.stat().st_size, path.stat().st_mtime_ns) for path in (surface_path, nodes_path, rcsdroad_path, rcsdnode_path)}
     artifacts = run_t05_phase2_rcsd_junctionization_and_relation(
         junction_surface_path=surface_path,
@@ -116,6 +118,7 @@ def _run_phase2(
         t07_relation_evidence_path=t07_path,
         t10_side_group_endpoint_candidate_path=t10_side_group_path if t10_side_group_rows is not None else None,
         t10_pair_anchor_endpoint_cluster_path=t10_pair_anchor_path if t10_pair_anchor_rows is not None else None,
+        t11_manual_relation_path=t11_manual_path if t11_manual_rows is not None else None,
         **(runner_kwargs or {}),
     )
     after = {path: (path.stat().st_size, path.stat().st_mtime_ns) for path in (surface_path, nodes_path, rcsdroad_path, rcsdnode_path)}
@@ -169,6 +172,42 @@ def test_existing_rcsd_semantic_junction_outputs_success_relation(tmp_path: Path
     assert artifacts.junction_anchor_source_funnel_csv_path.exists()
     assert artifacts.junction_anchor_failure_reasons_csv_path is not None
     assert artifacts.junction_anchor_failure_reasons_csv_path.exists()
+
+
+def test_t11_manual_relation_overrides_existing_1v1_with_group_relation(tmp_path: Path) -> None:
+    artifacts = _run_phase2(
+        tmp_path,
+        surface_features=[_surface("605415675")],
+        swsd_nodes=[_node(605415675, 0, 0, mainnodeid="605415675", grade=2, closed_con=1)],
+        rcsd_roads=[_road(1, (-10, 0), (10, 0))],
+        rcsd_nodes=[_node(1001, -1, 0), _node(1002, 1, 0), _node(2001, 20, 0)],
+        t04_rows=[
+            {
+                "target_id": "605415675",
+                "case_id": "605415675",
+                "base_id_candidate": "2001",
+                "status_suggested": "0",
+                "relation_state": "success_required_rcsd_junction",
+            }
+        ],
+        t11_manual_rows=[
+            {
+                "case_id": "605415675",
+                "target_id": "605415675",
+                "manual_relation_type": "1vN_rcsd_junction",
+                "selected_ids": "1001|1002",
+                "comment": "",
+            }
+        ],
+    )
+
+    relation = _relation_features(artifacts.relation_geojson_path)[0]
+    assert relation["properties"]["target_id"] == "605415675"
+    assert relation["properties"]["base_id"] in {1001, 1002}
+    with artifacts.rcsd_junctionization_audit_csv_path.open("r", encoding="utf-8", newline="") as handle:
+        audit = list(csv.DictReader(handle))[0]
+    assert audit["source_module"] == "T11_MANUAL"
+    assert audit["reason"] == "t11_manual_1vN_rcsd_junction"
 
 
 def test_t10_side_group_candidate_supplements_road_split_decision_without_masking_it() -> None:
@@ -1999,3 +2038,5 @@ _T10_PAIR_ANCHOR_FIELDS = [
     "manual_review_required",
     "problem_registry_path",
 ]
+
+_T11_MANUAL_FIELDS = ["case_id", "target_id", "manual_relation_type", "selected_ids", "comment"]

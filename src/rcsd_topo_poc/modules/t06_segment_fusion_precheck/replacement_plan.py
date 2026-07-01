@@ -1301,6 +1301,7 @@ def _apply_group_member_plan_gate(rows: list[dict[str, Any]]) -> None:
             blocked_members.append(segment_id)
             inherited_risks.extend(_parse_list(standard_props.get("risk_flags")))
         if absorbed_members:
+            props["absorbed_group_member_segments"] = absorbed_members
             props["risk_flags"] = unique_preserve_order(
                 [
                     *_parse_list(props.get("risk_flags")),
@@ -1331,9 +1332,18 @@ def _blocked_standard_member_absorbable_by_path_group(
     group_road_ids: set[str],
     ready_standard_owner_segments_by_road: dict[str, set[str]],
 ) -> bool:
-    if standard_props.get("source_reason") != "visual_consistency_road_conflict_with_primary_replacement_plan":
-        return False
     if not _is_visual_consistency_plan(standard_props):
+        return False
+    source_reason = str(standard_props.get("source_reason") or "")
+    risk_flags = set(_parse_list(standard_props.get("risk_flags")))
+    if source_reason == "visual_consistency_road_conflict_with_primary_replacement_plan":
+        pass
+    elif source_reason == "pair_anchor_mismatch_replacement_plan_anchor_not_authoritative":
+        if "visual_consistency_same_path_group_member_conflict_accepted" not in risk_flags:
+            return False
+        if "no_formal_trunk_road_conflict" not in risk_flags:
+            return False
+    else:
         return False
     segment_id = _safe_id(standard_props.get("swsd_segment_id"))
     if not segment_id or segment_id not in group_segment_ids:

@@ -5,6 +5,7 @@ from shapely.geometry import LineString, Point
 from rcsd_topo_poc.modules.t00_utility_toolbox.common import write_vector
 from rcsd_topo_poc.modules.t06_segment_fusion_precheck.graph_builders import NodeCanonicalizer
 from rcsd_topo_poc.modules.t06_segment_fusion_precheck.replacement_plan import (
+    _blocked_standard_member_absorbable_by_path_group,
     build_problem_registry_rows,
     build_replacement_plan_rows,
 )
@@ -902,6 +903,24 @@ def test_visual_consistency_member_does_not_conflict_with_own_path_group_plan() 
     assert "visual_consistency_same_path_group_member_conflict_accepted" in by_segment["s_member"]["risk_flags"]
     assert "accepted_same_path_group_member_rcsd_road_ids=['rr_member']" in by_segment["s_member"]["notes"]
     assert "visual_consistency_road_conflict_with_primary_replacement_plan" not in by_segment["s_member"]["risk_flags"]
+
+
+def test_group_member_gate_absorbs_same_path_pair_anchor_mismatch_member() -> None:
+    assert _blocked_standard_member_absorbable_by_path_group(
+        {
+            "swsd_segment_id": "s_member",
+            "source_reason": "pair_anchor_mismatch_replacement_plan_anchor_not_authoritative",
+            "replacement_strategy": "visual_consistency_controlled_release",
+            "rcsd_road_ids": ["rr_member"],
+            "risk_flags": [
+                "visual_consistency_same_path_group_member_conflict_accepted",
+                "no_formal_trunk_road_conflict",
+            ],
+        },
+        group_segment_ids={"s_group", "s_member"},
+        group_road_ids={"rr_group", "rr_member"},
+        ready_standard_owner_segments_by_road={},
+    )
 
 
 def test_visual_consistency_prunes_junction_local_connector_conflict() -> None:

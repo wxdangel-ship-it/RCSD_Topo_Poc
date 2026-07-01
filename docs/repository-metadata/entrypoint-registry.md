@@ -6,9 +6,9 @@
 
 ## 2. 当前登记摘要
 
-- 当前真实执行入口共 `95` 个。
+- 当前真实执行入口共 `96` 个。
 - 分布概览：
-  - repo 级入口文件：`67`（`Makefile` 1 + `scripts/` 65 + `.venv/bin/python -m rcsd_topo_poc` 1）
+  - repo 级入口文件：`68`（`Makefile` 1 + `scripts/` 66 + `.venv/bin/python -m rcsd_topo_poc` 1）
   - CLI 稳定子命令：`28`
 - 维护口径：
   - CLI 子命令以 `.venv/bin/python -m rcsd_topo_poc --help` 为准。
@@ -58,7 +58,7 @@
 | `t03_watch_internal_full_input_innernet_flat_review.sh` | `scripts/t03_watch_internal_full_input_innernet_flat_review.sh` | repo 级 | T03 internal full-input 内网 flat-review 监控包装脚本，从 latest run id 文件发现 RUN_ID 后转发到 `t03_watch_internal_full_input.sh` | `active` | 否 |
 | `t03_export_text_bundle_internal_multi_mainnodeids.sh` | `scripts/t03_export_text_bundle_internal_multi_mainnodeids.sh` | repo 级 | T03 内网多 mainnodeid 单文件文本证据包导出脚本；复用 T03/T04 共用文本包模块，支持命令参数或环境变量覆盖 SWSD/RCSD/DriveZone/DivStripZone 输入路径，超过阈值自动分片 | `active` | 否 |
 | `t05_backfill_t03_relation_evidence_innernet.py` | `scripts/t05_backfill_t03_relation_evidence_innernet.py` | repo 级 | T05 Phase 2 内网 handoff 补齐脚本；读取 T03 run root 的批次 relation evidence 与 case 级 `step6_status/step6_audit`，输出补齐后的 `t03_swsd_rcsd_relation_evidence_backfilled.*`、audit 与 summary，不修改 T03 主链或原始输出 | `active` | 否 |
-| `t05_innernet_experiment.py` | `scripts/t05_innernet_experiment.py` | repo 级 | T05 内网 Phase 1 + Phase 2 联合实验入口；以 T02/T03/T04 成果目录、原始 RCSDRoad/RCSDNode、final nodes 与 RCSDIntersection 为参数，先执行 T03 evidence handoff 补齐，再运行 junction surface fusion 与 one-to-one relation 发布；可选消费 T10 side-group endpoint candidates 与 pair-anchor endpoint clusters 作为已有 relation / road-only split 的 RCSDNode grouping 补充 | `active` | 否 |
+| `t05_innernet_experiment.py` | `scripts/t05_innernet_experiment.py` | repo 级 | T05 内网 Phase 1 + Phase 2 联合实验入口；以 T02/T03/T04 成果目录、原始 RCSDRoad/RCSDNode、final nodes 与 RCSDIntersection 为参数，先执行 T03 evidence handoff 补齐，再运行 junction surface fusion 与 one-to-one relation 发布；可选消费 T10 side-group endpoint candidates 与 pair-anchor endpoint clusters 作为已有 relation / road-only split 的 RCSDNode grouping 补充；可选 `--t11-manual-relation` 消费 T11 人工正向关系 CSV，`NULL`/空白审计行不进入 T05 | `active` | 否 |
 | `t06_run_innernet_precheck.py` | `scripts/t06_run_innernet_precheck.py` | repo 级 | T06 内网 Step1 + Step2 运行包装脚本；读取 T01 `segment.gpkg / roads.gpkg`、final `nodes.gpkg` 与 T05 Phase 2 `intersection_match_all.geojson / rcsdroad_out.gpkg / rcsdnode_out.gpkg`，输出 T06 candidates / replaceable / rejected / summary，不修改输入文件 | `active` | 否 |
 | `t06_run_step3_segment_replacement.py` | `scripts/t06_run_step3_segment_replacement.py` | repo 级 | T06 Step3 独立运行脚本；消费既有 T06 run root 的 Step2 `t06_rcsd_segment_replaceable.gpkg`、可选 `t06_special_junction_group_audit.*` 与 `t06_segment_group_replacement_audit.gpkg`，读取 SWSD Segment/Road/Node 与 T05 Phase 2 copy-on-write RCSDRoad/RCSDNode；可选读取 T07/T03/T04/T05 surface 与 T04 audit 执行 junction surface topology 后处理；输出 F-RCSD Road / Node、替换单元、路口 C 重建、id 冲突审计与拓扑审计，不改变 Step1 + Step2 内网脚本默认行为 | `active` | 否 |
 | `t07_run_semantic_junction_anchor_innernet.sh` | `scripts/t07_run_semantic_junction_anchor_innernet.sh` | repo 级 | T07 内网语义路口级 Step1 / Step2 执行脚本；读取 `nodes / DriveZone / RCSDIntersection`，可选读取 RCSDNode 辅助判断 RCSDIntersection 消费性，调用模块内 callable runner 输出代表 node 的 `has_evd / is_anchor / anchor_reason`，不处理 Segment | `active` | 否 |
@@ -122,6 +122,7 @@
 | `t10_pack_innernet_segments.sh` | `scripts/t10_pack_innernet_segments.sh` | repo 级 | T10 内网多 Segment 证据包正式打包入口；以 SWSD SegmentID 列表为输入，读取既有 `T10_RUN_ROOT` 反查 T01 Segment 与 T06 证据，生成 `cases/segment_<segment_id>/` 结构的文件证据包并导出可自动分片的文本 bundle，可选立即解包校验 | `active` | 否 |
 | `t10_run_e2e_cases.sh` | `scripts/t10_run_e2e_cases.sh` | repo 级 | T10 Case 级端到端执行入口；从已生成或已解包的 T10 Case package 读取局部外部输入切片，串联 `T01 -> T07 Step1/2 -> T03 -> T04 -> T05 -> T06 -> T09` 的既有脚本或模块 callable，并输出阶段审计与 T06 数据漏斗；可通过 `T10_FEEDBACK_ITERATIONS` 执行 T06 upstream feedback 的 side-group endpoint / pair-anchor endpoint cluster 回灌迭代并启用 replaced Segment 不回退 guard | `active` | 否 |
 | `t10_run_innernet_full_pipeline.sh` | `scripts/t10_run_innernet_full_pipeline.sh` | repo 级 | T10 内网全量端到端总控脚本；不走 Case package，默认串联 `T08 -> T01 -> T07 Step1/2 -> T03 -> T04 -> T05 -> T06 Step1/2 -> T06 Step3 -> T09` 既有模块入口或 callable，所有阶段输出到 `outputs/_work/t10_innernet_full_pipeline/<RUN_ID>/` 并写入 manifest；T07 Step3 仅在 `RUN_T07_STEP3` 且显式 `T07_STEP3_INTERSECTION_MATCH_ALL_PATH` 时作为兼容补锚阶段运行；支持 `FINALIZE_EXISTING` 补写既有 run 完成状态，并支持 `RESUME_RUN_ROOT / RESUME_FROM_STAGE / RUN_STAGES` 从既有 run 的指定阶段续跑 | `active` | 否 |
+| `t11_extract_relation_repair_candidates.py` | `scripts/t11_extract_relation_repair_candidates.py` | repo 级 | T11 人工 relation 修复候选抽取入口；读取既有 T10 Case root 中的 T05/T06/T10 证据，输出候选 CSV/GPKG、人工模板 CSV 与 summary JSON，不修改 T05/T06/T09 输入成果 | `active` | 否 |
 
 ## 4. 新增入口脚本的准入规则
 

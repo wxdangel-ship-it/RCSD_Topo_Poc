@@ -29,6 +29,7 @@
 | `t08_preprocess` | `Active` | `modules/t08_preprocess` | SWSD / RCSD 预处理、质检修复与显性化模块。 |
 | `t09_swsd_field_rule_restoration` | `Active` | `modules/t09_swsd_field_rule_restoration` | 路口级通行规则还原模块，已具备初始模块文档面；RCSD Laneinfo 与轨迹通行证据仍待后续迭代。 |
 | `t10_e2e_orchestration` | `Active` | `modules/t10_e2e_orchestration` | 端到端业务流程编排与 Case 证据组织模块；v1 支持 Case 级 replay、空间切片、T06 反馈闭环与内网全量总控，T08 在 Case runner 外独立运行。 |
+| `t11_manual_relation_review` | `Active` | `modules/t11_manual_relation_review` | 人工 relation 修复候选抽取模块；从冻结 T10 Case root 读取 T05/T06/T10 证据，输出人工审计候选与模板，不回写 T05/T06/T09。 |
 | `p01_arm_build` | `Active POC / 成果模块` | `modules/p01_arm_build` | 异构路口通行能力 POC / 成果模块，当前历史 P10 口径统一改称 P01。 |
 | `_template` | `Template` | `modules/_template` | 新模块启动模板，不是业务模块。 |
 

@@ -274,7 +274,12 @@ def _candidate_from_plan_row(
         return None
 
     source_segment_id = _safe_id(props.get("swsd_segment_id"))
-    member_segment_ids = _parse_list(props.get("group_segment_ids"))
+    absorbed_member_segment_ids = set(_parse_list(props.get("absorbed_group_member_segments")))
+    member_segment_ids = [
+        segment_id
+        for segment_id in _parse_list(props.get("group_segment_ids"))
+        if segment_id == source_segment_id or segment_id not in absorbed_member_segment_ids
+    ]
     segment_ids = _candidate_segment_ids(
         source_segment_id,
         member_segment_ids,

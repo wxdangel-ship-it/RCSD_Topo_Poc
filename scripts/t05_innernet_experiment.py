@@ -99,6 +99,7 @@ def main() -> int:
         t04_case_root=t04_case_root,
         t10_side_group_endpoint_candidate_path=args.t10_side_group_endpoint_candidates,
         t10_pair_anchor_endpoint_cluster_path=args.t10_pair_anchor_endpoint_clusters,
+        t11_manual_relation_path=args.t11_manual_relation,
         out_root=out_root,
         run_id=args.phase2_run_id,
         progress=True,
@@ -127,6 +128,7 @@ def main() -> int:
                     "t03_backfill_summary": str(t03_backfill.summary_path) if t03_backfill else None,
                     "t10_side_group_endpoint_candidates": args.t10_side_group_endpoint_candidates,
                     "t10_pair_anchor_endpoint_clusters": args.t10_pair_anchor_endpoint_clusters,
+                    "t11_manual_relation": args.t11_manual_relation,
                 },
                 "phase1": {
                     "run_root": str(phase1.run_root),
@@ -202,6 +204,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--t04-case-root", default=None)
     parser.add_argument("--t10-side-group-endpoint-candidates", default=None)
     parser.add_argument("--t10-pair-anchor-endpoint-clusters", default=None)
+    parser.add_argument("--t11-manual-relation", default=None)
     parser.add_argument("--phase1-run-id", default="t05_phase1_innernet")
     parser.add_argument("--phase2-run-id", default="t05_phase2_innernet")
     parser.add_argument("--readonly-workers", type=int, default=4)

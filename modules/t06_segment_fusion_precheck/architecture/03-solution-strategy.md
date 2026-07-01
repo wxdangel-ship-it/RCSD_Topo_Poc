@@ -125,8 +125,8 @@ T06 采用三步链路：
 - `swsd_directionality=single` 要求按推导 source/target 存在同向 RCSD corridor。
 - retained RCSDRoad 必须满足逐 road buffer overlap ratio；整体覆盖不一致比例和绝对长度默认不能超限。对于 `swsd_geometry_not_covered_by_retained_rcsd`，若 pair 端点 relation、required graph、candidate graph、方向性全部通过，failure business audit 给出非人工复核高置信 corridor，且 retained RCSD corridor 完全留在 SWSD 50m buffer 内，可作为 `swsd_buffer_corridor_controlled_release` 写入 replacement plan；该路径不放行 RCSD 跑出 buffer 的候选。
 - 宽 50m buffer 覆盖通过后，还必须执行窄通道视觉连续性复核。该复核用于识别“RCSD 在宽 buffer 内，但主线目视连续性断裂或替换结果明显偏离 SWSD 主通道”的场景；失败时不得进入 adaptive buffer 或 graph-first 重审。
-- 高等级受限重审通过的 Segment 仍必须通过单向 / 双向可达、叶子端点、额外 mapped semantic node、几何参考覆盖与特殊组门控；single graph-first 不允许只因全图有向 path 存在直接进入 replaceable，必须经过 50m buffer core 并满足纵向门槛。
-- `kind_2=64 / 128` 的特殊路口按关联 Segment 组执行全组门控：关联 Segment 必须全部可替换，否则该组全部移出 replaceable。
+- 高等级受限重审通过的 Segment 仍必须通过单向 / 双向可达、叶子端点、额外 mapped semantic node、几何参考覆盖与特殊组局部替换门控；single graph-first 不允许只因全图有向 path 存在直接进入 replaceable，必须经过 50m buffer core 并满足纵向门槛。
+- `kind_2=64 / 128` 的特殊路口按关联 Segment 组执行局部替换门控：关联 Segment 全部可替换时发布特殊组内部 RCSD Road/Node；只有部分可替换时保留已通过 Segment 的 replaceable，未通过 Segment 保留 SWSD carrier，且不发布特殊组内部 RCSD Road/Node。局部环岛必须保留 SWSD 环岛内部 Road，不能引入 RCSD 环岛内部端点间 Road。
 
 ### 5.3 输出与审计
 
@@ -138,9 +138,9 @@ T06 采用三步链路：
 
 ### 5.4 对错边界
 
-- 对：`replaceable` 是经过全部硬审计与特殊组门控后的最终白名单。
+- 对：`replaceable` 是经过全部硬审计与特殊组局部替换门控后的最终白名单。
 - 对：Step2 closeout 必须把普通 replaceable、passed 特殊路口组内部对象和 passed path-corridor group replacement 统一发布到 replacement plan，并把已覆盖、已解决、需上游迭代或已接受不可替换的问题写入 problem registry。
-- 错：把 candidates 当 replaceable，或特殊组部分通过就局部替换。
+- 错：把 candidates 当 replaceable；或在特殊组 `partial` 时发布特殊组内部 RCSD Road/Node；或在局部环岛中同时保留 SWSD 环岛内部 Road 和 RCSD 环岛内部端点间 Road。
 
 ## 6. Step2 失败诊断与修复候选
 
@@ -175,7 +175,7 @@ T06 采用三步链路：
 ### 7.2 落地策略
 
 - `t06_segment_replacement_plan.*` 是 Step3 的正式执行边界，`execution_scope` 至少覆盖 `standard_segment / special_junction_group_internal / path_corridor_group`。
-- path-corridor group replacement 只有在 group probe 已经证明闭包内 Segment、RCSD path 与特殊组覆盖均满足当前规则时，才能进入 ready plan；Step3 不再重新判断其可替换性。
+- path-corridor group replacement 只有在 group probe 已经证明闭包内 Segment、RCSD path 与特殊组局部替换规则均满足当前规则时，才能进入 ready plan；Step3 不再重新判断其可替换性。
 - `t06_segment_replacement_problem_registry.*` 必须登记 `covered_by_replacement_plan / resolved_in_step2_plan / accepted_non_replaceable / requires_upstream_iteration / requires_upstream_side_group_or_rcsd_directionality_review` 等状态。
 - `accepted_non_replaceable` 用于 T06 已确认无法形成可替换 RCSDSegment 但不应回流上游重跑的场景，例如 T05 relation 将 SWSD pair 两端归到同一 RCSD 语义路口。
 - `requires_upstream_side_group_or_rcsd_directionality_review` 用于双向 Segment 只能证明单向 RCSD 图通路的情况，先回流评估侧聚合或 RCSD 数据方向性，不由 Step3 兜底替换。
@@ -203,14 +203,14 @@ T06 采用三步链路：
 
 - Step3 优先消费 replacement plan，只执行 `plan_status=ready` 的 action，不处理 rejected，也不重新搜索 RCSD Segment。
 - 以 `swsd_segment_id` 建立替换单元，记录 SWSD `pair_nodes / junc_nodes / roads` 与 retained RCSD road/node。
-- `execution_scope=standard_segment` 执行普通 Segment 替换；`execution_scope=special_junction_group_internal` 引入特殊路口组内部 RCSD Road/Node；`execution_scope=path_corridor_group` 按 Step2 已验证的 group path corridor 合并生成组级原子替换单元。
+- `execution_scope=standard_segment` 执行普通 Segment 替换；`execution_scope=special_junction_group_internal` 只在特殊路口组全通过时引入内部 RCSD Road/Node；`execution_scope=path_corridor_group` 按 Step2 已验证的 group path corridor 合并生成组级原子替换单元。
 - `path_corridor_group` 的 source carrier 使用 Step2 group probe / replacement plan 发布的完整 group `rcsd_road_ids`；非 source member 可继续按成员几何做作用域过滤，避免远距离 RCSD Road 误挂到成员 relation。
 - Step3 不重新判定 Step2 ready group plan 的可替换性。若后续 topology / coverage 兜底仍发现问题，必须按整组 SWSD corridor 与整组 RCSD road union 聚合审计；失败时整组失败或整组回退，并写明 group 级原因，不能让 source carrier 失败而同组其它 member 成功替换。
 - 删除被替换 SWSDRoad；若 Step1/Step2 replaceable 的 final `junc_nodes` 少于 T01 原始 `junc_nodes`，detached junc 触达的原 SWSDRoad 以 `source=2` 保留为局部 restriction carrier，并在 Segment relation 中记录 `replaced+retained_swsd`。
 - Segment relation 中的 `frcsd_road_ids` 表达最终 F-RCSD 中该 Segment 实际可消费的 carrier。`replaced` 关系应指向 `source=1` RCSD 替换道路；`retained_swsd / replaced+retained_swsd` 关系可指向 `source=2` 保留 SWSD carrier，但必须通过 `relation_status`、`frcsd_road_source_values / source_mix`、风险标记和审计层表达来源。
 - 已进入 Step3 ready plan 的 Segment 若在执行后仍因局部 topology / coverage 兜底无法安全替换，不得从 F-RCSD 丢失；应保留原 SWSD Road/Node 作为 `source=2` carrier，或在混合替换时标记 `replaced+retained_swsd` 并进入人工风险审计。
 - SWSDNode 只删除被替换 SWSDRoad 的端点 Node，不删除整个 SWSD 语义路口组。
-- 引入 Step2 retained RCSDRoad / RCSDNode；passed 特殊组内部 RCSDRoad / RCSDNode 作为组级补充加入。
+- 引入 Step2 retained RCSDRoad / RCSDNode；仅 `gate_status=passed` 的特殊组内部 RCSDRoad / RCSDNode 作为组级补充加入，`partial / blocked` 特殊组内部 RCSDRoad / RCSDNode 不进入 F-RCSD。
 - 所有 replaceable Segment 的 `pair_nodes + junc_nodes` 形成待重建语义路口集合 C。
 - 若 C 原 main node 被删除，按原 main node、剩余 SWSD node 最小 id、加入 C 的 RCSD node 最小 id 的优先级重选 main node。
 - C 内 Node 继承原 main node 的 `kind / grade / kind_2 / grade_2 / closed_con`。
@@ -251,8 +251,8 @@ T06 采用三步链路：
 近期端到端 Case 修复表明，T06 提高替换率的关键不是放松审计，而是把不同数据问题分流到正确位置：
 
 - 上游 relation 问题：通过 buffer-only probe、repair candidates、failure business audit 和 problem registry 定位，满足高置信条件时只允许当前 Segment 内重试，不回写 T05 relation。
-- RCSD 裁剪窗口问题：通过 high-grade graph-first / adaptive buffer 受限重审处理，仍需通过方向、连通、覆盖和特殊组硬审计。
-- 路口组完整性问题：通过 special junction group gate 和 path-corridor group replacement 保证成组替换，不允许复杂路口局部破坏。
+- RCSD 裁剪窗口问题：通过 high-grade graph-first / adaptive buffer 受限重审处理，仍需通过方向、连通、覆盖和特殊组局部替换门控。
+- 路口组完整性问题：通过 special junction group gate 区分 `passed / partial / blocked`；全通过时整体引入内部 RCSD 对象，局部时只替换已通过的连接 Segment 或 path-corridor group，并用保留 SWSD carrier + 语义路口组表达混合端点关系。
 - SWSD/RCSD carrier 差异：通过 `replaced+retained_swsd`、topology supplement 和提前右转挂接表达混源边界，使 T09 仍能找到局部 restriction carrier。
 - 节点闭合问题：通过 surface-assisted closure 和 selected replacement endpoint fallback 补齐可解释的 relation node map，但不新增替换道路。
 - 最终质量问题：通过 topology connectivity audit、source consistency audit 和 T10 visual check summary 暴露给人工和批量 QA。

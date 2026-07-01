@@ -121,13 +121,17 @@ def special_junction_gate(
         associated = unique_preserve_order(associated_segment_ids)
         replaceable = [segment_id for segment_id in associated if segment_id in covered_segment_ids]
         missing = [segment_id for segment_id in associated if segment_id not in covered_segment_ids]
-        gate_status = "passed" if not missing else "blocked"
+        if not missing:
+            gate_status = "passed"
+        elif replaceable:
+            gate_status = "partial"
+        else:
+            gate_status = "blocked"
         if missing:
-            blocked_segment_ids.update(associated)
+            blocked_segment_ids.update(missing)
             for segment_id in associated:
                 if special_junction_id not in blocking_groups_by_segment[segment_id]:
                     blocking_groups_by_segment[segment_id].append(special_junction_id)
-            removed_replaceable_segment_ids.update(segment_id for segment_id in associated if segment_id in standard_replaceable_segment_ids)
 
         relation = relation_map.get(special_junction_id)
         rcsd_junction_id = ""
@@ -154,7 +158,7 @@ def special_junction_gate(
                     "removed_replaceable_segment_ids": [segment_id for segment_id in associated if segment_id in removed_replaceable_segment_ids],
                     "rcsd_junction_node_ids": rcsd_junction_node_ids.get(rcsd_junction_id, []),
                     "rcsd_junction_road_ids": rcsd_junction_road_ids.get(rcsd_junction_id, []),
-                    "notes": "all associated Segments are replaceable" if gate_status == "passed" else "at least one associated Segment is not replaceable",
+                    "notes": _special_gate_notes(gate_status),
                 },
                 None,
             )
@@ -178,6 +182,8 @@ def annotate_special_junction_gate(
             gate_status = "not_applicable"
         elif segment_id in blocked_segment_ids:
             gate_status = "blocked"
+        elif any(group_id in blocking_groups_by_segment.get(segment_id, []) for group_id in group_ids):
+            gate_status = "partial"
         else:
             gate_status = "passed"
         props["special_junction_group_ids"] = group_ids
@@ -235,6 +241,14 @@ def _coerce_int(value: Any) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _special_gate_notes(gate_status: str) -> str:
+    if gate_status == "passed":
+        return "all associated Segments are replaceable; internal RCSD junction entities may be planned"
+    if gate_status == "partial":
+        return "some associated Segments are replaceable; keep SWSD internal junction roads and only replace eligible connections"
+    return "no associated Segments are replaceable"
 
 
 def _feature_length(item: dict[str, Any]) -> float:

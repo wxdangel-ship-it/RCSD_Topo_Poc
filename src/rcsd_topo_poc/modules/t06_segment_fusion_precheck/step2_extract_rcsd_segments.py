@@ -1270,66 +1270,6 @@ def run_t06_step2_extract_rcsd_segments(
         blocked_segment_ids=blocked_segment_ids,
         blocking_groups_by_segment=blocking_groups_by_segment,
     )
-    if removed_replaceable_segment_ids:
-        candidate_props_by_segment = {
-            str((row.get("properties") or {}).get("swsd_segment_id")): dict(row.get("properties") or {})
-            for row in candidate_rows
-            if (row.get("properties") or {}).get("swsd_segment_id") is not None
-        }
-        replaceable_rows = [
-            row for row in replaceable_rows if (row.get("properties") or {}).get("swsd_segment_id") not in removed_replaceable_segment_ids
-        ]
-        for segment_id in sorted(removed_replaceable_segment_ids):
-            rejected_rows.append(
-                _reject(
-                    segment_id,
-                    None,
-                    "special_junction_group_gate",
-                    "special_junction_group_not_fully_replaceable",
-                    failed_metric_name="special_junction_group_ids",
-                    failed_metric_value=blocking_groups_by_segment.get(segment_id, []),
-                    notes="roundabout or complex junction group has at least one associated Segment that is not replaceable",
-                )
-            )
-            props = candidate_props_by_segment.get(segment_id, {})
-            failure_business_audit_rows.append(
-                feature(
-                    {
-                        "swsd_segment_id": segment_id,
-                        "segment_outcome": "special_gate_removed",
-                        "reject_reason": "special_junction_group_not_fully_replaceable",
-                        "scenario_type": "B",
-                        "buffer_only_candidate_status": "corridor_found",
-                        "failure_business_category": "multi_anchor_ambiguous",
-                        "auto_fix_candidate": False,
-                        "manual_review_required": True,
-                        "repair_recommendation": "manual_review_required",
-                        "swsd_pair_nodes": props.get("swsd_pair_nodes", []),
-                        "swsd_junc_nodes": props.get("swsd_junc_nodes", []),
-                        "original_rcsd_pair_nodes": props.get("rcsd_pair_nodes", []),
-                        "rcsd_pair_nodes": props.get("rcsd_pair_nodes", []),
-                        "rcsd_junc_nodes": props.get("rcsd_junc_nodes", []),
-                        "required_rcsd_nodes": props.get("required_rcsd_nodes", []),
-                        "optional_junc_nodes": props.get("optional_junc_nodes", []),
-                        "optional_junc_rcsd_nodes": props.get("optional_junc_rcsd_nodes", []),
-                        "dropped_junc_nodes": props.get("dropped_junc_nodes", []),
-                        "dropped_junc_relation_nodes": props.get("dropped_junc_relation_nodes", []),
-                        "lost_attach_road_ids": props.get("lost_attach_road_ids", []),
-                        "isolated_attach_loss_count": props.get("isolated_attach_loss_count", 0),
-                        "junc_attach_loss_reason": props.get("junc_attach_loss_reason", ""),
-                        "candidate_rcsd_pair_node_sets": [props.get("rcsd_pair_nodes", [])],
-                        "candidate_score": 0.0,
-                        "geometry_overlap_ratio": 0.0,
-                        "directionality_score": 0.0,
-                        "connectivity_score": 0.0,
-                        "shape_similarity_score": 0.0,
-                        "root_cause_category": "special_junction_group_gate",
-                        "upstream_issue_owner": "T06",
-                    },
-                    None,
-                )
-            )
-
     attach_promotion_stats = _promote_isolated_attach_roads(
         candidate_rows=candidate_rows,
         replaceable_rows=replaceable_rows,
@@ -1337,22 +1277,7 @@ def run_t06_step2_extract_rcsd_segments(
     )
     _annotate_rejected_swsd_context(rejected_rows, fusion_units=fusion_units, segments=segments)
     _normalize_repair_candidate_rows_from_business_audit(repair_candidate_rows, failure_business_audit_rows)
-    if removed_replaceable_segment_ids:
-        group_replacement_audit_rows = _build_group_replacement_audit_rows(
-            fusion_units=fusion_units,
-            segments=list(segments.values()),
-            relation_map=relation_map,
-            rcsd_roads=rcsd_roads,
-            rcsd_nodes=rcsd_node_features,
-            rcsd_node_canonicalizer=rcsd_node_canonicalizer,
-            replaceable_rows=replaceable_rows,
-            rejected_rows=rejected_rows,
-            failure_business_audit_rows=failure_business_audit_rows,
-            buffer_config=buffer_config,
-            progress=diag,
-        )
-    else:
-        group_replacement_audit_rows = pre_gate_group_replacement_audit_rows
+    group_replacement_audit_rows = pre_gate_group_replacement_audit_rows
     diag.stage("replacement_plan")
     replacement_plan_rows = _build_replacement_plan_rows(
         replaceable_rows=replaceable_rows,
@@ -1454,6 +1379,7 @@ def run_t06_step2_extract_rcsd_segments(
             ),
             "special_junction_group_count": len(special_group_rows),
             "special_junction_group_passed_count": sum(1 for item in special_group_rows if item["properties"].get("gate_status") == "passed"),
+            "special_junction_group_partial_count": sum(1 for item in special_group_rows if item["properties"].get("gate_status") == "partial"),
             "special_junction_group_blocked_count": sum(1 for item in special_group_rows if item["properties"].get("gate_status") == "blocked"),
             "special_junction_blocked_segment_count": len(blocked_segment_ids),
             "special_junction_gate_removed_replaceable_count": len(removed_replaceable_segment_ids),

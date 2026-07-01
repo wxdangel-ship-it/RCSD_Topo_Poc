@@ -14,7 +14,7 @@ T06 消费 T01 `segment.gpkg / roads.gpkg / nodes.gpkg` 与 T05 `intersection_ma
 | junc nodes | Segment 内部通过和侧向阻断语义路口，Step2 中作为 optional 审计对象。 |
 | T05 relation | SWSD 语义路口到 RCSD 语义路口的上游主关系。 |
 | RCSDSegment candidate | 在 SWSD buffer 内构造并收缩后的 RCSD corridor 候选。 |
-| replaceable | 通过硬审计和特殊组门控的可替换对象。 |
+| replaceable | 通过硬审计和特殊组局部替换门控的可替换对象。 |
 | replacement plan | Step2 发布给 Step3 的正式执行边界。 |
 | problem registry | Step2 对失败、已解决、已覆盖或需上游迭代问题的回流登记。 |
 | F-RCSD | Step3 输出的融合后 Road/Node 网络。 |
@@ -33,7 +33,7 @@ T06 消费 T01 `segment.gpkg / roads.gpkg / nodes.gpkg` 与 T05 `intersection_ma
 
 1. Step1 解析 T01 Segment 的 `pair_nodes / junc_nodes / roads / sgrade`，输出 candidates、final fusion units 和 rejected。
 2. Step2 读取 T05 relation 与 RCSD copy-on-write 网络，基于 SWSD Segment buffer 构建 RCSD candidate graph。
-3. Step2 收缩为 pair required semantic nodes 之间的最小 corridor，并执行方向、叶子端点、buffer overlap、视觉连续性、特殊组等硬审计。
+3. Step2 收缩为 pair required semantic nodes 之间的最小 corridor，并执行方向、叶子端点、buffer overlap、视觉连续性、特殊组局部替换门控等硬审计。
 4. Step2 输出 replaceable、rejected、probe、repair candidates、failure audit、replacement plan 和 problem registry。
 5. Step3 只执行 replacement plan ready action，输出 F-RCSD 和最终拓扑审计。
 

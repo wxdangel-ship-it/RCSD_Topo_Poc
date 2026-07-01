@@ -1713,7 +1713,7 @@ def test_step2_pair_anchor_diagnostic_outputs_short_connected_endpoint_cluster(t
     assert audit_props["pair_anchor_endpoint_cluster_nodes"] == [["10", "11"], ["20"]]
 
 
-def test_step2_blocks_whole_special_junction_group_when_one_segment_is_not_replaceable(tmp_path: Path) -> None:
+def test_step2_allows_partial_roundabout_group_when_one_segment_is_not_replaceable(tmp_path: Path) -> None:
     segments = _write(
         tmp_path / "segment.gpkg",
         [
@@ -1797,20 +1797,21 @@ def test_step2_blocks_whole_special_junction_group_when_one_segment_is_not_repla
 
     summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
     assert summary["rcsd_candidate_count"] == 1
-    assert summary["replaceable_count"] == 0
-    assert summary["special_junction_group_blocked_count"] == 1
-    assert summary["special_junction_gate_removed_replaceable_count"] == 1
+    assert summary["replaceable_count"] == 1
+    assert summary["special_junction_group_partial_count"] == 1
+    assert summary["special_junction_group_blocked_count"] == 0
+    assert summary["special_junction_gate_removed_replaceable_count"] == 0
     assert summary["reject_reason_counts"]["missing_pair_relation"] == 1
-    assert summary["reject_reason_counts"]["special_junction_group_not_fully_replaceable"] == 1
+    assert "special_junction_group_not_fully_replaceable" not in summary["reject_reason_counts"]
 
     replaceable_payload = json.loads(artifacts.replaceable_gpkg_path.with_suffix(".json").read_text(encoding="utf-8"))
-    assert replaceable_payload["row_count"] == 0
+    assert replaceable_payload["row_count"] == 1
 
     candidate_payload = json.loads(artifacts.candidates_gpkg_path.with_suffix(".json").read_text(encoding="utf-8"))
     candidate_props = candidate_payload["features"][0]["properties"]
     assert candidate_props["swsd_segment_id"] == "s_ok"
     assert candidate_props["special_junction_group_ids"] == ["3"]
-    assert candidate_props["special_junction_gate_status"] == "blocked"
+    assert candidate_props["special_junction_gate_status"] == "partial"
 
     group_audit = json.loads(
         (artifacts.summary_path.parent / "t06_special_junction_group_audit.json").read_text(encoding="utf-8")
@@ -1818,10 +1819,11 @@ def test_step2_blocks_whole_special_junction_group_when_one_segment_is_not_repla
     group_props = group_audit["features"][0]["properties"]
     assert group_props["special_junction_id"] == "3"
     assert group_props["special_junction_type"] == "roundabout"
-    assert group_props["gate_status"] == "blocked"
+    assert group_props["gate_status"] == "partial"
     assert group_props["associated_segment_ids"] == ["s_ok", "s_fail"]
+    assert group_props["replaceable_segment_ids"] == ["s_ok"]
     assert group_props["missing_replaceable_segment_ids"] == ["s_fail"]
-    assert group_props["removed_replaceable_segment_ids"] == ["s_ok"]
+    assert group_props["removed_replaceable_segment_ids"] == []
     assert group_props["rcsd_junction_node_ids"] == ["30", "31", "32"]
     assert group_props["rcsd_junction_road_ids"] == ["rr_internal"]
 

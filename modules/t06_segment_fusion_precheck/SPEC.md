@@ -8,7 +8,7 @@ T06 消费 T01 SWSD Segment 与 T05 SWSD-RCSD 语义路口关系，构建 RCSDSe
 
 - 从 T01 `segment.gpkg` 中识别可参与融合的 SWSD Segment。
 - 基于 T05 relation 与 copy-on-write RCSD 网络构建 buffer-based RCSDSegment。
-- 输出经过硬审计与特殊路口组门控后的 replaceable 集合，并发布 `t06_segment_replacement_plan.*` 作为 Step3 的正式执行范围。
+- 输出经过硬审计与特殊路口组局部替换门控后的 replaceable 集合，并发布 `t06_segment_replacement_plan.*` 作为 Step3 的正式执行范围。
 - 输出 `t06_segment_replacement_problem_registry.*`，把未替换或由当前计划覆盖的问题按根因和建议归属回流到 T01/T03/T04/T05/T08/T06 或数据裁剪审计。
 - Step3 优先消费 Step2 replacement plan 执行替换，旧 replaceable + group/special audit 只作为兼容 fallback。
 - 对失败 Segment 输出诊断、候选修复证据和上游责任归因；默认不覆盖 T05 relation，但 pair anchor 锚定错误在满足受限高置信安全门槛时，可在 T06 当前 Segment 内使用候选 pair 执行一次自动重试；普通缺失 pair 端点补全必须保留 T05 已知端点所在 SWSD pair 侧，只补失败侧；高等级 single 当缺失端点同时伴随已知端点被 `candidate_anchor_mismatch` 判错时，必须由诊断明确覆盖两个 SWSD pair 端点并通过正式硬审计后，才可整体采用候选 pair；两端 pair relation 均缺失时，只允许非人工复核、连通与方向评分满分、shape similarity 不低于 `0.95` 的 buffer-only 候选 pair 进入正式硬审计重试。
@@ -24,7 +24,7 @@ T06 消费 T01 SWSD Segment 与 T05 SWSD-RCSD 语义路口关系，构建 RCSDSe
 - Step1 可消费 T05 Phase 2 audit 中的 `T11_MANUAL` 人工正向 relation，用于释放对应 `is_anchor=fail3/fail4` 的锚定失败，或释放人工确认的 `has_evd=no / missing` no-evidence relation 进入 Step2 审查；该规则不改变节点事实，也不绕过 Step2/Step3 硬审计。
 - Step2：基于 buffer-based 策略构建 RCSDSegment 候选和 replaceable，并发布 replacement plan / problem registry。
 - Step3：消费 replacement plan 执行 Segment 替换，输出 F-RCSD Road / Node。
-- `kind_2=64 / 128` 特殊路口组门控。
+- `kind_2=64 / 128` 特殊路口组局部替换门控。
 - buffer-only probe、repair candidates 与 failure business audit。
 - 高等级 single graph-first 纵向联通、dual adaptive buffer 与 dual graph-first 双向联通重审审计。
 - Step2 窄通道视觉连续性复核。
@@ -67,10 +67,10 @@ T06 消费 T01 SWSD Segment 与 T05 SWSD-RCSD 语义路口关系，构建 RCSDSe
 | `t06_swsd_segment_candidates.*` | 通过 EVD 基础检查的 SWSD Segment 候选。 |
 | `t06_swsd_segment_final_fusion_units.*` | 通过 anchor / fallback 检查的最终 SWSD fusion units；高等级 Segment 中被脱挂的非特殊 junc-only 节点记录在 `detached_junc_nodes / detached_junc_reasons`。 |
 | `t06_rcsd_segment_candidates.*` | buffer 成功构建的 RCSDSegment 候选。 |
-| `t06_rcsd_segment_replaceable.*` | 经过硬审计与特殊组门控后的最终可替换集合。 |
+| `t06_rcsd_segment_replaceable.*` | 经过硬审计与特殊组局部替换门控后的最终可替换集合。 |
 | `t06_rcsd_segment_rejected.*` | Step2 拒绝原因和审计。 |
 | `t06_special_junction_group_audit.*` | 环岛 / 复杂路口组级门控审计。 |
-| `t06_segment_replacement_plan.*` | Step2 发布的正式 Step3 执行计划，覆盖标准 replaceable、passed 特殊路口组内部 RCSD 对象和 passed path-corridor group replacement。 |
+| `t06_segment_replacement_plan.*` | Step2 发布的正式 Step3 执行计划，覆盖标准 replaceable、全部通过特殊路口组内部 RCSD 对象和 passed path-corridor group replacement。 |
 | `t06_segment_replacement_problem_registry.*` | Segment 替换问题注册表，记录已由当前 plan 覆盖、已由 Step2 标准计划解决或仍需上游迭代的问题。 |
 | `t06_step2_progress.jsonl / t06_step2_heartbeat.json / t06_step2_slow_units.jsonl / t06_step2_slow_groups.jsonl / t06_step2_stackdump.log` | Step2 在 `progress=True` 时输出的运行诊断 sidecar，用于内网长耗时任务定位当前 Segment、group_audit 当前组、当前后处理阶段、逐文件写出状态、慢单元、慢 group 和 SIGUSR1 栈转储；不作为替换业务成果或 Step3 输入。 |
 | `t06_frcsd_road.* / t06_frcsd_node.*` | Step3 F-RCSD 替换结果；GPKG/CSV 是稳定审计载体，feature JSON 默认不写出；`t06_frcsd_node.*` 可写入 `semantic_junction_group_id`，表达物理节点分离但语义同一路口的分组。 |
@@ -95,7 +95,7 @@ Step3 正式成果同样以 GPKG/CSV 为稳定载体；标准 CLI 默认 `suppre
 | Step2 corridor 构建 | 基于 pair required semantic nodes 构建最小 corridor 子图，不直接发布连通分量。 |
 | Step2 pruning / hard audit | 裁剪 out seeds，检查叶子端点、双向 / 单向可达、buffer overlap、窄通道视觉连续性和额外 mapped semantic nodes。 |
 | 高等级受限重审 | 对 `0-0* / 0-1*` Segment 的裁剪窗口不足失败，在原始 pair relation 不变时执行受限重审；single 以 RCSD 有向图联通 pair 路口并经过 50m buffer core，dual 优先 adaptive 到 125m，仍失败时可在不跨越额外 mapped semantic nodes 的前提下执行 dual graph-first 双向联通。 |
-| 特殊组门控 | 环岛和复杂路口关联 Segment 必须全组可替换，否则整组移出 replaceable。 |
+| 特殊组门控 | 环岛和复杂路口关联 Segment 支持局部替换；已通过硬审计的关联 Segment 保留在 replaceable，未通过的关联 Segment 保留 SWSD carrier。只有全组可替换时才发布特殊组内部 RCSD Road/Node；局部环岛必须保留 SWSD 环岛内部 road，不引入 RCSD 环岛内部端点间 road。 |
 | Step2 replacement plan | 把标准 replaceable、特殊组内部对象、path-corridor group replacement 统一发布为 Step3 执行计划。 |
 | Step2 problem registry | 将 rejected、当前 plan 覆盖和 Step2 自动解决的问题登记为可回流上游模块的审计记录。 |
 | Step2 progress diagnostics | 在 `progress=True` 的长耗时运行中持续写出 heartbeat、阶段进度、group_audit 组级进度、逐个输出文件的 start/end/skipped、慢 Segment / 慢 group 记录和可触发栈转储，保证正式成果落盘阶段也能定位 I/O 或序列化卡点。 |
@@ -112,7 +112,7 @@ Step3 正式成果同样以 GPKG/CSV 为稳定载体；标准 CLI 默认 `suppre
 - 高等级受限重审不能修改 T05 pair anchor，且通过后必须记录 `adaptive_buffer_status / adaptive_buffer_distance_m / adaptive_buffer_source_reason`；single 的 `adaptive_buffer_source_reason` 以 `single_graph_first_longitudinal_retry:` 前缀标识。
 - buffer-only probe 若给出非 ambiguous、非人工复核的 `high_confidence_pair_anchor_candidate`，即使 T05 两端已有 anchor 但一端或两端被诊断为 `candidate_anchor_mismatch`，或 T05 两端 pair relation 均缺失但候选 pair 满足高置信安全门槛，也只允许在 T06 当前 Segment 内构造候选 effective relation 并重新执行正式 extractor；重试失败仍保持 rejected，不回写 T05 relation。
 - 单向 `multi_anchor_ambiguous` 只能在 probe 高置信、oriented RCSD pair 与 SWSD Segment 轴向端点侧位一致、且正式试算恰好一个 oriented candidate 通过时自动替换；多个候选通过、无候选通过或硬审计失败必须保持 rejected / 人工复核。
-- Step3 只执行 Step2 replacement plan，不重新判定特殊组或 path-corridor group 可替换性；若标准 replaceable 的 final junc 集合相对 T01 原始 Segment 发生 detached junc 缩减，detached junc 触达的原 SWSDRoad 必须保留为 `source=2` 局部 carrier，并在 relation 中标记 `replaced+retained_swsd`。
+- Step3 只执行 Step2 replacement plan，不重新判定特殊组或 path-corridor group 可替换性；特殊组 `partial` 时只执行标准 / path-corridor ready action，不引入特殊组内部 RCSD Road/Node，保留未替换 SWSD carrier 并通过 T05 语义路口组表达端点关系。若标准 replaceable 的 final junc 集合相对 T01 原始 Segment 发生 detached junc 缩减，detached junc 触达的原 SWSDRoad 必须保留为 `source=2` 局部 carrier，并在 relation 中标记 `replaced+retained_swsd`。
 - Step3 relation 中的 `frcsd_road_ids` 表达该 Segment 在最终 F-RCSD 中实际可消费的 carrier。`relation_status=replaced` 时应为正式 RCSD 替换道路；`retained_swsd / replaced+retained_swsd` 时可包含 `source=2` 的保留 SWSD carrier，但必须通过 `source_mix / frcsd_road_source_values`、状态和风险标记暴露来源。
 - Step3 若在执行后发现 ready plan 的局部 coverage / topology 兜底无法形成安全 RCSD 替换，不得丢弃该 SWSD Segment；必须保留原 SWSD Road/Node 为 `source=2` carrier，或将混合关系标记为 `replaced+retained_swsd` 并进入 topology / risk audit。
 - `replaced+retained_swsd` 可以保留原 SWSD carrier 以维持局部通行限制语义，但保留 carrier 的 endpoint 若已有 `swsd_to_frcsd_node_map` 指向 RCSD endpoint，最终 F-RCSD 中必须通过 `mainnodeid` 闭合到映射 RCSD mainnode/root；`semantic_junction_group_id` 只表达语义分组，不能替代 endpoint topology closure。

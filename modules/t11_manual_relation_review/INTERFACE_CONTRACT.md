@@ -133,10 +133,10 @@ src/rcsd_topo_poc/modules/t11_manual_relation_review/qgis_review/
 
 插件不新增 repo CLI 子命令，不新增 `scripts/` 包装入口；QGIS 图层样式、顺序和渲染仍由 QGIS 图层管理器控制。
 
-QGIS 绑定图层必需字段：
+QGIS 绑定图层字段要求：
 
 ```text
-Task/helper: workbook_path, sheet_name, excel_row, target_id, swsd_segment_id
+Task/helper optional; when bound: workbook_path, sheet_name, excel_row, target_id, swsd_segment_id
 SWSD Segment: id
 SWSD semantic junction: id
 RCSDRoad: id

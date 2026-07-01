@@ -18,6 +18,7 @@ from rcsd_topo_poc.modules.t11_manual_relation_review.qgis_review.ids import (
 from rcsd_topo_poc.modules.t11_manual_relation_review.qgis_review.layer_validation import (
     LayerDescriptor,
     LayerExpectation,
+    expectations_for_bound_layers,
     validate_layer_bindings,
 )
 from rcsd_topo_poc.modules.t11_manual_relation_review.qgis_review.task_index import (
@@ -138,6 +139,50 @@ def test_layer_validation_reports_fields_sources_and_crs() -> None:
     assert any("source mismatch" in error for error in result.errors)
     assert any("CRS differs" in warning for warning in result.warnings)
     assert any("multiple CRS" in warning for warning in result.warnings)
+
+
+def test_task_helper_layer_is_optional_until_bound() -> None:
+    layers = {
+        "swsd_segment": LayerDescriptor(
+            name="segment",
+            source_path="/tmp/segment.gpkg",
+            crs_authid="EPSG:3857",
+            fields=frozenset({"id"}),
+        ),
+        "swsd_semantic_junction": LayerDescriptor(
+            name="junction",
+            source_path="/tmp/junction.gpkg",
+            crs_authid="EPSG:3857",
+            fields=frozenset({"id"}),
+        ),
+        "rcsdroad": LayerDescriptor(
+            name="road",
+            source_path="/tmp/road.gpkg",
+            crs_authid="EPSG:3857",
+            fields=frozenset({"id"}),
+        ),
+        "rcsdnode": LayerDescriptor(
+            name="node",
+            source_path="/tmp/node.gpkg",
+            crs_authid="EPSG:3857",
+            fields=frozenset({"id", "mainnodeid"}),
+        ),
+    }
+
+    result = validate_layer_bindings(layers, expectations_for_bound_layers(layers))
+
+    assert result.ok
+
+    layers["task_helper"] = LayerDescriptor(
+        name="wrong-helper",
+        source_path="/tmp/wrong.gpkg",
+        crs_authid="EPSG:3857",
+        fields=frozenset({"id"}),
+    )
+    result = validate_layer_bindings(layers, expectations_for_bound_layers(layers))
+
+    assert not result.ok
+    assert any("task_helper missing required fields" in error for error in result.errors)
 
 
 def test_writes_task_index_json(tmp_path: Path) -> None:

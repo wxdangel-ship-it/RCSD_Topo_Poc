@@ -37,6 +37,19 @@ DEFAULT_LAYER_EXPECTATIONS = {
     "rcsdroad": LayerExpectation(frozenset({"id"})),
     "rcsdnode": LayerExpectation(frozenset({"id", "mainnodeid"})),
 }
+OPTIONAL_LAYER_ROLES = frozenset({"task_helper"})
+
+
+def expectations_for_bound_layers(
+    layers: dict[str, LayerDescriptor],
+    expectations: dict[str, LayerExpectation] | None = None,
+    optional_roles: frozenset[str] = OPTIONAL_LAYER_ROLES,
+) -> dict[str, LayerExpectation]:
+    expected = dict(expectations or DEFAULT_LAYER_EXPECTATIONS)
+    for role in optional_roles:
+        if role not in layers:
+            expected.pop(role, None)
+    return expected
 
 
 def validate_layer_bindings(

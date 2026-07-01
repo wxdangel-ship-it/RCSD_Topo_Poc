@@ -44,6 +44,7 @@ from rcsd_topo_poc.modules.t11_manual_relation_review.qgis_review.ids import (
 from rcsd_topo_poc.modules.t11_manual_relation_review.qgis_review.layer_validation import (
     DEFAULT_LAYER_EXPECTATIONS,
     LayerDescriptor,
+    expectations_for_bound_layers,
     validate_layer_bindings,
 )
 from rcsd_topo_poc.modules.t11_manual_relation_review.qgis_review.task_index import ReviewTask, load_review_tasks
@@ -143,6 +144,8 @@ class T11RelationReviewDock(QDockWidget):
         ]:
             combo = QgsMapLayerComboBox()
             combo.setFilters(QgsMapLayerProxyModel.VectorLayer)
+            if role == "task_helper":
+                combo.setAllowEmptyLayer(True)
             self.layer_combos[role] = combo
             layer_layout.addRow(label, combo)
         validate_button = QPushButton("Validate layers")
@@ -447,7 +450,7 @@ class T11RelationReviewDock(QDockWidget):
                 crs_authid=layer.crs().authid(),
                 fields=frozenset(field.name() for field in layer.fields()),
             )
-        result = validate_layer_bindings(layers, DEFAULT_LAYER_EXPECTATIONS)
+        result = validate_layer_bindings(layers, expectations_for_bound_layers(layers, DEFAULT_LAYER_EXPECTATIONS))
         text = []
         if result.errors:
             text.append("Errors:\n" + "\n".join(result.errors))

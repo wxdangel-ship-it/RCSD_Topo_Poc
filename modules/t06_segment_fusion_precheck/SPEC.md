@@ -21,7 +21,7 @@ T06 消费 T01 SWSD Segment 与 T05 SWSD-RCSD 语义路口关系，构建 RCSDSe
 ### 3.1 正式支持
 
 - Step1：识别 SWSD Segment 候选和最终 fusion units。
-- Step1 可消费 T05 Phase 2 audit 中的 `T11_MANUAL` 人工正向 relation，仅用于释放对应 `is_anchor=fail3/fail4` 的 Segment 进入 Step2 审查；该规则不改变节点事实，也不绕过 Step2/Step3 硬审计。
+- Step1 可消费 T05 Phase 2 audit 中的 `T11_MANUAL` 人工正向 relation，用于释放对应 `is_anchor=fail3/fail4` 的锚定失败，或释放人工确认的 `has_evd=no / missing` no-evidence relation 进入 Step2 审查；该规则不改变节点事实，也不绕过 Step2/Step3 硬审计。
 - Step2：基于 buffer-based 策略构建 RCSDSegment 候选和 replaceable，并发布 replacement plan / problem registry。
 - Step3：消费 replacement plan 执行 Segment 替换，输出 F-RCSD Road / Node。
 - `kind_2=64 / 128` 特殊路口组门控。
@@ -55,7 +55,7 @@ T06 消费 T01 SWSD Segment 与 T05 SWSD-RCSD 语义路口关系，构建 RCSDSe
 |---|---|
 | T01 `segment.gpkg` | Step1 候选 Segment、`pair_nodes / junc_nodes / roads / swsd_directionality` 来源。 |
 | SWSD `roads.gpkg / nodes.gpkg` | Step1/Step3 删除和保留 SWSD Road/Node 的来源。 |
-| T05 `intersection_match_all.geojson` 及同目录 audit | Step1 可读取 T05 audit 中可消费的 `T11_MANUAL` 人工正向 relation 释放 `fail3/fail4` anchor gate；Step2 将 SWSD pair/junc 映射到 RCSD 语义路口。 |
+| T05 `intersection_match_all.geojson` 及同目录 audit | Step1 可读取 T05 audit 中可消费的 `T11_MANUAL` 人工正向 relation 释放 `fail3/fail4` anchor gate，或释放人工确认的 no-evidence relation；Step2 将 SWSD pair/junc 映射到 RCSD 语义路口。 |
 | T05 `rcsdroad_out.gpkg / rcsdnode_out.gpkg` | Step2 RCSD 建图和 Step3 引入 RCSD Road/Node 的来源。 |
 | `t06_segment_replacement_plan.*` | Step3 优先消费的统一执行计划；旧产物无 plan 时才回退读取 passed 特殊路口组和 group replacement 审计。 |
 | T03/T04/T05/T07 surface 与 T04 audit | Step3 可选 surface topology closure 输入；用于节点语义闭合、relation node map 补写和旧 plan 兼容审计，不作为通用替换道路白名单。准确 T05 relation 下 retained-junction 20m 距离 gate 的风险释放由 Step2 replacement plan 前置处理。 |
@@ -89,7 +89,7 @@ Step3 正式成果同样以 GPKG/CSV 为稳定载体；标准 CLI 默认 `suppre
 
 | 步骤 | 业务说明 |
 |---|---|
-| Step1 eligibility | 解析 `pair_nodes + junc_nodes`，先排除 `pair_nodes` 两端相同的非替换主通道，再基于 T04 `final_swsd_nodes` 中的 `has_evd / is_anchor` 识别候选与 final fusion units；T05 audit 中可消费的 `T11_MANUAL` 人工正向 relation 只能释放对应 `fail3/fail4` anchor gate。 |
+| Step1 eligibility | 解析 `pair_nodes + junc_nodes`，先排除 `pair_nodes` 两端相同的非替换主通道，再基于 T04 `final_swsd_nodes` 中的 `has_evd / is_anchor` 识别候选与 final fusion units；T05 audit 中可消费的 `T11_MANUAL` 人工正向 relation 可释放对应 `fail3/fail4` anchor gate，也可释放人工确认的 `has_evd=no / missing` no-evidence relation。 |
 | Step2 relation mapping | 用 T05 relation 映射 pair required nodes，optional junc 只做审计和受控约束。 |
 | Step2 buffer candidate | 以 SWSD Segment 50m buffer 筛选 RCSDRoad/RCSDNode 候选。 |
 | Step2 corridor 构建 | 基于 pair required semantic nodes 构建最小 corridor 子图，不直接发布连通分量。 |
@@ -105,7 +105,7 @@ Step3 正式成果同样以 GPKG/CSV 为稳定载体；标准 CLI 默认 `suppre
 ## 8. 什么是对
 
 - Step2 只接受 `status=0 / base_id>0` 的 T05 relation。
-- Step1 final fusion units 只包含 `pair_nodes` 两端不同的 SWSD Segment；T01 `oneway_single_road_fallback` 生成的同一语义路口内部 self-pair fallback 必须进入 Step1 rejected 审计，不进入 Step2 替换分母。高等级 `0-0* / 0-1*` Segment 中，`has_evd=yes` 且 `is_anchor` 明确不可用的 `pair_nodes.kind_2=2048`、`junc_nodes.kind_2 in {16,2048}` 可被放行到 Step2 probe；`sgrade=0-2双` 且两个 `pair_nodes.kind_2` 均为 `2048` 的虚拟 T 型 pair 也可仅对 pair 主通道放行到 Step2 probe。T11 人工正向 relation 可释放对应 `fail3/fail4` anchor gate。上述放行都不被视为 anchor 成功，不回写 T05 relation。
+- Step1 final fusion units 只包含 `pair_nodes` 两端不同的 SWSD Segment；T01 `oneway_single_road_fallback` 生成的同一语义路口内部 self-pair fallback 必须进入 Step1 rejected 审计，不进入 Step2 替换分母。高等级 `0-0* / 0-1*` Segment 中，`has_evd=yes` 且 `is_anchor` 明确不可用的 `pair_nodes.kind_2=2048`、`junc_nodes.kind_2 in {16,2048}` 可被放行到 Step2 probe；`sgrade=0-2双` 且两个 `pair_nodes.kind_2` 均为 `2048` 的虚拟 T 型 pair 也可仅对 pair 主通道放行到 Step2 probe。T11 人工正向 relation 可释放对应 `fail3/fail4` anchor gate，也可释放 `has_evd=no / missing` 的人工确认 no-evidence relation；`is_anchor=no/fail1/fail2` 仍不放行。上述放行都不被视为 anchor 成功，不回写 T05 relation。
 - `pair_nodes` 是 hard required，`junc_nodes` 是 optional 内部通过 + 侧向阻断。
 - retained RCSD graph 的叶子端点只能是 pair 对应 RCSD semantic nodes。
 - 单向 Segment 的 source/target 只能由 SWSDRoad directed graph 推导。若 Segment 物理端点落在 `kind_2 in {64,128}` 特殊语义路口的 subnode 上，不能把 `mainnodeid` 折叠后的 pair 顺序当成唯一方向事实；初始 RCSD 有向 corridor 失败时，不能翻转 Segment 方向，只允许在原方向本地 corridor 存在、且方向缺口全部落在 `formway & 128 != 0` 的短 connector / 提前右转 Road 上时受限释放。

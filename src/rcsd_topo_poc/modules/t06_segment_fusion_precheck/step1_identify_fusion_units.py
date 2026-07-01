@@ -50,6 +50,8 @@ def run_t06_step1_identify_fusion_units(
     manual_anchor_override_nodes = _manual_relation_anchor_override_nodes(intersection_match_path)
     manual_anchor_override_segments: set[str] = set()
     manual_anchor_override_node_hits: set[str] = set()
+    manual_evd_override_segments: set[str] = set()
+    manual_evd_override_node_hits: set[str] = set()
 
     evd_candidates: list[dict[str, Any]] = []
     fusion_units: list[dict[str, Any]] = []
@@ -98,16 +100,59 @@ def run_t06_step1_identify_fusion_units(
         detached_junc_reasons: dict[str, str] = {}
         non_exempt_junc_nodes = [node_id for node_id in junc_nodes if node_id not in junc_kind2_exempt_node_set]
 
-        pair_has_evd_missing = [node_id for node_id in pair_nodes if node_index[node_id].get("has_evd") in (None, "")]
+        pair_manual_evd_missing = [
+            node_id
+            for node_id in pair_nodes
+            if node_index[node_id].get("has_evd") in (None, "")
+            and _manual_relation_evd_override_allowed(node_id=node_id, manual_anchor_override_nodes=manual_anchor_override_nodes)
+        ]
+        if pair_manual_evd_missing:
+            manual_evd_override_segments.add(segment_id)
+            manual_evd_override_node_hits.update(pair_manual_evd_missing)
+        pair_has_evd_missing = [
+            node_id
+            for node_id in pair_nodes
+            if node_index[node_id].get("has_evd") in (None, "")
+            and not _manual_relation_evd_override_allowed(node_id=node_id, manual_anchor_override_nodes=manual_anchor_override_nodes)
+        ]
         if pair_has_evd_missing:
             rejected.append(_rejected(segment_id, "before_evd", "has_evd_missing", pair_has_evd_missing, props, segment.get("geometry"), node_index))
             continue
-        pair_has_evd_failed = [node_id for node_id in pair_nodes if not yes_value(node_index[node_id].get("has_evd"))]
+        pair_manual_evd_failed = [
+            node_id
+            for node_id in pair_nodes
+            if node_id not in pair_manual_evd_missing
+            and not yes_value(node_index[node_id].get("has_evd"))
+            and _manual_relation_evd_override_allowed(node_id=node_id, manual_anchor_override_nodes=manual_anchor_override_nodes)
+        ]
+        if pair_manual_evd_failed:
+            manual_evd_override_segments.add(segment_id)
+            manual_evd_override_node_hits.update(pair_manual_evd_failed)
+        pair_has_evd_failed = [
+            node_id
+            for node_id in pair_nodes
+            if not yes_value(node_index[node_id].get("has_evd"))
+            and not _manual_relation_evd_override_allowed(node_id=node_id, manual_anchor_override_nodes=manual_anchor_override_nodes)
+        ]
         if pair_has_evd_failed:
             rejected.append(_rejected(segment_id, "before_evd", "has_evd_not_yes", pair_has_evd_failed, props, segment.get("geometry"), node_index))
             continue
 
-        junc_has_evd_missing = [node_id for node_id in non_exempt_junc_nodes if node_index[node_id].get("has_evd") in (None, "")]
+        junc_manual_evd_missing = [
+            node_id
+            for node_id in non_exempt_junc_nodes
+            if node_index[node_id].get("has_evd") in (None, "")
+            and _manual_relation_evd_override_allowed(node_id=node_id, manual_anchor_override_nodes=manual_anchor_override_nodes)
+        ]
+        if junc_manual_evd_missing:
+            manual_evd_override_segments.add(segment_id)
+            manual_evd_override_node_hits.update(junc_manual_evd_missing)
+        junc_has_evd_missing = [
+            node_id
+            for node_id in non_exempt_junc_nodes
+            if node_index[node_id].get("has_evd") in (None, "")
+            and not _manual_relation_evd_override_allowed(node_id=node_id, manual_anchor_override_nodes=manual_anchor_override_nodes)
+        ]
         blocked_junc_missing = _record_detached_junc_failures(
             detached_junc_reasons=detached_junc_reasons,
             failed_nodes=junc_has_evd_missing,
@@ -122,8 +167,20 @@ def run_t06_step1_identify_fusion_units(
         junc_has_evd_failed = [
             node_id
             for node_id in non_exempt_junc_nodes
-            if node_id not in detached_junc_reasons and not yes_value(node_index[node_id].get("has_evd"))
+            if node_id not in detached_junc_reasons
+            and not yes_value(node_index[node_id].get("has_evd"))
+            and not _manual_relation_evd_override_allowed(node_id=node_id, manual_anchor_override_nodes=manual_anchor_override_nodes)
         ]
+        junc_manual_evd_failed = [
+            node_id
+            for node_id in non_exempt_junc_nodes
+            if node_id not in detached_junc_reasons
+            and not yes_value(node_index[node_id].get("has_evd"))
+            and _manual_relation_evd_override_allowed(node_id=node_id, manual_anchor_override_nodes=manual_anchor_override_nodes)
+        ]
+        if junc_manual_evd_failed:
+            manual_evd_override_segments.add(segment_id)
+            manual_evd_override_node_hits.update(junc_manual_evd_failed)
         blocked_junc_failed = _record_detached_junc_failures(
             detached_junc_reasons=detached_junc_reasons,
             failed_nodes=junc_has_evd_failed,
@@ -166,7 +223,29 @@ def run_t06_step1_identify_fusion_units(
                 sgrade=sgrade_key,
             )
         ]
-        anchor_missing = [node_id for node_id in anchor_required_nodes if node_index[node_id].get("is_anchor") in (None, "")]
+        manual_anchor_missing_overridden = [
+            node_id
+            for node_id in anchor_required_nodes
+            if node_index[node_id].get("is_anchor") in (None, "")
+            and _manual_relation_anchor_override_allowed(
+                node_id=node_id,
+                node_index=node_index,
+                manual_anchor_override_nodes=manual_anchor_override_nodes,
+            )
+        ]
+        if manual_anchor_missing_overridden:
+            manual_anchor_override_segments.add(segment_id)
+            manual_anchor_override_node_hits.update(manual_anchor_missing_overridden)
+        anchor_missing = [
+            node_id
+            for node_id in anchor_required_nodes
+            if node_index[node_id].get("is_anchor") in (None, "")
+            and not _manual_relation_anchor_override_allowed(
+                node_id=node_id,
+                node_index=node_index,
+                manual_anchor_override_nodes=manual_anchor_override_nodes,
+            )
+        ]
         if anchor_missing:
             blocked_anchor_missing = _record_detached_junc_failures(
                 detached_junc_reasons=detached_junc_reasons,
@@ -324,6 +403,11 @@ def run_t06_step1_identify_fusion_units(
             "manual_relation_anchor_override_segment_count": len(manual_anchor_override_segments),
             "manual_relation_anchor_override_node_ids": sorted(manual_anchor_override_node_hits),
             "manual_relation_anchor_override_segment_ids": sorted(manual_anchor_override_segments),
+            "manual_relation_evd_override_source": MANUAL_RELATION_ANCHOR_OVERRIDE_SOURCE,
+            "manual_relation_evd_override_node_count": len(manual_evd_override_node_hits),
+            "manual_relation_evd_override_segment_count": len(manual_evd_override_segments),
+            "manual_relation_evd_override_node_ids": sorted(manual_evd_override_node_hits),
+            "manual_relation_evd_override_segment_ids": sorted(manual_evd_override_segments),
             "outputs": {
                 **{f"swsd_candidates_{k}": str(v) for k, v in candidate_paths.items()},
                 **{f"swsd_final_fusion_units_{k}": str(v) for k, v in final_fusion_paths.items()},
@@ -511,7 +595,15 @@ def _manual_relation_anchor_override_allowed(
     if node_id not in manual_anchor_override_nodes:
         return False
     anchor_state = str(node_index[node_id].get("is_anchor") or "").strip().lower()
-    return anchor_state in MANUAL_RELATION_ANCHOR_OVERRIDE_STATES
+    if anchor_state in MANUAL_RELATION_ANCHOR_OVERRIDE_STATES:
+        return True
+    if anchor_state:
+        return False
+    return not yes_value(node_index[node_id].get("has_evd"))
+
+
+def _manual_relation_evd_override_allowed(*, node_id: str, manual_anchor_override_nodes: set[str]) -> bool:
+    return node_id in manual_anchor_override_nodes
 
 
 def _manual_relation_anchor_override_nodes(intersection_match_path: str | Path | None) -> set[str]:

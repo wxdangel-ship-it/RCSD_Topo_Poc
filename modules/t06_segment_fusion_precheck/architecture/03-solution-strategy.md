@@ -24,16 +24,16 @@ T06 采用三步链路：
 
 - T01 `segment.gpkg`，依赖 `pair_nodes / junc_nodes / roads / sgrade` 等字段。
 - T04 downstream `final_swsd_nodes`，用于读取 `has_evd / is_anchor / kind_2`；这是 T06 Step1 漏斗分母的节点状态来源。
-- T05 Phase 2 audit，作为 T11 人工正向 relation 的可追溯来源。Step1 只读取其中 `T11_MANUAL + status=0 + base_id>0 + graph_consumable=1` 的 target，用于释放 `final_swsd_nodes.is_anchor=fail3/fail4` 的旧锚定失败门禁。
+- T05 Phase 2 audit，作为 T11 人工正向 relation 的可追溯来源。Step1 只读取其中 `T11_MANUAL + status=0 + base_id>0 + graph_consumable=1` 的 target，用于释放 `final_swsd_nodes.is_anchor=fail3/fail4` 的旧锚定失败门禁，或释放人工确认的 `has_evd=no / missing` no-evidence relation。
 
 ### 2.3 落地策略
 
 - 对每个 Segment 解析 `pair_nodes + junc_nodes`，形成语义路口集合。
 - `pair_nodes` 必须解析出两个不同的 SWSD 语义路口；同一语义路口内部 self-pair fallback 进入 Step1 rejected 审计，不进入 Step2 final fusion units。
 - `junc_nodes.kind_2 in {1,4096,8192}` 不参与 Step1 `has_evd / is_anchor` 判定，但仍保留为后续 optional junc 审计对象。
-- eligibility 集合内所有语义路口 `has_evd=yes` 时进入候选集。
+- eligibility 集合内所有语义路口 `has_evd=yes` 时进入候选集；若 T11 人工正向 relation 已确认 `has_evd=no / missing` 的 no-evidence 目标，Step1 可将该 target 作为人工修复证据放行到 Step2。
 - 在候选集中，所有 eligibility 语义路口 `is_anchor in {yes, fail4_fallback}` 时进入 final fusion units。
-- 对于 T05 audit 已确认的 T11 人工正向 relation，若对应语义路口旧节点状态为 `is_anchor=fail3/fail4`，Step1 可将该失败视为已由人工 relation 修复并放行到 Step2；`has_evd` 缺失/否、pair 两端不合法、`is_anchor=no/fail1/fail2`、非人工来源 relation、`graph_consumable=0` 不放行。
+- 对于 T05 audit 已确认的 T11 人工正向 relation，若对应语义路口旧节点状态为 `is_anchor=fail3/fail4`，Step1 可将该失败视为已由人工 relation 修复并放行到 Step2；若对应语义路口 `has_evd=no / missing`，也可作为人工确认 no-evidence relation 放行到 Step2。pair 两端不合法、`is_anchor=no/fail1/fail2`、非人工来源 relation、`graph_consumable=0` 不放行。
 
 ### 2.4 输出与审计
 
@@ -45,8 +45,8 @@ T06 采用三步链路：
 
 ### 2.5 对错边界
 
-- 对：`fail4_fallback` 视为可融合 anchor；T11 人工正向 relation 只释放 `fail3/fail4` 的 Step1 anchor gate；豁免只作用于 junc eligibility 检查；self-pair fallback 只保留 Step1 审计，不参与 RCSD Segment 替换分母。
-- 错：把人工 relation 当作 T06 替换白名单，或用它释放 `has_evd`、pair 合法性、非人工 relation 和 Step2/Step3 硬审计；把 `junc_nodes` 当作 hard-stop，或把 `pair_nodes` 豁免掉。
+- 对：`fail4_fallback` 视为可融合 anchor；T11 人工正向 relation 可释放 `fail3/fail4` 的 Step1 anchor gate，也可释放人工确认的 `has_evd=no / missing` no-evidence relation；豁免只作用于 junc eligibility 检查；self-pair fallback 只保留 Step1 审计，不参与 RCSD Segment 替换分母。
+- 错：把人工 relation 当作 T06 替换白名单，或用它释放 pair 合法性、`is_anchor=no/fail1/fail2`、非人工 relation 和 Step2/Step3 硬审计；把 `junc_nodes` 当作 hard-stop，或把 `pair_nodes` 豁免掉。
 
 ## 3. Step2：Relation Mapping
 

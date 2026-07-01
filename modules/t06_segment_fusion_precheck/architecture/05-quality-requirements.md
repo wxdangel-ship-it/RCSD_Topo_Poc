@@ -3,7 +3,7 @@
 ## 1. 替换正确性
 
 - Step2 只接受 `status=0 / base_id>0` 的 T05 relation。
-- T11 人工正向 relation 只允许释放 T06 Step1 中 `is_anchor=fail3/fail4` 的旧锚定失败门禁；释放后仍必须通过 Step2 relation mapping、RCSD 连通性、方向性、buffer、视觉连续性和 Step3 topology audit。
+- T11 人工正向 relation 允许释放 T06 Step1 中 `is_anchor=fail3/fail4` 的旧锚定失败门禁，也允许释放人工确认的 `has_evd=no / missing` no-evidence relation；释放后仍必须通过 Step2 relation mapping、RCSD 连通性、方向性、buffer、视觉连续性和 Step3 topology audit，且不得释放 pair 合法性、`is_anchor=no/fail1/fail2`、非人工 relation 或 `graph_consumable=0`。
 - `pair_nodes` 是 hard required，`junc_nodes` 是 optional 审计对象。
 - buffer 连通分量不能直接作为 RCSDSegment，必须收缩为 pair required semantic nodes 之间的可解释 corridor。
 - `replaceable` 必须通过方向、叶子端点、额外 mapped semantic nodes、buffer overlap、视觉连续性和特殊组门控；`swsd_buffer_corridor_controlled_release` 只允许在端点、连通、方向均通过且 retained RCSD corridor 完全位于 SWSD 50m buffer 内时，把 SWSD coverage gap 降级为 replacement plan 风险。

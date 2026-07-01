@@ -94,12 +94,12 @@ T03/T04 场景只作为人工参考提示写入 `t03_scene_hint / t04_scene_hint
 
 ## 6. QGIS 人工审计插件策略
 
-QGIS 插件只服务表 2 / 表 3 两张 relation 缺口 Excel。它把 Excel 行映射为任务时保留 `workbook_path / sheet_name / excel_row / target_id / swsd_segment_id`，先按 Segment 优先级排序，再按 `target_id` 去重，确保同一语义路口只展示和写入第一条任务。
+QGIS 插件只服务表 2 / 表 3 两张 relation 缺口 Excel，但 UI 单次只加载其中一张进行修订。它把当前 Excel 行映射为任务时保留 `workbook_path / sheet_name / excel_row / target_id / swsd_segment_id`，先按 Segment 优先级排序，再按 `target_id` 去重，确保同一语义路口只展示和写入第一条任务。
 
 插件分层：
 
 - 纯 Python 核心负责 Excel XML 级读写、任务去重、selected_ids 规范化和图层绑定校验。
-- QGIS 层只负责 Dock UI、QGIS 图层绑定、地图定位、feature selection 提取和高亮；UI 拆为左侧任务管理 Dock 与底部任务处理 Dock，任务列表保持分页列表形态，当前任务处理使用底部横向栏。
+- QGIS 层只负责 Dock UI、QGIS 图层绑定、地图定位、feature selection 提取和高亮；UI 拆为左侧任务管理 Dock 与底部任务处理 Dock，任务列表保持分页列表形态，当前任务处理使用底部横向栏，点击任务后默认缩放到约 `1:1000`。
 
 Excel 同步采用完全同步模式：
 

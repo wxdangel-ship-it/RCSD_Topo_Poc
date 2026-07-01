@@ -123,13 +123,13 @@ src/rcsd_topo_poc/modules/t11_manual_relation_review/qgis_review/
 
 核心能力：
 
-- `task_index.load_review_tasks(...)`：读取两张 Excel，按优先级排序，并按 `target_id` 去重保留第一条任务。
+- `task_index.load_review_tasks(...)`：读取一张或多张 T11 relation 缺口 Excel，按优先级排序，并按 `target_id` 去重保留第一条任务；QGIS 插件 UI 单次只加载一张审计 Excel 进行修订。
 - `excel_sync.update_manual_fields(...)`：只更新目标 Excel 行的 `manual_relation_type / selected_ids / comment` 三列，可在首次写入前创建 `_t11_qgis_backups/` 备份。
 - `ids.extract_rcsdnode_selected_ids(...)`：从 RCSDNode selection 写入 `mainnodeid`，空 / `0` / `NULL` 时回退 `id`。
 - `ids.extract_rcsdroad_selected_ids(...)`：从 RCSDRoad selection 写入 `id`。
 - `layer_validation.validate_layer_bindings(...)`：校验绑定图层的数据源、CRS 和必需字段。
 
-插件加载后注册两个 QGIS Dock：左侧 `T11 Relation Tasks` 负责 workbook 加载、图层绑定、分页和任务列表；底部 `T11 Relation Processing` 负责当前任务字段、上一条 / 下一条、定位、高亮、selection 写入、清空、`NULL` 与 `uncertain` 标记。
+插件加载后注册两个 QGIS Dock：左侧 `T11 Relation Tasks` 负责单个 workbook 加载、图层绑定、分页和任务列表；底部 `T11 Relation Processing` 负责当前任务字段、上一条 / 下一条、定位、高亮、selection 写入、清空、`NULL` 与 `uncertain` 标记。点击任务后定位到 SWSD 语义路口或 Segment 上下文，并默认缩放到约 `1:1000`。
 
 插件不新增 repo CLI 子命令，不新增 `scripts/` 包装入口；QGIS 图层样式、顺序和渲染仍由 QGIS 图层管理器控制。
 

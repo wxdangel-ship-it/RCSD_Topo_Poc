@@ -28,12 +28,14 @@
 - [x] 新增 QGIS `classFactory`。
 - [x] 新增插件生命周期文件。
 - [x] 新增左侧任务管理 Dock 与底部任务处理 Dock。
+- [x] 任务管理 Dock 单次只加载一张审计 Excel。
 
 ## Implement phase 3：图层绑定、定位、高亮、selection 提取
 
 - [x] 任务管理 Dock 支持五类图层绑定。
 - [x] 任务管理 Dock 支持字段/CRS/路径校验。
 - [x] 任务处理 Dock 支持定位到 SWSD 语义路口或 Segment。
+- [x] 任务点击定位后默认缩放到约 `1:1000`。
 - [x] 任务处理 Dock 支持高亮已有 `selected_ids`。
 - [x] 任务处理 Dock 支持从 RCSDNode / RCSDRoad selection 填入 `selected_ids`。
 

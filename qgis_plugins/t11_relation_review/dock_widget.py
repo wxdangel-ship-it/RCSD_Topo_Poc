@@ -59,6 +59,7 @@ RELATION_TYPES = [
     "no_valid_relation",
     "uncertain",
 ]
+DEFAULT_LOCATE_SCALE = 1000
 
 
 DOCK_STYLE = """
@@ -117,19 +118,15 @@ class T11RelationReviewDock(QDockWidget):
         root.setStyleSheet(DOCK_STYLE)
         layout = QVBoxLayout(root)
 
-        workbook_box = QGroupBox("Workbooks")
+        workbook_box = QGroupBox("Workbook")
         workbook_layout = QGridLayout(workbook_box)
-        self.all_evidence_path = QLineEdit()
-        self.no_evidence_path = QLineEdit()
-        workbook_layout.addWidget(QLabel("All evidence gaps"), 0, 0)
-        workbook_layout.addWidget(self.all_evidence_path, 0, 1)
-        workbook_layout.addWidget(self._browse_button(self.all_evidence_path), 0, 2)
-        workbook_layout.addWidget(QLabel("No evidence gaps"), 1, 0)
-        workbook_layout.addWidget(self.no_evidence_path, 1, 1)
-        workbook_layout.addWidget(self._browse_button(self.no_evidence_path), 1, 2)
+        self.audit_workbook_path = QLineEdit()
+        workbook_layout.addWidget(QLabel("Audit workbook"), 0, 0)
+        workbook_layout.addWidget(self.audit_workbook_path, 0, 1)
+        workbook_layout.addWidget(self._browse_button(self.audit_workbook_path), 0, 2)
         load_button = QPushButton("Load")
         load_button.clicked.connect(self._load_tasks)
-        workbook_layout.addWidget(load_button, 2, 0, 1, 3)
+        workbook_layout.addWidget(load_button, 1, 0, 1, 3)
         layout.addWidget(workbook_box)
 
         layer_box = QGroupBox("Layer Binding")
@@ -191,19 +188,15 @@ class T11RelationReviewDock(QDockWidget):
         return button
 
     def _load_tasks(self) -> None:
-        paths = {
-            "all_evidence_relation_gaps": Path(self.all_evidence_path.text()).expanduser(),
-            "no_evidence_relation_gaps": Path(self.no_evidence_path.text()).expanduser(),
-        }
-        for path in paths.values():
-            writable, reason = check_workbook_writable(path)
-            if not writable:
-                self.read_only = True
-                self._set_message(f"Workbook is not writable; editing disabled: {reason}", error=True)
-                return
+        path = Path(self.audit_workbook_path.text()).expanduser()
+        writable, reason = check_workbook_writable(path)
+        if not writable:
+            self.read_only = True
+            self._set_message(f"Workbook is not writable; editing disabled: {reason}", error=True)
+            return
         self.read_only = False
         try:
-            self.tasks = load_review_tasks(paths)
+            self.tasks = load_review_tasks([path])
         except Exception as exc:
             self._set_message(f"Failed to load tasks: {exc}", error=True)
             return
@@ -211,7 +204,7 @@ class T11RelationReviewDock(QDockWidget):
         self.current_index = 0 if self.tasks else -1
         self._refresh_task_list()
         self._show_current_task()
-        self._set_message(f"Loaded {len(self.tasks)} unique target tasks.")
+        self._set_message(f"Loaded {len(self.tasks)} unique target tasks from {path.name}.")
 
     def _set_page_size(self, value: int) -> None:
         self.page_size = value
@@ -433,8 +426,11 @@ class T11RelationReviewDock(QDockWidget):
                 if geom and not geom.isEmpty():
                     extent.combineExtentWith(geom.boundingBox())
             if not extent.isEmpty():
-                self.iface.mapCanvas().setExtent(extent)
-                self.iface.mapCanvas().refresh()
+                canvas = self.iface.mapCanvas()
+                canvas.setExtent(extent)
+                if hasattr(canvas, "zoomScale"):
+                    canvas.zoomScale(DEFAULT_LOCATE_SCALE)
+                canvas.refresh()
         if current_layer is not None:
             self.iface.setActiveLayer(current_layer)
 

@@ -59,6 +59,15 @@ def test_loads_sorts_and_deduplicates_review_tasks(tmp_path: Path) -> None:
     assert tasks[2].status == "filled"
 
 
+def test_loads_single_review_workbook(tmp_path: Path) -> None:
+    all_evidence, _ = _write_review_workbooks(tmp_path)
+
+    tasks = load_review_tasks([all_evidence])
+
+    assert [task.target_id for task in tasks] == ["T_DUP"]
+    assert {task.workbook_path for task in tasks} == {all_evidence}
+
+
 def test_updates_only_first_deduped_excel_row_and_keeps_validation(tmp_path: Path) -> None:
     all_evidence, no_evidence = _write_review_workbooks(tmp_path)
     task = load_review_tasks([all_evidence, no_evidence])[0]
@@ -209,6 +218,11 @@ def test_qgis_plugin_structure_and_metadata() -> None:
     parser.read(plugin_root / "metadata.txt", encoding="utf-8")
     assert parser.get("general", "name") == "T11 Relation Review"
     assert parser.get("general", "qgisMinimumVersion")
+    dock_text = (plugin_root / "dock_widget.py").read_text(encoding="utf-8")
+    assert "Audit workbook" in dock_text
+    assert "all_evidence_path" not in dock_text
+    assert "no_evidence_path" not in dock_text
+    assert "DEFAULT_LOCATE_SCALE = 1000" in dock_text
 
 
 def _write_review_workbooks(root: Path) -> tuple[Path, Path]:

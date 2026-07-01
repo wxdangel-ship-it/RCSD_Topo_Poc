@@ -15,6 +15,10 @@ if str(SRC_ROOT) not in sys.path:
 from rcsd_topo_poc.modules.t06_segment_fusion_precheck import (  # noqa: E402
     run_t06_step3_segment_replacement,
 )
+from rcsd_topo_poc.modules.t06_segment_fusion_precheck.io import suppress_feature_json_outputs  # noqa: E402
+from rcsd_topo_poc.modules.t06_segment_fusion_precheck.step3_output_slimming import (  # noqa: E402
+    compact_step3_outputs,
+)
 from rcsd_topo_poc.modules.t06_segment_fusion_precheck.rcsd_unreplaced_attribution import (  # noqa: E402
     run_t06_rcsd_unreplaced_attribution,
 )
@@ -95,19 +99,20 @@ def main() -> int:
             )
         else:
             diag.stage("run_standard_step3")
-            artifacts = run_t06_step3_segment_replacement(
-                step2_replaceable_path=inputs["step2_replaceable_path"],
-                step2_special_junction_group_audit_path=inputs["step2_special_junction_group_audit_path"],
-                step2_group_replacement_audit_path=inputs["step2_group_replacement_audit_path"],
-                swsd_segment_path=inputs["swsd_segment_path"],
-                swsd_roads_path=inputs["swsd_roads_path"],
-                swsd_nodes_path=inputs["swsd_nodes_path"],
-                rcsdroad_path=inputs["rcsdroad_path"],
-                rcsdnode_path=inputs["rcsdnode_path"],
-                out_root=out_root,
-                run_id=run_id,
-                progress=args.progress,
-            )
+            with suppress_feature_json_outputs():
+                artifacts = run_t06_step3_segment_replacement(
+                    step2_replaceable_path=inputs["step2_replaceable_path"],
+                    step2_special_junction_group_audit_path=inputs["step2_special_junction_group_audit_path"],
+                    step2_group_replacement_audit_path=inputs["step2_group_replacement_audit_path"],
+                    swsd_segment_path=inputs["swsd_segment_path"],
+                    swsd_roads_path=inputs["swsd_roads_path"],
+                    swsd_nodes_path=inputs["swsd_nodes_path"],
+                    rcsdroad_path=inputs["rcsdroad_path"],
+                    rcsdnode_path=inputs["rcsdnode_path"],
+                    out_root=out_root,
+                    run_id=run_id,
+                    progress=args.progress,
+                )
             surface_topology = None
         diag.stage("run_rcsd_unreplaced_attribution")
         attribution_artifacts = run_t06_rcsd_unreplaced_attribution(
@@ -116,8 +121,11 @@ def main() -> int:
             swsd_segment_path=inputs["swsd_segment_path"],
             rcsdroad_path=inputs["rcsdroad_path"],
         )
+        diag.stage("compact_outputs", step_root=str(artifacts.step_root))
+        summary = compact_step3_outputs(artifacts.step_root)
         diag.stage("read_summary", summary_path=str(artifacts.summary_path))
-        summary = _read_json(artifacts.summary_path)
+        if not summary:
+            summary = _read_json(artifacts.summary_path)
     except Exception as exc:
         diag.finish("error", error=repr(exc))
         raise

@@ -71,15 +71,17 @@ T06 消费 T01 SWSD Segment 与 T05 SWSD-RCSD 语义路口关系，构建 RCSDSe
 | `t06_segment_replacement_plan.*` | Step2 发布的正式 Step3 执行计划，覆盖标准 replaceable、passed 特殊路口组内部 RCSD 对象和 passed path-corridor group replacement。 |
 | `t06_segment_replacement_problem_registry.*` | Segment 替换问题注册表，记录已由当前 plan 覆盖、已由 Step2 标准计划解决或仍需上游迭代的问题。 |
 | `t06_step2_progress.jsonl / t06_step2_heartbeat.json / t06_step2_slow_units.jsonl / t06_step2_slow_groups.jsonl / t06_step2_stackdump.log` | Step2 在 `progress=True` 时输出的运行诊断 sidecar，用于内网长耗时任务定位当前 Segment、group_audit 当前组、当前后处理阶段、逐文件写出状态、慢单元、慢 group 和 SIGUSR1 栈转储；不作为替换业务成果或 Step3 输入。 |
-| `t06_frcsd_road.* / t06_frcsd_node.*` | Step3 F-RCSD 替换结果；`t06_frcsd_node.*` 可写入 `semantic_junction_group_id`，表达物理节点分离但语义同一路口的分组。 |
+| `t06_frcsd_road.* / t06_frcsd_node.*` | Step3 F-RCSD 替换结果；GPKG/CSV 是稳定审计载体，feature JSON 默认不写出；`t06_frcsd_node.*` 可写入 `semantic_junction_group_id`，表达物理节点分离但语义同一路口的分组。 |
 | `t06_step3_semantic_junction_groups.*` | Step3 基于 T05 有效 `target_id -> base_id` 关系输出的语义路口组审计，覆盖远距离 SWSD/RCSD 多源节点分裂风险。 |
 | `t06_step3_unreplaced_rcsd_roads.*` | 未进入替换结果的 RCSDRoad 基础清单。 |
 | `t06_step3_unreplaced_rcsd_attribution.* / t06_step3_unreplaced_rcsd_attribution_summary.json` | 未替换 RCSDRoad 的反向归因审计；保留 `attribution_*` 漏斗粗口径，并以 `final_attribution_*` 输出强证据优先、几何主 Segment 优先后的最终六类归因。几何主 Segment 在 relation scope 内时还需区分：已在可替换范围但 road 未被精确引用的回到 `5`，未进入可替换范围且 required semantic nodes / anchor 语义闭合不足的回到 `3`，RCSD 方向性/承载能力不足的保留 `4`。PPT 三大类以 `ppt_attribution_*` 输出：`4/5 -> Segment下RCSD质量导致无法替换`、`2/3 -> Segment侧替换前提不满足导致无法替换`、`1 -> RCSD不在Segment范围内导致无法替换`；mixed 部分覆盖不新增归因类型，只以低置信与 `ppt_review_flag` 标记。summary 输出 total-RCSD 分母下的数量与里程统计。 |
 | `t06_step3_swsd_frcsd_segment_relation.*` | 所有 SWSD Segment 到 F-RCSD carrier 的稳定关系索引，区分 `replaced / replaced+retained_swsd / retained_swsd / failed`；`frcsd_road_ids` 必须指向最终存在的 F-RCSD Road，按 `source_mix / frcsd_road_source_values` 区分 RCSD 替换 carrier 与保留 SWSD carrier。 |
 | `t06_step3_topology_connectivity_audit.*` | Step3 最终道路-节点完整性、正式替换 source 一致性、Segment 内连通、路口映射和挂接质量审计。 |
 | `t06_step3_surface_topology_audit.*` | 可选 surface-assisted closure 审计，记录 T03/T04/T05/T07 surface 对节点闭合的贡献和阻断原因。 |
+| `t06_step3_summary.json / t06_step3_detail_metrics.json / t06_step3_output_manifest.json` | Step3 紧凑 summary、详细指标 sidecar 与输出文件清单。summary 只保留下游常用漏斗、状态计数和 surface-aware 计数级结果；大体量列表、完整路径和文件大小进入 detail metrics / manifest。 |
 
 Step2 正式成果以 GPKG/CSV 为稳定载体；JSON feature dump 只作为本地调试和兼容产物。内网脚本默认 `write_json_outputs=false`，避免在大规模写出阶段重复序列化大几何导致长时间无进度或进程被终止；summary 必须记录该开关，Step3 必须能消费同目录 GPKG replacement plan。
+Step3 正式成果同样以 GPKG/CSV 为稳定载体；标准 CLI 默认 `suppress_feature_json_outputs=true`，不写出逐 feature 几何 JSON。需要本地调试旧 JSON feature dump 时，调用方必须显式关闭该开关。
 
 ## 7. 关键业务步骤
 

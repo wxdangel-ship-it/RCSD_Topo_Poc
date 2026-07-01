@@ -1746,6 +1746,7 @@ def test_visual_conflict_non_replaced_release_is_rolled_back(tmp_path: Path) -> 
 def test_surface_aware_visual_release_reuses_candidate_when_no_rollback(monkeypatch, tmp_path) -> None:
     step_root = tmp_path / "run" / "step3_segment_replacement"
     step_root.mkdir(parents=True)
+    (tmp_path / "t06_segment_replacement_plan.gpkg").write_text("plan", encoding="utf-8")
     original_plan = tmp_path / "replacement_plan.gpkg"
     original_plan.write_text("plan", encoding="utf-8")
     summary_path = step_root / "t06_step3_summary.json"
@@ -1781,10 +1782,9 @@ def test_surface_aware_visual_release_reuses_candidate_when_no_rollback(monkeypa
     monkeypatch.setattr(release_module, "read_features", lambda *_args, **_kwargs: [_feature({"replacement_plan_id": "standard:s1"})])
     monkeypatch.setattr(
         release_module,
-        "_surface_release_plan_rows",
+        "_preplanned_surface_release_plan_rows",
         lambda *args, **kwargs: ([_feature({"replacement_plan_id": "standard:s1"})], [{"plan_id": "standard:s1"}]),
     )
-    monkeypatch.setattr(release_module, "_has_visual_conflict_release_candidate", lambda _rows: True)
     monkeypatch.setattr(
         release_module,
         "_visual_conflict_release_plan_rows",
@@ -1811,13 +1811,15 @@ def test_surface_aware_visual_release_reuses_candidate_when_no_rollback(monkeypa
         progress=False,
     )
 
-    assert len(calls) == 2
-    assert [call[0] for call in calls] == [False, False]
+    assert len(calls) == 1
+    assert calls[0][1].name == "plan_candidate.json"
+    assert [call[0] for call in calls] == [False]
 
 
 def test_surface_aware_visual_release_skips_surface_safe_intermediate_rerun(monkeypatch, tmp_path) -> None:
     step_root = tmp_path / "run" / "step3_segment_replacement"
     step_root.mkdir(parents=True)
+    (tmp_path / "t06_segment_replacement_plan.gpkg").write_text("plan", encoding="utf-8")
     original_plan = tmp_path / "replacement_plan.gpkg"
     original_plan.write_text("plan", encoding="utf-8")
     summary_path = step_root / "t06_step3_summary.json"
@@ -1863,18 +1865,20 @@ def test_surface_aware_visual_release_skips_surface_safe_intermediate_rerun(monk
     monkeypatch.setattr(release_module, "_incident_segments_by_node", lambda _rows: {})
     monkeypatch.setattr(
         release_module,
-        "_surface_release_plan_rows",
+        "_preplanned_surface_release_plan_rows",
         lambda *args, **kwargs: (
             [_feature({"replacement_plan_id": "standard:s_surface"})],
             [{"plan_id": "standard:s_surface", "segment_id": "s_surface", "group_segment_ids": []}],
         ),
     )
     monkeypatch.setattr(release_module, "_rollback_plan_ids", lambda *args, **kwargs: {"standard:s_surface"})
-    monkeypatch.setattr(release_module, "_has_visual_conflict_release_candidate", lambda _rows: True)
     monkeypatch.setattr(
         release_module,
         "_visual_conflict_release_plan_rows",
-        lambda rows: (rows, [{"plan_id": "standard:s_visual", "segment_id": "s_visual", "group_segment_ids": []}]),
+        lambda rows: (
+            [*rows, _feature({"replacement_plan_id": "standard:s_visual", "swsd_uncovered_by_rcsd_ratio": 1.0})],
+            [{"plan_id": "standard:s_visual", "segment_id": "s_visual", "group_segment_ids": []}],
+        ),
     )
     monkeypatch.setattr(release_module, "_visual_conflict_non_replaced_plan_ids", lambda *args, **kwargs: set())
     monkeypatch.setattr(release_module, "_visual_conflict_rollback_plan_ids", lambda *args, **kwargs: {"standard:s_visual"})
@@ -1896,11 +1900,10 @@ def test_surface_aware_visual_release_skips_surface_safe_intermediate_rerun(monk
     )
 
     assert [call[1] for call in calls] == [
-        None,
         "t06_step3_surface_aware_replacement_plan_candidate.json",
         "t06_step3_surface_aware_replacement_plan_topology_safe.json",
     ]
-    assert [call[0] for call in calls] == [False, False, False]
+    assert [call[0] for call in calls] == [False, False]
     assert "t06_step3_surface_aware_replacement_plan_visual_candidate.json" not in [call[1] for call in calls]
     assert (step_root / "t06_step3_surface_aware_replacement_plan_topology_safe.json").is_file()
 

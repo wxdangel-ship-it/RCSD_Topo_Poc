@@ -18,7 +18,7 @@ from .road_attributes import is_advance_right_turn_road
 
 PATH_REFERENCE_BUFFER_M = 15.0
 PATH_OFF_REFERENCE_PENALTY_MULTIPLIER = 6.0
-CONNECTED_CORRIDOR_SUPPLEMENT_BUFFER_M = 5.0
+CONNECTED_CORRIDOR_SUPPLEMENT_BUFFER_M = PATH_REFERENCE_BUFFER_M
 CONNECTED_CORRIDOR_SUPPLEMENT_MAX_OUTSIDE_RATIO = 0.1
 CONNECTED_CORRIDOR_SUPPLEMENT_MAX_OUTSIDE_LENGTH_M = 20.0
 
@@ -209,11 +209,13 @@ class BufferSegmentExtractor:
             require_directed_pair=require_directed_pair,
             require_bidirectional=require_bidirectional,
         )
+        allowed_supplement_endpoint_nodes: set[str] = set()
         if require_bidirectional:
-            corridor_edges = _include_connected_corridor_supplement_edges(
+            corridor_edges, allowed_supplement_endpoint_nodes = _include_connected_corridor_supplement_edges(
                 selected_edges,
                 corridor_edges,
                 required_nodes=set(required_nodes),
+                optional_nodes=set(optional_nodes),
                 blocked_nodes=unexpected_base_ids - set(pruned.inner_nodes),
                 reference_geometry=segment_geometry,
             )
@@ -226,6 +228,7 @@ class BufferSegmentExtractor:
             pair_nodes,
             directed_nodes,
             unexpected_mapped_semantic_nodes=unexpected_mapped_semantic_nodes,
+            allowed_endpoint_nodes=allowed_supplement_endpoint_nodes,
             require_directed_pair=require_directed_pair,
             require_bidirectional=require_bidirectional,
         )
@@ -1100,11 +1103,12 @@ def _include_connected_corridor_supplement_edges(
     selected_edges: list[Edge],
     *,
     required_nodes: set[str],
+    optional_nodes: set[str],
     blocked_nodes: set[str],
     reference_geometry: BaseGeometry | None,
-) -> list[Edge]:
+) -> tuple[list[Edge], set[str]]:
     if reference_geometry is None or reference_geometry.is_empty or not selected_edges:
-        return selected_edges
+        return selected_edges, set()
     selected_edge_ids = {edge.edge_id for edge in selected_edges}
     retained_nodes = _nodes_from_edges(selected_edges)
     supplement_buffer = reference_geometry.buffer(CONNECTED_CORRIDOR_SUPPLEMENT_BUFFER_M)
@@ -1121,30 +1125,35 @@ def _include_connected_corridor_supplement_edges(
         )
     ]
     if not supplement_edges:
-        return selected_edges
+        return selected_edges, set()
 
     supplement_ids: set[str] = set()
+    allowed_endpoint_nodes: set[str] = set()
     supplement_components = _connected_components(_adjacency_from_edges(supplement_edges))
     for component in supplement_components:
         if component & blocked_nodes:
             continue
         boundary_nodes = sorted(component & retained_nodes)
-        if len(boundary_nodes) < 2 or not (set(boundary_nodes) & required_nodes):
+        if len(boundary_nodes) >= 2 and set(boundary_nodes) & required_nodes:
+            component_edges = [
+                edge for edge in supplement_edges if edge.source in component and edge.target in component
+            ]
+            for path in _minimum_terminal_edge_paths(component_edges, boundary_nodes, reference_geometry=reference_geometry):
+                supplement_ids.update(path)
             continue
-        component_edges = [
-            edge for edge in supplement_edges if edge.source in component and edge.target in component
-        ]
-        for path in _minimum_terminal_edge_paths(component_edges, boundary_nodes, reference_geometry=reference_geometry):
-            supplement_ids.update(path)
+        if len(boundary_nodes) >= 1 and set(boundary_nodes) & optional_nodes:
+            component_edges = [edge for edge in supplement_edges if edge.source in component and edge.target in component]
+            supplement_ids.update(edge.edge_id for edge in component_edges)
+            allowed_endpoint_nodes.update(_leaf_nodes(component_edges) - retained_nodes - required_nodes - optional_nodes)
     if not supplement_ids:
-        return selected_edges
+        return selected_edges, set()
 
     result = list(selected_edges)
     for edge in edges:
         if edge.edge_id in supplement_ids and edge.edge_id not in selected_edge_ids:
             result.append(edge)
             selected_edge_ids.add(edge.edge_id)
-    return result
+    return result, allowed_endpoint_nodes
 
 
 def _edge_within_buffer_scope(
@@ -1196,6 +1205,7 @@ def _retained_status(
     directed_pair_nodes: list[str],
     *,
     unexpected_mapped_semantic_nodes: list[str],
+    allowed_endpoint_nodes: set[str],
     require_directed_pair: bool,
     require_bidirectional: bool,
 ) -> tuple[bool, str, list[str]]:
@@ -1213,7 +1223,7 @@ def _retained_status(
         return False, "unexpected_mapped_semantic_nodes", []
     if require_bidirectional and not _pair_nodes_bidirectionally_reachable(retained_edges, pair_nodes):
         return False, "rcsd_not_bidirectional_for_swsd_dual", []
-    unexpected_endpoint_nodes = _unexpected_endpoint_nodes(retained_edges, pair_nodes)
+    unexpected_endpoint_nodes = _unexpected_endpoint_nodes(retained_edges, pair_nodes, allowed_endpoint_nodes=allowed_endpoint_nodes)
     if unexpected_endpoint_nodes:
         return False, "unexpected_retained_endpoint_nodes", unexpected_endpoint_nodes
     return True, "passed", []
@@ -1317,10 +1327,16 @@ def _is_soft_visual_consistency_issue(status: _GeometryCoverageStatus) -> bool:
     }
 
 
-def _unexpected_endpoint_nodes(edges: list[Edge], pair_nodes: list[str]) -> list[str]:
+def _unexpected_endpoint_nodes(edges: list[Edge], pair_nodes: list[str], *, allowed_endpoint_nodes: set[str] | None = None) -> list[str]:
     pair_node_set = set(pair_nodes)
+    allowed = allowed_endpoint_nodes or set()
     adjacency = _adjacency_from_edges(edges)
-    return sorted(node for node, neighbors in adjacency.items() if len(neighbors) <= 1 and node not in pair_node_set)
+    return sorted(node for node, neighbors in adjacency.items() if len(neighbors) <= 1 and node not in pair_node_set and node not in allowed)
+
+
+def _leaf_nodes(edges: list[Edge]) -> set[str]:
+    adjacency = _adjacency_from_edges(edges)
+    return {node for node, neighbors in adjacency.items() if len(neighbors) <= 1}
 
 
 def _required_nodes_connected(edges: list[Edge], required_nodes: list[str]) -> bool:

@@ -748,6 +748,76 @@ def test_dual_corridor_supplements_connected_carrier_inside_narrow_corridor() ->
     assert "50" not in result.out_node_ids
 
 
+def test_dual_corridor_supplements_optional_junction_carrier_inside_reference_corridor() -> None:
+    extractor = BufferSegmentExtractor(
+        rcsd_road_features=[
+            _road("forward", 10, 20, [(0, 0), (200, 0)], direction=2),
+            _road("reverse_a", 20, 30, [(200, 2), (100, 2)], direction=2),
+            _road("reverse_b", 30, 10, [(100, 2), (0, 2)], direction=2),
+            _road("optional_carrier_a", 30, 50, [(100, 2), (70, 3)], direction=2),
+            _road("optional_carrier_b", 50, 60, [(70, 3), (20, 4)], direction=2),
+        ],
+        rcsd_node_features=[
+            _node(10, 0, 0),
+            _node(20, 200, 0),
+            _node(30, 100, 2, kind=16),
+            _node(50, 70, 3),
+            _node(60, 20, 4),
+        ],
+    )
+
+    result = extractor.extract(
+        segment_geometry=LineString([(0, 0), (200, 0)]),
+        relation=RelationCheck(True, ["10", "20"], ["30"]),
+        optional_allowed_rcsd_nodes=[],
+        all_relation_base_ids={"10", "20", "30"},
+        require_bidirectional=True,
+        config=BufferExtractionConfig(buffer_distance_m=25),
+    )
+
+    assert result.ok
+    assert set(result.retained_road_ids) == {
+        "forward",
+        "reverse_a",
+        "reverse_b",
+        "optional_carrier_a",
+        "optional_carrier_b",
+    }
+    assert "60" in result.retained_node_ids
+    assert result.unexpected_endpoint_node_ids == []
+
+
+def test_dual_corridor_does_not_supplement_optional_junction_carrier_outside_reference_corridor() -> None:
+    extractor = BufferSegmentExtractor(
+        rcsd_road_features=[
+            _road("forward", 10, 20, [(0, 0), (200, 0)], direction=2),
+            _road("reverse_a", 20, 30, [(200, 2), (100, 2)], direction=2),
+            _road("reverse_b", 30, 10, [(100, 2), (0, 2)], direction=2),
+            _road("far_optional_carrier", 30, 50, [(100, 2), (100, 35)], direction=2),
+        ],
+        rcsd_node_features=[
+            _node(10, 0, 0),
+            _node(20, 200, 0),
+            _node(30, 100, 2, kind=16),
+            _node(50, 100, 35),
+        ],
+    )
+
+    result = extractor.extract(
+        segment_geometry=LineString([(0, 0), (200, 0)]),
+        relation=RelationCheck(True, ["10", "20"], ["30"]),
+        optional_allowed_rcsd_nodes=[],
+        all_relation_base_ids={"10", "20", "30"},
+        require_bidirectional=True,
+        config=BufferExtractionConfig(buffer_distance_m=50),
+    )
+
+    assert result.ok
+    assert set(result.retained_road_ids) == {"forward", "reverse_a", "reverse_b"}
+    assert "far_optional_carrier" not in result.retained_road_ids
+    assert "50" not in result.retained_node_ids
+
+
 def test_single_corridor_does_not_supplement_unselected_parallel_carrier() -> None:
     extractor = BufferSegmentExtractor(
         rcsd_road_features=[

@@ -165,6 +165,7 @@ class SingleGraphConnectivityRetry:
             required_nodes,
             directed_nodes,
             unexpected_mapped_semantic_nodes=unexpected_mapped_nodes,
+            allowed_endpoint_nodes=set(),
             require_directed_pair=True,
             require_bidirectional=False,
         )
@@ -285,6 +286,7 @@ class SingleGraphConnectivityRetry:
             required_nodes,
             [],
             unexpected_mapped_semantic_nodes=unexpected_mapped_nodes,
+            allowed_endpoint_nodes=set(),
             require_directed_pair=False,
             require_bidirectional=True,
         )

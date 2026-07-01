@@ -78,6 +78,33 @@ class T11RelationReviewDock(QDockWidget):
 
     def _build_ui(self) -> None:
         root = QWidget(self)
+        root.setStyleSheet(
+            """
+            QWidget {
+                font-size: 13pt;
+            }
+            QGroupBox {
+                font-size: 13pt;
+                font-weight: 600;
+                margin-top: 12px;
+                padding-top: 10px;
+            }
+            QLabel, QComboBox, QLineEdit, QListWidget, QPlainTextEdit, QSpinBox {
+                font-size: 13pt;
+            }
+            QPushButton {
+                font-size: 13pt;
+                min-height: 30px;
+                padding: 4px 8px;
+            }
+            QLineEdit, QComboBox, QSpinBox {
+                min-height: 30px;
+            }
+            QListWidget::item {
+                min-height: 28px;
+            }
+            """
+        )
         layout = QVBoxLayout(root)
 
         workbook_box = QGroupBox("Workbooks")

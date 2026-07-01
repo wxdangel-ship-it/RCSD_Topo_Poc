@@ -131,20 +131,42 @@ class T11RelationReviewDock(QDockWidget):
         root = QWidget(self)
         root.setStyleSheet(DOCK_STYLE)
         layout = QVBoxLayout(root)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(4)
+
+        setup_header = QHBoxLayout()
+        self.setup_toggle_button = QPushButton("Hide setup")
+        self.setup_toggle_button.clicked.connect(self._toggle_setup)
+        self.setup_summary_label = QLabel("")
+        self.setup_summary_label.setWordWrap(False)
+        setup_header.addWidget(self.setup_toggle_button)
+        setup_header.addWidget(self.setup_summary_label, stretch=1)
+        layout.addLayout(setup_header)
+
+        self.setup_body = QWidget(root)
+        setup_layout = QVBoxLayout(self.setup_body)
+        setup_layout.setContentsMargins(0, 0, 0, 0)
+        setup_layout.setSpacing(4)
 
         workbook_box = QGroupBox("Workbook")
         workbook_layout = QGridLayout(workbook_box)
+        workbook_layout.setContentsMargins(6, 6, 6, 6)
+        workbook_layout.setVerticalSpacing(4)
         self.audit_workbook_path = QLineEdit()
+        self.audit_workbook_path.textChanged.connect(self._update_setup_summary)
         workbook_layout.addWidget(QLabel("Audit workbook"), 0, 0)
         workbook_layout.addWidget(self.audit_workbook_path, 0, 1)
         workbook_layout.addWidget(self._browse_button(self.audit_workbook_path), 0, 2)
         load_button = QPushButton("Load")
         load_button.clicked.connect(self._load_tasks)
         workbook_layout.addWidget(load_button, 1, 0, 1, 3)
-        layout.addWidget(workbook_box)
+        setup_layout.addWidget(workbook_box)
 
         layer_box = QGroupBox("Layer Binding")
         layer_layout = QFormLayout(layer_box)
+        layer_layout.setContentsMargins(6, 6, 6, 6)
+        layer_layout.setVerticalSpacing(4)
+        layer_layout.setHorizontalSpacing(6)
         self.layer_combos: dict[str, QgsMapLayerComboBox] = {}
         for role, label in [
             ("task_helper", "Task/helper"),
@@ -157,12 +179,14 @@ class T11RelationReviewDock(QDockWidget):
             combo.setFilters(QgsMapLayerProxyModel.VectorLayer)
             if role == "task_helper":
                 combo.setAllowEmptyLayer(True)
+            combo.layerChanged.connect(self._update_setup_summary)
             self.layer_combos[role] = combo
             layer_layout.addRow(label, combo)
         validate_button = QPushButton("Validate layers")
         validate_button.clicked.connect(self._validate_layers)
         layer_layout.addRow(validate_button)
-        layout.addWidget(layer_box)
+        setup_layout.addWidget(layer_box)
+        layout.addWidget(self.setup_body)
 
         pager = QHBoxLayout()
         self.prev_page_button = QPushButton("Prev")
@@ -189,6 +213,20 @@ class T11RelationReviewDock(QDockWidget):
         self.message.setWordWrap(True)
         layout.addWidget(self.message)
         self.setWidget(root)
+        self._update_setup_summary()
+
+    def _toggle_setup(self) -> None:
+        self._set_setup_visible(not self.setup_body.isVisible())
+
+    def _set_setup_visible(self, visible: bool) -> None:
+        self.setup_body.setVisible(visible)
+        self.setup_toggle_button.setText("Hide setup" if visible else "Show setup")
+        self._update_setup_summary()
+
+    def _update_setup_summary(self, *_args: Any) -> None:
+        workbook = Path(self.audit_workbook_path.text()).name if self.audit_workbook_path.text() else "no workbook"
+        bound_layers = sum(1 for combo in self.layer_combos.values() if combo.currentLayer() is not None)
+        self.setup_summary_label.setText(f"Workbook: {workbook} | Layers: {bound_layers}/{len(self.layer_combos)}")
 
     def _browse_button(self, target: QLineEdit) -> QPushButton:
         button = QPushButton("...")
@@ -218,6 +256,7 @@ class T11RelationReviewDock(QDockWidget):
         self.current_index = 0 if self.tasks else -1
         self._refresh_task_list()
         self._show_current_task()
+        self._set_setup_visible(False)
         self._set_message(f"Loaded {len(self.tasks)} unique target tasks from {path.name}.")
 
     def _set_page_size(self, value: int) -> None:

@@ -227,6 +227,9 @@ def test_qgis_plugin_structure_and_metadata() -> None:
     assert "HAS DATA" in dock_text
     assert "Data: " in dock_text
     assert "_format_task_tooltip" in dock_text
+    assert "Hide setup" in dock_text
+    assert "Show setup" in dock_text
+    assert "self._set_setup_visible(False)" in dock_text
 
 
 def _write_review_workbooks(root: Path) -> tuple[Path, Path]:

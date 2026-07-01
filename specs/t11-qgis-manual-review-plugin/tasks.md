@@ -27,15 +27,15 @@
 - [x] 新增 `qgis_plugins/t11_relation_review/metadata.txt`。
 - [x] 新增 QGIS `classFactory`。
 - [x] 新增插件生命周期文件。
-- [x] 新增 Dock Panel 初版。
+- [x] 新增左侧任务管理 Dock 与底部任务处理 Dock。
 
 ## Implement phase 3：图层绑定、定位、高亮、selection 提取
 
-- [x] Dock 支持五类图层绑定。
-- [x] Dock 支持字段/CRS/路径校验。
-- [x] Dock 支持定位到 SWSD 语义路口或 Segment。
-- [x] Dock 支持高亮已有 `selected_ids`。
-- [x] Dock 支持从 RCSDNode / RCSDRoad selection 填入 `selected_ids`。
+- [x] 任务管理 Dock 支持五类图层绑定。
+- [x] 任务管理 Dock 支持字段/CRS/路径校验。
+- [x] 任务处理 Dock 支持定位到 SWSD 语义路口或 Segment。
+- [x] 任务处理 Dock 支持高亮已有 `selected_ids`。
+- [x] 任务处理 Dock 支持从 RCSDNode / RCSDRoad selection 填入 `selected_ids`。
 
 ## Implement phase 4：Excel 即时同步
 

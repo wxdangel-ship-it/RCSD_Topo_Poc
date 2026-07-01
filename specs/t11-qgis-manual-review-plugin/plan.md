@@ -26,10 +26,10 @@ qgis_plugins/t11_relation_review/
 |---|---|
 | `metadata.txt` | QGIS 插件元数据。 |
 | `__init__.py` | QGIS `classFactory` 入口。 |
-| `plugin.py` | 插件生命周期、Dock 注册和移除。 |
-| `dock_widget.py` | Dock Panel UI、任务分页、图层绑定、定位、高亮、selection 写入。 |
+| `plugin.py` | 插件生命周期、左侧任务管理 Dock 和底部任务处理 Dock 的注册与移除。 |
+| `dock_widget.py` | 双 Dock UI、任务分页、图层绑定、定位、高亮、selection 写入。 |
 
-QGIS Dock 使用 QGIS 图层管理器已有图层，不主动改变样式或图层顺序。
+QGIS Dock 使用 QGIS 图层管理器已有图层，不主动改变样式或图层顺序；任务管理保持分页列表，任务处理使用屏幕底部横向栏。
 
 ## 4. Excel 同步策略
 

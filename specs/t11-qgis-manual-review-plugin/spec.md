@@ -24,10 +24,10 @@
 
 人工审计人员在 QGIS 中加载 SWSD Segment、SWSD 语义路口、RCSDRoad、RCSDNode 与 T11 Excel/辅助任务索引后，可以：
 
-1. 在 Dock Panel 中按优先级分页浏览唯一 `target_id` 任务。
+1. 在左侧任务管理 Dock 中按优先级分页浏览唯一 `target_id` 任务。
 2. 点击任务定位到 SWSD 语义路口或 Segment 上下文。
 3. 从 QGIS 当前选择提取 RCSDNode / RCSDRoad ID。
-4. 手动编辑 `manual_relation_type`、`selected_ids`、`comment`。
+4. 在底部任务处理 Dock 中手动编辑 `manual_relation_type`、`selected_ids`、`comment`。
 5. 每次改动立即同步写入对应 Excel 第一条可消费行。
 
 ### 架构视角
@@ -35,7 +35,7 @@
 插件分两层：
 
 1. `src/rcsd_topo_poc/modules/t11_manual_relation_review/qgis_review/`：纯 Python 核心，负责 Excel 读写、任务去重排序、selected_ids 规范化和图层绑定校验。
-2. `qgis_plugins/t11_relation_review/`：QGIS 插件薄封装，负责 Dock UI、QGIS 图层选择、地图定位、高亮和 selection 提取。
+2. `qgis_plugins/t11_relation_review/`：QGIS 插件薄封装，负责左侧任务管理 Dock、底部任务处理 Dock、QGIS 图层选择、地图定位、高亮和 selection 提取。
 
 QGIS 层不得复制 Excel 事实；每次用户编辑都调用核心同步器写回 Excel。
 

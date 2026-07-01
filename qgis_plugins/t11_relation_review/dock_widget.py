@@ -60,9 +60,36 @@ RELATION_TYPES = [
 ]
 
 
+DOCK_STYLE = """
+QWidget {
+    font-size: 11pt;
+}
+QGroupBox {
+    font-size: 11pt;
+    font-weight: 600;
+    margin-top: 10px;
+    padding-top: 8px;
+}
+QLabel, QComboBox, QLineEdit, QListWidget, QPlainTextEdit, QSpinBox {
+    font-size: 11pt;
+}
+QPushButton {
+    font-size: 11pt;
+    min-height: 26px;
+    padding: 3px 7px;
+}
+QLineEdit, QComboBox, QSpinBox {
+    min-height: 26px;
+}
+QListWidget::item {
+    min-height: 24px;
+}
+"""
+
+
 class T11RelationReviewDock(QDockWidget):
     def __init__(self, iface):
-        super().__init__("T11 Relation Review")
+        super().__init__("T11 Relation Tasks")
         self.iface = iface
         self.tasks: list[ReviewTask] = []
         self.current_index = -1
@@ -70,41 +97,23 @@ class T11RelationReviewDock(QDockWidget):
         self.current_page = 0
         self.read_only = False
         self._loading_ui = False
+        self.processing_dock: T11RelationProcessingDock | None = None
         self._backed_up_workbooks: set[Path] = set()
         self._sync_timer = QTimer(self)
         self._sync_timer.setSingleShot(True)
         self._sync_timer.timeout.connect(self._sync_current_task)
+        self.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
         self._build_ui()
+
+    def bind_processing_dock(self, processing_dock: "T11RelationProcessingDock") -> None:
+        self.processing_dock = processing_dock
+        processing_dock.relation_type.currentTextChanged.connect(self._queue_sync)
+        processing_dock.selected_ids.editingFinished.connect(self._queue_sync)
+        processing_dock.comment.textChanged.connect(self._queue_sync)
 
     def _build_ui(self) -> None:
         root = QWidget(self)
-        root.setStyleSheet(
-            """
-            QWidget {
-                font-size: 13pt;
-            }
-            QGroupBox {
-                font-size: 13pt;
-                font-weight: 600;
-                margin-top: 12px;
-                padding-top: 10px;
-            }
-            QLabel, QComboBox, QLineEdit, QListWidget, QPlainTextEdit, QSpinBox {
-                font-size: 13pt;
-            }
-            QPushButton {
-                font-size: 13pt;
-                min-height: 30px;
-                padding: 4px 8px;
-            }
-            QLineEdit, QComboBox, QSpinBox {
-                min-height: 30px;
-            }
-            QListWidget::item {
-                min-height: 28px;
-            }
-            """
-        )
+        root.setStyleSheet(DOCK_STYLE)
         layout = QVBoxLayout(root)
 
         workbook_box = QGroupBox("Workbooks")
@@ -162,51 +171,10 @@ class T11RelationReviewDock(QDockWidget):
         self.task_list.currentRowChanged.connect(self._task_row_changed)
         layout.addWidget(self.task_list, stretch=1)
 
-        detail_box = QGroupBox("Current Task")
-        detail_layout = QFormLayout(detail_box)
-        self.segment_label = QLabel("")
-        self.target_label = QLabel("")
-        self.length_label = QLabel("")
-        self.status_label = QLabel("")
-        self.relation_type = QComboBox()
-        self.relation_type.addItems(RELATION_TYPES)
-        self.selected_ids = QLineEdit()
-        self.comment = QPlainTextEdit()
-        self.comment.setMaximumBlockCount(8)
-        detail_layout.addRow("swsd_segment_id", self.segment_label)
-        detail_layout.addRow("target_id", self.target_label)
-        detail_layout.addRow("Segment length", self.length_label)
-        detail_layout.addRow("Status", self.status_label)
-        detail_layout.addRow("manual_relation_type", self.relation_type)
-        detail_layout.addRow("selected_ids", self.selected_ids)
-        detail_layout.addRow("comment", self.comment)
-        layout.addWidget(detail_box)
-
-        actions = QGridLayout()
-        buttons = [
-            ("Prev task", self._previous_task),
-            ("Next task", self._next_task),
-            ("Locate", self._locate_current_task),
-            ("Highlight IDs", self._highlight_current_ids),
-            ("Use selection", self._fill_from_selection),
-            ("Clear", self._clear_current_fields),
-            ("Mark NULL", self._mark_null),
-            ("Uncertain", self._mark_uncertain),
-        ]
-        for index, (text, callback) in enumerate(buttons):
-            button = QPushButton(text)
-            button.clicked.connect(callback)
-            actions.addWidget(button, index // 2, index % 2)
-        layout.addLayout(actions)
-
         self.message = QLabel("")
         self.message.setWordWrap(True)
         layout.addWidget(self.message)
         self.setWidget(root)
-
-        self.relation_type.currentTextChanged.connect(self._queue_sync)
-        self.selected_ids.editingFinished.connect(self._queue_sync)
-        self.comment.textChanged.connect(self._queue_sync)
 
     def _browse_button(self, target: QLineEdit) -> QPushButton:
         button = QPushButton("...")
@@ -280,25 +248,28 @@ class T11RelationReviewDock(QDockWidget):
         self._highlight_current_ids()
 
     def _show_current_task(self) -> None:
+        processing = self.processing_dock
+        if processing is None:
+            return
         task = self._current_task()
         self._loading_ui = True
         try:
             if task is None:
-                self.segment_label.setText("")
-                self.target_label.setText("")
-                self.length_label.setText("")
-                self.status_label.setText("")
-                self.relation_type.setCurrentText("")
-                self.selected_ids.setText("")
-                self.comment.setPlainText("")
+                processing.segment_label.setText("")
+                processing.target_label.setText("")
+                processing.length_label.setText("")
+                processing.status_label.setText("")
+                processing.relation_type.setCurrentText("")
+                processing.selected_ids.setText("")
+                processing.comment.setPlainText("")
                 return
-            self.segment_label.setText(task.swsd_segment_id)
-            self.target_label.setText(task.target_id)
-            self.length_label.setText(f"{task.segment_length_m:.3f}")
-            self.status_label.setText(task.status)
-            self.relation_type.setCurrentText(task.manual_relation_type)
-            self.selected_ids.setText(task.selected_ids)
-            self.comment.setPlainText(task.comment)
+            processing.segment_label.setText(task.swsd_segment_id)
+            processing.target_label.setText(task.target_id)
+            processing.length_label.setText(f"{task.segment_length_m:.3f}")
+            processing.status_label.setText(task.status)
+            processing.relation_type.setCurrentText(task.manual_relation_type)
+            processing.selected_ids.setText(task.selected_ids)
+            processing.comment.setPlainText(task.comment)
         finally:
             self._loading_ui = False
 
@@ -323,7 +294,8 @@ class T11RelationReviewDock(QDockWidget):
 
     def _sync_current_task(self) -> None:
         task = self._current_task()
-        if task is None or self.read_only:
+        processing = self.processing_dock
+        if task is None or processing is None or self.read_only:
             return
         try:
             backup = task.workbook_path not in self._backed_up_workbooks
@@ -331,9 +303,9 @@ class T11RelationReviewDock(QDockWidget):
                 workbook_path=task.workbook_path,
                 excel_row=task.excel_row,
                 values={
-                    "manual_relation_type": self.relation_type.currentText(),
-                    "selected_ids": self.selected_ids.text(),
-                    "comment": self.comment.toPlainText(),
+                    "manual_relation_type": processing.relation_type.currentText(),
+                    "selected_ids": processing.selected_ids.text(),
+                    "comment": processing.comment.toPlainText(),
                 },
                 backup=backup,
             )
@@ -356,23 +328,35 @@ class T11RelationReviewDock(QDockWidget):
         self._show_current_task()
 
     def _clear_current_fields(self) -> None:
-        self.relation_type.setCurrentText("")
-        self.selected_ids.setText("")
-        self.comment.setPlainText("")
+        processing = self.processing_dock
+        if processing is None:
+            return
+        processing.relation_type.setCurrentText("")
+        processing.selected_ids.setText("")
+        processing.comment.setPlainText("")
         self._queue_sync()
 
     def _mark_null(self) -> None:
-        self.relation_type.setCurrentText("no_valid_relation")
-        self.selected_ids.setText("NULL")
+        processing = self.processing_dock
+        if processing is None:
+            return
+        processing.relation_type.setCurrentText("no_valid_relation")
+        processing.selected_ids.setText("NULL")
         self._queue_sync()
 
     def _mark_uncertain(self) -> None:
-        self.relation_type.setCurrentText("uncertain")
-        self.selected_ids.setText("")
+        processing = self.processing_dock
+        if processing is None:
+            return
+        processing.relation_type.setCurrentText("uncertain")
+        processing.selected_ids.setText("")
         self._queue_sync()
 
     def _fill_from_selection(self) -> None:
-        relation_type = self.relation_type.currentText()
+        processing = self.processing_dock
+        if processing is None:
+            return
+        relation_type = processing.relation_type.currentText()
         if relation_type in {"1v1_rcsd_junction", "1vN_rcsd_junction"}:
             layer = self._layer("rcsdnode")
             ids = extract_rcsdnode_selected_ids(layer.selectedFeatures() if layer is not None else [])
@@ -382,7 +366,7 @@ class T11RelationReviewDock(QDockWidget):
         else:
             self._set_message("Select a junction or road relation type before using QGIS selection.", error=True)
             return
-        self.selected_ids.setText(ids)
+        processing.selected_ids.setText(ids)
         self._queue_sync()
 
     def _locate_current_task(self) -> None:
@@ -398,12 +382,13 @@ class T11RelationReviewDock(QDockWidget):
 
     def _highlight_current_ids(self) -> None:
         task = self._current_task()
-        if task is None:
+        processing = self.processing_dock
+        if task is None or processing is None:
             return
-        ids = set(parse_selected_ids(self.selected_ids.text() or task.selected_ids))
+        ids = set(parse_selected_ids(processing.selected_ids.text() or task.selected_ids))
         if not ids:
             return
-        relation_type = self.relation_type.currentText() or task.manual_relation_type
+        relation_type = processing.relation_type.currentText() or task.manual_relation_type
         if relation_type in {"1v1_rcsd_junction", "1vN_rcsd_junction"}:
             layer = self._layer("rcsdnode")
             features = self._matching_features(layer, {"id", "mainnodeid"}, ids)
@@ -484,3 +469,70 @@ class T11RelationReviewDock(QDockWidget):
     def _set_message(self, text: str, error: bool = False) -> None:
         self.message.setText(text)
         self.message.setStyleSheet("color: #b00020;" if error else "")
+
+
+class T11RelationProcessingDock(QDockWidget):
+    def __init__(self, iface, task_dock: T11RelationReviewDock):
+        super().__init__("T11 Relation Processing")
+        self.iface = iface
+        self.task_dock = task_dock
+        self.setAllowedAreas(Qt.BottomDockWidgetArea | Qt.TopDockWidgetArea)
+        self._build_ui()
+
+    def _build_ui(self) -> None:
+        root = QWidget(self)
+        root.setStyleSheet(DOCK_STYLE)
+        layout = QGridLayout(root)
+        layout.setContentsMargins(8, 6, 8, 6)
+        layout.setHorizontalSpacing(8)
+        layout.setVerticalSpacing(5)
+
+        self.segment_label = QLabel("")
+        self.target_label = QLabel("")
+        self.length_label = QLabel("")
+        self.status_label = QLabel("")
+        self.relation_type = QComboBox()
+        self.relation_type.addItems(RELATION_TYPES)
+        self.selected_ids = QLineEdit()
+        self.comment = QPlainTextEdit()
+        self.comment.setMaximumBlockCount(8)
+        self.comment.setFixedHeight(58)
+
+        layout.addWidget(QLabel("swsd_segment_id"), 0, 0)
+        layout.addWidget(self.segment_label, 0, 1)
+        layout.addWidget(QLabel("target_id"), 0, 2)
+        layout.addWidget(self.target_label, 0, 3)
+        layout.addWidget(QLabel("Length"), 0, 4)
+        layout.addWidget(self.length_label, 0, 5)
+        layout.addWidget(QLabel("Status"), 0, 6)
+        layout.addWidget(self.status_label, 0, 7)
+
+        layout.addWidget(QLabel("manual_relation_type"), 1, 0)
+        layout.addWidget(self.relation_type, 1, 1, 1, 2)
+        layout.addWidget(QLabel("selected_ids"), 1, 3)
+        layout.addWidget(self.selected_ids, 1, 4, 1, 2)
+        layout.addWidget(QLabel("comment"), 1, 6)
+        layout.addWidget(self.comment, 1, 7, 2, 2)
+
+        actions = QHBoxLayout()
+        buttons = [
+            ("Prev task", self.task_dock._previous_task),
+            ("Next task", self.task_dock._next_task),
+            ("Locate", self.task_dock._locate_current_task),
+            ("Highlight IDs", self.task_dock._highlight_current_ids),
+            ("Use selection", self.task_dock._fill_from_selection),
+            ("Clear", self.task_dock._clear_current_fields),
+            ("Mark NULL", self.task_dock._mark_null),
+            ("Uncertain", self.task_dock._mark_uncertain),
+        ]
+        for text, callback in buttons:
+            button = QPushButton(text)
+            button.clicked.connect(callback)
+            actions.addWidget(button)
+        actions.addStretch(1)
+        layout.addLayout(actions, 2, 0, 1, 7)
+
+        layout.setColumnStretch(1, 1)
+        layout.setColumnStretch(4, 2)
+        layout.setColumnStretch(7, 3)
+        self.setWidget(root)

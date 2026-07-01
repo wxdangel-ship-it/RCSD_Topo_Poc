@@ -151,6 +151,7 @@ def test_step1_uses_consumable_t11_manual_relation_to_release_fail3_fail4_anchor
             _seg("manual_not_consumable", [30, 31], []),
             _seg("manual_has_evd_no", [40, 41], []),
             _seg("manual_anchor_no", [50, 51], []),
+            _seg("manual_has_evd_no_anchor_missing", [60, 61], []),
         ],
     )
     nodes_path = _write(
@@ -169,6 +170,8 @@ def test_step1_uses_consumable_t11_manual_relation_to_release_fail3_fail4_anchor
             _node(41, "yes", "yes"),
             _node(50, "yes", "no"),
             _node(51, "yes", "yes"),
+            _node(60, "no", None),
+            _node(61, "yes", "yes"),
         ],
     )
     t05_root = tmp_path / "t05"
@@ -184,6 +187,7 @@ def test_step1_uses_consumable_t11_manual_relation_to_release_fail3_fail4_anchor
             {"target_id": "30", "base_id": "90030", "relation_status": "0", "graph_consumable": "0", "source_modules": "T11_MANUAL"},
             {"target_id": "40", "base_id": "90040", "relation_status": "0", "graph_consumable": "1", "source_modules": "T11_MANUAL"},
             {"target_id": "50", "base_id": "90050", "relation_status": "0", "graph_consumable": "1", "source_modules": "T11_MANUAL"},
+            {"target_id": "60", "base_id": "90060", "relation_status": "0", "graph_consumable": "1", "source_modules": "T11_MANUAL"},
         ],
     )
 
@@ -196,17 +200,26 @@ def test_step1_uses_consumable_t11_manual_relation_to_release_fail3_fail4_anchor
     )
 
     summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
-    assert summary["manual_relation_anchor_override_candidate_node_count"] == 4
-    assert summary["manual_relation_anchor_override_node_count"] == 2
-    assert summary["manual_relation_anchor_override_segment_count"] == 2
-    assert summary["manual_relation_anchor_override_node_ids"] == ["10", "12"]
-    assert summary["manual_relation_anchor_override_segment_ids"] == ["manual_junc_fail3", "manual_pair_fail4"]
+    assert summary["manual_relation_anchor_override_candidate_node_count"] == 5
+    assert summary["manual_relation_anchor_override_node_count"] == 4
+    assert summary["manual_relation_anchor_override_segment_count"] == 4
+    assert summary["manual_relation_anchor_override_node_ids"] == ["10", "12", "40", "60"]
+    assert summary["manual_relation_anchor_override_segment_ids"] == [
+        "manual_has_evd_no",
+        "manual_has_evd_no_anchor_missing",
+        "manual_junc_fail3",
+        "manual_pair_fail4",
+    ]
+    assert summary["manual_relation_evd_override_node_count"] == 2
+    assert summary["manual_relation_evd_override_segment_count"] == 2
+    assert summary["manual_relation_evd_override_node_ids"] == ["40", "60"]
+    assert summary["manual_relation_evd_override_segment_ids"] == ["manual_has_evd_no", "manual_has_evd_no_anchor_missing"]
     assert summary["reject_reason_counts"]["is_anchor_not_eligible"] == 3
-    assert summary["reject_reason_counts"]["has_evd_not_yes"] == 1
+    assert "has_evd_not_yes" not in summary["reject_reason_counts"]
 
     fusion_payload = json.loads(artifacts.fusion_units_gpkg_path.with_suffix(".json").read_text(encoding="utf-8"))
     fusion_rows = {item["properties"]["swsd_segment_id"] for item in fusion_payload["features"]}
-    assert fusion_rows == {"manual_pair_fail4", "manual_junc_fail3"}
+    assert fusion_rows == {"manual_pair_fail4", "manual_junc_fail3", "manual_has_evd_no", "manual_has_evd_no_anchor_missing"}
 
 
 def test_step1_stats_csv_groups_by_sgrade(tmp_path: Path) -> None:

@@ -1811,8 +1811,8 @@ def test_surface_aware_visual_release_reuses_candidate_when_no_rollback(monkeypa
         progress=False,
     )
 
-    assert len(calls) == 3
-    assert [call[0] for call in calls] == [False, False, False]
+    assert len(calls) == 2
+    assert [call[0] for call in calls] == [False, False]
 
 
 def test_surface_aware_visual_release_skips_surface_safe_intermediate_rerun(monkeypatch, tmp_path) -> None:
@@ -1898,10 +1898,10 @@ def test_surface_aware_visual_release_skips_surface_safe_intermediate_rerun(monk
     assert [call[1] for call in calls] == [
         None,
         "t06_step3_surface_aware_replacement_plan_candidate.json",
-        "t06_step3_surface_aware_replacement_plan_visual_candidate.json",
-        "t06_step3_surface_aware_replacement_plan_visual_topology_safe.json",
+        "t06_step3_surface_aware_replacement_plan_topology_safe.json",
     ]
-    assert "t06_step3_surface_aware_replacement_plan_topology_safe.json" not in [call[1] for call in calls]
+    assert [call[0] for call in calls] == [False, False, False]
+    assert "t06_step3_surface_aware_replacement_plan_visual_candidate.json" not in [call[1] for call in calls]
     assert (step_root / "t06_step3_surface_aware_replacement_plan_topology_safe.json").is_file()
 
 

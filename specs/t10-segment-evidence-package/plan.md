@@ -3,7 +3,7 @@
 ## 1. 实施策略
 
 1. 保持现有 semantic junction Case package 不变。
-2. 在 T10 内新增 Segment scope：以 T01 `segment.gpkg` 中的目标 Segment 几何和 matched T06 evidence rows 作为 spatial slice 证据闭包来源。
+2. 在 T10 内新增 Segment scope：以 T01 `segment.gpkg` 中的目标 Segment geometry 固定 `200m` buffer 作为 spatial slice 范围，matched T06 evidence rows 只进入 manifest evidence reference。
 3. 从既有 T10 run root 读取 manifest、visual check、T06 problem registry / replacement plan / relation 等证据，写入 Segment package manifest 的 evidence references。
 4. 复用现有 external input slot、spatial slice、text bundle 和 T10 Case runner；runner 仅为 `segment_*` 合法无候选的 T07/T03/T04 阶段生成显式空 handoff。
 5. 新增正式 root script，入口登记同步到 registry。
@@ -30,7 +30,7 @@
 - 正式 Segment 身份字段：`scope.swsd_segment_id`。
 - Segment scope 类型：`scope.scope_type = swsd_segment`。
 - Segment evidence source：`t10_run_root` + `t01_segment` + T06 evidence artifacts。
-- Segment external input selection：由 T01 Segment 几何、Segment 端点和 matched T06 evidence rows 中的 SWSD/RCSD 节点/道路依赖形成 evidence dependency closure，不暴露 `RADIUS_M`。
+- Segment external input selection：由 T01 Segment geometry 的固定 `200m` buffer 形成，不暴露 `RADIUS_M`，不使用 T06 matched rows 扩张空间范围。
 - Segment no-candidate handoff：T07 stdout 明确无可用 RCSDIntersection 或 RCSDNode 几何记录，或 T03/T04 stdout 明确无 eligible candidate 时，记录 `segment_no_candidate_handoff=true`、复制上游 nodes、生成空 relation/surface/audit 输出，继续本地 replay。
 - 默认物化模式：`spatial_slice`。
 - 外部输入仍按 `external_inputs/<slot>/<slot>_slice.gpkg` 输出。
@@ -40,11 +40,10 @@
 <out_root>/<package_id>/
   t10_multi_segment_evidence_manifest.json
   t10_multi_segment_evidence_summary.json
-  cases/
-    segment_<segment_id>/
-      t10_case_evidence_manifest.json
-      t10_case_evidence_summary.json
-      external_inputs/
+  <SegmentID>/
+    t10_case_evidence_manifest.json
+    t10_case_evidence_summary.json
+    external_inputs/
 ```
 
 ## 4. 验证

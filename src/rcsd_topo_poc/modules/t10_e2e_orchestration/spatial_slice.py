@@ -1,14 +1,12 @@
 from __future__ import annotations
 
 import hashlib
-import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping
 
 from shapely.geometry import box
 from shapely.geometry.base import BaseGeometry
-from shapely.ops import unary_union
 
 from rcsd_topo_poc.modules.t08_preprocess.vector_io import (
     VectorFeature,
@@ -24,6 +22,7 @@ from .contracts import EXTERNAL_INPUT_REQUIREMENTS
 
 CASE_ID_EMPTY_VALUES = {"", "0", "0.0", "none", "null", "nan", "-1"}
 PROCESS_CRS_TEXT = "EPSG:3857"
+SEGMENT_BUFFER_M = 200.0
 
 
 @dataclass(frozen=True)
@@ -169,12 +168,14 @@ def build_segment_spatial_input_slices(
     package_dir: Path,
     swsd_segment_path: str | Path,
     swsd_segment_id: str,
-    segment_evidence_rows: Sequence[Mapping[str, Any]] | None = None,
     target_epsg: int = 3857,
+    segment_buffer_m: float = SEGMENT_BUFFER_M,
 ) -> T10SpatialSliceResult:
     segment_id = str(swsd_segment_id).strip()
     if not segment_id:
         raise ValueError("swsd_segment_id must be non-empty.")
+    if segment_buffer_m <= 0:
+        raise ValueError("segment_buffer_m must be > 0.")
 
     external_inputs = _mapping(manifest.get("external_inputs"))
     read_cache: dict[str, VectorReadResult] = {}
@@ -190,89 +191,54 @@ def build_segment_spatial_input_slices(
         target_epsg=target_epsg,
     )
     segment_geometry = segment_scope["_segment_geometry"]
-    dependency_context = _segment_dependency_context(
-        swsd_segment_id=segment_id,
-        segment_endpoint_node_ids=set(segment_scope["segment_endpoint_node_ids"]),
-        evidence_rows=segment_evidence_rows or (),
-    )
+    selection_geometry = segment_geometry.buffer(float(segment_buffer_m))
+    if selection_geometry is None or selection_geometry.is_empty:
+        raise ValueError(f"SWSD Segment buffer is empty: {swsd_segment_id}")
 
-    swsd_roads_entry, swsd_roads_summary, swsd_roads = _slice_slot(
+    swsd_road_endpoint_node_ids = _road_endpoint_ids_for_selected_features(
         slot="prepared_swsd_roads",
         source_path_text=external_inputs.get("prepared_swsd_roads"),
-        package_dir=package_dir,
-        window=segment_geometry,
+        window=selection_geometry,
         target_epsg=target_epsg,
         read_cache=read_cache,
-        forced_node_ids=set(),
-        forced_road_endpoint_ids=dependency_context["swsd_node_ids"],
-        forced_feature_ids=dependency_context["swsd_road_ids"],
-        preserve_geometry=True,
     )
-    swsd_road_endpoint_node_ids = _unique_sorted(
-        node_id for feature in swsd_roads for node_id in _road_endpoint_ids(feature.properties)
+    initial_rcsd_node_ids = _node_identity_ids_for_selected_features(
+        slot="rcsdnode",
+        source_path_text=external_inputs.get("rcsdnode"),
+        window=selection_geometry,
+        target_epsg=target_epsg,
+        read_cache=read_cache,
     )
-    selected_swsd_road_ids = _unique_sorted(
-        road_id for feature in swsd_roads for road_id in _feature_identity_ids(feature.properties)
-    )
-    dependency_context["swsd_node_ids"].update(swsd_road_endpoint_node_ids)
-    dependency_context["swsd_road_ids"].update(selected_swsd_road_ids)
-
-    rcsd_roads_entry, rcsd_roads_summary, rcsd_roads = _slice_slot(
+    rcsd_road_endpoint_node_ids = _road_endpoint_ids_for_selected_features(
         slot="rcsdroad",
         source_path_text=external_inputs.get("rcsdroad"),
-        package_dir=package_dir,
-        window=segment_geometry,
+        window=selection_geometry,
         target_epsg=target_epsg,
         read_cache=read_cache,
-        forced_node_ids=set(),
-        forced_road_endpoint_ids=dependency_context["rcsd_node_ids"],
-        forced_feature_ids=dependency_context["rcsd_road_ids"],
-        preserve_geometry=True,
+        forced_road_endpoint_ids=initial_rcsd_node_ids,
     )
-    rcsd_road_endpoint_node_ids = _unique_sorted(
-        node_id for feature in rcsd_roads for node_id in _road_endpoint_ids(feature.properties)
-    )
-    selected_rcsd_road_ids = _unique_sorted(
-        road_id for feature in rcsd_roads for road_id in _feature_identity_ids(feature.properties)
-    )
-    dependency_context["rcsd_node_ids"].update(rcsd_road_endpoint_node_ids)
-    dependency_context["rcsd_road_ids"].update(selected_rcsd_road_ids)
-
-    context_geometries = [segment_geometry]
-    context_geometries.extend(
-        feature.geometry for feature in swsd_roads if feature.geometry is not None and not feature.geometry.is_empty
-    )
-    context_geometries.extend(
-        feature.geometry for feature in rcsd_roads if feature.geometry is not None and not feature.geometry.is_empty
-    )
-    selection_geometry = unary_union(context_geometries) if context_geometries else segment_geometry
 
     included_inputs: list[dict[str, Any]] = []
     slot_summaries: dict[str, dict[str, Any]] = {}
     selected_features_by_slot: dict[str, list[VectorFeature]] = {}
-    preselected = {
-        "prepared_swsd_roads": (swsd_roads_entry, swsd_roads_summary, swsd_roads),
-        "rcsdroad": (rcsd_roads_entry, rcsd_roads_summary, rcsd_roads),
-    }
     for requirement in EXTERNAL_INPUT_REQUIREMENTS:
         slot = requirement.slot
-        if slot in preselected:
-            entry, slot_summary, selected_features = preselected[slot]
-            included_inputs.append(entry)
-            slot_summaries[slot] = slot_summary
-            selected_features_by_slot[slot] = selected_features
-            continue
-
         forced_node_ids = set()
         forced_road_endpoint_ids = set()
-        forced_feature_ids = set()
-        preserve_geometry = True
+        preserve_geometry = False
         if slot == "prepared_swsd_nodes":
-            forced_node_ids = dependency_context["swsd_node_ids"]
+            forced_node_ids = (
+                set(segment_scope["segment_endpoint_node_ids"])
+                | _segment_id_endpoint_ids(segment_id)
+                | set(swsd_road_endpoint_node_ids)
+            )
+        elif slot == "prepared_swsd_roads":
+            preserve_geometry = True
         elif slot == "rcsdnode":
-            forced_node_ids = dependency_context["rcsd_node_ids"]
-        elif slot in {"sw_restriction_tool7", "sw_arrow_tool8"}:
-            forced_feature_ids = dependency_context["swsd_road_ids"]
+            forced_node_ids = set(rcsd_road_endpoint_node_ids)
+        elif slot == "rcsdroad":
+            forced_road_endpoint_ids = set(initial_rcsd_node_ids)
+            preserve_geometry = True
 
         entry, slot_summary, selected_features = _slice_slot(
             slot=slot,
@@ -283,7 +249,6 @@ def build_segment_spatial_input_slices(
             read_cache=read_cache,
             forced_node_ids=forced_node_ids,
             forced_road_endpoint_ids=forced_road_endpoint_ids,
-            forced_feature_ids=forced_feature_ids,
             preserve_geometry=preserve_geometry,
         )
         included_inputs.append(entry)
@@ -296,10 +261,9 @@ def build_segment_spatial_input_slices(
         rcsd_road_endpoint_node_ids=rcsd_road_endpoint_node_ids,
         selected_rcsd_nodes=selected_features_by_slot.get("rcsdnode", []),
     )
-    dependency_payload = _dependency_context_payload(dependency_context)
 
     summary = {
-        "selection_mode": "swsd_segment_e2e_evidence_dependency_closure",
+        "selection_mode": "swsd_segment_geometry_buffer",
         "selection_status": "spatial_slice_completed",
         "case_id": "segment_" + _safe_scope_id(segment_id),
         "case_id_semantics": "swsd_segment_package_case_id",
@@ -308,6 +272,7 @@ def build_segment_spatial_input_slices(
         "target_epsg": int(target_epsg),
         "selection_crs": f"EPSG:{target_epsg}",
         "center": {"x": segment_scope["center_x"], "y": segment_scope["center_y"]},
+        "buffer_m": float(segment_buffer_m),
         "segment_bounds": segment_scope["segment_bounds"],
         "bounds": {
             "minx": float(selection_geometry.bounds[0]),
@@ -317,7 +282,6 @@ def build_segment_spatial_input_slices(
         },
         "segment_endpoint_node_ids": segment_scope["segment_endpoint_node_ids"],
         "segment_properties": segment_scope["segment_properties"],
-        "dependency_context": dependency_payload,
         "slot_summaries": slot_summaries,
         "materialized_file_count": sum(1 for item in included_inputs if item.get("package_path")),
         "selected_feature_count_total": sum(int(item.get("selected_feature_count") or 0) for item in slot_summaries.values()),
@@ -326,7 +290,7 @@ def build_segment_spatial_input_slices(
             "crs_and_transform": f"All readable vector slots are normalized to EPSG:{target_epsg} before selection.",
             "topology_silent_fix": False,
             "topology_dependency_complete": dependency_audit["topology_dependency_complete"],
-            "geometry_semantics": "Segment selection is derived from T01 Segment geometry plus matched T10/T06 evidence dependency ids; no operator-provided radius is used.",
+            "geometry_semantics": "Segment selection is derived from T01 Segment geometry buffered by 200m; matched T10/T06 rows remain evidence references and do not expand the spatial scope.",
             "audit_traceability": "Each slot records source path, source count, selected count, dependency audit, bounds, output path and output checksum.",
             "performance_verifiability": "Each slot records source and selected feature counts plus materialized file sizes.",
         },
@@ -668,85 +632,9 @@ def _node_identity_ids_for_selected_features(
     return {node_id for feature in selected for node_id in _node_identity_ids(feature.properties)}
 
 
-def _segment_dependency_context(
-    *,
-    swsd_segment_id: str,
-    segment_endpoint_node_ids: set[str],
-    evidence_rows: Sequence[Mapping[str, Any]],
-) -> dict[str, set[str]]:
-    context = {
-        "swsd_node_ids": set(segment_endpoint_node_ids) | _segment_id_endpoint_ids(swsd_segment_id),
-        "swsd_road_ids": set(),
-        "rcsd_node_ids": set(),
-        "rcsd_road_ids": set(),
-    }
-    for row in evidence_rows:
-        for field in (
-            "swsd_pair_nodes",
-            "swsd_node_ids",
-            "swsd_endpoint_ids",
-            "segment_endpoint_node_ids",
-            "source_swsd_node_ids",
-            "target_swsd_node_ids",
-        ):
-            context["swsd_node_ids"].update(_parse_dependency_ids(_field_value(row, field)))
-        for field in (
-            "swsd_road_ids",
-            "swsdroad_ids",
-            "swsd_link_ids",
-            "sw_road_ids",
-            "sw_link_ids",
-        ):
-            context["swsd_road_ids"].update(_parse_dependency_ids(_field_value(row, field)))
-        for field in (
-            "rcsd_pair_nodes",
-            "candidate_rcsd_pair_node_sets",
-            "candidate_rcsd_node_ids",
-            "original_rcsd_pair_nodes",
-            "pair_anchor_endpoint_cluster_nodes",
-            "candidate_group_rcsdnode_ids",
-            "matched_rcsdnode_ids",
-            "incident_rcsdnode_ids",
-            "rcsd_node_ids",
-            "rcsdnode_ids",
-        ):
-            context["rcsd_node_ids"].update(_parse_dependency_ids(_field_value(row, field)))
-        for field in (
-            "pair_anchor_bridge_road_ids",
-            "bridge_road_ids",
-            "rcsd_road_ids",
-            "rcsdroad_ids",
-            "candidate_rcsd_road_ids",
-        ):
-            context["rcsd_road_ids"].update(_parse_dependency_ids(_field_value(row, field)))
-    return context
-
-
 def _segment_id_endpoint_ids(segment_id: str) -> set[str]:
     parts = [_normalize_id(part) for part in str(segment_id).replace("-", "_").split("_")]
     return {part for part in parts if _is_valid_case_id(part)}
-
-
-def _parse_dependency_ids(value: Any) -> set[str]:
-    if value is None:
-        return set()
-    if isinstance(value, (list, tuple, set)):
-        result: set[str] = set()
-        for item in value:
-            result.update(_parse_dependency_ids(item))
-        return result
-    text = str(value).strip()
-    if not text or text in {"[]", "{}"}:
-        return set()
-    return {
-        token
-        for token in re.findall(r"[A-Za-z0-9][A-Za-z0-9_.:-]*", text)
-        if _is_valid_case_id(token)
-    }
-
-
-def _dependency_context_payload(context: Mapping[str, set[str]]) -> dict[str, Any]:
-    return {key: sorted(values, key=_sort_key) for key, values in context.items()}
 
 
 def _selected_features_for_dependency(

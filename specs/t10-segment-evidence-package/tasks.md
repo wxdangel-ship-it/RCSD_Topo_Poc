@@ -10,8 +10,8 @@
 ## Plan
 
 - [x] 定义 Segment CaseID 和正式 Segment identity 字段。
-- [x] 定义 Segment 证据闭包来源：T01 `segment.gpkg` 目标几何与 T06 matched evidence rows。
-- [x] 定义 Segment 外部输入选择不暴露半径，改由 T01 Segment + T06 evidence dependency closure 决定。
+- [x] 定义 Segment 空间范围来源：T01 `segment.gpkg` 目标 geometry 固定 `200m` buffer；T06 matched rows 只作为 evidence reference。
+- [x] 定义 Segment 外部输入选择不暴露半径，改由 T01 Segment geometry `200m` buffer 决定。
 - [x] 定义输出结构和 text bundle 复用策略。
 - [x] 定义 QA 审计字段和 1885118 验证策略。
 
@@ -36,7 +36,7 @@
 
 - [x] CRS 与坐标变换记录在 manifest。
 - [x] 拓扑不 silent fix，记录 invalid geometry。
-- [x] 几何语义记录 Segment center / bounds / evidence dependency closure。
+- [x] 几何语义记录 Segment center / bounds / buffer_m。
 - [x] 审计可追溯到 T10 run root、T01 Segment 和 T06 evidence。
 - [x] 性能可通过 feature count、file size 和 materialized count 观察。
 - [x] 1885118 抽样打包、分片、解包和本地 replay 通过结果已记录到 `verification-1885118.md`。

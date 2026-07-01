@@ -125,7 +125,7 @@ def try_segment_no_candidate_handoff(
     record["return_code"] = 0
     record["segment_no_candidate_handoff"] = True
     record["message"] = "Segment package has no eligible candidates for this stage; wrote explicit empty handoff."
-    record["noop_reason"] = "no_eligible_candidates_in_segment_dependency_closure"
+    record["noop_reason"] = "no_eligible_candidates_in_segment_geometry_buffer"
     return {**produced, **result}
 
 

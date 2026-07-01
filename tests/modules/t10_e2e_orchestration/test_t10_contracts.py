@@ -598,7 +598,7 @@ def test_multi_segment_package_uses_t10_run_evidence_and_segment_scope(tmp_path:
     problem_csv.write_text(
         "swsd_segment_id,problem_status,reject_reason,swsd_pair_nodes,rcsd_pair_nodes,pair_anchor_bridge_road_ids\n"
         "1001_3001,requires_upstream_iteration,missing_pair_relation,"
-        "\"['1001','3001']\",\"['rc1','rc2']\",\"['rcroad_near']\"\n",
+        "\"['1001','3001']\",\"['rc1','rc2']\",\"['rcroad_far']\"\n",
         encoding="utf-8",
     )
     (run_root / "t10_t06_visual_check_summary.json").write_text(
@@ -625,7 +625,12 @@ def test_multi_segment_package_uses_t10_run_evidence_and_segment_scope(tmp_path:
         include_files=True,
     )
 
-    case_dir = artifacts.package_dir / "cases" / "segment_1001_3001"
+    multi_manifest = json.loads(artifacts.manifest_json.read_text(encoding="utf-8"))
+    assert multi_manifest["segment_buffer_m"] == 200.0
+    assert multi_manifest["cases"][0]["case_dir"] == "1001_3001"
+    assert not (artifacts.package_dir / "cases").exists()
+
+    case_dir = artifacts.package_dir / "1001_3001"
     case_manifest = json.loads((case_dir / "t10_case_evidence_manifest.json").read_text(encoding="utf-8"))
     case_summary = json.loads((case_dir / "t10_case_evidence_summary.json").read_text(encoding="utf-8"))
     assert case_manifest["package_type"] == "t10_segment_evidence"
@@ -633,11 +638,12 @@ def test_multi_segment_package_uses_t10_run_evidence_and_segment_scope(tmp_path:
     assert case_manifest["scope"]["case_id"] == "segment_1001_3001"
     assert case_manifest["scope"]["swsd_segment_id"] == "1001_3001"
     assert "radius_m" not in case_manifest["scope"]
+    assert case_manifest["scope"]["buffer_m"] == 200.0
     assert case_manifest["scope"]["center"] == {"x": 200.0, "y": 0.0}
     assert case_manifest["scope"]["segment_endpoint_node_ids"] == ["1001", "3001"]
-    assert case_manifest["spatial_slice_summary"]["selection_mode"] == "swsd_segment_e2e_evidence_dependency_closure"
-    assert case_manifest["spatial_slice_summary"]["dependency_context"]["rcsd_node_ids"] == ["rc1", "rc2"]
-    assert case_manifest["spatial_slice_summary"]["dependency_context"]["rcsd_road_ids"] == ["rcroad_near"]
+    assert case_manifest["spatial_slice_summary"]["selection_mode"] == "swsd_segment_geometry_buffer"
+    assert "dependency_context" not in case_manifest["spatial_slice_summary"]
+    assert case_summary["segment_buffer_m"] == 200.0
     assert case_summary["matched_evidence_artifact_count"] == 1
 
     evidence_artifacts = {
@@ -650,6 +656,7 @@ def test_multi_segment_package_uses_t10_run_evidence_and_segment_scope(tmp_path:
     slot_entries = {entry["slot"]: entry for entry in case_manifest["included_external_inputs"]}
     nodes_slice = case_dir / slot_entries["prepared_swsd_nodes"]["package_path"]
     roads_slice = case_dir / slot_entries["prepared_swsd_roads"]["package_path"]
+    rcsd_roads_slice = case_dir / slot_entries["rcsdroad"]["package_path"]
     assert nodes_slice.is_file()
     assert roads_slice.is_file()
     node_ids = {
@@ -658,6 +665,11 @@ def test_multi_segment_package_uses_t10_run_evidence_and_segment_scope(tmp_path:
     }
     assert node_ids == {"1001", "1002", "3001"}
     assert len(read_vector(roads_slice, target_epsg=3857).features) == 1
+    rcsd_road_ids = {
+        str(feature.properties["id"])
+        for feature in read_vector(rcsd_roads_slice, target_epsg=3857).features
+    }
+    assert rcsd_road_ids == {"rcroad_near"}
 
     bundle = export_t10_case_evidence_text_bundle(
         package_dir=artifacts.package_dir,
@@ -670,7 +682,7 @@ def test_multi_segment_package_uses_t10_run_evidence_and_segment_scope(tmp_path:
     )
     decoded_manifest = json.loads(decoded.manifest_path.read_text(encoding="utf-8"))
     assert decoded_manifest["package_type"] == "t10_segment_evidence"
-    assert (decoded.out_dir / "cases" / "segment_1001_3001" / "t10_case_evidence_manifest.json").is_file()
+    assert (decoded.out_dir / "1001_3001" / "t10_case_evidence_manifest.json").is_file()
 
 
 def test_t10_t06_funnel_summary_reads_step_summaries(tmp_path: Path) -> None:

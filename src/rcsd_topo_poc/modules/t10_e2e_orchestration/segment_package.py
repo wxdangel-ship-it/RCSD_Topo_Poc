@@ -15,7 +15,7 @@ from .evidence_package import (
     T10_MATERIALIZATION_MANIFEST_ONLY,
     T10_MATERIALIZATION_SPATIAL_SLICE,
 )
-from .spatial_slice import build_segment_spatial_input_slices
+from .spatial_slice import SEGMENT_BUFFER_M, build_segment_spatial_input_slices
 
 
 SEGMENT_EVIDENCE_ARTIFACT_NAMES = {
@@ -82,6 +82,7 @@ def build_segment_evidence_package(
     include_files: bool = True,
     materialization_mode: str | None = None,
     target_epsg: int = 3857,
+    segment_buffer_m: float = SEGMENT_BUFFER_M,
 ) -> T10SegmentEvidencePackageArtifacts:
     segment_id = _required_segment_id(swsd_segment_id)
     effective_package_id = package_id or _default_segment_package_id(segment_id)
@@ -97,6 +98,7 @@ def build_segment_evidence_package(
         include_files=include_files,
         materialization_mode=materialization_mode,
         target_epsg=target_epsg,
+        segment_buffer_m=segment_buffer_m,
     )
     artifacts = T10SegmentEvidencePackageArtifacts(
         package_dir=package_dir,
@@ -119,6 +121,7 @@ def build_multi_segment_evidence_package(
     include_files: bool = True,
     materialization_mode: str | None = None,
     target_epsg: int = 3857,
+    segment_buffer_m: float = SEGMENT_BUFFER_M,
 ) -> T10MultiSegmentEvidencePackageArtifacts:
     segment_ids = [_required_segment_id(segment_id) for segment_id in swsd_segment_ids if str(segment_id).strip()]
     if not segment_ids:
@@ -126,13 +129,12 @@ def build_multi_segment_evidence_package(
 
     effective_package_id = package_id or _default_multi_segment_package_id(segment_ids)
     package_dir = Path(out_root).expanduser().resolve() / effective_package_id
-    cases_dir = package_dir / "cases"
-    cases_dir.mkdir(parents=True, exist_ok=True)
+    package_dir.mkdir(parents=True, exist_ok=True)
     case_manifest_paths: list[Path] = []
     case_summaries: list[dict[str, Any]] = []
     for segment_id in segment_ids:
         case_id = _segment_case_id(segment_id)
-        case_dir = cases_dir / case_id
+        case_dir = package_dir / _segment_case_dir_name(segment_id)
         case_dir.mkdir(parents=True, exist_ok=True)
         payload, summary = _segment_payload_and_summary(
             manifest=manifest,
@@ -144,6 +146,7 @@ def build_multi_segment_evidence_package(
             include_files=include_files,
             materialization_mode=materialization_mode,
             target_epsg=target_epsg,
+            segment_buffer_m=segment_buffer_m,
         )
         case_manifest = case_dir / "t10_case_evidence_manifest.json"
         case_summary = case_dir / "t10_case_evidence_summary.json"
@@ -155,6 +158,7 @@ def build_multi_segment_evidence_package(
                 "case_id": case_id,
                 "swsd_segment_id": segment_id,
                 "case_dir": str(case_dir.relative_to(package_dir)),
+                "case_dir_semantics": "swsd_segment_id",
                 "passed": summary["passed"],
                 "selection_status": summary["selection_status"],
                 "missing_external_input_slots": summary["missing_external_input_slots"],
@@ -169,10 +173,12 @@ def build_multi_segment_evidence_package(
         "package_type": "t10_segment_evidence",
         "package_id": effective_package_id,
         "produced_at_utc": _now_text(),
-        "case_id_semantics": "Segment package case id; formal Segment identity is scope.swsd_segment_id.",
+        "case_id_semantics": "Segment package case id remains segment_<SegmentID> for runner compatibility; formal Segment identity is scope.swsd_segment_id.",
+        "case_dir_semantics": "Each Segment case directory is named by SegmentID at package-root level.",
         "scope_type": "swsd_segment",
         "segment_count": len(case_summaries),
         "selection_crs": f"EPSG:{target_epsg}",
+        "segment_buffer_m": float(segment_buffer_m),
         "materialization_mode": _resolve_materialization_mode(
             include_files=include_files,
             materialization_mode=materialization_mode,
@@ -181,7 +187,7 @@ def build_multi_segment_evidence_package(
         "t08_policy": T10_T08_POLICY,
         "cases": case_summaries,
         "payload_policy": (
-            "Each Segment directory contains external input slices only; T10/T06 intermediate artifacts are referenced as evidence."
+            "Each SegmentID directory contains external input slices only; T10/T06 intermediate artifacts are referenced as evidence."
         ),
     }
     summary = {
@@ -189,6 +195,7 @@ def build_multi_segment_evidence_package(
         "package_type": "t10_segment_evidence",
         "package_id": effective_package_id,
         "segment_count": len(case_summaries),
+        "segment_buffer_m": float(segment_buffer_m),
         "materialization_mode": payload["materialization_mode"],
         "passed": all(item["passed"] for item in case_summaries),
         "failed_segment_count": sum(1 for item in case_summaries if not item["passed"]),
@@ -217,6 +224,7 @@ def _segment_payload_and_summary(
     include_files: bool,
     materialization_mode: str | None,
     target_epsg: int,
+    segment_buffer_m: float,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     mode = _resolve_materialization_mode(include_files=include_files, materialization_mode=materialization_mode)
     evidence = _discover_segment_evidence(
@@ -232,8 +240,8 @@ def _segment_payload_and_summary(
             package_dir=package_dir,
             swsd_segment_path=segment_source_path,
             swsd_segment_id=swsd_segment_id,
-            segment_evidence_rows=_matched_evidence_rows(evidence),
             target_epsg=target_epsg,
+            segment_buffer_m=segment_buffer_m,
         )
         included_inputs = slice_result.included_inputs
         spatial_slice_summary = slice_result.summary
@@ -259,6 +267,7 @@ def _segment_payload_and_summary(
             {
                 "center": spatial_slice_summary["center"],
                 "bounds": spatial_slice_summary["bounds"],
+                "buffer_m": spatial_slice_summary["buffer_m"],
                 "segment_bounds": spatial_slice_summary["segment_bounds"],
                 "segment_endpoint_node_ids": spatial_slice_summary["segment_endpoint_node_ids"],
                 "segment_properties": spatial_slice_summary["segment_properties"],
@@ -288,7 +297,7 @@ def _segment_payload_and_summary(
                 else f"Segment scope is declared in EPSG:{target_epsg}; no vector materialization was requested."
             ),
             "topology_consistency": "No topology repair or silent fix is performed while building the Segment package.",
-            "geometry_semantics": "The package is keyed by SWSD Segment id and selects local inputs from T01 Segment geometry plus matched T10/T06 evidence dependencies; no radius parameter is used.",
+            "geometry_semantics": "The package is keyed by SWSD Segment id and selects local inputs from T01 Segment geometry buffered by 200m; T10/T06 matched rows are retained as evidence references only.",
             "audit_traceability": "The manifest records T10 run root, T01 Segment source, T06 evidence paths, external source paths and checksums.",
             "performance_verifiability": "Manifest records input counts and optional materialized file count.",
         },
@@ -307,6 +316,7 @@ def _segment_payload_and_summary(
         "missing_external_input_slots": missing_external,
         "materialized_file_count": materialized_count,
         "matched_evidence_artifact_count": matched_artifact_count,
+        "segment_buffer_m": float(segment_buffer_m),
         "t01_segment_path": evidence["t01_segment_path"],
         "t10_run_root": evidence["t10_run_root"],
         "passed": not missing_external and bool(evidence["t01_segment_path"]),
@@ -351,17 +361,6 @@ def _discover_segment_evidence(
         "visual_check_row_count": len(visual_rows),
         "artifacts": artifacts,
     }
-
-
-def _matched_evidence_rows(evidence: Mapping[str, Any]) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    for artifact in evidence.get("artifacts", []):
-        if not isinstance(artifact, Mapping):
-            continue
-        matched_rows = artifact.get("matched_rows")
-        if isinstance(matched_rows, list):
-            rows.extend(dict(row) for row in matched_rows if isinstance(row, Mapping))
-    return rows
 
 
 def _discover_t01_segment_path(t10_run_root: Path) -> Path | None:
@@ -586,6 +585,10 @@ def _required_segment_id(value: str) -> str:
 
 def _segment_case_id(segment_id: str) -> str:
     return "segment_" + _safe_id(segment_id)
+
+
+def _segment_case_dir_name(segment_id: str) -> str:
+    return _safe_id(segment_id)
 
 
 def _default_segment_package_id(segment_id: str) -> str:

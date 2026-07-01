@@ -9,7 +9,8 @@ Usage:
 
 Purpose:
   Build a T10 multi-Segment evidence package and export it as split text bundle files.
-  SegmentID means SWSD Segment id from the T01 Segment layer. Each Segment becomes one local T10 case directory.
+  SegmentID means SWSD Segment id from the T01 Segment layer. Each Segment becomes one first-level local T10 case directory.
+  Segment file slices use the T01 Segment geometry buffered by 200m; T10/T06 rows are retained as evidence references.
 
 Required runtime:
   Run from a repo with .venv already prepared.
@@ -36,6 +37,9 @@ Common env:
   MAX_TEXT_SIZE_BYTES       Default: 256000
   DECODE_AFTER_EXPORT       Default: 0
   DECODE_ROOT               Default: outputs/_work/t10_segment_evidence_decoded
+
+Notes:
+  Segment package geometry scope is fixed to a 200m buffer around the T01 Segment geometry.
 USAGE
 }
 

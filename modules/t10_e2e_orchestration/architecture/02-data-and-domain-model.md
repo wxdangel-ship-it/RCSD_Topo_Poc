@@ -12,7 +12,7 @@ T10 消费外部输入、T01-T09 模块输出、T06 problem registry、T06 relat
 | handoff slot | 模块间正式文件级产物位置。 |
 | CaseID | SWSD semantic junction id，不是坐标。 |
 | Case package | 以 CaseID 和半径组织的局部外部输入证据包。 |
-| Segment package | 以 SWSD SegmentID 和既有 T10 run root 组织的局部外部输入证据包；runner 兼容 CaseID 为 `segment_<SegmentID>`。 |
+| Segment package | 以 SWSD SegmentID、既有 T10 run root 和 T01 Segment geometry `200m` buffer 组织的局部外部输入证据包；runner 兼容 CaseID 为 `segment_<SegmentID>`，多 Segment package 子目录为 `<SegmentID>/`。 |
 | spatial slice | `include_files=true` 时默认生成的局部 GPKG 输入切片。 |
 | stage record | Case runner 或 full pipeline 中单阶段的输入、输出、日志和状态。 |
 | T06 funnel | SWSD Segment 到 F-RCSD 替换结果的数量流转和拒绝原因视图。 |
@@ -32,7 +32,7 @@ T10 消费外部输入、T01-T09 模块输出、T06 problem registry、T06 relat
 ## 4. 数据流
 
 1. Workflow planning 检查外部输入和 handoff slot。
-2. Case packaging 按 CaseID 和半径生成 manifest 或 spatial slice；Segment packaging 按 SegmentID 从既有 T10 run root 反查 T01/T06 证据，并按 evidence dependency closure 生成 spatial slice。
+2. Case packaging 按 CaseID 和半径生成 manifest 或 spatial slice；Segment packaging 按 SegmentID 从既有 T10 run root 反查 T01/T06 证据，并按 T01 Segment geometry `200m` buffer 生成 spatial slice。
 3. Case runner 从 package 启动 T01-T09 关键链路，并记录阶段级结果。
 4. T06 funnel、visual check 和 feedback 从已产出的阶段结果中读取证据。
 5. Innernet full pipeline 脚本串联全量阶段并写入 manifest / summary。

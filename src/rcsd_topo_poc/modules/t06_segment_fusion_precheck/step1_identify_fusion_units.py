@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import csv
 from collections import Counter
 from pathlib import Path
 from typing import Any
 
 from .audit import failed_attrs
 from .io import prepare_run_roots, read_features, write_csv, write_feature_triplet, write_json
-from .parsing import ParseError, anchor_eligible, normalize_id, parse_id_list, unique_preserve_order, yes_value
+from .parsing import ParseError, anchor_eligible, normalize_id, parse_id_list, parse_positive_int, unique_preserve_order, yes_value
 from .schemas import (
     FUSION_UNIT_FIELDS,
     STEP1_CANDIDATES_STEM,
@@ -29,12 +30,15 @@ STEP1_DETACHED_JUNC_BLOCKED_KIND2_VALUES = {64, 128}
 STEP2_PROBE_RELAXED_PAIR_KIND2_VALUES = {2048}
 STEP2_PROBE_RELAXED_PAIR_FAIL1_KIND2_VALUES = {4}
 STEP2_PROBE_RELAXED_JUNC_KIND2_VALUES = {16, 2048}
+MANUAL_RELATION_ANCHOR_OVERRIDE_SOURCE = "T11_MANUAL"
+MANUAL_RELATION_ANCHOR_OVERRIDE_STATES = {"fail3", "fail4"}
 
 
 def run_t06_step1_identify_fusion_units(
     *,
     swsd_segment_path: str | Path,
     swsd_nodes_path: str | Path,
+    intersection_match_path: str | Path | None = None,
     out_root: str | Path,
     run_id: str | None = None,
     progress: bool = False,
@@ -43,6 +47,9 @@ def run_t06_step1_identify_fusion_units(
     segments = read_features(swsd_segment_path)
     nodes = read_features(swsd_nodes_path)
     node_index = _node_index(nodes)
+    manual_anchor_override_nodes = _manual_relation_anchor_override_nodes(intersection_match_path)
+    manual_anchor_override_segments: set[str] = set()
+    manual_anchor_override_node_hits: set[str] = set()
 
     evd_candidates: list[dict[str, Any]] = []
     fusion_units: list[dict[str, Any]] = []
@@ -207,7 +214,29 @@ def run_t06_step1_identify_fusion_units(
                 str(node_index[node_id].get("is_anchor") or "").strip().lower() == "fail4_fallback"
                 for node_id in semantic_nodes
             )
-        anchor_failed = [node_id for node_id in anchor_required_nodes if not anchor_eligible(node_index[node_id].get("is_anchor"))]
+        anchor_failed = [
+            node_id
+            for node_id in anchor_required_nodes
+            if not anchor_eligible(node_index[node_id].get("is_anchor"))
+            and not _manual_relation_anchor_override_allowed(
+                node_id=node_id,
+                node_index=node_index,
+                manual_anchor_override_nodes=manual_anchor_override_nodes,
+            )
+        ]
+        manual_anchor_overridden = [
+            node_id
+            for node_id in anchor_required_nodes
+            if not anchor_eligible(node_index[node_id].get("is_anchor"))
+            and _manual_relation_anchor_override_allowed(
+                node_id=node_id,
+                node_index=node_index,
+                manual_anchor_override_nodes=manual_anchor_override_nodes,
+            )
+        ]
+        if manual_anchor_overridden:
+            manual_anchor_override_segments.add(segment_id)
+            manual_anchor_override_node_hits.update(manual_anchor_overridden)
         if anchor_failed:
             blocked_anchor_failed = _record_detached_junc_failures(
                 detached_junc_reasons=detached_junc_reasons,
@@ -266,7 +295,14 @@ def run_t06_step1_identify_fusion_units(
         summary_path,
         {
             "run_id": resolved_run_id,
-            "input_paths": {"swsd_segment_path": str(swsd_segment_path), "swsd_nodes_path": str(swsd_nodes_path)},
+            "input_paths": {
+                "swsd_segment_path": str(swsd_segment_path),
+                "swsd_nodes_path": str(swsd_nodes_path),
+                "intersection_match_path": str(intersection_match_path) if intersection_match_path else None,
+                "manual_relation_anchor_override_audit_path": str(_manual_relation_audit_path(intersection_match_path))
+                if _manual_relation_audit_path(intersection_match_path)
+                else None,
+            },
             "input_segment_count": len(segments),
             "evd_candidate_count": len(evd_candidates),
             "final_fusion_unit_count": len(fusion_units),
@@ -282,6 +318,12 @@ def run_t06_step1_identify_fusion_units(
             "detached_junc_node_count": sum(len(item["properties"].get("detached_junc_nodes") or []) for item in fusion_units),
             "detached_junc_reason_counts": _detached_junc_reason_counts(fusion_units),
             "has_fail4_fallback_segment_count": sum(1 for item in fusion_units if item["properties"].get("has_fail4_fallback")),
+            "manual_relation_anchor_override_source": MANUAL_RELATION_ANCHOR_OVERRIDE_SOURCE,
+            "manual_relation_anchor_override_candidate_node_count": len(manual_anchor_override_nodes),
+            "manual_relation_anchor_override_node_count": len(manual_anchor_override_node_hits),
+            "manual_relation_anchor_override_segment_count": len(manual_anchor_override_segments),
+            "manual_relation_anchor_override_node_ids": sorted(manual_anchor_override_node_hits),
+            "manual_relation_anchor_override_segment_ids": sorted(manual_anchor_override_segments),
             "outputs": {
                 **{f"swsd_candidates_{k}": str(v) for k, v in candidate_paths.items()},
                 **{f"swsd_final_fusion_units_{k}": str(v) for k, v in final_fusion_paths.items()},
@@ -458,6 +500,86 @@ def _detached_junc_reason_counts(fusion_units: list[dict[str, Any]]) -> dict[str
             reason = text.split(":", 1)[1] if ":" in text else text
             counts[reason] += 1
     return dict(counts)
+
+
+def _manual_relation_anchor_override_allowed(
+    *,
+    node_id: str,
+    node_index: dict[str, dict[str, Any]],
+    manual_anchor_override_nodes: set[str],
+) -> bool:
+    if node_id not in manual_anchor_override_nodes:
+        return False
+    anchor_state = str(node_index[node_id].get("is_anchor") or "").strip().lower()
+    return anchor_state in MANUAL_RELATION_ANCHOR_OVERRIDE_STATES
+
+
+def _manual_relation_anchor_override_nodes(intersection_match_path: str | Path | None) -> set[str]:
+    audit_path = _manual_relation_audit_path(intersection_match_path)
+    if audit_path is None:
+        return set()
+    result: set[str] = set()
+    with audit_path.open("r", encoding="utf-8-sig", newline="") as handle:
+        for row in csv.DictReader(handle):
+            target_id = _manual_relation_target_id(row)
+            if not target_id:
+                continue
+            if _manual_relation_row_is_step1_override(row):
+                result.add(target_id)
+    return result
+
+
+def _manual_relation_audit_path(intersection_match_path: str | Path | None) -> Path | None:
+    if intersection_match_path is None:
+        return None
+    root = Path(intersection_match_path).parent
+    for name in (
+        "relation_graph_consumability_audit.csv",
+        "intersection_match_all_audit.csv",
+        "rcsd_junctionization_audit.csv",
+    ):
+        candidate = root / name
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _manual_relation_target_id(row: dict[str, Any]) -> str | None:
+    try:
+        return normalize_id(row.get("target_id"))
+    except ParseError:
+        return None
+
+
+def _manual_relation_row_is_step1_override(row: dict[str, Any]) -> bool:
+    if MANUAL_RELATION_ANCHOR_OVERRIDE_SOURCE not in _split_modules(row.get("source_modules") or row.get("source_module")):
+        return False
+    status = row.get("relation_status") if "relation_status" in row else row.get("status")
+    if _parse_zero_status(status) != 0:
+        return False
+    if parse_positive_int(row.get("base_id")) is None:
+        return False
+    if "graph_consumable" in row and not _truthy_relation_audit_value(row.get("graph_consumable")):
+        return False
+    return True
+
+
+def _split_modules(value: Any) -> set[str]:
+    text = str(value or "").strip()
+    if not text:
+        return set()
+    return {part.strip() for part in text.replace("|", ";").replace(",", ";").split(";") if part.strip()}
+
+
+def _parse_zero_status(value: Any) -> int | None:
+    try:
+        return int(float(str(value).strip()))
+    except Exception:
+        return None
+
+
+def _truthy_relation_audit_value(value: Any) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "y"}
 
 
 def _node_index(nodes: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:

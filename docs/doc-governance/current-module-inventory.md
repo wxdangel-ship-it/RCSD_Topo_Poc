@@ -24,7 +24,7 @@
 | `t03_virtual_junction_anchor` | Active | 面向交叉路口与 T 型路口构建虚拟锚定，消费道路面、SWSD 与 RCSD 上下文。输出虚拟路口面、`nodes` 更新与 T05 relation evidence，是路口 1:1 relation 层的常规路口补锚模块，不处理环岛。 |
 | `t04_divmerge_virtual_polygon` | Active | 面向分歧、合流与复杂路口构建 `Step1-7` 虚拟锚定。消费道路面、导流带、SWSD、RCSD，输出 accepted/rejected 发布层与 relation evidence，是路口 1:1 relation 层的复杂路口补锚模块，复杂属性修正逐步移交 T08。 |
 | `t05_junction_surface_fusion` | Active | 汇总 T07 / T03 / T04 的锚定与构面成果，正式生产统一 SWSD-RCSD 语义路口关系。负责 RCSD junctionization、复杂路口归组、环岛预处理与 copy-on-write RCSD 输出，是 T06 替换前的 relation 发布层。 |
-| `t06_segment_fusion_precheck` | Active | 基于 T01 Segment 与 T05 语义路口关系构建 RCSDSegment，处理 RCSD 数据质量和 SWSD/RCSD 工艺差异下的替换可行性。通过 replacement plan、problem registry、source 边界、提前右转后处理、surface topology closure 与 topology audit 输出 F-RCSD Road / Node 和下游 T09 稳定承载关系。 |
+| `t06_segment_fusion_precheck` | Active | 基于 T01 Segment 与 T05 语义路口关系构建 RCSDSegment，处理 RCSD 数据质量和 SWSD/RCSD 工艺差异下的替换可行性。T05 正式发布的 `T11_MANUAL` 人工正向 relation 可释放 Step1 中对应 `fail3/fail4` 锚定失败门禁，但不作为 Step2/Step3 替换白名单。通过 replacement plan、problem registry、source 边界、提前右转后处理、surface topology closure 与 topology audit 输出 F-RCSD Road / Node 和下游 T09 稳定承载关系。 |
 | `t07_semantic_junction_anchor` | Active | 迁移 T02 语义路口级 1:1 锚定能力，并保留显式兼容 relation 补锚。它是路口 1:1 relation 层的已有路口面锚定模块，用于提高当前替换率，未来 RCSD 滚动构图方案下不作为长期依赖。 |
 | `t08_preprocess` | Active | SWSD / RCSD 正式预处理模块，提供格式转换、Road/Node 类型聚合、质检修复、restriction / Laneinfo 显性化与 RCSD 清理。为 T01、T03、T04、T05、T06、T09 提供规范输入。 |
 | `t09_swsd_field_rule_restoration` | Active | 基于 SWSD Laneinfo、restriction 与 T06 F-RCSD 混合承载关系，还原现场路口级通行规则。当前缺少 RCSD Laneinfo 与轨迹通行证据，需后续迭代完善。 |
@@ -39,7 +39,7 @@
 - Segment 替换：T06 基于 T01 Segment 与 T05 relation 构建 RCSDSegment，并在 RCSD 数据质量、方向性、端点、提右和 surface 证据存在差异时执行受控诊断、补强、replacement plan 执行和最终拓扑审计，输出 F-RCSD 承载关系。
 - 通行恢复：T09 基于 SWSD 通行规则证据和 T06 F-RCSD 承载关系还原融合后路口通行能力。
 - 端到端编排：T10 v1 以文件级 handoff 方式组织 Case package、空间切片、Case 级 replay、T06 反馈闭环和内网全量总控；Case runner 不调用 T08，全量总控可把 T08 作为独立前置阶段串联。
-- 人工审计输入：T11 从 T10 Case 结果中抽取 relation 修复候选，供人工判断后续是否回到 T05 重新生成正式 relation。
+- 人工审计输入：T11 从 T10 Case 结果中抽取 relation 修复候选，供人工判断后续是否回到 T05 重新生成正式 relation；经 T05 发布为可消费 `T11_MANUAL` relation 后，可在 T06 Step1 释放对应 `fail3/fail4` 旧锚定失败门禁，最终替换仍由 T06 Step2/Step3 审计决定。
 - POC 验证：P01 承载异构路口通行能力 POC，不替代 T09。
 
 ## 当前治理缺口

@@ -33,6 +33,7 @@ MIN_VISUAL_CONFLICT_PRUNE_OUTSIDE_RATIO = 0.5
 VISUAL_CONSISTENCY_STRATEGIES = {
     "visual_consistency_high_confidence_repair",
     "visual_consistency_controlled_release",
+    "swsd_buffer_corridor_controlled_release",
 }
 
 
@@ -482,7 +483,13 @@ def _visual_consistency_repair_plan_rows(
         if not retained_road_ids or not retained_node_ids:
             continue
         controlled_release = release_mode == "controlled_release"
-        strategy = "visual_consistency_controlled_release" if controlled_release else "visual_consistency_high_confidence_repair"
+        buffer_corridor_release = release_mode == "buffer_corridor_release"
+        if controlled_release:
+            strategy = "visual_consistency_controlled_release"
+        elif buffer_corridor_release:
+            strategy = "swsd_buffer_corridor_controlled_release"
+        else:
+            strategy = "visual_consistency_high_confidence_repair"
         risk_flags = [strategy]
         if controlled_release:
             risk_flags.append("retained_geometry_outside_swsd_visual_consistency_scope")
@@ -490,6 +497,8 @@ def _visual_consistency_repair_plan_rows(
                 risk_flags.append("visual_consistency_high_deviation")
             if audit_props.get("manual_review_required"):
                 risk_flags.append("manual_review_required")
+        if buffer_corridor_release:
+            risk_flags.append("swsd_geometry_not_covered_by_retained_rcsd")
         rows.append(
             feature(
                 {
@@ -529,10 +538,9 @@ def _visual_consistency_repair_plan_rows(
                     "swsd_uncovered_by_rcsd_length_m": props.get("swsd_uncovered_by_rcsd_length_m"),
                     "swsd_uncovered_by_rcsd_ratio": props.get("swsd_uncovered_by_rcsd_ratio"),
                     "risk_flags": unique_preserve_order(risk_flags),
-                    "notes": (
-                        "topology and directionality passed; retained RCSD visual consistency mismatch accepted as controlled release audit risk"
-                        if controlled_release
-                        else "topology and directionality passed; visual consistency mismatch accepted by high-confidence T06 repair gate"
+                    "notes": _visual_consistency_plan_notes(
+                        controlled_release=controlled_release,
+                        buffer_corridor_release=buffer_corridor_release,
                     ),
                 },
                 row.get("geometry") or next(
@@ -1571,6 +1579,7 @@ def _visual_consistency_release_mode(
     audit_props: dict[str, Any],
 ) -> str:
     if buffer_props.get("reject_reason") not in {
+        "swsd_geometry_not_covered_by_retained_rcsd",
         "retained_geometry_outside_swsd_visual_consistency_scope",
         "swsd_visual_continuity_not_covered_by_retained_rcsd",
     }:
@@ -1591,7 +1600,8 @@ def _visual_consistency_release_mode(
     if not _visual_release_pair_anchor_complete(buffer_props, audit_props):
         return ""
 
-    if buffer_props.get("reject_reason") == "retained_geometry_outside_swsd_visual_consistency_scope":
+    reject_reason = str(buffer_props.get("reject_reason") or "")
+    if reject_reason == "retained_geometry_outside_swsd_visual_consistency_scope":
         if _coerce_float(buffer_props.get("retained_road_count")) < 1:
             return ""
         swsd_uncovered_length = _coverage_metric(
@@ -1608,6 +1618,9 @@ def _visual_consistency_release_mode(
             return ""
         return "controlled_release"
 
+    buffer_corridor_release = reject_reason == "swsd_geometry_not_covered_by_retained_rcsd"
+    if buffer_corridor_release and not _rcsd_corridor_stays_inside_swsd_buffer(buffer_props, rejected_props):
+        return ""
     if rejected_props.get("swsd_directionality") != "single":
         return ""
     if _coerce_float(buffer_props.get("retained_road_count")) < 2:
@@ -1627,7 +1640,23 @@ def _visual_consistency_release_mode(
         return ""
     if _coerce_float(audit_props.get("shape_similarity_score")) < 1.0:
         return ""
-    return "high_confidence_repair"
+    return "buffer_corridor_release" if buffer_corridor_release else "high_confidence_repair"
+
+
+def _rcsd_corridor_stays_inside_swsd_buffer(buffer_props: dict[str, Any], rejected_props: dict[str, Any]) -> bool:
+    outside_length = _coverage_metric(buffer_props, rejected_props, "rcsd_outside_swsd_buffer_length_m")
+    outside_ratio = _coverage_metric(buffer_props, rejected_props, "rcsd_outside_swsd_buffer_ratio")
+    if outside_length is None or outside_ratio is None:
+        return False
+    return outside_length <= 1e-6 and outside_ratio <= 1e-6
+
+
+def _visual_consistency_plan_notes(*, controlled_release: bool, buffer_corridor_release: bool) -> str:
+    if controlled_release:
+        return "topology and directionality passed; retained RCSD visual consistency mismatch accepted as controlled release audit risk"
+    if buffer_corridor_release:
+        return "topology and directionality passed; retained RCSD corridor stays inside SWSD buffer; SWSD coverage gap accepted as controlled release audit risk"
+    return "topology and directionality passed; visual consistency mismatch accepted by high-confidence T06 repair gate"
 
 
 def _visual_release_pair_anchor_complete(buffer_props: dict[str, Any], audit_props: dict[str, Any]) -> bool:

@@ -91,3 +91,16 @@ CSV 是人工审计主入口；GPKG 用于 QGIS 叠加；summary 用于复核输
 表 2/3 使用完全一致的字段，均按 `Segment + target_id` 出行；同一 target 在前序 Segment 已出现时，后序重复行保留以维持 Segment 完整性，但标记 `manual_row_consumable=0` 和 `duplicate_target_policy`，后续消费不应读取该重复行。
 
 T03/T04 场景只作为人工参考提示写入 `t03_scene_hint / t04_scene_hint / upstream_no_rcsd_reference_hint`，不固化为 T11 强判定。无证据节点的 50m RCSD 查询基于输出 CRS 中的几何距离，写入 `rcsd_50m_*` 字段；T11 只读几何，不做 snap、repair 或拓扑修改。
+
+## 6. 人工 Excel 重跑策略
+
+`scripts/t11_run_manual_rerun.py` 是 T11 人工结果消费的编排入口，不新增 T05/T06 业务规则。它先读取三张 Segment 审计 Excel，把可执行人工 relation 行合并为 `t11_manual_relation_merged.csv`，再把该 CSV 交给既有 T05 `--t11-manual-relation` 参数，随后串联 T06 Step1/2 与 Step3 并输出修复前后指标对比。
+
+导入策略：
+
+- 表 1/2/3 都会被扫描，允许人工只填写局部行。
+- 只消费 `1v1_rcsd_junction / 1vN_rcsd_junction / 1v1_rcsd_road / 1vN_rcsd_road`。
+- `NULL`、空白、`no_valid_relation`、`uncertain` 仅作为人工审计标记，不进入 T05。
+- `manual_row_consumable=0` 的重复路口行不进入 T05。
+- 同一 `target_id` 只消费首个可执行人工行，避免同一语义路口被多个 Segment 重复回灌。
+- 输出全部写入新的 `_work` run root；输入 T10 Case root 与 T11 审计目录只读。

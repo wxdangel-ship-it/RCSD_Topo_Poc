@@ -1,0 +1,11 @@
+[general]
+name=T11 Relation Review
+description=Map-assisted editor for T11 manual relation review Excel workbooks.
+version=0.1.0
+qgisMinimumVersion=3.28
+author=RCSD_Topo_Poc
+email=
+category=Vector
+experimental=True
+deprecated=False
+about=Loads the two T11 relation-gap Excel workbooks, shows deduplicated target_id tasks, and immediately syncs manual relation fields back to Excel.

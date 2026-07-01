@@ -94,6 +94,61 @@ T11 按文件名和常规 T10 layout 探测输入，不要求调用方传入 T05
 - 表 1 原始设计不要求填写 relation；若人工额外填入上述可执行字段，脚本会纳入导入，否则只作为下游问题审计表保留。
 - 脚本不修改输入 Case root、不覆盖 baseline，所有输出写到新的 `<out-root>/run_<timestamp>/`。
 
+## 2.1 QGIS 插件入口
+
+QGIS 插件工程：
+
+```text
+qgis_plugins/t11_relation_review/
+```
+
+QGIS 加载入口：
+
+```python
+qgis_plugins.t11_relation_review.classFactory(iface)
+```
+
+插件当前只服务两张 Segment relation 缺口 Excel：
+
+```text
+t11_unreplaced_segments_all_junctions_have_evidence_relation_gaps.xlsx
+t11_unreplaced_segments_with_no_evidence_junction_relation_gaps.xlsx
+```
+
+纯 Python 核心位于：
+
+```text
+src/rcsd_topo_poc/modules/t11_manual_relation_review/qgis_review/
+```
+
+核心能力：
+
+- `task_index.load_review_tasks(...)`：读取两张 Excel，按优先级排序，并按 `target_id` 去重保留第一条任务。
+- `excel_sync.update_manual_fields(...)`：只更新目标 Excel 行的 `manual_relation_type / selected_ids / comment` 三列，可在首次写入前创建 `_t11_qgis_backups/` 备份。
+- `ids.extract_rcsdnode_selected_ids(...)`：从 RCSDNode selection 写入 `mainnodeid`，空 / `0` / `NULL` 时回退 `id`。
+- `ids.extract_rcsdroad_selected_ids(...)`：从 RCSDRoad selection 写入 `id`。
+- `layer_validation.validate_layer_bindings(...)`：校验绑定图层的数据源、CRS 和必需字段。
+
+插件不新增 repo CLI 子命令，不新增 `scripts/` 包装入口；QGIS 图层样式、顺序和渲染仍由 QGIS 图层管理器控制。
+
+QGIS 绑定图层必需字段：
+
+```text
+Task/helper: workbook_path, sheet_name, excel_row, target_id, swsd_segment_id
+SWSD Segment: id
+SWSD semantic junction: id
+RCSDRoad: id
+RCSDNode: id, mainnodeid
+```
+
+同步规则：
+
+- Excel 是最终事实源；插件不采用“临时状态 -> 最后导出覆盖 Excel”的回写模式。
+- 打开 workbook 时检测可写性；不可写时禁止编辑或进入只读提示。
+- 每次修改立即写入 Excel，只写三个人工字段，不改变排序、表结构、其它业务字段和下拉定义。
+- `selected_ids` 多选用 `|` 拼接并去重；`selected_ids=NULL` 表示人工确认没有有效关系。
+- 同一 `target_id` 只显示并写入排序后的第一条任务，重复 Segment 行不展示、不写入。
+
 ## 3. 候选主表字段
 
 ```text

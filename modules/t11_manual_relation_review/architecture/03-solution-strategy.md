@@ -92,7 +92,25 @@ CSV 是人工审计主入口；GPKG 用于 QGIS 叠加；summary 用于复核输
 
 T03/T04 场景只作为人工参考提示写入 `t03_scene_hint / t04_scene_hint / upstream_no_rcsd_reference_hint`，不固化为 T11 强判定。无证据节点的 50m RCSD 查询基于输出 CRS 中的几何距离，写入 `rcsd_50m_*` 字段；T11 只读几何，不做 snap、repair 或拓扑修改。
 
-## 6. 人工 Excel 重跑策略
+## 6. QGIS 人工审计插件策略
+
+QGIS 插件只服务表 2 / 表 3 两张 relation 缺口 Excel。它把 Excel 行映射为任务时保留 `workbook_path / sheet_name / excel_row / target_id / swsd_segment_id`，先按 Segment 优先级排序，再按 `target_id` 去重，确保同一语义路口只展示和写入第一条任务。
+
+插件分层：
+
+- 纯 Python 核心负责 Excel XML 级读写、任务去重、selected_ids 规范化和图层绑定校验。
+- QGIS 层只负责 Dock UI、QGIS 图层绑定、地图定位、feature selection 提取和高亮。
+
+Excel 同步采用完全同步模式：
+
+- workbook 打开时先检测可写性；不可写时不进入编辑。
+- 每个 workbook 首次写入前复制到 `_t11_qgis_backups/`。
+- 每次编辑只写 `manual_relation_type / selected_ids / comment` 三列。
+- 写入保留 sheet 结构、排序、其它字段与既有 data validation。
+
+图层绑定只做校验，不接管图层管理器。必需校验包括数据源路径、CRS、字段完整性，以及 relation 类型与 RCSDNode / RCSDRoad selection 的匹配关系。CRS 不一致时只提示需要 QGIS 坐标变换，不 silent fix。
+
+## 7. 人工 Excel 重跑策略
 
 `scripts/t11_run_manual_rerun.py` 是 T11 人工结果消费的编排入口，不新增 T05/T06 业务规则。它先读取三张 Segment 审计 Excel，把可执行人工 relation 行合并为 `t11_manual_relation_merged.csv`，再把该 CSV 交给既有 T05 `--t11-manual-relation` 参数，随后串联 T06 Step1/2 与 Step3 并输出修复前后指标对比。
 

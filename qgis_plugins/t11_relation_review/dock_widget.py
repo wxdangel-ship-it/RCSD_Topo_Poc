@@ -347,7 +347,7 @@ class T11RelationReviewDock(QDockWidget):
             processing.segment_label.setText(task.swsd_segment_id)
             processing.target_label.setText(task.target_id)
             processing.length_label.setText(f"{task.segment_length_m:.3f}")
-            processing.status_label.setText(task.status)
+            processing.status_label.setText(TASK_STATUS_LABELS.get(task.status, task.status))
             processing.relation_type.setCurrentText(task.manual_relation_type)
             processing.selected_ids.setText(task.selected_ids)
             processing.comment.setPlainText(task.comment)
@@ -567,56 +567,78 @@ class T11RelationProcessingDock(QDockWidget):
         root = QWidget(self)
         root.setStyleSheet(DOCK_STYLE)
         layout = QGridLayout(root)
-        layout.setContentsMargins(8, 6, 8, 6)
-        layout.setHorizontalSpacing(8)
-        layout.setVerticalSpacing(5)
+        layout.setContentsMargins(8, 5, 8, 5)
+        layout.setHorizontalSpacing(10)
+        layout.setVerticalSpacing(6)
 
         self.segment_label = QLabel("")
         self.target_label = QLabel("")
         self.length_label = QLabel("")
         self.status_label = QLabel("")
+        for value_label in [self.segment_label, self.target_label, self.length_label, self.status_label]:
+            value_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            value_label.setStyleSheet("font-weight: 600;")
         self.relation_type = QComboBox()
         self.relation_type.addItems(RELATION_TYPES)
+        self.relation_type.setToolTip("Manual relation type written to manual_relation_type.")
         self.selected_ids = QLineEdit()
+        self.selected_ids.setPlaceholderText("RCSDNode mainnodeid/id or RCSDRoad id; use | for multiple IDs")
+        self.selected_ids.setToolTip("IDs that will be written to selected_ids. Use | between multiple IDs.")
         self.comment = QPlainTextEdit()
         self.comment.setMaximumBlockCount(8)
-        self.comment.setFixedHeight(58)
+        self.comment.setPlaceholderText("Manual note")
+        self.comment.setToolTip("Free-form manual comment written to comment.")
+        self.comment.setFixedHeight(54)
 
-        layout.addWidget(QLabel("swsd_segment_id"), 0, 0)
-        layout.addWidget(self.segment_label, 0, 1)
-        layout.addWidget(QLabel("target_id"), 0, 2)
-        layout.addWidget(self.target_label, 0, 3)
+        layout.addWidget(QLabel("Target"), 0, 0)
+        layout.addWidget(self.target_label, 0, 1)
+        layout.addWidget(QLabel("Segment"), 0, 2)
+        layout.addWidget(self.segment_label, 0, 3)
         layout.addWidget(QLabel("Length"), 0, 4)
         layout.addWidget(self.length_label, 0, 5)
-        layout.addWidget(QLabel("Status"), 0, 6)
+        layout.addWidget(QLabel("State"), 0, 6)
         layout.addWidget(self.status_label, 0, 7)
 
-        layout.addWidget(QLabel("manual_relation_type"), 1, 0)
+        layout.addWidget(QLabel("Relation type"), 1, 0)
         layout.addWidget(self.relation_type, 1, 1, 1, 2)
-        layout.addWidget(QLabel("selected_ids"), 1, 3)
+        layout.addWidget(QLabel("Selected IDs"), 1, 3)
         layout.addWidget(self.selected_ids, 1, 4, 1, 2)
-        layout.addWidget(QLabel("comment"), 1, 6)
+        layout.addWidget(QLabel("Comment"), 1, 6)
         layout.addWidget(self.comment, 1, 7, 2, 2)
 
         actions = QHBoxLayout()
-        buttons = [
-            ("Prev task", self.task_dock._previous_task),
-            ("Next task", self.task_dock._next_task),
-            ("Locate", self.task_dock._locate_current_task),
-            ("Highlight IDs", self.task_dock._highlight_current_ids),
-            ("Use selection", self.task_dock._fill_from_selection),
-            ("Clear", self.task_dock._clear_current_fields),
-            ("Mark NULL", self.task_dock._mark_null),
-            ("Uncertain", self.task_dock._mark_uncertain),
+        actions.setSpacing(8)
+        button_groups = [
+            [
+                ("Prev", self.task_dock._previous_task, "Move to the previous audit task."),
+                ("Next", self.task_dock._next_task, "Move to the next audit task."),
+            ],
+            [
+                ("Locate", self.task_dock._locate_current_task, "Zoom to the current SWSD junction or Segment."),
+                ("Show IDs", self.task_dock._highlight_current_ids, "Select/highlight features already listed in Selected IDs."),
+            ],
+            [
+                ("Use Selection", self.task_dock._fill_from_selection, "Fill Selected IDs from the current RCSDNode or RCSDRoad selection."),
+                ("Clear", self.task_dock._clear_current_fields, "Clear relation type, selected IDs, and comment for this task."),
+            ],
+            [
+                ("No valid", self.task_dock._mark_null, "Mark no valid relation: type=no_valid_relation and selected_ids=NULL."),
+                ("Uncertain", self.task_dock._mark_uncertain, "Mark the task as uncertain for later review."),
+            ],
         ]
-        for text, callback in buttons:
-            button = QPushButton(text)
-            button.clicked.connect(callback)
-            actions.addWidget(button)
+        for group_index, button_group in enumerate(button_groups):
+            if group_index:
+                actions.addSpacing(14)
+            for text, callback, tooltip in button_group:
+                button = QPushButton(text)
+                button.setToolTip(tooltip)
+                button.clicked.connect(callback)
+                actions.addWidget(button)
         actions.addStretch(1)
         layout.addLayout(actions, 2, 0, 1, 7)
 
         layout.setColumnStretch(1, 1)
+        layout.setColumnStretch(3, 1)
         layout.setColumnStretch(4, 2)
         layout.setColumnStretch(7, 3)
         self.setWidget(root)

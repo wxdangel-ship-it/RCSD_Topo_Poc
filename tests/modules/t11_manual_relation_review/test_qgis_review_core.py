@@ -230,6 +230,11 @@ def test_qgis_plugin_structure_and_metadata() -> None:
     assert "Hide setup" in dock_text
     assert "Show setup" in dock_text
     assert "self._set_setup_visible(False)" in dock_text
+    assert "Relation type" in dock_text
+    assert "Selected IDs" in dock_text
+    assert "Use Selection" in dock_text
+    assert "No valid" in dock_text
+    assert "Fill Selected IDs from the current RCSDNode or RCSDRoad selection." in dock_text
 
 
 def _write_review_workbooks(root: Path) -> tuple[Path, Path]:

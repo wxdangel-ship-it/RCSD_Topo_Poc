@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 from typing import Any
 
@@ -28,13 +27,10 @@ from qgis.core import QgsMapLayerProxyModel, QgsProject, QgsRectangle  # type: i
 from qgis.gui import QgsMapLayerComboBox  # type: ignore
 
 
-def _ensure_repo_src_on_path() -> None:
-    repo_src = Path(__file__).resolve().parents[2] / "src"
-    if repo_src.is_dir() and str(repo_src) not in sys.path:
-        sys.path.insert(0, str(repo_src))
+from .path_bootstrap import ensure_repo_src_on_path
 
 
-_ensure_repo_src_on_path()
+ensure_repo_src_on_path()
 
 from rcsd_topo_poc.modules.t11_manual_relation_review.qgis_review.excel_sync import (
     check_workbook_writable,

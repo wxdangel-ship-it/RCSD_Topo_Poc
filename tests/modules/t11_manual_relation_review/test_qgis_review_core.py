@@ -157,7 +157,7 @@ def test_qgis_plugin_structure_and_metadata() -> None:
     repo_root = Path(__file__).resolve().parents[3]
     plugin_root = repo_root / "qgis_plugins" / "t11_relation_review"
 
-    for name in ["metadata.txt", "__init__.py", "plugin.py", "dock_widget.py"]:
+    for name in ["metadata.txt", "__init__.py", "plugin.py", "dock_widget.py", "path_bootstrap.py"]:
         assert (plugin_root / name).is_file()
 
     parser = ConfigParser()

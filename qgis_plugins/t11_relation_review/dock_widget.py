@@ -61,7 +61,7 @@ RELATION_TYPES = [
     "no_valid_relation",
     "uncertain",
 ]
-DEFAULT_LOCATE_SCALE = 1000
+DEFAULT_LOCATE_SCALE = 1500
 DEFAULT_FONT_SIZE = 11
 TASK_STATUS_LABELS = {
     "blank": "NO DATA",

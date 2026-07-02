@@ -222,7 +222,7 @@ def test_qgis_plugin_structure_and_metadata() -> None:
     assert "Audit workbook" in dock_text
     assert "all_evidence_path" not in dock_text
     assert "no_evidence_path" not in dock_text
-    assert "DEFAULT_LOCATE_SCALE = 1000" in dock_text
+    assert "DEFAULT_LOCATE_SCALE = 1500" in dock_text
     assert "NO DATA" in dock_text
     assert "HAS DATA" in dock_text
     assert "TASK_DATA_SYMBOLS" in dock_text

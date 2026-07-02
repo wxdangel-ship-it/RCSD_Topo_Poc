@@ -25,7 +25,7 @@
 人工审计人员在 QGIS 中加载 SWSD Segment、SWSD 语义路口、RCSDRoad、RCSDNode 与单张 T11 审计 Excel 后，可以：
 
 1. 在左侧任务管理 Dock 中按优先级分页浏览唯一 `target_id` 任务。
-2. 点击任务定位到 SWSD 语义路口或 Segment 上下文，默认缩放到约 `1:1000`。
+2. 点击任务定位到 SWSD 语义路口或 Segment 上下文，默认缩放到约 `1:1500`。
 3. 从 QGIS 当前选择提取 RCSDNode / RCSDRoad ID。
 4. 在底部任务处理 Dock 中手动编辑 `manual_relation_type`、`selected_ids`、`comment`。
 5. 每次改动立即同步写入对应 Excel 第一条可消费行。

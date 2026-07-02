@@ -235,6 +235,11 @@ def test_qgis_plugin_structure_and_metadata() -> None:
     assert "Use Selection" in dock_text
     assert "No valid" in dock_text
     assert "Fill Selected IDs from the current RCSDNode or RCSDRoad selection." in dock_text
+    assert "Font" in dock_text
+    assert "Adjust font size for both T11 Relation Tasks and T11 Relation Processing." in dock_text
+    assert "set_font_size" in dock_text
+    assert "setCenter" in dock_text
+    assert "_average_center" in dock_text
 
 
 def _write_review_workbooks(root: Path) -> tuple[Path, Path]:

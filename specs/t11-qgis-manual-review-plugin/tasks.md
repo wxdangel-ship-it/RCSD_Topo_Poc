@@ -30,6 +30,7 @@
 - [x] 新增左侧任务管理 Dock 与底部任务处理 Dock。
 - [x] 任务管理 Dock 单次只加载一张审计 Excel。
 - [x] Setup 区可折叠，并在加载任务后自动收起。
+- [x] 任务管理 Dock 提供全局字号控制，并同步到任务处理 Dock。
 - [x] 任务列表格式化展示状态、目标、Segment、长度和人工数据存在性。
 - [x] 任务处理 Dock 按摘要、编辑字段和分组操作按钮组织，并为按钮提供 tooltip。
 
@@ -38,7 +39,7 @@
 - [x] 任务管理 Dock 支持五类图层绑定。
 - [x] 任务管理 Dock 支持字段/CRS/路径校验。
 - [x] 任务处理 Dock 支持定位到 SWSD 语义路口或 Segment。
-- [x] 任务点击定位后默认缩放到约 `1:1000`。
+- [x] 任务点击定位后显式居中，并默认缩放到约 `1:1000`。
 - [x] 任务处理 Dock 支持高亮已有 `selected_ids`。
 - [x] 任务处理 Dock 支持从 RCSDNode / RCSDRoad selection 填入 `selected_ids`。
 

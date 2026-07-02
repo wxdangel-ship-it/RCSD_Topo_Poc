@@ -20,11 +20,12 @@ from qgis.PyQt.QtWidgets import (  # type: ignore
     QMessageBox,
     QPushButton,
     QPlainTextEdit,
+    QSizePolicy,
     QSpinBox,
     QVBoxLayout,
     QWidget,
 )
-from qgis.core import QgsMapLayerProxyModel, QgsProject, QgsRectangle  # type: ignore
+from qgis.core import QgsMapLayerProxyModel, QgsPointXY, QgsProject, QgsRectangle  # type: ignore
 from qgis.gui import QgsMapLayerComboBox  # type: ignore
 
 
@@ -61,6 +62,7 @@ RELATION_TYPES = [
     "uncertain",
 ]
 DEFAULT_LOCATE_SCALE = 1000
+DEFAULT_FONT_SIZE = 11
 TASK_STATUS_LABELS = {
     "blank": "NO DATA",
     "filled": "HAS DATA",
@@ -75,31 +77,33 @@ TASK_STATUS_BACKGROUNDS = {
 }
 
 
-DOCK_STYLE = """
-QWidget {
-    font-size: 11pt;
-}
-QGroupBox {
-    font-size: 11pt;
+def build_dock_style(font_size: int) -> str:
+    task_item_height = max(42, font_size * 5)
+    return f"""
+QWidget {{
+    font-size: {font_size}pt;
+}}
+QGroupBox {{
+    font-size: {font_size}pt;
     font-weight: 600;
     margin-top: 10px;
     padding-top: 8px;
-}
-QLabel, QComboBox, QLineEdit, QListWidget, QPlainTextEdit, QSpinBox {
-    font-size: 11pt;
-}
-QPushButton {
-    font-size: 11pt;
+}}
+QLabel, QComboBox, QLineEdit, QListWidget, QPlainTextEdit, QSpinBox {{
+    font-size: {font_size}pt;
+}}
+QPushButton {{
+    font-size: {font_size}pt;
     min-height: 26px;
     padding: 3px 7px;
-}
-QLineEdit, QComboBox, QSpinBox {
+}}
+QLineEdit, QComboBox, QSpinBox {{
     min-height: 26px;
-}
-QListWidget::item {
-    min-height: 50px;
+}}
+QListWidget::item {{
+    min-height: {task_item_height}px;
     padding: 4px;
-}
+}}
 """
 
 
@@ -113,6 +117,7 @@ class T11RelationReviewDock(QDockWidget):
         self.current_page = 0
         self.read_only = False
         self._loading_ui = False
+        self.font_size = DEFAULT_FONT_SIZE
         self.processing_dock: T11RelationProcessingDock | None = None
         self._backed_up_workbooks: set[Path] = set()
         self._sync_timer = QTimer(self)
@@ -126,10 +131,14 @@ class T11RelationReviewDock(QDockWidget):
         processing_dock.relation_type.currentTextChanged.connect(self._queue_sync)
         processing_dock.selected_ids.editingFinished.connect(self._queue_sync)
         processing_dock.comment.textChanged.connect(self._queue_sync)
+        processing_dock.set_font_size(self.font_size)
 
     def _build_ui(self) -> None:
+        self.setMinimumWidth(260)
         root = QWidget(self)
-        root.setStyleSheet(DOCK_STYLE)
+        self.root_widget = root
+        root.setMinimumWidth(240)
+        root.setStyleSheet(build_dock_style(self.font_size))
         layout = QVBoxLayout(root)
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(4)
@@ -139,8 +148,17 @@ class T11RelationReviewDock(QDockWidget):
         self.setup_toggle_button.clicked.connect(self._toggle_setup)
         self.setup_summary_label = QLabel("")
         self.setup_summary_label.setWordWrap(False)
+        self.setup_summary_label.setMinimumWidth(0)
+        self.setup_summary_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        self.font_size_spin = QSpinBox()
+        self.font_size_spin.setRange(8, 16)
+        self.font_size_spin.setValue(self.font_size)
+        self.font_size_spin.setToolTip("Adjust font size for both T11 Relation Tasks and T11 Relation Processing.")
+        self.font_size_spin.valueChanged.connect(self._set_font_size)
         setup_header.addWidget(self.setup_toggle_button)
         setup_header.addWidget(self.setup_summary_label, stretch=1)
+        setup_header.addWidget(QLabel("Font"))
+        setup_header.addWidget(self.font_size_spin)
         layout.addLayout(setup_header)
 
         self.setup_body = QWidget(root)
@@ -153,6 +171,8 @@ class T11RelationReviewDock(QDockWidget):
         workbook_layout.setContentsMargins(6, 6, 6, 6)
         workbook_layout.setVerticalSpacing(4)
         self.audit_workbook_path = QLineEdit()
+        self.audit_workbook_path.setMinimumWidth(80)
+        self.audit_workbook_path.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
         self.audit_workbook_path.textChanged.connect(self._update_setup_summary)
         workbook_layout.addWidget(QLabel("Audit workbook"), 0, 0)
         workbook_layout.addWidget(self.audit_workbook_path, 0, 1)
@@ -177,6 +197,8 @@ class T11RelationReviewDock(QDockWidget):
         ]:
             combo = QgsMapLayerComboBox()
             combo.setFilters(QgsMapLayerProxyModel.VectorLayer)
+            combo.setMinimumWidth(80)
+            combo.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
             if role == "task_helper":
                 combo.setAllowEmptyLayer(True)
             combo.layerChanged.connect(self._update_setup_summary)
@@ -206,6 +228,7 @@ class T11RelationReviewDock(QDockWidget):
         layout.addLayout(pager)
 
         self.task_list = QListWidget()
+        self.task_list.setMinimumWidth(0)
         self.task_list.currentRowChanged.connect(self._task_row_changed)
         layout.addWidget(self.task_list, stretch=1)
 
@@ -223,10 +246,20 @@ class T11RelationReviewDock(QDockWidget):
         self.setup_toggle_button.setText("Hide setup" if visible else "Show setup")
         self._update_setup_summary()
 
+    def _set_font_size(self, value: int) -> None:
+        self.font_size = value
+        self.root_widget.setStyleSheet(build_dock_style(value))
+        if self.processing_dock is not None:
+            self.processing_dock.set_font_size(value)
+        self._refresh_task_list()
+
     def _update_setup_summary(self, *_args: Any) -> None:
         workbook = Path(self.audit_workbook_path.text()).name if self.audit_workbook_path.text() else "no workbook"
         bound_layers = sum(1 for combo in self.layer_combos.values() if combo.currentLayer() is not None)
         self.setup_summary_label.setText(f"Workbook: {workbook} | Layers: {bound_layers}/{len(self.layer_combos)}")
+
+    def _task_item_height(self) -> int:
+        return max(42, self.font_size * 5)
 
     def _browse_button(self, target: QLineEdit) -> QPushButton:
         button = QPushButton("...")
@@ -277,7 +310,7 @@ class T11RelationReviewDock(QDockWidget):
         for index in range(start, end):
             task = self.tasks[index]
             item = QListWidgetItem(self._format_task_item_text(task))
-            item.setSizeHint(QSize(0, 56))
+            item.setSizeHint(QSize(0, self._task_item_height()))
             item.setToolTip(self._format_task_tooltip(task))
             item.setBackground(QColor(TASK_STATUS_BACKGROUNDS.get(task.status, "#ffffff")))
             item.setData(Qt.UserRole, index)
@@ -506,18 +539,34 @@ class T11RelationReviewDock(QDockWidget):
         if zoom:
             extent = QgsRectangle()
             extent.setMinimal()
+            centers = []
             for feature in features:
                 geom = feature.geometry()
                 if geom and not geom.isEmpty():
-                    extent.combineExtentWith(geom.boundingBox())
-            if not extent.isEmpty():
+                    box = geom.boundingBox()
+                    centers.append(box.center())
+                    if not box.isEmpty():
+                        extent.combineExtentWith(box)
+            center = extent.center() if not extent.isEmpty() else self._average_center(centers)
+            if center is not None:
                 canvas = self.iface.mapCanvas()
-                canvas.setExtent(extent)
+                if not extent.isEmpty():
+                    canvas.setExtent(extent)
+                if hasattr(canvas, "setCenter"):
+                    canvas.setCenter(center)
                 if hasattr(canvas, "zoomScale"):
                     canvas.zoomScale(DEFAULT_LOCATE_SCALE)
                 canvas.refresh()
         if current_layer is not None:
             self.iface.setActiveLayer(current_layer)
+
+    def _average_center(self, centers: list[Any]) -> QgsPointXY | None:
+        if not centers:
+            return None
+        return QgsPointXY(
+            sum(point.x() for point in centers) / len(centers),
+            sum(point.y() for point in centers) / len(centers),
+        )
 
     def _validate_layers(self) -> None:
         layers: dict[str, LayerDescriptor] = {}
@@ -560,12 +609,14 @@ class T11RelationProcessingDock(QDockWidget):
         super().__init__("T11 Relation Processing")
         self.iface = iface
         self.task_dock = task_dock
+        self.font_size = getattr(task_dock, "font_size", DEFAULT_FONT_SIZE)
         self.setAllowedAreas(Qt.BottomDockWidgetArea | Qt.TopDockWidgetArea)
         self._build_ui()
 
     def _build_ui(self) -> None:
         root = QWidget(self)
-        root.setStyleSheet(DOCK_STYLE)
+        self.root_widget = root
+        root.setStyleSheet(build_dock_style(self.font_size))
         layout = QGridLayout(root)
         layout.setContentsMargins(8, 5, 8, 5)
         layout.setHorizontalSpacing(10)
@@ -588,7 +639,7 @@ class T11RelationProcessingDock(QDockWidget):
         self.comment.setMaximumBlockCount(8)
         self.comment.setPlaceholderText("Manual note")
         self.comment.setToolTip("Free-form manual comment written to comment.")
-        self.comment.setFixedHeight(54)
+        self.comment.setFixedHeight(self._comment_height())
 
         layout.addWidget(QLabel("Target"), 0, 0)
         layout.addWidget(self.target_label, 0, 1)
@@ -642,3 +693,11 @@ class T11RelationProcessingDock(QDockWidget):
         layout.setColumnStretch(4, 2)
         layout.setColumnStretch(7, 3)
         self.setWidget(root)
+
+    def set_font_size(self, value: int) -> None:
+        self.font_size = value
+        self.root_widget.setStyleSheet(build_dock_style(value))
+        self.comment.setFixedHeight(self._comment_height())
+
+    def _comment_height(self) -> int:
+        return max(44, self.font_size * 5)

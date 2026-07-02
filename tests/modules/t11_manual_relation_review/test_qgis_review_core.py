@@ -256,9 +256,9 @@ def test_qgis_plugin_structure_and_metadata() -> None:
     assert "self.relation_type.setVisible(False)" not in dock_text
     assert 'layout.addWidget(self.relation_type, 1, 1, 1, 2)' in dock_text
     assert 'layout.addWidget(self.selected_ids, 1, 4, 1, 2)' in dock_text
-    assert 'layout.addWidget(self.comment, 1, 7, 3, 2)' in dock_text
+    assert 'layout.addWidget(self.comment, 1, 7, 4, 2)' in dock_text
     assert 'layout.addLayout(relation_button_row, 2, 1, 1, 5)' in dock_text
-    assert 'actions.addStretch(1)' in dock_text
+    assert 'layout.addLayout(actions, 4, 0, 1, 7)' in dock_text
     assert "relation_type_buttons" in dock_text
     assert "_apply_relation_type_button" in dock_text
     assert "_activate_layer_for_relation_type" in dock_text
@@ -266,7 +266,11 @@ def test_qgis_plugin_structure_and_metadata() -> None:
     assert '"rcsdnode"' in dock_text
     assert '"rcsdroad"' in dock_text
     assert "Selected IDs" in dock_text
+    assert "Locate" in dock_text
+    assert "Show IDs" in dock_text
+    assert "Use Selection" in dock_text
     assert "No valid" in dock_text
+    assert "Read the current RCSDNode or RCSDRoad map selection into Selected IDs." in dock_text
     assert "Font" in dock_text
     assert "Adjust font size for both T11 Relation Tasks and T11 Relation Processing." in dock_text
     assert "Display" in dock_text
@@ -277,11 +281,11 @@ def test_qgis_plugin_structure_and_metadata() -> None:
     assert "_visible_task_indices" in dock_text
     assert 'task.status in {"blank", "partial"}' in dock_text
     assert "set_font_size" in dock_text
-    assert "max(30, font_size * 3)" in dock_text
+    assert "max(44, self.font_size * 4)" in dock_text
     assert "padding: 2px 3px;" in dock_text
-    assert '("Locate", self.task_dock._locate_current_task' not in dock_text
-    assert '("Show IDs", self.task_dock._highlight_current_ids' not in dock_text
-    assert '("Use Selection", self.task_dock._fill_from_selection' not in dock_text
+    assert '("Locate", self.task_dock._locate_current_task' in dock_text
+    assert '("Show IDs", self.task_dock._highlight_current_ids' in dock_text
+    assert '("Use Selection", self.task_dock._fill_from_selection' in dock_text
     assert "setCenter" in dock_text
     assert "_average_center" in dock_text
     assert "itemClicked.connect" in dock_text

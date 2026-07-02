@@ -831,29 +831,32 @@ class T11RelationProcessingDock(QDockWidget):
         layout.addWidget(QLabel("Selected IDs"), 1, 3)
         layout.addWidget(self.selected_ids, 1, 4, 1, 2)
         layout.addWidget(QLabel("Comment"), 1, 6)
-        layout.addWidget(self.comment, 1, 7, 3, 2)
+        layout.addWidget(self.comment, 1, 7, 4, 2)
         layout.addWidget(QLabel("Quick type"), 2, 0)
         layout.addLayout(relation_button_row, 2, 1, 1, 5)
 
         actions = QHBoxLayout()
-        actions.setSpacing(8)
+        actions.setSpacing(6)
         button_groups = [
             [
                 ("Prev", self.task_dock._previous_task, "Move to the previous audit task."),
                 ("Next", self.task_dock._next_task, "Move to the next audit task."),
+                ("Locate", self.task_dock._locate_current_task, "Zoom to and select the current SWSD junction or Segment."),
+                ("Show IDs", self.task_dock._highlight_current_ids, "Highlight RCSDNode/RCSDRoad features already listed in Selected IDs."),
+                ("Use Selection", self.task_dock._fill_from_selection, "Read the current RCSDNode or RCSDRoad map selection into Selected IDs."),
                 ("Clear", self.task_dock._clear_current_fields, "Clear relation type, selected IDs, and comment for this task."),
             ],
         ]
-        actions.addStretch(1)
         for group_index, button_group in enumerate(button_groups):
             if group_index:
                 actions.addSpacing(14)
             for text, callback, tooltip in button_group:
                 button = QPushButton(text)
+                button.setMinimumWidth(0)
                 button.setToolTip(tooltip)
                 button.clicked.connect(callback)
                 actions.addWidget(button)
-        layout.addLayout(actions, 3, 0, 1, 7)
+        layout.addLayout(actions, 4, 0, 1, 7)
 
         layout.setColumnStretch(1, 1)
         layout.setColumnStretch(3, 1)
@@ -868,7 +871,7 @@ class T11RelationProcessingDock(QDockWidget):
         self.comment.setFixedHeight(self._comment_height())
 
     def _comment_height(self) -> int:
-        return max(44, self.font_size * 5)
+        return max(44, self.font_size * 4)
 
     def set_relation_type(self, relation_type: str) -> None:
         self.relation_type.setCurrentText(relation_type)

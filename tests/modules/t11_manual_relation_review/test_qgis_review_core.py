@@ -242,11 +242,14 @@ def test_qgis_plugin_structure_and_metadata() -> None:
     assert "NO DATA" in dock_text
     assert "PARTIAL" in dock_text
     assert "HAS DATA" in dock_text
+    assert "AUTOSAVE_INTERVAL_MS = 5 * 60 * 1000" in dock_text
+    assert "CURRENT_TASK_BACKGROUND" in dock_text
     assert "TASK_DATA_SYMBOLS" in dock_text
     assert "✅ +" in dock_text
     assert "❌ -" in dock_text
     assert "{data_symbol} {task.target_id} | {task.swsd_segment_id}" in dock_text
     assert "has_manual_data" in dock_text
+    assert "pending_save" in dock_text
     assert "_format_task_tooltip" in dock_text
     assert "Hide setup" in dock_text
     assert "Show setup" in dock_text
@@ -277,12 +280,27 @@ def test_qgis_plugin_structure_and_metadata() -> None:
     assert "QCheckBox" in dock_text
     assert "Only unfinished" in dock_text
     assert "self.show_incomplete_only = False" in dock_text
+    assert "self._dirty_task_indices" in dock_text
+    assert "selected_ids.textChanged.connect(self._queue_sync)" in dock_text
     assert "_set_show_incomplete_only" in dock_text
     assert "_visible_task_indices" in dock_text
-    assert 'task.status in {"blank", "partial"}' in dock_text
+    assert 'index == self.current_index or task.status in {"blank", "partial"}' in dock_text
     assert "set_font_size" in dock_text
     assert "max(44, self.font_size * 4)" in dock_text
     assert "padding: 2px 3px;" in dock_text
+    assert '("Save", self.task_dock._save_dirty_tasks' in dock_text
+    assert dock_text.index('("Save", self.task_dock._save_dirty_tasks') < dock_text.index(
+        '("Prev", self.task_dock._previous_task'
+    )
+    assert dock_text.index('("Prev", self.task_dock._previous_task') < dock_text.index(
+        '("Next", self.task_dock._next_task'
+    )
+    assert dock_text.index('("Next", self.task_dock._next_task') < dock_text.index(
+        '("Clear", self.task_dock._clear_current_fields'
+    )
+    assert dock_text.index('("Clear", self.task_dock._clear_current_fields') < dock_text.index(
+        '("Locate", self.task_dock._locate_current_task'
+    )
     assert '("Locate", self.task_dock._locate_current_task' in dock_text
     assert '("Show IDs", self.task_dock._highlight_current_ids' in dock_text
     assert '("Use Selection", self.task_dock._fill_from_selection' in dock_text
@@ -294,7 +312,10 @@ def test_qgis_plugin_structure_and_metadata() -> None:
     assert "_clear_skip_next_clicked_index" in dock_text
     assert "keep_active=True" in dock_text
     assert "_processing_manual_values" in dock_text
-    assert "if values == self._task_manual_values(task):" in dock_text
+    assert "_capture_current_task_edits" in dock_text
+    assert "_save_dirty_tasks" in dock_text
+    assert "_save_task_index" in dock_text
+    assert "_sync_timer.start(400)" not in dock_text
     assert "_refresh_current_task_item" in dock_text
     assert "_reload_after_sync(task.target_id)" not in dock_text
 

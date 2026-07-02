@@ -77,6 +77,7 @@ RELATION_TYPE_BUTTONS = [
 ]
 DEFAULT_LOCATE_SCALE = 1500
 DEFAULT_FONT_SIZE = 11
+AUTOSAVE_INTERVAL_MS = 5 * 60 * 1000
 TASK_STATUS_LABELS = {
     "blank": "NO DATA",
     "partial": "PARTIAL",
@@ -91,6 +92,7 @@ TASK_STATUS_BACKGROUNDS = {
     "NULL": "#f1f3f4",
     "uncertain": "#e3f2fd",
 }
+CURRENT_TASK_BACKGROUND = "#cfe8ff"
 TASK_DATA_SYMBOLS = {
     "blank": "❌ -",
     "partial": "❌ -",
@@ -149,17 +151,19 @@ class T11RelationReviewDock(QDockWidget):
         self.font_size = DEFAULT_FONT_SIZE
         self.processing_dock: T11RelationProcessingDock | None = None
         self._backed_up_workbooks: set[Path] = set()
+        self._dirty_task_indices: set[int] = set()
         self._skip_next_clicked_index: int | None = None
-        self._sync_timer = QTimer(self)
-        self._sync_timer.setSingleShot(True)
-        self._sync_timer.timeout.connect(self._sync_current_task)
+        self._autosave_timer = QTimer(self)
+        self._autosave_timer.setInterval(AUTOSAVE_INTERVAL_MS)
+        self._autosave_timer.timeout.connect(lambda: self._save_dirty_tasks(automatic=True))
+        self._autosave_timer.start()
         self.setAllowedAreas(Qt.LeftDockWidgetArea | Qt.RightDockWidgetArea)
         self._build_ui()
 
     def bind_processing_dock(self, processing_dock: "T11RelationProcessingDock") -> None:
         self.processing_dock = processing_dock
         processing_dock.relation_type.currentTextChanged.connect(self._relation_type_changed)
-        processing_dock.selected_ids.editingFinished.connect(self._queue_sync)
+        processing_dock.selected_ids.textChanged.connect(self._queue_sync)
         processing_dock.comment.textChanged.connect(self._queue_sync)
         processing_dock.set_font_size(self.font_size)
 
@@ -326,6 +330,7 @@ class T11RelationReviewDock(QDockWidget):
         except Exception as exc:
             self._set_message(f"Failed to load tasks: {exc}", error=True)
             return
+        self._dirty_task_indices.clear()
         self.current_page = 0
         visible_indices = self._visible_task_indices()
         self.current_index = visible_indices[0] if visible_indices else -1
@@ -340,6 +345,7 @@ class T11RelationReviewDock(QDockWidget):
         self._refresh_task_list()
 
     def _set_show_incomplete_only(self, checked: bool) -> None:
+        self._capture_current_task_edits()
         self.show_incomplete_only = checked
         self.current_page = 0
         visible_indices = self._visible_task_indices()
@@ -349,6 +355,7 @@ class T11RelationReviewDock(QDockWidget):
         self._refresh_task_list()
 
     def _turn_page(self, delta: int) -> None:
+        self._capture_current_task_edits()
         visible_indices = self._visible_task_indices()
         max_page = max((len(visible_indices) - 1) // self.page_size, 0)
         self.current_page = min(max(self.current_page + delta, 0), max_page)
@@ -366,7 +373,7 @@ class T11RelationReviewDock(QDockWidget):
             item = QListWidgetItem(self._format_task_item_text(task))
             item.setSizeHint(QSize(0, self._task_item_height()))
             item.setToolTip(self._format_task_tooltip(task))
-            item.setBackground(QColor(TASK_STATUS_BACKGROUNDS.get(task.status, "#ffffff")))
+            item.setBackground(self._task_item_background(index, task))
             item.setData(Qt.UserRole, index)
             self.task_list.addItem(item)
         if self.current_index in page_indices:
@@ -378,7 +385,16 @@ class T11RelationReviewDock(QDockWidget):
     def _visible_task_indices(self) -> list[int]:
         if not self.show_incomplete_only:
             return list(range(len(self.tasks)))
-        return [index for index, task in enumerate(self.tasks) if task.status in {"blank", "partial"}]
+        return [
+            index
+            for index, task in enumerate(self.tasks)
+            if index == self.current_index or task.status in {"blank", "partial"}
+        ]
+
+    def _task_item_background(self, index: int, task: ReviewTask) -> QColor:
+        if index == self.current_index:
+            return QColor(CURRENT_TASK_BACKGROUND)
+        return QColor(TASK_STATUS_BACKGROUNDS.get(task.status, "#ffffff"))
 
     def _format_task_item_text(self, task: ReviewTask) -> str:
         data_symbol = TASK_DATA_SYMBOLS.get(task.status, "+" if self._task_has_manual_data(task) else "-")
@@ -387,6 +403,15 @@ class T11RelationReviewDock(QDockWidget):
     def _task_has_manual_data(self, task: ReviewTask) -> bool:
         return bool(task.manual_relation_type or task.selected_ids or task.comment)
 
+    def _task_index(self, task: ReviewTask) -> int:
+        for index, candidate in enumerate(self.tasks):
+            if candidate is task:
+                return index
+        try:
+            return self.tasks.index(task)
+        except ValueError:
+            return -1
+
     def _format_task_tooltip(self, task: ReviewTask) -> str:
         return (
             f"target_id: {task.target_id}\n"
@@ -394,6 +419,7 @@ class T11RelationReviewDock(QDockWidget):
             f"segment_length_m: {task.segment_length_m:.3f}\n"
             f"status: {TASK_STATUS_LABELS.get(task.status, task.status)}\n"
             f"has_manual_data: {'yes' if self._task_has_manual_data(task) else 'no'}\n"
+            f"pending_save: {'yes' if self._task_index(task) in self._dirty_task_indices else 'no'}\n"
             f"manual_relation_type: {task.manual_relation_type or '(empty)'}\n"
             f"selected_ids: {task.selected_ids or '(empty)'}\n"
             f"comment: {task.comment or '(empty)'}\n"
@@ -417,7 +443,13 @@ class T11RelationReviewDock(QDockWidget):
         self._activate_task_item(item)
 
     def _activate_task_item(self, item: QListWidgetItem) -> None:
-        self.current_index = int(item.data(Qt.UserRole))
+        next_index = int(item.data(Qt.UserRole))
+        if next_index == self.current_index:
+            self._show_locate_and_prepare_selection()
+            return
+        self._capture_current_task_edits()
+        self.current_index = next_index
+        self._refresh_task_list()
         self._show_locate_and_prepare_selection()
 
     def _clear_skip_next_clicked_index(self) -> None:
@@ -456,6 +488,7 @@ class T11RelationReviewDock(QDockWidget):
             self._loading_ui = False
 
     def _previous_task(self) -> None:
+        self._capture_current_task_edits()
         visible_indices = self._visible_task_indices()
         if not visible_indices:
             return
@@ -470,6 +503,7 @@ class T11RelationReviewDock(QDockWidget):
             self._show_locate_and_prepare_selection()
 
     def _next_task(self) -> None:
+        self._capture_current_task_edits()
         visible_indices = self._visible_task_indices()
         if not visible_indices:
             return
@@ -484,23 +518,59 @@ class T11RelationReviewDock(QDockWidget):
             self._show_locate_and_prepare_selection()
 
     def _queue_sync(self) -> None:
+        if self._loading_ui or self.read_only:
+            return
+        self._capture_current_task_edits()
+
+    def _capture_current_task_edits(self) -> bool:
         task = self._current_task()
         processing = self.processing_dock
         if self._loading_ui or self.read_only or task is None or processing is None:
-            return
-        if self._processing_manual_values(processing) == self._task_manual_values(task):
-            self._sync_timer.stop()
-            return
-        self._sync_timer.start(400)
-
-    def _sync_current_task(self) -> None:
-        task = self._current_task()
-        processing = self.processing_dock
-        if task is None or processing is None or self.read_only:
-            return
+            return False
         values = self._processing_manual_values(processing)
         if values == self._task_manual_values(task):
-            return
+            self._refresh_current_task_item()
+            return False
+        updated_task = replace(
+            task,
+            manual_relation_type=values["manual_relation_type"],
+            selected_ids=values["selected_ids"],
+            comment=values["comment"],
+            status=task_status(values),
+            raw={**task.raw, **values},
+        )
+        self.tasks[self.current_index] = updated_task
+        self._dirty_task_indices.add(self.current_index)
+        processing.status_label.setText(TASK_STATUS_LABELS.get(updated_task.status, updated_task.status))
+        self._refresh_current_task_item()
+        self._set_message(f"Pending save for {updated_task.target_id}.")
+        return True
+
+    def _sync_current_task(self) -> None:
+        self._save_dirty_tasks()
+
+    def _save_dirty_tasks(self, automatic: bool = False) -> bool:
+        self._capture_current_task_edits()
+        if self.read_only:
+            return False
+        dirty_indices = sorted(index for index in self._dirty_task_indices if 0 <= index < len(self.tasks))
+        if not dirty_indices:
+            if not automatic:
+                self._set_message("No pending changes to save.")
+            return True
+        saved = 0
+        for index in dirty_indices:
+            if not self._save_task_index(index):
+                return False
+            saved += 1
+        self._refresh_task_list()
+        label = "Autosaved" if automatic else "Saved"
+        self._set_message(f"{label} {saved} pending task(s) to Excel.")
+        return True
+
+    def _save_task_index(self, index: int) -> bool:
+        task = self.tasks[index]
+        values = self._task_manual_values(task)
         try:
             backup = task.workbook_path not in self._backed_up_workbooks
             update_manual_fields(
@@ -510,21 +580,15 @@ class T11RelationReviewDock(QDockWidget):
                 backup=backup,
             )
             self._backed_up_workbooks.add(task.workbook_path)
-            updated_task = replace(
-                task,
-                manual_relation_type=values["manual_relation_type"],
-                selected_ids=values["selected_ids"],
-                comment=values["comment"],
-                status=task_status(values),
-                raw={**task.raw, **values},
-            )
-            self.tasks[self.current_index] = updated_task
-            processing.status_label.setText(TASK_STATUS_LABELS.get(updated_task.status, updated_task.status))
+            self._dirty_task_indices.discard(index)
+            if index == self.current_index and self.processing_dock is not None:
+                self.processing_dock.status_label.setText(TASK_STATUS_LABELS.get(task.status, task.status))
             self._refresh_current_task_item()
-            self._set_message(f"Synced {task.target_id} to {task.workbook_path.name}:{task.excel_row}.")
+            return True
         except Exception as exc:
             self.read_only = True
-            self._set_message(f"Sync failed; editing disabled: {exc}", error=True)
+            self._set_message(f"Save failed; editing disabled: {exc}", error=True)
+            return False
 
     def _relation_type_changed(self, relation_type: str) -> None:
         if not self._loading_ui:
@@ -559,7 +623,7 @@ class T11RelationReviewDock(QDockWidget):
             return
         item.setText(self._format_task_item_text(task))
         item.setToolTip(self._format_task_tooltip(task))
-        item.setBackground(QColor(TASK_STATUS_BACKGROUNDS.get(task.status, "#ffffff")))
+        item.setBackground(self._task_item_background(self.current_index, task))
 
     def _reload_after_sync(self, target_id: str) -> None:
         paths = sorted({task.workbook_path for task in self.tasks})
@@ -839,12 +903,13 @@ class T11RelationProcessingDock(QDockWidget):
         actions.setSpacing(6)
         button_groups = [
             [
+                ("Save", self.task_dock._save_dirty_tasks, "Save pending edits to the Excel workbook now."),
                 ("Prev", self.task_dock._previous_task, "Move to the previous audit task."),
                 ("Next", self.task_dock._next_task, "Move to the next audit task."),
+                ("Clear", self.task_dock._clear_current_fields, "Clear relation type, selected IDs, and comment for this task."),
                 ("Locate", self.task_dock._locate_current_task, "Zoom to and select the current SWSD junction or Segment."),
                 ("Show IDs", self.task_dock._highlight_current_ids, "Highlight RCSDNode/RCSDRoad features already listed in Selected IDs."),
                 ("Use Selection", self.task_dock._fill_from_selection, "Read the current RCSDNode or RCSDRoad map selection into Selected IDs."),
-                ("Clear", self.task_dock._clear_current_fields, "Clear relation type, selected IDs, and comment for this task."),
             ],
         ]
         for group_index, button_group in enumerate(button_groups):

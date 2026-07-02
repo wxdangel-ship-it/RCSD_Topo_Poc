@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
-from qgis.PyQt.QtCore import QSize, QTimer, Qt  # type: ignore
+from qgis.PyQt.QtCore import QObject, QSize, QThread, QTimer, Qt, pyqtSignal  # type: ignore
 from qgis.PyQt.QtGui import QColor  # type: ignore
 from qgis.PyQt.QtWidgets import (  # type: ignore
     QComboBox,
@@ -102,6 +102,47 @@ TASK_DATA_SYMBOLS = {
 }
 
 
+@dataclass(frozen=True)
+class _PendingExcelSave:
+    index: int
+    workbook_path: Path
+    excel_row: int
+    values: dict[str, str]
+    backup: bool
+
+
+class _ExcelSaveWorker(QObject):
+    finished = pyqtSignal(object, object, object)
+
+    def __init__(self, payloads: list[_PendingExcelSave], automatic: bool):
+        super().__init__()
+        self.payloads = payloads
+        self.automatic = automatic
+
+    def run(self) -> None:
+        saved: list[dict[str, Any]] = []
+        error: str | None = None
+        try:
+            for payload in self.payloads:
+                result = update_manual_fields(
+                    workbook_path=payload.workbook_path,
+                    excel_row=payload.excel_row,
+                    values=payload.values,
+                    backup=payload.backup,
+                )
+                saved.append(
+                    {
+                        "index": payload.index,
+                        "workbook_path": payload.workbook_path,
+                        "backup_path": result.backup_path,
+                        "values": payload.values,
+                    }
+                )
+        except Exception as exc:
+            error = f"{type(exc).__name__}: {exc}"
+        self.finished.emit(saved, error, self.automatic)
+
+
 def build_dock_style(font_size: int) -> str:
     task_item_height = max(30, font_size * 3)
     return f"""
@@ -152,6 +193,8 @@ class T11RelationReviewDock(QDockWidget):
         self.processing_dock: T11RelationProcessingDock | None = None
         self._backed_up_workbooks: set[Path] = set()
         self._dirty_task_indices: set[int] = set()
+        self._save_thread: QThread | None = None
+        self._save_worker: _ExcelSaveWorker | None = None
         self._skip_next_clicked_index: int | None = None
         self._autosave_timer = QTimer(self)
         self._autosave_timer.setInterval(AUTOSAVE_INTERVAL_MS)
@@ -552,42 +595,68 @@ class T11RelationReviewDock(QDockWidget):
         self._capture_current_task_edits()
         if self.read_only:
             return False
-        dirty_indices = sorted(index for index in self._dirty_task_indices if 0 <= index < len(self.tasks))
-        if not dirty_indices:
+        if self._save_thread is not None:
+            if not automatic:
+                self._set_message("Save already in progress; pending edits will remain queued.")
+            return False
+        payloads = self._pending_excel_saves()
+        if not payloads:
             if not automatic:
                 self._set_message("No pending changes to save.")
             return True
-        saved = 0
-        for index in dirty_indices:
-            if not self._save_task_index(index):
-                return False
-            saved += 1
-        self._refresh_task_list()
-        label = "Autosaved" if automatic else "Saved"
-        self._set_message(f"{label} {saved} pending task(s) to Excel.")
+        self._start_save_worker(payloads, automatic=automatic)
         return True
 
-    def _save_task_index(self, index: int) -> bool:
-        task = self.tasks[index]
-        values = self._task_manual_values(task)
-        try:
-            backup = task.workbook_path not in self._backed_up_workbooks
-            update_manual_fields(
-                workbook_path=task.workbook_path,
-                excel_row=task.excel_row,
-                values=values,
-                backup=backup,
+    def _pending_excel_saves(self) -> list[_PendingExcelSave]:
+        payloads: list[_PendingExcelSave] = []
+        seen_workbooks = set(self._backed_up_workbooks)
+        dirty_indices = sorted(index for index in self._dirty_task_indices if 0 <= index < len(self.tasks))
+        for index in dirty_indices:
+            task = self.tasks[index]
+            backup = task.workbook_path not in seen_workbooks
+            seen_workbooks.add(task.workbook_path)
+            payloads.append(
+                _PendingExcelSave(
+                    index=index,
+                    workbook_path=task.workbook_path,
+                    excel_row=task.excel_row,
+                    values=self._task_manual_values(task),
+                    backup=backup,
+                )
             )
-            self._backed_up_workbooks.add(task.workbook_path)
-            self._dirty_task_indices.discard(index)
-            if index == self.current_index and self.processing_dock is not None:
-                self.processing_dock.status_label.setText(TASK_STATUS_LABELS.get(task.status, task.status))
-            self._refresh_current_task_item()
-            return True
-        except Exception as exc:
-            self.read_only = True
-            self._set_message(f"Save failed; editing disabled: {exc}", error=True)
-            return False
+        return payloads
+
+    def _start_save_worker(self, payloads: list[_PendingExcelSave], automatic: bool = False) -> None:
+        self._save_thread = QThread(self)
+        self._save_worker = _ExcelSaveWorker(payloads, automatic)
+        self._save_worker.moveToThread(self._save_thread)
+        self._save_thread.started.connect(self._save_worker.run)
+        self._save_worker.finished.connect(self._on_save_worker_finished)
+        self._save_worker.finished.connect(self._save_thread.quit)
+        self._save_worker.finished.connect(self._save_worker.deleteLater)
+        self._save_thread.finished.connect(self._save_thread.deleteLater)
+        label = "Autosaving" if automatic else "Saving"
+        self._set_message(f"{label} {len(payloads)} pending task(s) in background.")
+        self._save_thread.start()
+
+    def _on_save_worker_finished(self, saved: list[dict[str, Any]], error: str | None, automatic: bool) -> None:
+        for result in saved:
+            workbook_path = result["workbook_path"]
+            if result.get("backup_path") is not None:
+                self._backed_up_workbooks.add(workbook_path)
+            index = int(result["index"])
+            if 0 <= index < len(self.tasks) and self._task_manual_values(self.tasks[index]) == result["values"]:
+                self._dirty_task_indices.discard(index)
+        self._save_thread = None
+        self._save_worker = None
+        self._refresh_task_list()
+        if error:
+            self._set_message(f"Save failed after {len(saved)} task(s); pending edits kept: {error}", error=True)
+            return
+        label = "Autosaved" if automatic else "Saved"
+        remaining = len(self._dirty_task_indices)
+        suffix = f"; {remaining} newer pending task(s) remain." if remaining else "."
+        self._set_message(f"{label} {len(saved)} pending task(s) to Excel{suffix}")
 
     def _relation_type_changed(self, relation_type: str) -> None:
         if not self._loading_ui:

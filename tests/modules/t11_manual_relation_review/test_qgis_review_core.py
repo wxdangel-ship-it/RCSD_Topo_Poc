@@ -243,6 +243,8 @@ def test_qgis_plugin_structure_and_metadata() -> None:
     assert "PARTIAL" in dock_text
     assert "HAS DATA" in dock_text
     assert "AUTOSAVE_INTERVAL_MS = 5 * 60 * 1000" in dock_text
+    assert "_ExcelSaveWorker" in dock_text
+    assert "QThread" in dock_text
     assert "CURRENT_TASK_BACKGROUND" in dock_text
     assert "TASK_DATA_SYMBOLS" in dock_text
     assert "✅ +" in dock_text
@@ -325,7 +327,11 @@ def test_qgis_plugin_structure_and_metadata() -> None:
     assert "_processing_manual_values" in dock_text
     assert "_capture_current_task_edits" in dock_text
     assert "_save_dirty_tasks" in dock_text
-    assert "_save_task_index" in dock_text
+    assert "_pending_excel_saves" in dock_text
+    assert "_start_save_worker" in dock_text
+    assert "_on_save_worker_finished" in dock_text
+    assert "Save already in progress; pending edits will remain queued." in dock_text
+    assert "in background" in dock_text
     assert "_sync_timer.start(400)" not in dock_text
     assert "_refresh_current_task_item" in dock_text
     assert "_reload_after_sync(task.target_id)" not in dock_text

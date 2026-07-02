@@ -242,6 +242,8 @@ def test_qgis_plugin_structure_and_metadata() -> None:
     assert "Font" in dock_text
     assert "Adjust font size for both T11 Relation Tasks and T11 Relation Processing." in dock_text
     assert "set_font_size" in dock_text
+    assert "max(30, font_size * 3)" in dock_text
+    assert "padding: 2px 3px;" in dock_text
     assert "setCenter" in dock_text
     assert "_average_center" in dock_text
     assert "itemClicked.connect" in dock_text

@@ -84,7 +84,7 @@ TASK_DATA_SYMBOLS = {
 
 
 def build_dock_style(font_size: int) -> str:
-    task_item_height = max(42, font_size * 5)
+    task_item_height = max(30, font_size * 3)
     return f"""
 QWidget {{
     font-size: {font_size}pt;
@@ -108,7 +108,7 @@ QLineEdit, QComboBox, QSpinBox {{
 }}
 QListWidget::item {{
     min-height: {task_item_height}px;
-    padding: 4px;
+    padding: 2px 3px;
 }}
 """
 
@@ -266,7 +266,7 @@ class T11RelationReviewDock(QDockWidget):
         self.setup_summary_label.setText(f"Workbook: {workbook} | Layers: {bound_layers}/{len(self.layer_combos)}")
 
     def _task_item_height(self) -> int:
-        return max(42, self.font_size * 5)
+        return max(30, self.font_size * 3)
 
     def _browse_button(self, target: QLineEdit) -> QPushButton:
         button = QPushButton("...")

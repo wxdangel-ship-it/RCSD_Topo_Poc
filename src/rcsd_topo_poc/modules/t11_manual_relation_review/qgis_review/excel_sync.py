@@ -84,7 +84,7 @@ def create_workbook_backup(path: Path, backup_dir: Path | None = None) -> Path:
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     root = backup_dir or path.parent / "_t11_qgis_backups"
     root.mkdir(parents=True, exist_ok=True)
-    backup = root / f"{path.stem}_{timestamp}_{uuid.uuid4().hex[:8]}{path.suffix}"
+    backup = root / f"backup_{timestamp}_{uuid.uuid4().hex[:8]}{path.suffix}"
     shutil.copy2(path, backup)
     return backup
 
@@ -134,20 +134,21 @@ def update_manual_fields(
 
 
 def _write_last_sync_marker(path: Path, excel_row: int, fields: tuple[str, ...]) -> None:
+    marker_id = uuid.uuid5(uuid.NAMESPACE_URL, str(path)).hex[:12]
     marker = {
         "workbook_path": str(path),
         "excel_row": excel_row,
         "updated_fields": list(fields),
         "updated_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }
-    (path.parent / f".{path.name}.t11_qgis_last_sync.json").write_text(
+    (path.parent / f".t11_qgis_last_sync_{marker_id}.json").write_text(
         json.dumps(marker, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
 
 
 def _rewrite_xlsx(path: Path, entries: list[tuple[zipfile.ZipInfo, bytes]], replacements: dict[str, bytes]) -> None:
-    tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
+    tmp = path.with_name(f".t11_qgis_{uuid.uuid4().hex}.tmp")
     try:
         with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as archive:
             seen: set[str] = set()

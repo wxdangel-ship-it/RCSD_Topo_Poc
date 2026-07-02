@@ -91,6 +91,9 @@ def test_updates_only_first_deduped_excel_row_and_keeps_validation(tmp_path: Pat
     assert rows[1]["target_id"] == "T_DUP"
     assert rows[1]["manual_relation_type"] == ""
     assert result.backup_path is not None and result.backup_path.is_file()
+    assert result.backup_path.name.startswith("backup_")
+    assert len(result.backup_path.name) < 64
+    assert len(list(all_evidence.parent.glob(".t11_qgis_last_sync_*.json"))) == 1
     with zipfile.ZipFile(all_evidence) as archive:
         sheet_xml = archive.read("xl/worksheets/sheet1.xml").decode("utf-8")
     assert "dataValidation" in sheet_xml

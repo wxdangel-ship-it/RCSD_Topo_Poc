@@ -31,7 +31,7 @@
 - [x] 任务管理 Dock 单次只加载一张审计 Excel。
 - [x] Setup 区可折叠，并在加载任务后自动收起。
 - [x] 任务管理 Dock 提供全局字号控制，并同步到任务处理 Dock。
-- [x] 任务列表格式化展示状态、目标、Segment、长度和人工数据存在性。
+- [x] 任务列表单行展示人工数据符号、目标和 SegmentID。
 - [x] 任务处理 Dock 按摘要、编辑字段和分组操作按钮组织，并为按钮提供 tooltip。
 
 ## Implement phase 3：图层绑定、定位、高亮、selection 提取

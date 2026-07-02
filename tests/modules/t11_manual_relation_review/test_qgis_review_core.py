@@ -225,7 +225,11 @@ def test_qgis_plugin_structure_and_metadata() -> None:
     assert "DEFAULT_LOCATE_SCALE = 1000" in dock_text
     assert "NO DATA" in dock_text
     assert "HAS DATA" in dock_text
-    assert "Data: " in dock_text
+    assert "TASK_DATA_SYMBOLS" in dock_text
+    assert "✅ +" in dock_text
+    assert "❌ -" in dock_text
+    assert "{data_symbol} {task.target_id} | {task.swsd_segment_id}" in dock_text
+    assert "has_manual_data" in dock_text
     assert "_format_task_tooltip" in dock_text
     assert "Hide setup" in dock_text
     assert "Show setup" in dock_text

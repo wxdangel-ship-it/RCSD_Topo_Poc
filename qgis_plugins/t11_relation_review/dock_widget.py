@@ -75,6 +75,12 @@ TASK_STATUS_BACKGROUNDS = {
     "NULL": "#f1f3f4",
     "uncertain": "#e3f2fd",
 }
+TASK_DATA_SYMBOLS = {
+    "blank": "❌ -",
+    "filled": "✅ +",
+    "NULL": "✅ +",
+    "uncertain": "✅ +",
+}
 
 
 def build_dock_style(font_size: int) -> str:
@@ -322,22 +328,11 @@ class T11RelationReviewDock(QDockWidget):
         self.page_label.setText(f"{self.current_page + 1 if self.tasks else 0} / {max_page}")
 
     def _format_task_item_text(self, task: ReviewTask) -> str:
-        status = TASK_STATUS_LABELS.get(task.status, task.status.upper())
-        return (
-            f"{status} | target_id: {task.target_id}\n"
-            f"Segment: {task.swsd_segment_id} | Length: {task.segment_length_m:.1f} m | "
-            f"{self._manual_data_summary(task)}"
-        )
+        data_symbol = TASK_DATA_SYMBOLS.get(task.status, "+" if self._task_has_manual_data(task) else "-")
+        return f"{data_symbol} {task.target_id} | {task.swsd_segment_id}"
 
-    def _manual_data_summary(self, task: ReviewTask) -> str:
-        parts = []
-        if task.manual_relation_type:
-            parts.append("type")
-        if task.selected_ids:
-            parts.append("NULL ids" if task.selected_ids.upper() == "NULL" else "ids")
-        if task.comment:
-            parts.append("comment")
-        return "Data: " + (" + ".join(parts) if parts else "none")
+    def _task_has_manual_data(self, task: ReviewTask) -> bool:
+        return bool(task.manual_relation_type or task.selected_ids or task.comment)
 
     def _format_task_tooltip(self, task: ReviewTask) -> str:
         return (
@@ -345,6 +340,7 @@ class T11RelationReviewDock(QDockWidget):
             f"swsd_segment_id: {task.swsd_segment_id}\n"
             f"segment_length_m: {task.segment_length_m:.3f}\n"
             f"status: {TASK_STATUS_LABELS.get(task.status, task.status)}\n"
+            f"has_manual_data: {'yes' if self._task_has_manual_data(task) else 'no'}\n"
             f"manual_relation_type: {task.manual_relation_type or '(empty)'}\n"
             f"selected_ids: {task.selected_ids or '(empty)'}\n"
             f"comment: {task.comment or '(empty)'}\n"

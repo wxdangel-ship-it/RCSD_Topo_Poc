@@ -39,7 +39,7 @@
 - [x] 任务管理 Dock 支持五类图层绑定。
 - [x] 任务管理 Dock 支持字段/CRS/路径校验。
 - [x] 任务处理 Dock 支持定位到 SWSD 语义路口或 Segment。
-- [x] 任务点击定位后显式居中，并默认缩放到约 `1:1000`。
+- [x] 任务点击定位后显式居中、保持 SWSD 要素选中，并默认缩放到约 `1:1000`。
 - [x] 任务处理 Dock 支持高亮已有 `selected_ids`。
 - [x] 任务处理 Dock 支持从 RCSDNode / RCSDRoad selection 填入 `selected_ids`。
 

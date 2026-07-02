@@ -236,6 +236,7 @@ class T11RelationReviewDock(QDockWidget):
         self.task_list = QListWidget()
         self.task_list.setMinimumWidth(0)
         self.task_list.currentRowChanged.connect(self._task_row_changed)
+        self.task_list.itemClicked.connect(self._task_item_clicked)
         layout.addWidget(self.task_list, stretch=1)
 
         self.message = QLabel("")
@@ -352,6 +353,12 @@ class T11RelationReviewDock(QDockWidget):
         item = self.task_list.item(row)
         if item is None:
             return
+        self._activate_task_item(item)
+
+    def _task_item_clicked(self, item: QListWidgetItem) -> None:
+        self._activate_task_item(item)
+
+    def _activate_task_item(self, item: QListWidgetItem) -> None:
         self.current_index = int(item.data(Qt.UserRole))
         self._show_current_task()
         self._locate_current_task()
@@ -488,7 +495,7 @@ class T11RelationReviewDock(QDockWidget):
         if not features:
             layer = self._layer("swsd_segment")
             features = self._matching_features(layer, {"id", "swsd_segment_id"}, task.swsd_segment_id)
-        self._select_and_zoom(layer, features)
+        self._select_and_zoom(layer, features, keep_active=True)
 
     def _highlight_current_ids(self) -> None:
         task = self._current_task()
@@ -526,7 +533,13 @@ class T11RelationReviewDock(QDockWidget):
                     continue
         return matches
 
-    def _select_and_zoom(self, layer: Any, features: list[Any], zoom: bool = True) -> None:
+    def _select_and_zoom(
+        self,
+        layer: Any,
+        features: list[Any],
+        zoom: bool = True,
+        keep_active: bool = False,
+    ) -> None:
         if layer is None or not features:
             return
         feature_ids = [feature.id() for feature in features]
@@ -553,7 +566,9 @@ class T11RelationReviewDock(QDockWidget):
                 if hasattr(canvas, "zoomScale"):
                     canvas.zoomScale(DEFAULT_LOCATE_SCALE)
                 canvas.refresh()
-        if current_layer is not None:
+        if keep_active:
+            self.iface.setActiveLayer(layer)
+        elif current_layer is not None:
             self.iface.setActiveLayer(current_layer)
 
     def _average_center(self, centers: list[Any]) -> QgsPointXY | None:

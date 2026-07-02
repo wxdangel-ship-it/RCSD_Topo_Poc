@@ -244,6 +244,9 @@ def test_qgis_plugin_structure_and_metadata() -> None:
     assert "set_font_size" in dock_text
     assert "setCenter" in dock_text
     assert "_average_center" in dock_text
+    assert "itemClicked.connect" in dock_text
+    assert "_activate_task_item" in dock_text
+    assert "keep_active=True" in dock_text
 
 
 def _write_review_workbooks(root: Path) -> tuple[Path, Path]:

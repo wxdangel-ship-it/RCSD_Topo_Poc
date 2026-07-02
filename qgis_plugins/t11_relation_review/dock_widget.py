@@ -8,6 +8,7 @@ from qgis.PyQt.QtCore import QSize, QTimer, Qt  # type: ignore
 from qgis.PyQt.QtGui import QColor  # type: ignore
 from qgis.PyQt.QtWidgets import (  # type: ignore
     QComboBox,
+    QCheckBox,
     QDockWidget,
     QFileDialog,
     QFormLayout,
@@ -144,6 +145,7 @@ class T11RelationReviewDock(QDockWidget):
         self.current_page = 0
         self.read_only = False
         self._loading_ui = False
+        self.show_incomplete_only = False
         self.font_size = DEFAULT_FONT_SIZE
         self.processing_dock: T11RelationProcessingDock | None = None
         self._backed_up_workbooks: set[Path] = set()
@@ -185,14 +187,24 @@ class T11RelationReviewDock(QDockWidget):
         self.font_size_spin.valueChanged.connect(self._set_font_size)
         setup_header.addWidget(self.setup_toggle_button)
         setup_header.addWidget(self.setup_summary_label, stretch=1)
-        setup_header.addWidget(QLabel("Font"))
-        setup_header.addWidget(self.font_size_spin)
         layout.addLayout(setup_header)
 
         self.setup_body = QWidget(root)
         setup_layout = QVBoxLayout(self.setup_body)
         setup_layout.setContentsMargins(0, 0, 0, 0)
         setup_layout.setSpacing(4)
+
+        display_box = QGroupBox("Display")
+        display_layout = QHBoxLayout(display_box)
+        display_layout.setContentsMargins(6, 6, 6, 6)
+        self.show_incomplete_only_check = QCheckBox("Only unfinished")
+        self.show_incomplete_only_check.setToolTip("Show only tasks that are blank or partially filled.")
+        self.show_incomplete_only_check.toggled.connect(self._set_show_incomplete_only)
+        display_layout.addWidget(QLabel("Font"))
+        display_layout.addWidget(self.font_size_spin)
+        display_layout.addWidget(self.show_incomplete_only_check)
+        display_layout.addStretch(1)
+        setup_layout.addWidget(display_box)
 
         workbook_box = QGroupBox("Workbook")
         workbook_layout = QGridLayout(workbook_box)
@@ -315,7 +327,8 @@ class T11RelationReviewDock(QDockWidget):
             self._set_message(f"Failed to load tasks: {exc}", error=True)
             return
         self.current_page = 0
-        self.current_index = 0 if self.tasks else -1
+        visible_indices = self._visible_task_indices()
+        self.current_index = visible_indices[0] if visible_indices else -1
         self._refresh_task_list()
         self._show_current_task()
         self._set_setup_visible(False)
@@ -326,17 +339,29 @@ class T11RelationReviewDock(QDockWidget):
         self.current_page = 0
         self._refresh_task_list()
 
+    def _set_show_incomplete_only(self, checked: bool) -> None:
+        self.show_incomplete_only = checked
+        self.current_page = 0
+        visible_indices = self._visible_task_indices()
+        if self.current_index not in visible_indices:
+            self.current_index = visible_indices[0] if visible_indices else -1
+            self._show_current_task()
+        self._refresh_task_list()
+
     def _turn_page(self, delta: int) -> None:
-        max_page = max((len(self.tasks) - 1) // self.page_size, 0)
+        visible_indices = self._visible_task_indices()
+        max_page = max((len(visible_indices) - 1) // self.page_size, 0)
         self.current_page = min(max(self.current_page + delta, 0), max_page)
         self._refresh_task_list()
 
     def _refresh_task_list(self) -> None:
         self.task_list.blockSignals(True)
         self.task_list.clear()
+        visible_indices = self._visible_task_indices()
         start = self.current_page * self.page_size
-        end = min(start + self.page_size, len(self.tasks))
-        for index in range(start, end):
+        end = min(start + self.page_size, len(visible_indices))
+        page_indices = visible_indices[start:end]
+        for index in page_indices:
             task = self.tasks[index]
             item = QListWidgetItem(self._format_task_item_text(task))
             item.setSizeHint(QSize(0, self._task_item_height()))
@@ -344,11 +369,16 @@ class T11RelationReviewDock(QDockWidget):
             item.setBackground(QColor(TASK_STATUS_BACKGROUNDS.get(task.status, "#ffffff")))
             item.setData(Qt.UserRole, index)
             self.task_list.addItem(item)
-        if 0 <= self.current_index < len(self.tasks) and start <= self.current_index < end:
-            self.task_list.setCurrentRow(self.current_index - start)
+        if self.current_index in page_indices:
+            self.task_list.setCurrentRow(page_indices.index(self.current_index))
         self.task_list.blockSignals(False)
-        max_page = max((len(self.tasks) - 1) // self.page_size + 1, 0)
-        self.page_label.setText(f"{self.current_page + 1 if self.tasks else 0} / {max_page}")
+        max_page = max((len(visible_indices) - 1) // self.page_size + 1, 0)
+        self.page_label.setText(f"{self.current_page + 1 if visible_indices else 0} / {max_page}")
+
+    def _visible_task_indices(self) -> list[int]:
+        if not self.show_incomplete_only:
+            return list(range(len(self.tasks)))
+        return [index for index, task in enumerate(self.tasks) if task.status in {"blank", "partial"}]
 
     def _format_task_item_text(self, task: ReviewTask) -> str:
         data_symbol = TASK_DATA_SYMBOLS.get(task.status, "+" if self._task_has_manual_data(task) else "-")
@@ -426,16 +456,30 @@ class T11RelationReviewDock(QDockWidget):
             self._loading_ui = False
 
     def _previous_task(self) -> None:
-        if self.current_index > 0:
-            self.current_index -= 1
-            self.current_page = self.current_index // self.page_size
+        visible_indices = self._visible_task_indices()
+        if not visible_indices:
+            return
+        try:
+            position = visible_indices.index(self.current_index)
+        except ValueError:
+            position = len(visible_indices)
+        if position > 0:
+            self.current_index = visible_indices[position - 1]
+            self.current_page = (position - 1) // self.page_size
             self._refresh_task_list()
             self._show_locate_and_prepare_selection()
 
     def _next_task(self) -> None:
-        if self.current_index + 1 < len(self.tasks):
-            self.current_index += 1
-            self.current_page = self.current_index // self.page_size
+        visible_indices = self._visible_task_indices()
+        if not visible_indices:
+            return
+        try:
+            position = visible_indices.index(self.current_index)
+        except ValueError:
+            position = -1
+        if position + 1 < len(visible_indices):
+            self.current_index = visible_indices[position + 1]
+            self.current_page = (position + 1) // self.page_size
             self._refresh_task_list()
             self._show_locate_and_prepare_selection()
 
@@ -505,7 +549,11 @@ class T11RelationReviewDock(QDockWidget):
         task = self._current_task()
         if task is None:
             return
-        row = self.current_index - self.current_page * self.page_size
+        visible_indices = self._visible_task_indices()
+        if self.current_index not in visible_indices:
+            self._refresh_task_list()
+            return
+        row = visible_indices.index(self.current_index) - self.current_page * self.page_size
         item = self.task_list.item(row)
         if item is None:
             return
@@ -783,7 +831,7 @@ class T11RelationProcessingDock(QDockWidget):
         layout.addWidget(QLabel("Selected IDs"), 1, 3)
         layout.addWidget(self.selected_ids, 1, 4, 1, 2)
         layout.addWidget(QLabel("Comment"), 1, 6)
-        layout.addWidget(self.comment, 1, 7, 2, 2)
+        layout.addWidget(self.comment, 1, 7, 3, 2)
         layout.addWidget(QLabel("Quick type"), 2, 0)
         layout.addLayout(relation_button_row, 2, 1, 1, 5)
 
@@ -793,16 +841,10 @@ class T11RelationProcessingDock(QDockWidget):
             [
                 ("Prev", self.task_dock._previous_task, "Move to the previous audit task."),
                 ("Next", self.task_dock._next_task, "Move to the next audit task."),
-            ],
-            [
-                ("Locate", self.task_dock._locate_current_task, "Zoom to and select the current SWSD junction or Segment."),
-                ("Show IDs", self.task_dock._highlight_current_ids, "Highlight RCSDNode/RCSDRoad features already listed in Selected IDs."),
-            ],
-            [
-                ("Use Selection", self.task_dock._fill_from_selection, "Read the current RCSDNode or RCSDRoad map selection into Selected IDs."),
                 ("Clear", self.task_dock._clear_current_fields, "Clear relation type, selected IDs, and comment for this task."),
             ],
         ]
+        actions.addStretch(1)
         for group_index, button_group in enumerate(button_groups):
             if group_index:
                 actions.addSpacing(14)
@@ -811,7 +853,6 @@ class T11RelationProcessingDock(QDockWidget):
                 button.setToolTip(tooltip)
                 button.clicked.connect(callback)
                 actions.addWidget(button)
-        actions.addStretch(1)
         layout.addLayout(actions, 3, 0, 1, 7)
 
         layout.setColumnStretch(1, 1)

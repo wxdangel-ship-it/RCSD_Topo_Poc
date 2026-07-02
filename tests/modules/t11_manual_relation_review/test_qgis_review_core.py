@@ -274,6 +274,13 @@ def test_qgis_plugin_structure_and_metadata() -> None:
     assert "Use Selection" in dock_text
     assert "No valid" in dock_text
     assert "Read the current RCSDNode or RCSDRoad map selection into Selected IDs." in dock_text
+    assert "Use Selection expects active" in dock_text
+    assert "select features there and click Use Selection again" in dock_text
+    assert "processing.selected_ids.setText(\"\")" in dock_text
+    assert "Cleared selected_ids; no selected" in dock_text
+    assert "_relation_layer_label" in dock_text
+    assert "_same_layer" in dock_text
+    assert "self.iface.activeLayer()" in dock_text
     assert "Font" in dock_text
     assert "Adjust font size for both T11 Relation Tasks and T11 Relation Processing." in dock_text
     assert "Display" in dock_text
@@ -304,6 +311,10 @@ def test_qgis_plugin_structure_and_metadata() -> None:
     assert '("Locate", self.task_dock._locate_current_task' in dock_text
     assert '("Show IDs", self.task_dock._highlight_current_ids' in dock_text
     assert '("Use Selection", self.task_dock._fill_from_selection' in dock_text
+    locate_block = dock_text[
+        dock_text.index("def _show_locate_and_prepare_selection") : dock_text.index("def _show_current_task")
+    ]
+    assert "_highlight_current_ids()" not in locate_block
     assert "setCenter" in dock_text
     assert "_average_center" in dock_text
     assert "itemClicked.connect" in dock_text

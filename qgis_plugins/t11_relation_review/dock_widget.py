@@ -458,7 +458,6 @@ class T11RelationReviewDock(QDockWidget):
     def _show_locate_and_prepare_selection(self) -> None:
         self._show_current_task()
         self._locate_current_task()
-        self._highlight_current_ids()
         self._activate_layer_for_current_relation_type()
 
     def _show_current_task(self) -> None:
@@ -668,17 +667,35 @@ class T11RelationReviewDock(QDockWidget):
         if processing is None:
             return
         relation_type = processing.relation_type.currentText()
-        if relation_type in {"1v1_rcsd_junction", "1vN_rcsd_junction"}:
-            layer = self._layer("rcsdnode")
-            ids = extract_rcsdnode_selected_ids(layer.selectedFeatures() if layer is not None else [])
-        elif relation_type in {"1v1_rcsd_road", "1vN_rcsd_road"}:
-            layer = self._layer("rcsdroad")
-            ids = extract_rcsdroad_selected_ids(layer.selectedFeatures() if layer is not None else [])
-        else:
+        role = self._relation_layer_role(relation_type)
+        if role is None:
             self._set_message("Select a junction or road relation type before using QGIS selection.", error=True)
             return
+        layer = self._layer(role)
+        if layer is None:
+            self._set_message(f"Bind the {self._relation_layer_label(role)} layer before using QGIS selection.", error=True)
+            return
+        active_layer = self.iface.activeLayer()
+        if not self._same_layer(active_layer, layer):
+            self.iface.setActiveLayer(layer)
+            self._set_message(
+                f"Use Selection expects active {self._relation_layer_label(role)} layer for {relation_type}; "
+                "select features there and click Use Selection again.",
+                error=True,
+            )
+            return
+        features = layer.selectedFeatures()
+        if role == "rcsdnode":
+            ids = extract_rcsdnode_selected_ids(features)
+        else:
+            ids = extract_rcsdroad_selected_ids(features)
+        processing.selected_ids.setText("")
         processing.selected_ids.setText(ids)
         self._queue_sync()
+        if ids:
+            self._set_message(f"Filled selected_ids from {len(features)} selected {self._relation_layer_label(role)} feature(s).")
+        else:
+            self._set_message(f"Cleared selected_ids; no selected {self._relation_layer_label(role)} features.")
 
     def _locate_current_task(self) -> None:
         task = self._current_task()
@@ -698,18 +715,24 @@ class T11RelationReviewDock(QDockWidget):
             return
         ids = set(parse_selected_ids(processing.selected_ids.text() or task.selected_ids))
         relation_type = processing.relation_type.currentText() or task.manual_relation_type
+        role = self._relation_layer_role(relation_type)
+        if role is None:
+            self._set_message("Show IDs needs a junction or road relation type.", error=True)
+            return
+        layer = self._layer(role)
+        if layer is None:
+            self._set_message(f"Bind the {self._relation_layer_label(role)} layer before showing IDs.", error=True)
+            return
         if not ids:
-            self._activate_layer_for_relation_type(relation_type)
+            self.iface.setActiveLayer(layer)
+            self._set_message("No selected_ids to show for the current task.", error=True)
             return
-        if relation_type in {"1v1_rcsd_junction", "1vN_rcsd_junction"}:
-            layer = self._layer("rcsdnode")
+        if role == "rcsdnode":
             features = self._matching_features(layer, {"id", "mainnodeid"}, ids)
-        elif relation_type in {"1v1_rcsd_road", "1vN_rcsd_road"}:
-            layer = self._layer("rcsdroad")
-            features = self._matching_features(layer, {"id"}, ids)
         else:
-            return
+            features = self._matching_features(layer, {"id"}, ids)
         self._select_and_zoom(layer, features, zoom=False, keep_active=True)
+        self._set_message(f"Selected {len(features)} {self._relation_layer_label(role)} feature(s) for selected_ids.")
 
     def _activate_layer_for_current_relation_type(self) -> None:
         processing = self.processing_dock
@@ -732,6 +755,17 @@ class T11RelationReviewDock(QDockWidget):
         if relation_type in {"1v1_rcsd_road", "1vN_rcsd_road"}:
             return "rcsdroad"
         return None
+
+    def _relation_layer_label(self, role: str) -> str:
+        return "RCSDNode" if role == "rcsdnode" else "RCSDRoad"
+
+    def _same_layer(self, left: Any, right: Any) -> bool:
+        if left is None or right is None:
+            return False
+        try:
+            return left.id() == right.id()
+        except Exception:
+            return left is right
 
     def _matching_features(self, layer: Any, fields: set[str], values: str | set[str]) -> list[Any]:
         if layer is None:

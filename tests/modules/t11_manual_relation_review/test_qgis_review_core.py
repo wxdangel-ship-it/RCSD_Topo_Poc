@@ -253,7 +253,10 @@ def test_qgis_plugin_structure_and_metadata() -> None:
     assert "self._set_setup_visible(False)" in dock_text
     assert "Relation type" in dock_text
     assert "RELATION_TYPE_BUTTONS" in dock_text
-    assert "self.relation_type.setVisible(False)" in dock_text
+    assert "self.relation_type.setVisible(False)" not in dock_text
+    assert 'layout.addWidget(self.relation_type, 1, 1, 1, 2)' in dock_text
+    assert 'layout.addWidget(self.selected_ids, 1, 4, 1, 2)' in dock_text
+    assert 'layout.addLayout(relation_button_row, 2, 1, 1, 5)' in dock_text
     assert "relation_type_buttons" in dock_text
     assert "_apply_relation_type_button" in dock_text
     assert "_activate_layer_for_relation_type" in dock_text
@@ -263,7 +266,7 @@ def test_qgis_plugin_structure_and_metadata() -> None:
     assert "Selected IDs" in dock_text
     assert "Use Selection" in dock_text
     assert "No valid" in dock_text
-    assert "Fill Selected IDs from the current RCSDNode or RCSDRoad selection." in dock_text
+    assert "Read the current RCSDNode or RCSDRoad map selection into Selected IDs." in dock_text
     assert "Font" in dock_text
     assert "Adjust font size for both T11 Relation Tasks and T11 Relation Processing." in dock_text
     assert "set_font_size" in dock_text

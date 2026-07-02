@@ -156,7 +156,7 @@ class T11RelationReviewDock(QDockWidget):
 
     def bind_processing_dock(self, processing_dock: "T11RelationProcessingDock") -> None:
         self.processing_dock = processing_dock
-        processing_dock.relation_type.currentTextChanged.connect(self._queue_sync)
+        processing_dock.relation_type.currentTextChanged.connect(self._relation_type_changed)
         processing_dock.selected_ids.editingFinished.connect(self._queue_sync)
         processing_dock.comment.textChanged.connect(self._queue_sync)
         processing_dock.set_font_size(self.font_size)
@@ -482,6 +482,11 @@ class T11RelationReviewDock(QDockWidget):
             self.read_only = True
             self._set_message(f"Sync failed; editing disabled: {exc}", error=True)
 
+    def _relation_type_changed(self, relation_type: str) -> None:
+        if not self._loading_ui:
+            self._activate_layer_for_relation_type(relation_type)
+        self._queue_sync()
+
     def _processing_manual_values(self, processing: "T11RelationProcessingDock") -> dict[str, str]:
         return {
             "manual_relation_type": processing.relation_type.currentText().strip(),
@@ -742,8 +747,7 @@ class T11RelationProcessingDock(QDockWidget):
             value_label.setStyleSheet("font-weight: 600;")
         self.relation_type = QComboBox()
         self.relation_type.addItems(RELATION_TYPES)
-        self.relation_type.setToolTip("Manual relation type written to manual_relation_type.")
-        self.relation_type.setVisible(False)
+        self.relation_type.setToolTip("Manual relation type written to manual_relation_type. The quick buttons below set the same field.")
         self.relation_type.currentTextChanged.connect(self._sync_relation_type_buttons)
         self.relation_type_buttons: dict[str, QPushButton] = {}
         relation_button_row = QHBoxLayout()
@@ -775,11 +779,13 @@ class T11RelationProcessingDock(QDockWidget):
         layout.addWidget(self.status_label, 0, 7)
 
         layout.addWidget(QLabel("Relation type"), 1, 0)
-        layout.addLayout(relation_button_row, 1, 1, 1, 5)
-        layout.addWidget(QLabel("Selected IDs"), 1, 6)
-        layout.addWidget(self.selected_ids, 1, 7, 1, 2)
-        layout.addWidget(QLabel("Comment"), 2, 6)
-        layout.addWidget(self.comment, 2, 7, 1, 2)
+        layout.addWidget(self.relation_type, 1, 1, 1, 2)
+        layout.addWidget(QLabel("Selected IDs"), 1, 3)
+        layout.addWidget(self.selected_ids, 1, 4, 1, 2)
+        layout.addWidget(QLabel("Comment"), 1, 6)
+        layout.addWidget(self.comment, 1, 7, 2, 2)
+        layout.addWidget(QLabel("Quick type"), 2, 0)
+        layout.addLayout(relation_button_row, 2, 1, 1, 5)
 
         actions = QHBoxLayout()
         actions.setSpacing(8)
@@ -789,11 +795,11 @@ class T11RelationProcessingDock(QDockWidget):
                 ("Next", self.task_dock._next_task, "Move to the next audit task."),
             ],
             [
-                ("Locate", self.task_dock._locate_current_task, "Zoom to the current SWSD junction or Segment."),
-                ("Show IDs", self.task_dock._highlight_current_ids, "Select/highlight features already listed in Selected IDs."),
+                ("Locate", self.task_dock._locate_current_task, "Zoom to and select the current SWSD junction or Segment."),
+                ("Show IDs", self.task_dock._highlight_current_ids, "Highlight RCSDNode/RCSDRoad features already listed in Selected IDs."),
             ],
             [
-                ("Use Selection", self.task_dock._fill_from_selection, "Fill Selected IDs from the current RCSDNode or RCSDRoad selection."),
+                ("Use Selection", self.task_dock._fill_from_selection, "Read the current RCSDNode or RCSDRoad map selection into Selected IDs."),
                 ("Clear", self.task_dock._clear_current_fields, "Clear relation type, selected IDs, and comment for this task."),
             ],
         ]
@@ -806,7 +812,7 @@ class T11RelationProcessingDock(QDockWidget):
                 button.clicked.connect(callback)
                 actions.addWidget(button)
         actions.addStretch(1)
-        layout.addLayout(actions, 2, 0, 1, 6)
+        layout.addLayout(actions, 3, 0, 1, 7)
 
         layout.setColumnStretch(1, 1)
         layout.setColumnStretch(3, 1)

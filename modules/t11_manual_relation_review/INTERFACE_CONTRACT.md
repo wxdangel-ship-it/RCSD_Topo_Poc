@@ -129,7 +129,7 @@ src/rcsd_topo_poc/modules/t11_manual_relation_review/qgis_review/
 - `ids.extract_rcsdroad_selected_ids(...)`：从 RCSDRoad selection 写入 `id`。
 - `layer_validation.validate_layer_bindings(...)`：校验绑定图层的数据源、CRS 和必需字段。
 
-插件加载后注册两个 QGIS Dock：左侧 `T11 Relation Tasks` 负责单个 workbook 加载、图层绑定、分页和任务列表；setup 区可折叠，并在任务加载成功后自动收起以给任务列表让出空间。任务管理区提供 `Font` 字号控件，同时作用于任务管理与任务处理两个 Dock。任务列表单行展示人工数据符号、`target_id` 和 `swsd_segment_id`，其中 `❌ -` 表示未填写、`✅ +` 表示已有人工数据；完整状态和人工字段保留在 tooltip。底部 `T11 Relation Processing` 负责当前任务摘要、人工字段编辑、上一条 / 下一条、定位、高亮、selection 写入、清空、`NULL` 与 `uncertain` 标记；操作按钮按导航、地图、写入和标记分组，并通过 tooltip 说明用途。点击任务后定位到 SWSD 语义路口或 Segment 上下文，显式居中，默认缩放到约 `1:1500`，并保持匹配 SWSD 要素处于选中状态以便识别。
+插件加载后注册两个 QGIS Dock：左侧 `T11 Relation Tasks` 负责单个 workbook 加载、图层绑定、分页和任务列表；setup 区可折叠，并在任务加载成功后自动收起以给任务列表让出空间。任务管理区提供 `Font` 字号控件，同时作用于任务管理与任务处理两个 Dock。任务列表单行展示人工数据符号、`target_id` 和 `swsd_segment_id`，其中 `❌ -` 表示未填写、`✅ +` 表示已有人工数据；完整状态和人工字段保留在 tooltip。底部 `T11 Relation Processing` 负责当前任务摘要、人工字段编辑、上一条 / 下一条、定位、高亮、selection 写入、清空、`NULL` 与 `uncertain` 标记；`manual_relation_type` 使用按钮组快速填入，不再要求通过下拉选择；点击 junction / road 类型按钮或切换到已有类型任务后，插件会激活对应的 RCSDNode / RCSDRoad 绑定图层，便于直接点选后写入 `selected_ids`。点击任务后定位到 SWSD 语义路口或 Segment 上下文，显式居中，默认缩放到约 `1:1500`，并保持匹配 SWSD 要素处于选中状态以便识别。
 
 插件不新增 repo CLI 子命令，不新增 `scripts/` 包装入口；QGIS 图层样式、顺序和渲染仍由 QGIS 图层管理器控制。
 

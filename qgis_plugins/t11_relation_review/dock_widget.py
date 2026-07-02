@@ -66,6 +66,14 @@ RELATION_TYPES = [
     "no_valid_relation",
     "uncertain",
 ]
+RELATION_TYPE_BUTTONS = [
+    ("J 1v1", "1v1_rcsd_junction", "Use RCSDNode selection and write mainnodeid/id."),
+    ("J 1vN", "1vN_rcsd_junction", "Use RCSDNode selection and write mainnodeid/id."),
+    ("R 1v1", "1v1_rcsd_road", "Use RCSDRoad selection and write id."),
+    ("R 1vN", "1vN_rcsd_road", "Use RCSDRoad selection and write id."),
+    ("No valid", "no_valid_relation", "Mark no valid relation and write selected_ids=NULL."),
+    ("Uncertain", "uncertain", "Mark this task as uncertain."),
+]
 DEFAULT_LOCATE_SCALE = 1500
 DEFAULT_FONT_SIZE = 11
 TASK_STATUS_LABELS = {
@@ -108,6 +116,11 @@ QPushButton {{
     min-height: 26px;
     padding: 3px 7px;
 }}
+QPushButton:checked {{
+    background-color: #dcefe4;
+    border: 1px solid #2f7d57;
+    font-weight: 600;
+}}
 QLineEdit, QComboBox, QSpinBox {{
     min-height: 26px;
 }}
@@ -131,6 +144,7 @@ class T11RelationReviewDock(QDockWidget):
         self.font_size = DEFAULT_FONT_SIZE
         self.processing_dock: T11RelationProcessingDock | None = None
         self._backed_up_workbooks: set[Path] = set()
+        self._skip_next_clicked_index: int | None = None
         self._sync_timer = QTimer(self)
         self._sync_timer.setSingleShot(True)
         self._sync_timer.timeout.connect(self._sync_current_task)
@@ -358,16 +372,29 @@ class T11RelationReviewDock(QDockWidget):
         item = self.task_list.item(row)
         if item is None:
             return
+        self._skip_next_clicked_index = int(item.data(Qt.UserRole))
+        QTimer.singleShot(0, self._clear_skip_next_clicked_index)
         self._activate_task_item(item)
 
     def _task_item_clicked(self, item: QListWidgetItem) -> None:
+        index = int(item.data(Qt.UserRole))
+        if self._skip_next_clicked_index == index:
+            self._skip_next_clicked_index = None
+            return
         self._activate_task_item(item)
 
     def _activate_task_item(self, item: QListWidgetItem) -> None:
         self.current_index = int(item.data(Qt.UserRole))
+        self._show_locate_and_prepare_selection()
+
+    def _clear_skip_next_clicked_index(self) -> None:
+        self._skip_next_clicked_index = None
+
+    def _show_locate_and_prepare_selection(self) -> None:
         self._show_current_task()
         self._locate_current_task()
         self._highlight_current_ids()
+        self._activate_layer_for_current_relation_type()
 
     def _show_current_task(self) -> None:
         processing = self.processing_dock
@@ -389,7 +416,7 @@ class T11RelationReviewDock(QDockWidget):
             processing.target_label.setText(task.target_id)
             processing.length_label.setText(f"{task.segment_length_m:.3f}")
             processing.status_label.setText(TASK_STATUS_LABELS.get(task.status, task.status))
-            processing.relation_type.setCurrentText(task.manual_relation_type)
+            processing.set_relation_type(task.manual_relation_type)
             processing.selected_ids.setText(task.selected_ids)
             processing.comment.setPlainText(task.comment)
         finally:
@@ -400,14 +427,14 @@ class T11RelationReviewDock(QDockWidget):
             self.current_index -= 1
             self.current_page = self.current_index // self.page_size
             self._refresh_task_list()
-            self._show_current_task()
+            self._show_locate_and_prepare_selection()
 
     def _next_task(self) -> None:
         if self.current_index + 1 < len(self.tasks):
             self.current_index += 1
             self.current_page = self.current_index // self.page_size
             self._refresh_task_list()
-            self._show_current_task()
+            self._show_locate_and_prepare_selection()
 
     def _queue_sync(self) -> None:
         task = self._current_task()
@@ -493,25 +520,27 @@ class T11RelationReviewDock(QDockWidget):
         processing = self.processing_dock
         if processing is None:
             return
-        processing.relation_type.setCurrentText("")
+        processing.set_relation_type("")
         processing.selected_ids.setText("")
         processing.comment.setPlainText("")
         self._queue_sync()
 
     def _mark_null(self) -> None:
-        processing = self.processing_dock
-        if processing is None:
-            return
-        processing.relation_type.setCurrentText("no_valid_relation")
-        processing.selected_ids.setText("NULL")
-        self._queue_sync()
+        self._apply_relation_type_button("no_valid_relation")
 
     def _mark_uncertain(self) -> None:
+        self._apply_relation_type_button("uncertain")
+
+    def _apply_relation_type_button(self, relation_type: str) -> None:
         processing = self.processing_dock
         if processing is None:
             return
-        processing.relation_type.setCurrentText("uncertain")
-        processing.selected_ids.setText("")
+        processing.set_relation_type(relation_type)
+        if relation_type == "no_valid_relation":
+            processing.selected_ids.setText("NULL")
+        elif relation_type == "uncertain":
+            processing.selected_ids.setText("")
+        self._activate_layer_for_relation_type(relation_type)
         self._queue_sync()
 
     def _fill_from_selection(self) -> None:
@@ -548,9 +577,10 @@ class T11RelationReviewDock(QDockWidget):
         if task is None or processing is None:
             return
         ids = set(parse_selected_ids(processing.selected_ids.text() or task.selected_ids))
-        if not ids:
-            return
         relation_type = processing.relation_type.currentText() or task.manual_relation_type
+        if not ids:
+            self._activate_layer_for_relation_type(relation_type)
+            return
         if relation_type in {"1v1_rcsd_junction", "1vN_rcsd_junction"}:
             layer = self._layer("rcsdnode")
             features = self._matching_features(layer, {"id", "mainnodeid"}, ids)
@@ -559,7 +589,29 @@ class T11RelationReviewDock(QDockWidget):
             features = self._matching_features(layer, {"id"}, ids)
         else:
             return
-        self._select_and_zoom(layer, features, zoom=False)
+        self._select_and_zoom(layer, features, zoom=False, keep_active=True)
+
+    def _activate_layer_for_current_relation_type(self) -> None:
+        processing = self.processing_dock
+        task = self._current_task()
+        if processing is None or task is None:
+            return
+        self._activate_layer_for_relation_type(processing.relation_type.currentText() or task.manual_relation_type)
+
+    def _activate_layer_for_relation_type(self, relation_type: str) -> None:
+        role = self._relation_layer_role(relation_type)
+        if role is None:
+            return
+        layer = self._layer(role)
+        if layer is not None:
+            self.iface.setActiveLayer(layer)
+
+    def _relation_layer_role(self, relation_type: str) -> str | None:
+        if relation_type in {"1v1_rcsd_junction", "1vN_rcsd_junction"}:
+            return "rcsdnode"
+        if relation_type in {"1v1_rcsd_road", "1vN_rcsd_road"}:
+            return "rcsdroad"
+        return None
 
     def _matching_features(self, layer: Any, fields: set[str], values: str | set[str]) -> list[Any]:
         if layer is None:
@@ -688,6 +740,19 @@ class T11RelationProcessingDock(QDockWidget):
         self.relation_type = QComboBox()
         self.relation_type.addItems(RELATION_TYPES)
         self.relation_type.setToolTip("Manual relation type written to manual_relation_type.")
+        self.relation_type.setVisible(False)
+        self.relation_type.currentTextChanged.connect(self._sync_relation_type_buttons)
+        self.relation_type_buttons: dict[str, QPushButton] = {}
+        relation_button_row = QHBoxLayout()
+        relation_button_row.setSpacing(4)
+        for label, value, tooltip in RELATION_TYPE_BUTTONS:
+            button = QPushButton(label)
+            button.setCheckable(True)
+            button.setToolTip(tooltip)
+            button.clicked.connect(lambda _checked=False, relation_type=value: self.task_dock._apply_relation_type_button(relation_type))
+            self.relation_type_buttons[value] = button
+            relation_button_row.addWidget(button)
+        relation_button_row.addStretch(1)
         self.selected_ids = QLineEdit()
         self.selected_ids.setPlaceholderText("RCSDNode mainnodeid/id or RCSDRoad id; use | for multiple IDs")
         self.selected_ids.setToolTip("IDs that will be written to selected_ids. Use | between multiple IDs.")
@@ -707,11 +772,11 @@ class T11RelationProcessingDock(QDockWidget):
         layout.addWidget(self.status_label, 0, 7)
 
         layout.addWidget(QLabel("Relation type"), 1, 0)
-        layout.addWidget(self.relation_type, 1, 1, 1, 2)
-        layout.addWidget(QLabel("Selected IDs"), 1, 3)
-        layout.addWidget(self.selected_ids, 1, 4, 1, 2)
-        layout.addWidget(QLabel("Comment"), 1, 6)
-        layout.addWidget(self.comment, 1, 7, 2, 2)
+        layout.addLayout(relation_button_row, 1, 1, 1, 5)
+        layout.addWidget(QLabel("Selected IDs"), 1, 6)
+        layout.addWidget(self.selected_ids, 1, 7, 1, 2)
+        layout.addWidget(QLabel("Comment"), 2, 6)
+        layout.addWidget(self.comment, 2, 7, 1, 2)
 
         actions = QHBoxLayout()
         actions.setSpacing(8)
@@ -728,10 +793,6 @@ class T11RelationProcessingDock(QDockWidget):
                 ("Use Selection", self.task_dock._fill_from_selection, "Fill Selected IDs from the current RCSDNode or RCSDRoad selection."),
                 ("Clear", self.task_dock._clear_current_fields, "Clear relation type, selected IDs, and comment for this task."),
             ],
-            [
-                ("No valid", self.task_dock._mark_null, "Mark no valid relation: type=no_valid_relation and selected_ids=NULL."),
-                ("Uncertain", self.task_dock._mark_uncertain, "Mark the task as uncertain for later review."),
-            ],
         ]
         for group_index, button_group in enumerate(button_groups):
             if group_index:
@@ -742,13 +803,14 @@ class T11RelationProcessingDock(QDockWidget):
                 button.clicked.connect(callback)
                 actions.addWidget(button)
         actions.addStretch(1)
-        layout.addLayout(actions, 2, 0, 1, 7)
+        layout.addLayout(actions, 2, 0, 1, 6)
 
         layout.setColumnStretch(1, 1)
         layout.setColumnStretch(3, 1)
         layout.setColumnStretch(4, 2)
         layout.setColumnStretch(7, 3)
         self.setWidget(root)
+        self._sync_relation_type_buttons(self.relation_type.currentText())
 
     def set_font_size(self, value: int) -> None:
         self.font_size = value
@@ -757,3 +819,11 @@ class T11RelationProcessingDock(QDockWidget):
 
     def _comment_height(self) -> int:
         return max(44, self.font_size * 5)
+
+    def set_relation_type(self, relation_type: str) -> None:
+        self.relation_type.setCurrentText(relation_type)
+        self._sync_relation_type_buttons(relation_type)
+
+    def _sync_relation_type_buttons(self, relation_type: str) -> None:
+        for value, button in self.relation_type_buttons.items():
+            button.setChecked(value == relation_type)

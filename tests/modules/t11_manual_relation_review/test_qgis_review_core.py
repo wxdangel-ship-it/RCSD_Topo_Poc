@@ -238,6 +238,14 @@ def test_qgis_plugin_structure_and_metadata() -> None:
     assert "Show setup" in dock_text
     assert "self._set_setup_visible(False)" in dock_text
     assert "Relation type" in dock_text
+    assert "RELATION_TYPE_BUTTONS" in dock_text
+    assert "self.relation_type.setVisible(False)" in dock_text
+    assert "relation_type_buttons" in dock_text
+    assert "_apply_relation_type_button" in dock_text
+    assert "_activate_layer_for_relation_type" in dock_text
+    assert "_relation_layer_role" in dock_text
+    assert '"rcsdnode"' in dock_text
+    assert '"rcsdroad"' in dock_text
     assert "Selected IDs" in dock_text
     assert "Use Selection" in dock_text
     assert "No valid" in dock_text
@@ -251,6 +259,8 @@ def test_qgis_plugin_structure_and_metadata() -> None:
     assert "_average_center" in dock_text
     assert "itemClicked.connect" in dock_text
     assert "_activate_task_item" in dock_text
+    assert "_skip_next_clicked_index" in dock_text
+    assert "_clear_skip_next_clicked_index" in dock_text
     assert "keep_active=True" in dock_text
     assert "_processing_manual_values" in dock_text
     assert "if values == self._task_manual_values(task):" in dock_text

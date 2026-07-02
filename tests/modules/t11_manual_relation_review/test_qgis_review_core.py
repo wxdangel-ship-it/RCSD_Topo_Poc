@@ -252,6 +252,10 @@ def test_qgis_plugin_structure_and_metadata() -> None:
     assert "itemClicked.connect" in dock_text
     assert "_activate_task_item" in dock_text
     assert "keep_active=True" in dock_text
+    assert "_processing_manual_values" in dock_text
+    assert "if values == self._task_manual_values(task):" in dock_text
+    assert "_refresh_current_task_item" in dock_text
+    assert "_reload_after_sync(task.target_id)" not in dock_text
 
 
 def _write_review_workbooks(root: Path) -> tuple[Path, Path]:

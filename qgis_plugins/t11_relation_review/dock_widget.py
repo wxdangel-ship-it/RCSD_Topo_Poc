@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -49,7 +50,11 @@ from rcsd_topo_poc.modules.t11_manual_relation_review.qgis_review.layer_validati
     expectations_for_bound_layers,
     validate_layer_bindings,
 )
-from rcsd_topo_poc.modules.t11_manual_relation_review.qgis_review.task_index import ReviewTask, load_review_tasks
+from rcsd_topo_poc.modules.t11_manual_relation_review.qgis_review.task_index import (
+    ReviewTask,
+    load_review_tasks,
+    task_status,
+)
 
 
 RELATION_TYPES = [
@@ -405,7 +410,12 @@ class T11RelationReviewDock(QDockWidget):
             self._show_current_task()
 
     def _queue_sync(self) -> None:
-        if self._loading_ui or self.read_only or self._current_task() is None:
+        task = self._current_task()
+        processing = self.processing_dock
+        if self._loading_ui or self.read_only or task is None or processing is None:
+            return
+        if self._processing_manual_values(processing) == self._task_manual_values(task):
+            self._sync_timer.stop()
             return
         self._sync_timer.start(400)
 
@@ -414,24 +424,59 @@ class T11RelationReviewDock(QDockWidget):
         processing = self.processing_dock
         if task is None or processing is None or self.read_only:
             return
+        values = self._processing_manual_values(processing)
+        if values == self._task_manual_values(task):
+            return
         try:
             backup = task.workbook_path not in self._backed_up_workbooks
             update_manual_fields(
                 workbook_path=task.workbook_path,
                 excel_row=task.excel_row,
-                values={
-                    "manual_relation_type": processing.relation_type.currentText(),
-                    "selected_ids": processing.selected_ids.text(),
-                    "comment": processing.comment.toPlainText(),
-                },
+                values=values,
                 backup=backup,
             )
             self._backed_up_workbooks.add(task.workbook_path)
-            self._reload_after_sync(task.target_id)
+            updated_task = replace(
+                task,
+                manual_relation_type=values["manual_relation_type"],
+                selected_ids=values["selected_ids"],
+                comment=values["comment"],
+                status=task_status(values),
+                raw={**task.raw, **values},
+            )
+            self.tasks[self.current_index] = updated_task
+            processing.status_label.setText(TASK_STATUS_LABELS.get(updated_task.status, updated_task.status))
+            self._refresh_current_task_item()
             self._set_message(f"Synced {task.target_id} to {task.workbook_path.name}:{task.excel_row}.")
         except Exception as exc:
             self.read_only = True
             self._set_message(f"Sync failed; editing disabled: {exc}", error=True)
+
+    def _processing_manual_values(self, processing: "T11RelationProcessingDock") -> dict[str, str]:
+        return {
+            "manual_relation_type": processing.relation_type.currentText().strip(),
+            "selected_ids": processing.selected_ids.text().strip(),
+            "comment": processing.comment.toPlainText().strip(),
+        }
+
+    def _task_manual_values(self, task: ReviewTask) -> dict[str, str]:
+        return {
+            "manual_relation_type": task.manual_relation_type.strip(),
+            "selected_ids": task.selected_ids.strip(),
+            "comment": task.comment.strip(),
+        }
+
+    def _refresh_current_task_item(self) -> None:
+        task = self._current_task()
+        if task is None:
+            return
+        row = self.current_index - self.current_page * self.page_size
+        item = self.task_list.item(row)
+        if item is None:
+            return
+        item.setText(self._format_task_item_text(task))
+        item.setToolTip(self._format_task_tooltip(task))
+        item.setBackground(QColor(TASK_STATUS_BACKGROUNDS.get(task.status, "#ffffff")))
 
     def _reload_after_sync(self, target_id: str) -> None:
         paths = sorted({task.workbook_path for task in self.tasks})

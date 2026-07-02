@@ -78,12 +78,14 @@ def task_status(row: dict[str, str]) -> str:
     manual_type = _text(row.get("manual_relation_type"))
     selected_ids = _text(row.get("selected_ids"))
     comment = _text(row.get("comment"))
-    if selected_ids.upper() == "NULL" or manual_type.upper() == "NULL" or manual_type == "no_valid_relation":
+    if manual_type == "no_valid_relation" and selected_ids.upper() == "NULL":
         return "NULL"
     if manual_type == "uncertain":
         return "uncertain"
-    if manual_type or selected_ids or comment:
+    if manual_type and selected_ids and selected_ids.upper() != "NULL":
         return "filled"
+    if manual_type or selected_ids or comment:
+        return "partial"
     return "blank"
 
 

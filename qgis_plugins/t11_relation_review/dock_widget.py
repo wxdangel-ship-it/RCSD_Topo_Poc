@@ -78,18 +78,21 @@ DEFAULT_LOCATE_SCALE = 1500
 DEFAULT_FONT_SIZE = 11
 TASK_STATUS_LABELS = {
     "blank": "NO DATA",
+    "partial": "PARTIAL",
     "filled": "HAS DATA",
     "NULL": "NULL CONFIRMED",
     "uncertain": "UNCERTAIN",
 }
 TASK_STATUS_BACKGROUNDS = {
     "blank": "#fff8e1",
+    "partial": "#fff3cd",
     "filled": "#e8f5e9",
     "NULL": "#f1f3f4",
     "uncertain": "#e3f2fd",
 }
 TASK_DATA_SYMBOLS = {
     "blank": "❌ -",
+    "partial": "❌ -",
     "filled": "✅ +",
     "NULL": "✅ +",
     "uncertain": "✅ +",

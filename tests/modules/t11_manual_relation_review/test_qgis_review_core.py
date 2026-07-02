@@ -23,6 +23,7 @@ from rcsd_topo_poc.modules.t11_manual_relation_review.qgis_review.layer_validati
 )
 from rcsd_topo_poc.modules.t11_manual_relation_review.qgis_review.task_index import (
     load_review_tasks,
+    task_status,
     write_task_index_json,
 )
 from rcsd_topo_poc.modules.t11_manual_relation_review.xlsx_writer import write_text_xlsx
@@ -66,6 +67,18 @@ def test_loads_single_review_workbook(tmp_path: Path) -> None:
 
     assert [task.target_id for task in tasks] == ["T_DUP"]
     assert {task.workbook_path for task in tasks} == {all_evidence}
+
+
+def test_task_status_requires_relation_type_and_selected_ids_for_completion() -> None:
+    assert task_status({}) == "blank"
+    assert task_status({"manual_relation_type": "1v1_rcsd_road"}) == "partial"
+    assert task_status({"selected_ids": "R1"}) == "partial"
+    assert task_status({"comment": "needs review"}) == "partial"
+    assert task_status({"manual_relation_type": "1v1_rcsd_road", "selected_ids": "R1"}) == "filled"
+    assert task_status({"manual_relation_type": "1v1_rcsd_road", "selected_ids": "NULL"}) == "partial"
+    assert task_status({"manual_relation_type": "no_valid_relation"}) == "partial"
+    assert task_status({"manual_relation_type": "no_valid_relation", "selected_ids": "NULL"}) == "NULL"
+    assert task_status({"manual_relation_type": "uncertain"}) == "uncertain"
 
 
 def test_updates_only_first_deduped_excel_row_and_keeps_validation(tmp_path: Path) -> None:
@@ -227,6 +240,7 @@ def test_qgis_plugin_structure_and_metadata() -> None:
     assert "no_evidence_path" not in dock_text
     assert "DEFAULT_LOCATE_SCALE = 1500" in dock_text
     assert "NO DATA" in dock_text
+    assert "PARTIAL" in dock_text
     assert "HAS DATA" in dock_text
     assert "TASK_DATA_SYMBOLS" in dock_text
     assert "✅ +" in dock_text

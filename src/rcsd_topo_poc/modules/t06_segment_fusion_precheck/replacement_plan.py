@@ -498,7 +498,7 @@ def _visual_consistency_repair_plan_rows(
             if audit_props.get("manual_review_required"):
                 risk_flags.append("manual_review_required")
         if buffer_corridor_release:
-            risk_flags.append("swsd_geometry_not_covered_by_retained_rcsd")
+            risk_flags.extend(["swsd_geometry_not_covered_by_retained_rcsd", "manual_review_required"])
         rows.append(
             feature(
                 {
@@ -883,6 +883,12 @@ def _prune_plan_roads(
     props["risk_flags"] = unique_preserve_order([*_parse_list(props.get("risk_flags")), risk_flag])
     notes = str(props.get("notes") or "")
     props["notes"] = f"{notes}; {notes_suffix}" if notes else notes_suffix
+    if not _parse_list(props.get("rcsd_road_ids")):
+        _block_plan_row(
+            props,
+            reason="visual_consistency_pruned_empty_rcsd_road_ids",
+            risk_flag="visual_consistency_pruned_empty_rcsd_road_ids",
+        )
 
 
 def _plan_retained_node_ids(
@@ -1621,6 +1627,8 @@ def _visual_consistency_release_mode(
     buffer_corridor_release = reject_reason == "swsd_geometry_not_covered_by_retained_rcsd"
     if buffer_corridor_release and not _rcsd_corridor_stays_inside_swsd_buffer(buffer_props, rejected_props):
         return ""
+    if buffer_corridor_release:
+        return "buffer_corridor_release"
     if rejected_props.get("swsd_directionality") != "single":
         return ""
     if _coerce_float(buffer_props.get("retained_road_count")) < 2:

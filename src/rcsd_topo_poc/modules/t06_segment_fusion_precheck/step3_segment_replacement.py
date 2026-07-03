@@ -93,12 +93,13 @@ from .step3_topology_supplement import (
     junction_surface_by_node_id_from_features,
     junction_surface_mask_for_unit,
     materialize_topology_supplement_rcsd_roads,
+    swsd_buffer_corridor_release_allows_coverage_gap,
 )
 
 
 INHERITED_NODE_FIELDS = ["kind", "grade", "kind_2", "grade_2", "closed_con"]
-TOPOLOGY_SUPPLEMENT_MAX_UNCOVERED_RATIO = 0.05
-TOPOLOGY_SUPPLEMENT_MIN_UNCOVERED_LENGTH_M = 20.0
+TS_MAX_RATIO = 0.05
+TS_MIN_LEN_M = 20.0
 
 
 @dataclass
@@ -1166,7 +1167,9 @@ def _retain_topology_supplement_swsd_roads(
             )
             if coverage_released:
                 append_junction_surface_release_risk(unit)
-            if _directed_path_missing(direction, path_forward, path_reverse, undirected_connected) or coverage_failed:
+            if _directed_path_missing(direction, path_forward, path_reverse, undirected_connected) or (
+                coverage_failed and not swsd_buffer_corridor_release_allows_coverage_gap(unit)
+            ):
                 retained.append(road_id)
         if retained:
             unit.retained_detached_swsd_road_ids = unique_preserve_order([*unit.retained_detached_swsd_road_ids, *retained])
@@ -1301,8 +1304,8 @@ def _road_corridor_coverage_failed(
     return coverage_failed_after_junction_surface_release(
         geometry,
         selected_corridor,
-        max_uncovered_ratio=TOPOLOGY_SUPPLEMENT_MAX_UNCOVERED_RATIO,
-        min_uncovered_length_m=TOPOLOGY_SUPPLEMENT_MIN_UNCOVERED_LENGTH_M,
+        max_uncovered_ratio=TS_MAX_RATIO,
+        min_uncovered_length_m=TS_MIN_LEN_M,
         allowed_surface=allowed_surface,
     )
 

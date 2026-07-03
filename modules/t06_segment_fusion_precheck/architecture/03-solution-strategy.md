@@ -123,7 +123,7 @@ T06 采用三步链路：
 - retained graph 中不得存在 pair required corridor 内部解释节点以外的额外 mapped semantic nodes。
 - `swsd_directionality=dual` 要求 RCSD pair 两端双向可达。
 - `swsd_directionality=single` 要求按推导 source/target 存在同向 RCSD corridor。
-- retained RCSDRoad 必须满足逐 road buffer overlap ratio；整体覆盖不一致比例和绝对长度默认不能超限。对于 `swsd_geometry_not_covered_by_retained_rcsd`，若 pair 端点 relation、required graph、candidate graph、方向性全部通过，failure business audit 给出非人工复核高置信 corridor，且 retained RCSD corridor 完全留在 SWSD 50m buffer 内，可作为 `swsd_buffer_corridor_controlled_release` 写入 replacement plan；该路径不放行 RCSD 跑出 buffer 的候选。
+- retained RCSDRoad 必须满足逐 road buffer overlap ratio；retained RCSD 跑出 SWSD 50m buffer 的覆盖不一致仍硬拒绝。对于 `swsd_geometry_not_covered_by_retained_rcsd`，若 pair 端点 relation、required graph、candidate graph、方向性全部通过，且 retained RCSD corridor 完全留在 SWSD 50m buffer 内，可作为 `swsd_buffer_corridor_controlled_release` 写入 replacement plan；SWSD 反向 coverage gap 只作为 `manual_review_required` 审计风险，不再依赖 failure business audit 高置信评分放行。
 - 宽 50m buffer 覆盖通过后，还必须执行窄通道视觉连续性复核。该复核用于识别“RCSD 在宽 buffer 内，但主线目视连续性断裂或替换结果明显偏离 SWSD 主通道”的场景；失败时不得进入 adaptive buffer 或 graph-first 重审。
 - 高等级受限重审通过的 Segment 仍必须通过单向 / 双向可达、叶子端点、额外 mapped semantic node、几何参考覆盖与特殊组局部替换门控；single graph-first 不允许只因全图有向 path 存在直接进入 replaceable，必须经过 50m buffer core 并满足纵向门槛。
 - `kind_2=64 / 128` 的特殊路口按关联 Segment 组执行局部替换门控：关联 Segment 全部可替换时发布特殊组内部 RCSD Road/Node；只有部分可替换时保留已通过 Segment 的 replaceable，未通过 Segment 保留 SWSD carrier，且不发布特殊组内部 RCSD Road/Node。局部环岛必须保留 SWSD 环岛内部 Road，不能引入 RCSD 环岛内部端点间 Road。

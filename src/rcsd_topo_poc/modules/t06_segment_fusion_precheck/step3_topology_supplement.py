@@ -39,6 +39,7 @@ JUNCTION_SURFACE_COVERAGE_RELEASE_RISK_FLAGS = [
     "junction_surface_coverage_release",
     "manual_review_required",
 ]
+SWSD_BUFFER_CORRIDOR_RELEASE_RISK = "swsd_buffer_corridor_controlled_release"
 
 
 class _LineSpatialIndex:
@@ -400,6 +401,8 @@ def _unit_corridor_coverage_unavailable(
             if failed and _surface_aware_formal_corridor_release_available(unit, swsd_road, unit_roads):
                 _append_surface_aware_formal_corridor_release_risk(unit)
                 continue
+            if failed and swsd_buffer_corridor_release_allows_coverage_gap(unit):
+                continue
             if failed:
                 return True
             continue
@@ -409,6 +412,8 @@ def _unit_corridor_coverage_unavailable(
         if released:
             append_junction_surface_release_risk(unit)
         if not failed:
+            continue
+        if swsd_buffer_corridor_release_allows_coverage_gap(unit):
             continue
         return True
     return False
@@ -460,6 +465,14 @@ def _surface_aware_formal_corridor_release_available(
         buffer_m=SURFACE_AWARE_FORMAL_CORRIDOR_BUFFER_M,
     )
     return not failed
+
+
+def swsd_buffer_corridor_release_allows_coverage_gap(unit: Any) -> bool:
+    try:
+        risk_flags = set(parse_id_list(getattr(unit, "risk_flags", []), allow_empty=True))
+    except ParseError:
+        return False
+    return SWSD_BUFFER_CORRIDOR_RELEASE_RISK in risk_flags
 
 
 def materialize_topology_supplement_rcsd_roads(

@@ -35,7 +35,7 @@ T06 消费 T01 SWSD Segment 与 T05 SWSD-RCSD 语义路口关系，构建 RCSDSe
 
 - 不修改 T01 / T05 输出。
 - 不新增 repo CLI。
-- Step2 对 `swsd_geometry_not_covered_by_retained_rcsd` 的拒绝只允许一个受控例外：pair 端点、required graph、candidate graph 与方向性全部通过，failure business audit 给出非人工复核高置信 corridor，且 retained RCSD corridor 完全位于 SWSD 50m buffer 内时，可发布 `swsd_buffer_corridor_controlled_release` replacement plan；该例外只接受 SWSD 覆盖差异，不接受 RCSD 跑出 buffer。
+- Step2 对 `swsd_geometry_not_covered_by_retained_rcsd` 必须按受控审计风险处理：正式 relation 已消费、pair required graph / candidate graph / 方向性全部通过，且 retained RCSD corridor 完全位于 SWSD 50m buffer 内时，可发布 `swsd_buffer_corridor_controlled_release` replacement plan，并写入 `manual_review_required` 风险；该路径只接受 SWSD 反向覆盖差异，不接受 RCSD 跑出 buffer。
 - Step3 不处理未进入 Step2 replacement plan 的 rejected Segment。
 - Step3 不通过几何猜测补救未通过 Step2 的 Segment。
 - Step2 不再执行旧 pair-to-pair BFS、主轴趋势、长度趋势或唯一性筛选。

@@ -18,7 +18,7 @@ def _node(node_id: int, x: float) -> dict:
     return {"properties": {"id": node_id, "mainnodeid": node_id}, "geometry": Point(x, 0)}
 
 
-def _run_case(tmp_path: Path, *, with_surface: bool):
+def _run_case(tmp_path: Path, *, with_surface: bool, risk_flags: list[str] | None = None):
     segment = _write(
         tmp_path / "segment.gpkg",
         [
@@ -61,6 +61,7 @@ def _run_case(tmp_path: Path, *, with_surface: bool):
                     "rcsd_road_ids": ["rr1"],
                     "retained_node_ids": [10, 20],
                     "hard_filter_passed": True,
+                    "risk_flags": risk_flags or [],
                 },
                 "geometry": LineString([(0, 0), (100, 0)]),
             }
@@ -118,3 +119,24 @@ def test_step3_keeps_formal_corridor_gap_without_junction_surface_hard_failed(tm
     assert unit["unit_status"] == "failed"
     assert unit["unit_reason"] == "formal_replacement_corridor_coverage_unavailable"
     assert relation["relation_status"] == "retained_swsd"
+
+
+def test_step3_releases_buffer_corridor_controlled_gap_without_junction_surface(tmp_path: Path) -> None:
+    artifacts = _run_case(
+        tmp_path,
+        with_surface=False,
+        risk_flags=[
+            "swsd_buffer_corridor_controlled_release",
+            "swsd_geometry_not_covered_by_retained_rcsd",
+            "manual_review_required",
+        ],
+    )
+
+    [unit] = _rows(artifacts.replacement_units_gpkg_path)
+    [relation] = _rows(artifacts.swsd_frcsd_segment_relation_gpkg_path)
+
+    assert unit["unit_status"] == "passed"
+    assert unit["retained_detached_swsd_road_ids"] == []
+    assert relation["relation_status"] == "replaced"
+    assert "swsd_buffer_corridor_controlled_release" in relation["risk_flags"]
+    assert "manual_review_required" in relation["risk_flags"]

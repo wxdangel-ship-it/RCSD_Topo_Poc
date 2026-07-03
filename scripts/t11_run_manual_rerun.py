@@ -15,6 +15,7 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from rcsd_topo_poc.modules.t11_manual_relation_review.manual_rerun import (  # noqa: E402
+    build_t05_manual_relation_final_rejected_reports,
     compare_t06_run_metrics,
     import_t11_manual_review_xlsx_to_csv,
     resolve_rcsd_inputs_from_case_root,
@@ -86,6 +87,10 @@ def main() -> int:
             str(args.progress_interval),
         ]
     )
+    final_rejected_artifacts = build_t05_manual_relation_final_rejected_reports(
+        manual_relation_csv=manual_csv,
+        t05_phase2_root=t05_root / "t05_phase2",
+    )
     _run(
         [
             sys.executable,
@@ -147,9 +152,15 @@ def main() -> int:
         "manual_relation_csv": str(import_artifacts.manual_relation_csv),
         "manual_relation_import_summary": str(import_artifacts.summary_json),
         "t05_phase2_root": str(t05_root / "t05_phase2"),
+        "t05_manual_relation_final_rejected_summary": str(final_rejected_artifacts.summary_json),
+        "t05_manual_relation_final_rejected_csv": str(final_rejected_artifacts.rejected_csv),
+        "t05_manual_relation_graph_unconsumable_reference_csv": str(
+            final_rejected_artifacts.graph_unconsumable_reference_csv
+        ),
         "t06_run_root": str(t06_out_root / "t06"),
         "metric_compare_json": str(run_root / "manual_rerun_metric_compare.json"),
         "manual_import": import_artifacts.summary,
+        "t05_manual_relation_final_rejected": final_rejected_artifacts.summary,
         "metric_compare": compare,
     }
     (run_root / "t11_manual_rerun_summary.json").write_text(

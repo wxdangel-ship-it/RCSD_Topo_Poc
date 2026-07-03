@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from rcsd_topo_poc.modules.t11_manual_relation_review.manual_rerun import (
+    build_t05_manual_relation_final_rejected_reports,
     compare_t06_run_metrics,
     import_t11_manual_review_xlsx_to_csv,
     read_t11_manual_review_xlsx_rows,
@@ -46,6 +47,97 @@ def test_writes_merged_manual_relation_csv_and_summary(tmp_path: Path) -> None:
     assert csv_rows[1]["source_manual_table"] == "all_evidence_relation_gaps"
     assert summary["manual_relation_csv"] == str(out_csv)
     assert summary["source_table_stats"]["no_evidence_relation_gaps"]["accepted_row_count"] == 1
+
+
+def test_builds_t05_manual_final_rejected_and_graph_reference_reports(tmp_path: Path) -> None:
+    manual_csv = tmp_path / "t11_manual_relation_merged.csv"
+    t05_root = tmp_path / "t05_phase2"
+    t05_root.mkdir()
+    _write_csv(
+        manual_csv,
+        [
+            {"case_id": "case", "swsd_segment_id": "seg-a", "target_id": "A", "manual_relation_type": "1v1_rcsd_junction", "selected_ids": "100"},
+            {"case_id": "case", "swsd_segment_id": "seg-b", "target_id": "B", "manual_relation_type": "1v1_rcsd_road", "selected_ids": "200"},
+            {"case_id": "case", "swsd_segment_id": "seg-c", "target_id": "C", "manual_relation_type": "1v1_rcsd_junction", "selected_ids": "300"},
+            {"case_id": "case", "swsd_segment_id": "seg-d", "target_id": "D", "manual_relation_type": "1v1_rcsd_junction", "selected_ids": "400"},
+            {"case_id": "case", "swsd_segment_id": "seg-e", "target_id": "E", "manual_relation_type": "1v1_rcsd_road", "selected_ids": "500"},
+            {"case_id": "case", "swsd_segment_id": "seg-f", "target_id": "F", "manual_relation_type": "1vN_rcsd_junction", "selected_ids": "600|601"},
+            {"case_id": "case", "swsd_segment_id": "seg-n", "target_id": "N", "manual_relation_type": "no_valid_relation", "selected_ids": "NULL"},
+        ],
+        ["case_id", "swsd_segment_id", "target_id", "manual_relation_type", "selected_ids"],
+    )
+    (t05_root / "intersection_match_all.geojson").write_text('{"type":"FeatureCollection","features":[]}', encoding="utf-8")
+    _write_csv(
+        t05_root / "rcsd_junctionization_audit.csv",
+        [
+            _audit_row("A", status="0", base_id="1000", reason="t11_manual_1v1_rcsd_junction"),
+            _audit_row("B", status="1", base_id="0", scene="road_only_split", reason="rcsdroad_split_failed", skipped_reason="missing_rcsdroad_id:200"),
+            _audit_row("C", status="0", base_id="3000", reason="t11_manual_1v1_rcsd_junction"),
+            _audit_row("D", status="0", base_id="4000", reason="t11_manual_1v1_rcsd_junction"),
+            _audit_row("E", status="0", base_id="5000", scene="road_only_split", reason="road_only_projection_near_endpoint_reuse_rcsdnode"),
+            _audit_row("F", status="1", base_id="0", scene="group_existing_rcsd_nodes", reason="missing_rcsdnode_ids:[601]", skipped_reason="rcsdnode_grouping_failed"),
+        ],
+        _AUDIT_FIELDS,
+    )
+    _write_csv(
+        t05_root / "relation_graph_consumability_audit.csv",
+        [
+            {
+                "target_id": "C",
+                "base_id": "3000",
+                "relation_status": "0",
+                "graph_consumable": "0",
+                "graph_consumability_status": "base_node_not_incident_to_rcsdroad",
+                "recommended_action": "graph_qc",
+            }
+        ],
+        ["target_id", "base_id", "relation_status", "graph_consumable", "graph_consumability_status", "recommended_action"],
+    )
+    _write_csv(t05_root / "blocking_errors.csv", [], ["target_id", "reason", "source_modules"])
+    _write_csv(
+        t05_root / "relation_cardinality_errors.csv",
+        [
+            {
+                "error_type": "one_target_to_many_base",
+                "target_id": "D",
+                "base_id": "4000|4001",
+                "related_target_ids": "D",
+                "source_modules": "T11_MANUAL",
+                "scenes": "direct_existing_rcsd_junction",
+                "reasons": "target has multiple bases",
+            },
+            {
+                "error_type": "many_target_to_one_base",
+                "target_id": "E|Z",
+                "base_id": "5000",
+                "related_target_ids": "E|Z",
+                "source_modules": "T11_MANUAL|T07",
+                "scenes": "road_only_split",
+                "reasons": "audit only",
+            },
+        ],
+        ["error_type", "target_id", "base_id", "related_target_ids", "source_modules", "scenes", "reasons"],
+    )
+
+    artifacts = build_t05_manual_relation_final_rejected_reports(
+        manual_relation_csv=manual_csv,
+        t05_phase2_root=t05_root,
+    )
+
+    rejected = _read_csv(artifacts.rejected_csv)
+    graph_reference = _read_csv(artifacts.graph_unconsumable_reference_csv)
+    assert [row["target_id"] for row in rejected] == ["B", "D", "F"]
+    assert {row["target_id"]: row["reject_category"] for row in rejected} == {
+        "B": "selected_rcsdroad_missing",
+        "D": "cardinality_blocked",
+        "F": "selected_rcsdnode_missing",
+    }
+    assert [row["target_id"] for row in graph_reference] == ["C"]
+    assert graph_reference[0]["reject_category"] == "graph_unconsumable_reference"
+    assert artifacts.summary["manual_actionable_target_count"] == 6
+    assert artifacts.summary["t05_manual_consumed_success_count"] == 3
+    assert artifacts.summary["t05_final_rejected_count"] == 3
+    assert artifacts.summary["graph_unconsumable_reference_count"] == 1
 
 
 def test_resolves_default_three_review_workbooks(tmp_path: Path) -> None:
@@ -166,6 +258,79 @@ def _write_three_manual_xlsx(root: Path) -> dict[str, Path]:
         "all_evidence_relation_gaps": all_evidence,
         "no_evidence_relation_gaps": no_evidence,
     }
+
+
+_AUDIT_FIELDS = [
+    "target_id",
+    "surface_id",
+    "source_module",
+    "source_case_id",
+    "scene",
+    "action",
+    "status",
+    "base_id",
+    "reason",
+    "original_rcsdroad_ids",
+    "new_rcsdroad_ids",
+    "original_rcsdnode_ids",
+    "new_rcsdnode_ids",
+    "grouped_rcsdnode_ids",
+    "selected_main_rcsdnode_id",
+    "projection_point_count",
+    "split_point_count",
+    "skipped_reason",
+    "geometry_mode",
+    "multi_base_relation",
+    "blocking_error",
+]
+
+
+def _audit_row(
+    target_id: str,
+    *,
+    status: str,
+    base_id: str,
+    scene: str = "direct_existing_rcsd_junction",
+    action: str = "direct_relation",
+    reason: str,
+    skipped_reason: str = "",
+) -> dict[str, str]:
+    return {
+        "target_id": target_id,
+        "surface_id": f"T11_MANUAL:{target_id}",
+        "source_module": "T11_MANUAL",
+        "source_case_id": "case",
+        "scene": scene,
+        "action": action,
+        "status": status,
+        "base_id": base_id,
+        "reason": reason,
+        "original_rcsdroad_ids": "",
+        "new_rcsdroad_ids": "",
+        "original_rcsdnode_ids": "",
+        "new_rcsdnode_ids": "",
+        "grouped_rcsdnode_ids": "",
+        "selected_main_rcsdnode_id": base_id if status == "0" else "0",
+        "projection_point_count": "0",
+        "split_point_count": "0",
+        "skipped_reason": skipped_reason,
+        "geometry_mode": "success_line" if status == "0" else "zero_length_no_rcsd",
+        "multi_base_relation": "0",
+        "blocking_error": "0",
+    }
+
+
+def _write_csv(path: Path, rows: list[dict[str, str]], fieldnames: list[str]) -> None:
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({field: row.get(field, "") for field in fieldnames})
+
+
+def _read_csv(path: Path) -> list[dict[str, str]]:
+    with path.open(encoding="utf-8", newline="") as handle:
+        return list(csv.DictReader(handle))
 
 
 def _write_t06_summary_tree(root: Path, *, final: int, replaceable: int, success: int, unreplaced: int, length: float) -> Path:

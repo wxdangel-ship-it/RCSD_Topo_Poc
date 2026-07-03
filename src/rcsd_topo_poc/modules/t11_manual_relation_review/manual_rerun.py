@@ -4,7 +4,9 @@ import csv
 import json
 import re
 import zipfile
+from collections import Counter
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
@@ -34,6 +36,45 @@ MANUAL_RELATION_CSV_FIELDS = [
     "source_manual_table",
     "source_manual_xlsx",
 ]
+
+T05_MANUAL_FINAL_REJECTED_FIELDS = [
+    "target_id",
+    "swsd_segment_id",
+    "manual_relation_type",
+    "manual_selected_ids",
+    "t05_scene",
+    "t05_action",
+    "t05_status",
+    "t05_base_id",
+    "t05_reason",
+    "t05_skipped_reason",
+    "blocking_error",
+    "original_rcsdroad_ids",
+    "original_rcsdnode_ids",
+    "new_rcsdroad_ids",
+    "new_rcsdnode_ids",
+    "grouped_rcsdnode_ids",
+    "selected_main_rcsdnode_id",
+    "reject_category",
+    "suggested_manual_check",
+]
+
+T05_MANUAL_GRAPH_UNCONSUMABLE_REFERENCE_FIELDS = [
+    *T05_MANUAL_FINAL_REJECTED_FIELDS,
+    "graph_consumable",
+    "graph_consumability_status",
+    "graph_recommended_action",
+]
+
+T05_BLOCKING_CARDINALITY_ERROR_TYPES = {"one_target_to_many_base", "duplicate_target_rows"}
+
+
+@dataclass(frozen=True)
+class ManualRelationFinalRejectedArtifacts:
+    rejected_csv: Path
+    graph_unconsumable_reference_csv: Path
+    summary_json: Path
+    summary: dict[str, Any]
 
 
 @dataclass(frozen=True)
@@ -196,6 +237,122 @@ def compare_t06_run_metrics(*, before_t06_root: Path, after_t06_root: Path, out_
     return report
 
 
+def build_t05_manual_relation_final_rejected_reports(
+    *,
+    manual_relation_csv: Path,
+    t05_phase2_root: Path,
+    out_root: Path | None = None,
+) -> ManualRelationFinalRejectedArtifacts:
+    phase2_root = Path(t05_phase2_root)
+    output_root = Path(out_root) if out_root is not None else phase2_root
+    _require_t05_manual_rejection_inputs(phase2_root, manual_relation_csv)
+
+    manual_rows = _read_csv_rows(manual_relation_csv)
+    manual_by_target = _actionable_manual_rows_by_target(manual_rows)
+    audit_rows = _read_csv_rows(phase2_root / "rcsd_junctionization_audit.csv")
+    graph_rows = _read_csv_rows(phase2_root / "relation_graph_consumability_audit.csv")
+    blocking_rows = _read_csv_rows(phase2_root / "blocking_errors.csv")
+    cardinality_rows = _read_csv_rows(phase2_root / "relation_cardinality_errors.csv")
+
+    audit_by_target = _rows_by_target(audit_rows)
+    t11_audit_by_target = {
+        target_id: [row for row in rows if _source_contains(row.get("source_module"), "T11_MANUAL")]
+        for target_id, rows in audit_by_target.items()
+    }
+    blocking_by_target = _blocking_rows_by_manual_target(blocking_rows, manual_by_target)
+    cardinality_by_target = _blocking_cardinality_rows_by_manual_target(cardinality_rows, manual_by_target)
+
+    strict_targets: set[str] = set()
+    for target_id, rows in t11_audit_by_target.items():
+        if target_id not in manual_by_target:
+            continue
+        for row in rows:
+            if _strictly_rejected_audit_row(row):
+                strict_targets.add(target_id)
+                break
+    strict_targets.update(blocking_by_target)
+    strict_targets.update(cardinality_by_target)
+
+    rejected_rows = [
+        _manual_rejection_row(
+            target_id=target_id,
+            manual_row=manual_by_target[target_id],
+            audit_row=_pick_audit_row(t11_audit_by_target.get(target_id), audit_by_target.get(target_id)),
+            blocking_rows=blocking_by_target.get(target_id, []),
+            cardinality_rows=cardinality_by_target.get(target_id, []),
+        )
+        for target_id in sorted(strict_targets, key=_sort_key)
+        if target_id in manual_by_target
+    ]
+    rejected_target_ids = {row["target_id"] for row in rejected_rows}
+
+    graph_reference_rows = []
+    graph_by_target = _rows_by_target(graph_rows)
+    for target_id, graph_target_rows in sorted(graph_by_target.items(), key=lambda item: _sort_key(item[0])):
+        if target_id not in manual_by_target or target_id in rejected_target_ids:
+            continue
+        graph_row = _pick_graph_unconsumable_success_row(graph_target_rows)
+        if graph_row is None:
+            continue
+        base_row = _manual_rejection_row(
+            target_id=target_id,
+            manual_row=manual_by_target[target_id],
+            audit_row=_pick_audit_row(t11_audit_by_target.get(target_id), audit_by_target.get(target_id)),
+            blocking_rows=[],
+            cardinality_rows=[],
+            category_override="graph_unconsumable_reference",
+        )
+        graph_reference_rows.append(
+            {
+                **base_row,
+                "t05_reason": _join_nonempty([base_row.get("t05_reason"), graph_row.get("graph_consumability_status")]),
+                "graph_consumable": _text(graph_row.get("graph_consumable")),
+                "graph_consumability_status": _text(graph_row.get("graph_consumability_status")),
+                "graph_recommended_action": _text(graph_row.get("recommended_action")),
+            }
+        )
+
+    rejected_csv = output_root / "t05_manual_relation_final_rejected_junctions.csv"
+    graph_csv = output_root / "t05_manual_relation_graph_unconsumable_reference.csv"
+    summary_json = output_root / "t05_manual_relation_final_rejected_summary.json"
+    _write_csv_rows(rejected_csv, rejected_rows, T05_MANUAL_FINAL_REJECTED_FIELDS)
+    _write_csv_rows(graph_csv, graph_reference_rows, T05_MANUAL_GRAPH_UNCONSUMABLE_REFERENCE_FIELDS)
+
+    success_targets = {
+        target_id
+        for target_id, rows in t11_audit_by_target.items()
+        if target_id in manual_by_target
+        and target_id not in rejected_target_ids
+        and any(_successful_valid_audit_row(row) for row in rows)
+    }
+    category_counts = Counter(row["reject_category"] for row in rejected_rows)
+    summary = {
+        "manual_actionable_target_count": len(manual_by_target),
+        "t05_manual_consumed_success_count": len(success_targets),
+        "t05_final_rejected_count": len(rejected_rows),
+        "graph_unconsumable_reference_count": len(graph_reference_rows),
+        "reject_category_counts": dict(sorted(category_counts.items())),
+        "t05_manual_audit_row_count": sum(len(rows) for rows in t11_audit_by_target.values()),
+        "output_paths": {
+            "t05_manual_relation_final_rejected_junctions": str(rejected_csv),
+            "t05_manual_relation_graph_unconsumable_reference": str(graph_csv),
+            "t05_manual_relation_final_rejected_summary": str(summary_json),
+        },
+        "input_paths": {
+            "manual_relation_csv": str(manual_relation_csv),
+            "t05_phase2_root": str(phase2_root),
+        },
+        "produced_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+    summary_json.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+    return ManualRelationFinalRejectedArtifacts(
+        rejected_csv=rejected_csv,
+        graph_unconsumable_reference_csv=graph_csv,
+        summary_json=summary_json,
+        summary=summary,
+    )
+
+
 def resolve_rcsd_inputs_from_case_root(case_root: Path) -> tuple[Path, Path]:
     summary_path = case_root / "t05" / "t05_phase2" / "summary.json"
     if summary_path.is_file():
@@ -214,6 +371,276 @@ def resolve_rcsd_inputs_from_case_root(case_root: Path) -> tuple[Path, Path]:
         "cannot resolve RCSD inputs from case root summary or default T10 external_inputs: "
         f"{summary_path}"
     )
+
+
+def _require_t05_manual_rejection_inputs(t05_phase2_root: Path, manual_relation_csv: Path) -> None:
+    required = [
+        manual_relation_csv,
+        t05_phase2_root / "intersection_match_all.geojson",
+        t05_phase2_root / "rcsd_junctionization_audit.csv",
+        t05_phase2_root / "relation_graph_consumability_audit.csv",
+        t05_phase2_root / "blocking_errors.csv",
+        t05_phase2_root / "relation_cardinality_errors.csv",
+    ]
+    missing = [str(path) for path in required if not Path(path).is_file()]
+    if missing:
+        raise FileNotFoundError("missing T05 manual rejection report inputs: " + ", ".join(missing))
+
+
+def _actionable_manual_rows_by_target(rows: list[dict[str, str]]) -> dict[str, dict[str, str]]:
+    result: dict[str, dict[str, str]] = {}
+    for row in rows:
+        target_id = _normalize_id(row.get("target_id"))
+        manual_type = _text(row.get("manual_relation_type"))
+        selected_ids = _text(row.get("selected_ids") or row.get("manual_selected_ids"))
+        if not target_id or target_id in result:
+            continue
+        if manual_type not in MANUAL_RELATION_ACTIONABLE_TYPES:
+            continue
+        if not selected_ids or selected_ids.lower() == "null":
+            continue
+        result[target_id] = {**row, "target_id": target_id, "selected_ids": selected_ids}
+    return result
+
+
+def _rows_by_target(rows: list[dict[str, str]]) -> dict[str, list[dict[str, str]]]:
+    result: dict[str, list[dict[str, str]]] = {}
+    for row in rows:
+        target_id = _normalize_id(row.get("target_id"))
+        if not target_id:
+            continue
+        result.setdefault(target_id, []).append(row)
+    return result
+
+
+def _blocking_rows_by_manual_target(
+    rows: list[dict[str, str]],
+    manual_by_target: dict[str, dict[str, str]],
+) -> dict[str, list[dict[str, str]]]:
+    result: dict[str, list[dict[str, str]]] = {}
+    for row in rows:
+        target_ids = _normalized_parts(row.get("target_id"))
+        for target_id in sorted(target_ids & set(manual_by_target), key=_sort_key):
+            result.setdefault(target_id, []).append(row)
+    return result
+
+
+def _blocking_cardinality_rows_by_manual_target(
+    rows: list[dict[str, str]],
+    manual_by_target: dict[str, dict[str, str]],
+) -> dict[str, list[dict[str, str]]]:
+    result: dict[str, list[dict[str, str]]] = {}
+    for row in rows:
+        if _text(row.get("error_type")) not in T05_BLOCKING_CARDINALITY_ERROR_TYPES:
+            continue
+        target_ids = _normalized_parts(row.get("related_target_ids")) or _normalized_parts(row.get("target_id"))
+        for target_id in sorted(target_ids & set(manual_by_target), key=_sort_key):
+            result.setdefault(target_id, []).append(row)
+    return result
+
+
+def _strictly_rejected_audit_row(row: dict[str, str]) -> bool:
+    return (
+        _text(row.get("status")) != "0"
+        or not _valid_base_id(row.get("base_id"))
+        or _nonzero(row.get("blocking_error"))
+    )
+
+
+def _successful_valid_audit_row(row: dict[str, str]) -> bool:
+    return _text(row.get("status")) == "0" and _valid_base_id(row.get("base_id")) and not _nonzero(row.get("blocking_error"))
+
+
+def _pick_audit_row(
+    t11_rows: list[dict[str, str]] | None,
+    fallback_rows: list[dict[str, str]] | None,
+) -> dict[str, str]:
+    for row in t11_rows or []:
+        if _strictly_rejected_audit_row(row):
+            return row
+    if t11_rows:
+        return t11_rows[0]
+    return (fallback_rows or [{}])[0]
+
+
+def _pick_graph_unconsumable_success_row(rows: list[dict[str, str]]) -> dict[str, str] | None:
+    for row in rows:
+        if _text(row.get("relation_status")) == "0" and _false_like(row.get("graph_consumable")):
+            return row
+    return None
+
+
+def _manual_rejection_row(
+    *,
+    target_id: str,
+    manual_row: dict[str, str],
+    audit_row: dict[str, str],
+    blocking_rows: list[dict[str, str]],
+    cardinality_rows: list[dict[str, str]],
+    category_override: str | None = None,
+) -> dict[str, str]:
+    category = category_override or _reject_category(
+        manual_row=manual_row,
+        audit_row=audit_row,
+        cardinality_rows=cardinality_rows,
+    )
+    cardinality_types = [_text(row.get("error_type")) for row in cardinality_rows]
+    reason = _join_nonempty(
+        [
+            audit_row.get("reason"),
+            *[row.get("reason") for row in blocking_rows],
+            *[row.get("reasons") for row in cardinality_rows],
+            "|".join(cardinality_types),
+        ]
+    )
+    skipped_reason = _join_nonempty(
+        [
+            audit_row.get("skipped_reason"),
+            *[f"relation_cardinality_error:{item}" for item in cardinality_types if item],
+        ]
+    )
+    return {
+        "target_id": target_id,
+        "swsd_segment_id": _text(manual_row.get("swsd_segment_id")),
+        "manual_relation_type": _text(manual_row.get("manual_relation_type")),
+        "manual_selected_ids": _text(manual_row.get("selected_ids") or manual_row.get("manual_selected_ids")),
+        "t05_scene": _text(audit_row.get("scene")) or _join_nonempty([row.get("scenes") for row in cardinality_rows]),
+        "t05_action": _text(audit_row.get("action")),
+        "t05_status": _text(audit_row.get("status")),
+        "t05_base_id": _text(audit_row.get("base_id")) or _join_nonempty([row.get("base_id") for row in cardinality_rows]),
+        "t05_reason": reason,
+        "t05_skipped_reason": skipped_reason,
+        "blocking_error": _text(audit_row.get("blocking_error")) or ("1" if blocking_rows else "0"),
+        "original_rcsdroad_ids": _text(audit_row.get("original_rcsdroad_ids")),
+        "original_rcsdnode_ids": _text(audit_row.get("original_rcsdnode_ids")),
+        "new_rcsdroad_ids": _text(audit_row.get("new_rcsdroad_ids")),
+        "new_rcsdnode_ids": _text(audit_row.get("new_rcsdnode_ids")),
+        "grouped_rcsdnode_ids": _text(audit_row.get("grouped_rcsdnode_ids")),
+        "selected_main_rcsdnode_id": _text(audit_row.get("selected_main_rcsdnode_id")),
+        "reject_category": category,
+        "suggested_manual_check": _suggested_manual_check(category),
+    }
+
+
+def _reject_category(
+    *,
+    manual_row: dict[str, str],
+    audit_row: dict[str, str],
+    cardinality_rows: list[dict[str, str]],
+) -> str:
+    if cardinality_rows:
+        return "cardinality_blocked"
+    manual_type = _text(manual_row.get("manual_relation_type"))
+    text = "|".join(
+        _text(value)
+        for value in (
+            audit_row.get("reason"),
+            audit_row.get("skipped_reason"),
+            audit_row.get("scene"),
+            audit_row.get("action"),
+        )
+    )
+    if "missing_rcsdnode_ids" in text or "missing_endpoint_rcsdnode_ids" in text:
+        return "selected_rcsdnode_missing"
+    if "missing_rcsdroad_id" in text:
+        return "selected_rcsdroad_missing"
+    if "rcsdnode_grouping_failed" in text or "multiple_base_id_unmergeable" in text:
+        return "rcsdnode_grouping_failed"
+    if "rcsdroad_split_failed" in text or "no_valid_split_point" in text or "missing_fact_reference_point" in text:
+        return "rcsdroad_split_failed"
+    if manual_type.endswith("_road") and _text(audit_row.get("status")) != "0":
+        return "rcsdroad_split_failed"
+    return "other_t05_failure"
+
+
+def _suggested_manual_check(category: str) -> str:
+    suggestions = {
+        "selected_rcsdnode_missing": "Check whether selected_ids are RCSDNode.id/mainnodeid and exist in T05 rcsdnode_out.gpkg; reselect RCSDNode if needed.",
+        "selected_rcsdroad_missing": "Check whether selected_ids are RCSDRoad.id and exist in T05 input or rcsdroad_out.gpkg; reselect a projectable RCSDRoad if needed.",
+        "rcsdnode_grouping_failed": "Review whether selected RCSDNodes belong to one semantic junction and can share one mainnodeid; narrow or reselect the node group if needed.",
+        "rcsdroad_split_failed": "Review whether the road-only selection can project to a splittable RCSDRoad, especially missing_rcsdroad_id, no_valid_split_point, and endpoint reuse conditions.",
+        "cardinality_blocked": "Review whether one target produced multiple bases or duplicate success rows; keep exactly one publishable relation.",
+        "graph_unconsumable_reference": "T05 published a success relation but graph topology is not consumable; route to incident-road or T06 replaceability review, not T05 final rejection.",
+        "other_t05_failure": "Review T05 scene/action/reason/skipped_reason and confirm manual_relation_type matches the selected_ids kind.",
+    }
+    return suggestions.get(category, suggestions["other_t05_failure"])
+
+
+def _read_csv_rows(path: Path) -> list[dict[str, str]]:
+    with path.open("r", encoding="utf-8-sig", newline="") as handle:
+        reader = csv.DictReader(handle)
+        return [
+            {_text(key): _text(value) for key, value in row.items() if key is not None}
+            for row in reader
+        ]
+
+
+def _write_csv_rows(path: Path, rows: list[dict[str, Any]], fieldnames: list[str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({field: row.get(field, "") for field in fieldnames})
+
+
+def _normalized_parts(value: Any) -> set[str]:
+    return {normalized for part in str(value or "").replace(",", "|").split("|") if (normalized := _normalize_id(part))}
+
+
+def _normalize_id(value: Any) -> str:
+    text = _text(value)
+    if text.lower() in {"", "nan", "none", "null"}:
+        return ""
+    try:
+        numeric = Decimal(text)
+    except (InvalidOperation, ValueError):
+        return text
+    if numeric == numeric.to_integral_value():
+        return str(int(numeric))
+    return text
+
+
+def _valid_base_id(value: Any) -> bool:
+    return _normalize_id(value) not in {"", "0", "-1"}
+
+
+def _nonzero(value: Any) -> bool:
+    text = _text(value)
+    if not text:
+        return False
+    try:
+        return int(float(text)) != 0
+    except ValueError:
+        return text.lower() not in {"false", "no", "none", "null"}
+
+
+def _source_contains(value: Any, source: str) -> bool:
+    return source in {part.strip() for part in str(value or "").replace(",", "|").split("|") if part.strip()}
+
+
+def _false_like(value: Any) -> bool:
+    return _text(value).lower() in {"0", "false", "no"}
+
+
+def _join_nonempty(values: Iterable[Any]) -> str:
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        text = _text(value)
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        result.append(text)
+    return "|".join(result)
+
+
+def _sort_key(value: Any) -> tuple[int, int | str]:
+    text = _normalize_id(value)
+    try:
+        return (0, int(text))
+    except ValueError:
+        return (1, text)
 
 
 def _read_text_xlsx_table(path: Path) -> list[list[str]]:

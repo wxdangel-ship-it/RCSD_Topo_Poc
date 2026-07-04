@@ -94,6 +94,27 @@ T11 按文件名和常规 T10 layout 探测输入，不要求调用方传入 T05
 - 表 1 原始设计不要求填写 relation；若人工额外填入上述可执行字段，脚本会纳入导入，否则只作为下游问题审计表保留。
 - 脚本不修改输入 Case root、不覆盖 baseline，所有输出写到新的 `<out-root>/run_<timestamp>/`。
 
+内网人工重跑损失度量抽取入口：
+
+```bash
+.venv/bin/python -m rcsd_topo_poc.modules.t11_manual_relation_review.innernet_loss_metrics \
+  --run-root /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t11_manual_rerun_innernet_partial/run_20260703T232329Z \
+  --out-dir /mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t11_manual_rerun_innernet_partial/run_20260703T232329Z/_loss_metric_extract \
+  --top-n 500 \
+  --pack-top-n 80 \
+  --max-output-bytes 240000
+```
+
+该入口只读 T11 manual rerun / T05 / T06 输出目录，按文件名递归发现既有成果，不修改输入 run root。输出：
+
+- `metrics_snapshot.json`：输入文件、总量、metric compare 摘要和各输出路径。
+- `relation_gain_priority.csv`：人工正向 relation 中机器漏锚 / 未图消费 / 已消费行，按 `sort_benefit_m` 与问题权重降序。
+- `root5_strategy_priority.csv`：`final_attribution_class=5_replaceable_scope_unreplaced` 的 RCSDRoad 明细，按未替换长度降序。
+- `root5_strategy_by_segment.csv`：根因 5 按 Segment 聚合的收益排序。
+- `case_pack_request.csv`：建议本地复现打包清单，优先输出 Segment 级 `scripts/t10_pack_innernet_segments.sh` 命令提示。
+
+`--max-output-bytes` 默认按 `240000` 控制单个 CSV/JSON 文件大小，便于回传；若候选过多，输出会保留收益最高的行并在 `metrics_snapshot.json` 中记录 `truncated=true`。收益排序仅用于选择复现与优化目标，不直接改变 T05/T06 业务口径。
+
 ## 2.1 QGIS 插件入口
 
 QGIS 插件工程：

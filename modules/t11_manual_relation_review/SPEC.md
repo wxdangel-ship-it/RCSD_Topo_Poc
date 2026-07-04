@@ -28,6 +28,7 @@ T11 不修改 T05/T06/T09，不重跑 T06/T09，不把候选提升为 T06 白名
 - 固定输出三张 Segment 审计拆分表：所有路口均有 Relation、所有路口均有证据但存在 Relation 缺口、存在无证据路口且需按 50m RCSD 上下文排序。
 - 固定输出 Segment 级“全 1V1 relation 成功但 T06 未替换”审计 CSV/GPKG/XLSX，用于快速定位 relation 之外的 corridor、方向性、RCSD 数据质量或 T06 执行问题。
 - 提供人工 Excel 重跑入口，直接读取三张 Segment 审计 Excel 中局部填写的可执行人工 relation，合并为 T05 可消费 CSV 后重跑 T05/T06，并输出修复前后指标对比。
+- 提供内网人工重跑损失度量抽取入口，从 T11/T05/T06 运行成果中按收益降序输出人工 relation 漏锚与 `5_replaceable_scope_unreplaced` 策略问题清单；该入口只读运行目录，不修改输入成果。
 - 提供 QGIS 人工 Relation 审计插件，作为表 2 / 表 3 两张 relation 缺口 Excel 的地图化编辑入口；插件 UI 单次加载其中一张 Excel 进行修订，按 `target_id` 去重展示任务，并将人工编辑立即同步写回当前 Excel 的 `manual_relation_type / selected_ids / comment` 三列。
 
 ### 3.2 当前非目标

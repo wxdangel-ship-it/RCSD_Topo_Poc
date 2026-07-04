@@ -130,3 +130,51 @@ def test_t04_relation_fallback_rejects_zero_mainnode_group(tmp_path: Path) -> No
     assert rows["987955"]["relation_state"] == "geometry_not_accepted"
     assert audit_rows["987955"]["fallback_state"] == "failed"
     assert audit_rows["987955"]["reason"] == "invalid_rcsdnode_group_id:5396513947461929=0"
+
+
+def test_t04_relation_fallback_accepts_zero_mainnode_singleton_with_strong_rcsd_profile(tmp_path: Path) -> None:
+    run_root = tmp_path / "run"
+    run_root.mkdir()
+    _write_relation_csv(
+        run_root / "t04_swsd_rcsd_relation_evidence.csv",
+        [
+            {
+                "target_id": "1206756",
+                "case_id": "1206756",
+                "junction_type": "merge",
+                "final_state": "rejected",
+                "required_rcsd_node_ids": "5384381972227452",
+                "selected_rcsdnode_ids": "5384381972227452",
+                "rcsd_profile": "A=1|B=0|C=0",
+                "surface_candidate_present": 0,
+                "base_id_candidate": -1,
+                "status_suggested": 1,
+                "relation_state": "geometry_not_accepted",
+                "reason": "multi_component_result",
+            }
+        ],
+    )
+
+    outputs = enrich_t04_relation_evidence_with_fallback(
+        run_root=run_root,
+        selected_cases=[{"case_id": "1206756", "mainnodeid": "1206756"}],
+        source_node_features=[
+            {"properties": {"id": "1206756", "mainnodeid": "1206756", "kind_2": 8}, "geometry": Point(0, 0)},
+        ],
+        rcsdnode_features=[
+            {"properties": {"id": "5384381972227452", "mainnodeid": 0}, "geometry": Point(10, 0)},
+        ],
+        input_dataset_id="unit-test-input",
+    )
+
+    with (run_root / "t04_swsd_rcsd_relation_evidence.csv").open("r", encoding="utf-8-sig", newline="") as handle:
+        rows = {row["case_id"]: row for row in csv.DictReader(handle)}
+    with (run_root / "t04_relation_fallback_audit.csv").open("r", encoding="utf-8-sig", newline="") as handle:
+        audit_rows = {row["case_id"]: row for row in csv.DictReader(handle)}
+
+    assert outputs["fallback_success_case_ids"] == ["1206756"]
+    assert rows["1206756"]["status_suggested"] == "0"
+    assert rows["1206756"]["base_id_candidate"] == "5384381972227452"
+    assert rows["1206756"]["relation_state"] == "success_required_rcsd_junction"
+    assert audit_rows["1206756"]["fallback_state"] == "success"
+    assert audit_rows["1206756"]["reason"] == "required_rcsd_singleton_node_resolved_from_strong_rcsd_profile"

@@ -120,7 +120,7 @@ def test_buffer_extraction_prefers_reference_corridor_over_shortcut() -> None:
     assert result.retained_road_ids == ["corridor_a", "corridor_b"]
 
 
-def test_retained_road_must_satisfy_buffer_overlap_ratio() -> None:
+def test_retained_road_records_low_buffer_overlap_without_rejecting_when_intersecting() -> None:
     extractor = BufferSegmentExtractor(
         rcsd_road_features=[
             _road("detour", 10, 20, [(0, 0), (0, 100), (100, 100), (100, 0)]),
@@ -136,15 +136,15 @@ def test_retained_road_must_satisfy_buffer_overlap_ratio() -> None:
         config=BufferExtractionConfig(buffer_distance_m=10, min_road_overlap_ratio=0.2, min_road_overlap_length_m=1.0),
     )
 
-    assert not result.ok
-    assert result.reason == "retained_road_buffer_overlap_insufficient"
+    assert result.ok
+    assert result.reason == "passed"
     assert result.retained_road_ids == ["detour"]
-    assert result.low_buffer_overlap_road_ids == ["detour"]
+    assert result.low_buffer_overlap_road_ids == []
     assert result.min_retained_road_buffer_overlap_ratio is not None
     assert result.min_retained_road_buffer_overlap_ratio < 0.2
 
 
-def test_retained_geometry_must_stay_inside_swsd_buffer_scope() -> None:
+def test_retained_geometry_outside_swsd_buffer_scope_is_audit_risk() -> None:
     extractor = BufferSegmentExtractor(
         rcsd_road_features=[
             _road("overlong", 10, 20, [(0, 0), (100, 0), (180, 0)]),
@@ -160,14 +160,14 @@ def test_retained_geometry_must_stay_inside_swsd_buffer_scope() -> None:
         config=BufferExtractionConfig(buffer_distance_m=10, min_road_overlap_ratio=0.2),
     )
 
-    assert not result.ok
-    assert result.reason == "retained_geometry_outside_swsd_buffer_scope"
+    assert result.ok
+    assert result.reason == "passed"
     assert result.geometry_buffer_coverage_issue == "retained_geometry_outside_swsd_buffer_scope"
     assert result.rcsd_outside_swsd_buffer_length_m > 30
     assert result.rcsd_outside_swsd_buffer_ratio > 0.1
 
 
-def test_retained_geometry_rejects_absolute_outside_length_when_ratio_is_low() -> None:
+def test_retained_geometry_records_absolute_outside_length_when_ratio_is_low() -> None:
     extractor = BufferSegmentExtractor(
         rcsd_road_features=[
             _road("slightly_overlong", 10, 20, [(0, 0), (1035, 0)]),
@@ -183,13 +183,14 @@ def test_retained_geometry_rejects_absolute_outside_length_when_ratio_is_low() -
         config=BufferExtractionConfig(buffer_distance_m=10, min_road_overlap_ratio=0.2),
     )
 
-    assert not result.ok
-    assert result.reason == "retained_geometry_outside_swsd_buffer_scope"
+    assert result.ok
+    assert result.reason == "passed"
+    assert result.geometry_buffer_coverage_issue == "retained_geometry_outside_swsd_buffer_scope"
     assert result.rcsd_outside_swsd_buffer_length_m > 20
     assert result.rcsd_outside_swsd_buffer_ratio < 0.1
 
 
-def test_retained_geometry_rejects_outside_ratio_when_length_is_low() -> None:
+def test_retained_geometry_records_outside_ratio_when_length_is_low() -> None:
     extractor = BufferSegmentExtractor(
         rcsd_road_features=[
             _road("slightly_overlong", 10, 20, [(0, 0), (125, 0)]),
@@ -205,13 +206,14 @@ def test_retained_geometry_rejects_outside_ratio_when_length_is_low() -> None:
         config=BufferExtractionConfig(buffer_distance_m=10, min_road_overlap_ratio=0.2),
     )
 
-    assert not result.ok
-    assert result.reason == "retained_geometry_outside_swsd_buffer_scope"
+    assert result.ok
+    assert result.reason == "passed"
+    assert result.geometry_buffer_coverage_issue == "retained_geometry_outside_swsd_buffer_scope"
     assert result.rcsd_outside_swsd_buffer_length_m < 20
     assert result.rcsd_outside_swsd_buffer_ratio > 0.1
 
 
-def test_swsd_geometry_must_be_covered_by_retained_rcsd_buffer_scope() -> None:
+def test_swsd_geometry_uncovered_by_retained_rcsd_is_audit_risk() -> None:
     extractor = BufferSegmentExtractor(
         rcsd_road_features=[
             _road("too_short", 10, 20, [(0, 0), (50, 0)]),
@@ -227,14 +229,14 @@ def test_swsd_geometry_must_be_covered_by_retained_rcsd_buffer_scope() -> None:
         config=BufferExtractionConfig(buffer_distance_m=10, min_road_overlap_ratio=0.2),
     )
 
-    assert not result.ok
-    assert result.reason == "swsd_geometry_not_covered_by_retained_rcsd"
+    assert result.ok
+    assert result.reason == "passed"
     assert result.geometry_buffer_coverage_issue == "swsd_geometry_not_covered_by_retained_rcsd"
     assert result.swsd_uncovered_by_rcsd_length_m > 30
     assert result.swsd_uncovered_by_rcsd_ratio > 0.1
 
 
-def test_swsd_geometry_rejects_absolute_uncovered_length_when_ratio_is_low() -> None:
+def test_swsd_geometry_records_absolute_uncovered_length_when_ratio_is_low() -> None:
     extractor = BufferSegmentExtractor(
         rcsd_road_features=[
             _road("slightly_short", 10, 20, [(0, 0), (965, 0)]),
@@ -250,13 +252,14 @@ def test_swsd_geometry_rejects_absolute_uncovered_length_when_ratio_is_low() -> 
         config=BufferExtractionConfig(buffer_distance_m=10, min_road_overlap_ratio=0.2),
     )
 
-    assert not result.ok
-    assert result.reason == "swsd_geometry_not_covered_by_retained_rcsd"
+    assert result.ok
+    assert result.reason == "passed"
+    assert result.geometry_buffer_coverage_issue == "swsd_geometry_not_covered_by_retained_rcsd"
     assert result.swsd_uncovered_by_rcsd_length_m > 20
     assert result.swsd_uncovered_by_rcsd_ratio < 0.1
 
 
-def test_swsd_geometry_rejects_uncovered_ratio_when_length_is_low() -> None:
+def test_swsd_geometry_records_uncovered_ratio_when_length_is_low() -> None:
     extractor = BufferSegmentExtractor(
         rcsd_road_features=[
             _road("slightly_short", 10, 20, [(0, 0), (75, 0)]),
@@ -272,8 +275,9 @@ def test_swsd_geometry_rejects_uncovered_ratio_when_length_is_low() -> None:
         config=BufferExtractionConfig(buffer_distance_m=10, min_road_overlap_ratio=0.2),
     )
 
-    assert not result.ok
-    assert result.reason == "swsd_geometry_not_covered_by_retained_rcsd"
+    assert result.ok
+    assert result.reason == "passed"
+    assert result.geometry_buffer_coverage_issue == "swsd_geometry_not_covered_by_retained_rcsd"
     assert result.swsd_uncovered_by_rcsd_length_m < 20
     assert result.swsd_uncovered_by_rcsd_ratio > 0.1
 
@@ -471,7 +475,7 @@ def test_junc_kind2_optional_nodes_are_not_required() -> None:
     assert result.missing_required_node_ids == []
 
 
-def test_missing_optional_junc_nodes_do_not_fail_pair_component_coverage() -> None:
+def test_relation_junc_nodes_do_not_block_pair_corridor_extraction() -> None:
     extractor = BufferSegmentExtractor(
         rcsd_road_features=[_road("main", 10, 20, [(0, 0), (100, 0)])],
         rcsd_node_features=[_node(10, 0, 0), _node(20, 100, 0)],
@@ -486,6 +490,7 @@ def test_missing_optional_junc_nodes_do_not_fail_pair_component_coverage() -> No
     )
 
     assert result.ok
+    assert result.reason == "passed"
     assert result.required_rcsd_nodes == ["10", "20"]
     assert result.optional_allowed_rcsd_nodes == ["30"]
     assert result.missing_required_node_ids == []
@@ -768,8 +773,8 @@ def test_dual_corridor_supplements_optional_junction_carrier_inside_reference_co
 
     result = extractor.extract(
         segment_geometry=LineString([(0, 0), (200, 0)]),
-        relation=RelationCheck(True, ["10", "20"], ["30"]),
-        optional_allowed_rcsd_nodes=[],
+        relation=RelationCheck(True, ["10", "20"], []),
+        optional_allowed_rcsd_nodes=["30"],
         all_relation_base_ids={"10", "20", "30"},
         require_bidirectional=True,
         config=BufferExtractionConfig(buffer_distance_m=25),
@@ -805,8 +810,8 @@ def test_dual_corridor_does_not_supplement_optional_junction_carrier_outside_ref
 
     result = extractor.extract(
         segment_geometry=LineString([(0, 0), (200, 0)]),
-        relation=RelationCheck(True, ["10", "20"], ["30"]),
-        optional_allowed_rcsd_nodes=[],
+        relation=RelationCheck(True, ["10", "20"], []),
+        optional_allowed_rcsd_nodes=["30"],
         all_relation_base_ids={"10", "20", "30"},
         require_bidirectional=True,
         config=BufferExtractionConfig(buffer_distance_m=50),
@@ -848,7 +853,7 @@ def test_single_corridor_does_not_supplement_unselected_parallel_carrier() -> No
     assert not {"carrier_a", "carrier_b"} & set(result.retained_road_ids)
 
 
-def test_dual_corridor_does_not_supplement_carrier_without_required_endpoint() -> None:
+def test_dual_corridor_supplements_retained_boundary_bridge_without_required_endpoint() -> None:
     extractor = BufferSegmentExtractor(
         rcsd_road_features=[
             _road("forward_a", 10, 30, [(0, 0), (100, 0)], direction=2),
@@ -877,8 +882,50 @@ def test_dual_corridor_does_not_supplement_carrier_without_required_endpoint() -
     )
 
     assert result.ok
+    assert set(result.retained_road_ids) == {
+        "forward_a",
+        "forward_b",
+        "reverse_a",
+        "reverse_b",
+        "carrier_a",
+        "carrier_b",
+    }
+
+
+def test_dual_corridor_does_not_supplement_bridge_with_external_mapped_node() -> None:
+    extractor = BufferSegmentExtractor(
+        rcsd_road_features=[
+            _road("forward_a", 10, 30, [(0, 0), (100, 0)], direction=2),
+            _road("forward_b", 30, 20, [(100, 0), (200, 0)], direction=2),
+            _road("reverse_a", 20, 40, [(200, 2), (100, 2)], direction=2),
+            _road("reverse_b", 40, 10, [(100, 2), (0, 2)], direction=2),
+            _road("carrier_a", 40, 50, [(100, 2), (60, 1)], direction=2),
+            _road("carrier_b", 50, 30, [(60, 1), (100, 0)], direction=2),
+            _road("mapped_side_branch", 50, 60, [(60, 1), (60, 12)], direction=2),
+        ],
+        rcsd_node_features=[
+            _node(10, 0, 0),
+            _node(20, 200, 0),
+            _node(30, 100, 0),
+            _node(40, 100, 2),
+            _node(50, 60, 1),
+            _node(60, 60, 12, kind=16),
+        ],
+    )
+
+    result = extractor.extract(
+        segment_geometry=LineString([(0, 0), (200, 0)]),
+        relation=RelationCheck(True, ["10", "20"], []),
+        optional_allowed_rcsd_nodes=[],
+        all_relation_base_ids={"10", "20", "60"},
+        unexpected_relation_base_ids={"60"},
+        require_bidirectional=True,
+        config=BufferExtractionConfig(buffer_distance_m=25),
+    )
+
+    assert result.ok
     assert set(result.retained_road_ids) == {"forward_a", "forward_b", "reverse_a", "reverse_b"}
-    assert not {"carrier_a", "carrier_b"} & set(result.retained_road_ids)
+    assert not {"carrier_a", "carrier_b", "mapped_side_branch"} & set(result.retained_road_ids)
 
 
 def test_single_swsd_requires_at_least_one_directed_pair_path() -> None:
@@ -973,8 +1020,8 @@ def test_corridor_construction_removes_closed_loop_noise() -> None:
 
     result = extractor.extract(
         segment_geometry=LineString([(0, 0), (100, 0)]),
-        relation=RelationCheck(True, ["10", "20"], ["30"]),
-        optional_allowed_rcsd_nodes=[],
+        relation=RelationCheck(True, ["10", "20"], []),
+        optional_allowed_rcsd_nodes=["30"],
         all_relation_base_ids={"10", "20", "30"},
         config=BufferExtractionConfig(buffer_distance_m=20),
     )
@@ -1062,8 +1109,8 @@ def test_optional_junc_leaf_endpoint_is_pruned_without_rejecting_main_corridor()
 
     result = extractor.extract(
         segment_geometry=LineString([(0, 0), (100, 0)]),
-        relation=RelationCheck(True, ["10", "20"], ["30"]),
-        optional_allowed_rcsd_nodes=[],
+        relation=RelationCheck(True, ["10", "20"], []),
+        optional_allowed_rcsd_nodes=["30"],
         all_relation_base_ids={"10", "20", "30"},
         config=BufferExtractionConfig(buffer_distance_m=25),
     )
@@ -1075,6 +1122,103 @@ def test_optional_junc_leaf_endpoint_is_pruned_without_rejecting_main_corridor()
     assert result.out_node_ids == ["30"]
     assert result.unexpected_endpoint_node_ids == []
     assert result.retained_road_ids == ["direct"]
+
+
+def test_non_bidirectional_optional_terminal_supplements_connected_corridor() -> None:
+    extractor = BufferSegmentExtractor(
+        rcsd_road_features=[
+            _road("direct", 10, 20, [(0, 0), (100, 0)]),
+            _road("branch_a", 10, 30, [(0, 0), (50, 5)]),
+            _road("branch_b", 30, 20, [(50, 5), (100, 0)]),
+        ],
+        rcsd_node_features=[_node(10, 0, 0), _node(20, 100, 0), _node(30, 50, 5)],
+    )
+
+    result = extractor.extract(
+        segment_geometry=LineString([(0, 0), (100, 0)]),
+        relation=RelationCheck(True, ["10", "20"], ["30"]),
+        optional_allowed_rcsd_nodes=[],
+        all_relation_base_ids={"10", "20", "30"},
+        config=BufferExtractionConfig(buffer_distance_m=10),
+    )
+
+    assert result.ok
+    assert result.reason == "passed"
+    assert result.retained_road_ids == ["direct", "branch_a", "branch_b"]
+    assert result.unexpected_endpoint_node_ids == []
+
+
+def test_seed_pruning_keeps_paths_between_optional_terminals_and_prunes_leaf_noise() -> None:
+    extractor = BufferSegmentExtractor(
+        rcsd_road_features=[
+            _road("direct", 10, 20, [(0, 0), (100, 0)]),
+            _road("attach_a", 10, 30, [(0, 0), (20, 0)]),
+            _road("optional_a", 30, 50, [(20, 0), (40, 0)]),
+            _road("optional_mid", 50, 60, [(40, 0), (60, 0)]),
+            _road("optional_b", 60, 40, [(60, 0), (80, 0)]),
+            _road("attach_b", 40, 20, [(80, 0), (100, 0)]),
+            _road("leaf_noise", 60, 70, [(60, 0), (60, 10)]),
+        ],
+        rcsd_node_features=[
+            _node(10, 0, 0),
+            _node(20, 100, 0),
+            _node(30, 20, 0),
+            _node(40, 80, 0),
+            _node(50, 40, 0),
+            _node(60, 60, 0),
+            _node(70, 60, 10),
+        ],
+    )
+
+    result = extractor.extract(
+        segment_geometry=LineString([(0, 0), (100, 0)]),
+        relation=RelationCheck(True, ["10", "20"], ["30", "40"]),
+        optional_allowed_rcsd_nodes=[],
+        all_relation_base_ids={"10", "20", "30", "40", "50", "60", "70"},
+        config=BufferExtractionConfig(buffer_distance_m=20),
+    )
+
+    assert result.ok
+    assert {"attach_a", "optional_a", "optional_mid", "optional_b", "attach_b"}.issubset(set(result.retained_road_ids))
+    assert "leaf_noise" not in result.retained_road_ids
+    assert result.out_node_ids == ["70"]
+
+
+def test_optional_terminal_pruning_preserves_required_pair_corridor_in_same_seed_group() -> None:
+    extractor = BufferSegmentExtractor(
+        rcsd_road_features=[
+            _road("pair_a", 10, 50, [(0, 0), (35, 0)]),
+            _road("pair_b", 50, 60, [(35, 0), (70, 0)]),
+            _road("pair_c", 60, 20, [(70, 0), (100, 0)]),
+            _road("optional_a", 50, 70, [(35, 0), (50, 8)]),
+            _road("optional_b", 70, 30, [(50, 8), (30, 8)]),
+            _road("optional_c", 70, 40, [(50, 8), (70, 8)]),
+            _road("leaf_noise", 70, 80, [(50, 8), (50, 20)]),
+        ],
+        rcsd_node_features=[
+            _node(10, 0, 0),
+            _node(20, 100, 0),
+            _node(30, 30, 8),
+            _node(40, 70, 8),
+            _node(50, 35, 0),
+            _node(60, 70, 0),
+            _node(70, 50, 8),
+            _node(80, 50, 20),
+        ],
+    )
+
+    result = extractor.extract(
+        segment_geometry=LineString([(0, 0), (100, 0)]),
+        relation=RelationCheck(True, ["10", "20"], ["30", "40"]),
+        optional_allowed_rcsd_nodes=[],
+        all_relation_base_ids={"10", "20", "30", "40", "50", "60", "70", "80"},
+        config=BufferExtractionConfig(buffer_distance_m=25),
+    )
+
+    assert result.ok
+    assert {"pair_a", "pair_b", "pair_c"}.issubset(set(result.retained_road_ids))
+    assert {"optional_b", "optional_c"}.issubset(set(result.retained_road_ids))
+    assert "leaf_noise" not in result.retained_road_ids
 
 
 def test_seed_pruning_keeps_required_corridor_and_removes_out_branch() -> None:

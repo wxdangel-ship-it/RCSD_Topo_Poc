@@ -30,7 +30,7 @@ T06 采用三步链路：
 
 - 对每个 Segment 解析 `pair_nodes + junc_nodes`，形成语义路口集合。
 - `pair_nodes` 必须解析出两个不同的 SWSD 语义路口；同一语义路口内部 self-pair fallback 进入 Step1 rejected 审计，不进入 Step2 final fusion units。
-- `junc_nodes.kind_2 in {1,4096,8192}` 不参与 Step1 `has_evd / is_anchor` 判定，但仍保留为后续 optional junc 审计对象。
+- `junc_nodes.kind_2 in {1,4096,8192}` 不参与 Step1 `has_evd / is_anchor` 判定；未被明确 detached / exempt 的 junc 进入 Step2 后仍按 required junction relation 与拓扑语义审计。
 - eligibility 集合内所有语义路口 `has_evd=yes` 时进入候选集；若 T11 人工正向 relation 已确认 `has_evd=no / missing` 的 no-evidence 目标，Step1 可将该 target 作为人工修复证据放行到 Step2。
 - 在候选集中，所有 eligibility 语义路口 `is_anchor in {yes, fail4_fallback}` 时进入 final fusion units。
 - 对于 T05 audit 已确认的 T11 人工正向 relation，若对应语义路口旧节点状态为 `is_anchor=fail3/fail4`，Step1 可将该失败视为已由人工 relation 修复并放行到 Step2；若对应语义路口 `has_evd=no / missing`，也可作为人工确认 no-evidence relation 放行到 Step2。pair 两端不合法、`is_anchor=no/fail1/fail2`、非人工来源 relation、`graph_consumable=0` 不放行。
@@ -46,7 +46,7 @@ T06 采用三步链路：
 ### 2.5 对错边界
 
 - 对：`fail4_fallback` 视为可融合 anchor；T11 人工正向 relation 可释放 `fail3/fail4` 的 Step1 anchor gate，也可释放人工确认的 `has_evd=no / missing` no-evidence relation；豁免只作用于 junc eligibility 检查；self-pair fallback 只保留 Step1 审计，不参与 RCSD Segment 替换分母。
-- 错：把人工 relation 当作 T06 替换白名单，或用它释放 pair 合法性、`is_anchor=no/fail1/fail2`、非人工 relation 和 Step2/Step3 硬审计；把 `junc_nodes` 当作 hard-stop，或把 `pair_nodes` 豁免掉。
+- 错：把人工 relation 当作 T06 替换白名单，或用它释放 pair 合法性、`is_anchor=no/fail1/fail2`、非人工 relation 和 Step2/Step3 硬审计；把 detached / exempt junc 当作替换白名单，或把 `pair_nodes` / required junction 豁免掉。
 
 ## 3. Step2：Relation Mapping
 
@@ -65,7 +65,7 @@ T06 采用三步链路：
 - relation 只接受 `status=0` 且 `base_id>0`。
 - `pair_nodes` 是 required semantic nodes，必须全部映射成功。
 - 映射后 RCSD pair 两端归一到同一语义路口时，以 `rcsd_pair_nodes_not_distinct` 拒绝。
-- `junc_nodes` 是 optional 内部通过 + 侧向阻断；映射成功进入 optional 审计，映射失败进入 dropped / lost attach 审计，不默认拖垮 pair-to-pair 主通道。
+- 未被明确 detached / exempt 的 `junc_nodes` 是 required junction nodes，映射失败或 retained corridor 中相对拓扑不成立时不得进入 replaceable；被明确 detached / exempt 的 junc 只做风险审计和局部 carrier 处理。
 - RCSDNode 统一使用 `id / mainnodeid / subnodeid` 归一到 canonical semantic node key。
 
 ### 3.4 输出与审计
@@ -81,23 +81,23 @@ T06 采用三步链路：
 
 ### 4.1 业务目的
 
-在 SWSD Segment 的空间范围内构建与 pair required semantic nodes 对应的 RCSD corridor，而不是简单拿 buffer 内全部连通分量。
+在 SWSD Segment 的空间范围内构建与 pair nodes + required junction nodes 对应的 RCSD corridor，而不是简单拿 buffer 内全部连通分量。
 
 ### 4.2 输入与前提
 
 - SWSD Segment 几何。
 - `rcsdroad_out.gpkg / rcsdnode_out.gpkg`。
-- pair required RCSD semantic nodes 和 optional junc seeds。
+- pair required RCSD semantic nodes 和 required junction / exempt junc seeds。
 
 ### 4.3 落地策略
 
 - 使用 SWSD Segment 50m buffer 筛选 RCSDRoad / RCSDNode 候选。
 - 构建 RCSD canonical semantic graph，避免 subnode 挂接导致同一语义路口被误判为断连。
 - 在候选图中先识别 `formway & 128 != 0` 提前右转 road；只有满足二度链接保留或 required corridor 保留条件时才参与构建。
-- 候选连通分量不能直接输出为 RCSDSegment，必须基于 pair required semantic nodes 构建最小 corridor 子图。
-- 对额外 T05 mapped semantic nodes 与 optional junc 做 seed pruning：required corridor 内部保留为 `inner_nodes`，旁支或孤立挂接归为 `out_nodes` 并裁剪。
+- 候选连通分量不能直接输出为 RCSDSegment，必须基于 pair nodes + required junction nodes 构建可解释 corridor 子图。
+- 对额外 T05 mapped semantic nodes 与 exempt junc 做 seed pruning：属于目标 Segment required 路口关系的节点必须保留并参与拓扑审计；RCSD 自身未锚定节点允许作为通路节点；已锚定到其它 SWSD 语义路口且破坏目标 Segment 相对拓扑的节点不得静默放行。
 - 双向 Segment 需要保护 pair 两端正反向 directed corridor；单向 Segment 必须由 SWSDRoad directed graph 推导 source/target 后构建同向 RCSD corridor。
-- 高等级 Segment 的 50m 失败若属于裁剪窗口不足，且 T05 原始 pair relation 完整、全图拓扑证据支持，可在原始 pair 不变的前提下执行受限重审；single 采用 RCSD graph-first 纵向联通并要求经过 50m buffer core，dual 优先采用 adaptive buffer 并要求双向可达；当 buffer-only probe 给出非人工复核高置信候选 pair 集合时，可遍历候选 pair，但只有恰好一个候选通过正式双向硬审计才消费候选 pair，必要时可用 dual graph-first 双向联通，且不得跨越额外 mapped semantic nodes。
+- 高等级 Segment 的 50m 失败若属于裁剪窗口不足，且 T05 原始 pair relation 完整、全图拓扑证据支持，可在原始 pair 不变的前提下执行受限重审；single 采用 RCSD graph-first 纵向联通并要求经过 50m buffer core，dual 优先采用 adaptive buffer 并要求双向可达；当 buffer-only probe 给出非人工复核高置信候选 pair 集合时，可遍历候选 pair，但只有恰好一个候选通过正式双向硬审计才消费候选 pair，必要时可用 dual graph-first 双向联通，并保持 required junction 相对拓扑。
 
 ### 4.4 输出与审计
 
@@ -108,7 +108,7 @@ T06 采用三步链路：
 
 ### 4.5 对错边界
 
-- 对：retained graph 是 pair required semantic nodes 之间的最小可解释 corridor。
+- 对：retained graph 是 pair nodes + required junction nodes 之间的可解释 corridor。
 - 错：把 buffer 连通分量、pair 字段顺序或 `segmentid A_B` 顺序当作业务方向。
 
 ## 5. Step2：硬审计与 Replaceable 判定
@@ -119,13 +119,13 @@ T06 采用三步链路：
 
 ### 5.2 落地策略
 
-- retained graph 的叶子端点只能是 pair 对应 RCSD semantic nodes。
-- retained graph 中不得存在 pair required corridor 内部解释节点以外的额外 mapped semantic nodes。
+- retained graph 的叶子端点只能是 pair 对应 RCSD semantic nodes，required junction nodes 必须位于 pair corridor 的可解释内部关系上。
+- retained graph 可经过未锚定 RCSD 节点；额外 mapped semantic nodes 只有在破坏目标 Segment 的 pair/junction 相对拓扑、形成错误跨 Segment 消费或构成完全绕开 SWSD buffer 的 pair-to-pair 通路时才作为硬阻塞。
 - `swsd_directionality=dual` 要求 RCSD pair 两端双向可达。
 - `swsd_directionality=single` 要求按推导 source/target 存在同向 RCSD corridor。
-- retained RCSDRoad 必须满足逐 road buffer overlap ratio；retained RCSD 跑出 SWSD 50m buffer 的覆盖不一致仍硬拒绝。对于 `swsd_geometry_not_covered_by_retained_rcsd`，若 pair 端点 relation、required graph、candidate graph、方向性全部通过，且 retained RCSD corridor 完全留在 SWSD 50m buffer 内，可作为 `swsd_buffer_corridor_controlled_release` 写入 replacement plan；SWSD 反向 coverage gap 只作为 `manual_review_required` 审计风险，不再依赖 failure business audit 高置信评分放行。
+- retained RCSDRoad 必须与 SWSD Segment buffer 有有效交集；retained RCSD 不要求完全留在 50m buffer 内。只有 pair-to-pair 存在连续通路完全不经过 SWSD Segment buffer 时才硬拒绝；反向 coverage gap、retained RCSD 部分跑出 buffer 和 SWSD 反向覆盖不足写入 `manual_review_required` 审计风险，不作为 Step2 replaceable 硬门槛。
 - 宽 50m buffer 覆盖通过后，还必须执行窄通道视觉连续性复核。该复核用于识别“RCSD 在宽 buffer 内，但主线目视连续性断裂或替换结果明显偏离 SWSD 主通道”的场景；失败时不得进入 adaptive buffer 或 graph-first 重审。
-- 高等级受限重审通过的 Segment 仍必须通过单向 / 双向可达、叶子端点、额外 mapped semantic node、几何参考覆盖与特殊组局部替换门控；single graph-first 不允许只因全图有向 path 存在直接进入 replaceable，必须经过 50m buffer core 并满足纵向门槛。
+- 高等级受限重审通过的 Segment 仍必须通过单向 / 双向可达、叶子端点、required junction 相对拓扑、有效 buffer 穿行与特殊组局部替换门控；single graph-first 不允许只因全图有向 path 存在直接进入 replaceable，必须经过 50m buffer core 并满足纵向门槛。
 - `kind_2=64 / 128` 的特殊路口按关联 Segment 组执行局部替换门控：关联 Segment 全部可替换时发布特殊组内部 RCSD Road/Node；只有部分可替换时保留已通过 Segment 的 replaceable，未通过 Segment 保留 SWSD carrier，且不发布特殊组内部 RCSD Road/Node。局部环岛必须保留 SWSD 环岛内部 Road，不能引入 RCSD 环岛内部端点间 Road。
 
 ### 5.3 输出与审计
@@ -153,7 +153,7 @@ T06 采用三步链路：
 - Step2 失败后执行 buffer-only probe，不依赖 T05 relation 绑定，只基于 SWSD Segment buffer 与 RCSD 图结构输出诊断。
 - `t06_rcsd_repair_candidates.*` 可以记录原始 pair、候选 pair、错误 SWSD 端点、endpoint cluster、bridge road 和长度。
 - repair candidate 默认只用于人工质检和问题定位；仅当候选为非 ambiguous、非人工复核的 `high_confidence_pair_anchor_candidate`，且只补缺失 pair 端点、已有端点与候选端点存在短距离 endpoint cluster 证据，或已有端点中一端或两端被诊断为 `candidate_anchor_mismatch` 且候选 pair 通过正式 extractor 时，才可驱动当前 Segment 的一次自动重试。普通缺失端点补全必须保留 T05 已知端点所在 SWSD pair 侧，只补失败侧；buffer-only 候选不包含该已知端点时，不得作为侧保持补全自动通过。高等级 single 若已知端点本身也被 `candidate_anchor_mismatch` 判错，且诊断同时覆盖已知端错误与另一端缺失，可在高置信安全门槛和 Step2 硬审计通过后整体采用候选 pair。probe 低分但 `corridor_found`、连通/方向/shape 证据充分的缺端补全，只有在 Step2 原硬审计全部通过后才能作为 `side_preserving_missing_pair_anchor_completion` 自动进入 replaceable。单向 `multi_anchor_ambiguous` 只允许在高置信 `ambiguous_corridor` 下遍历全部候选 pair 的 as-is / reversed 正式试算，并要求 oriented RCSD pair 与 SWSD Segment 轴向端点侧位一致，且恰好一个 oriented candidate 通过时自动替换；多个候选通过或无候选通过均保持人工复核。
-- 高等级 single 受限重审不是 repair candidate 路径，不读取候选 pair 替换已有端点；single 通过后以 `single_graph_first_longitudinal_retry` 写入 failure business audit，并在 candidates / replaceable / buffer segments 中以 `single_graph_first_longitudinal_retry:<原失败原因>` 记录来源。高等级 dual 默认复用 T05 原始 pair 做 `adaptive_high_grade_dual_buffer_retry`；只有 buffer-only probe 已给出非人工复核高置信候选 pair，且候选 pair 重新经过正式双向 extractor / adaptive buffer / dual graph-first 硬审计时，dual 才可在当前 Segment 内消费该候选 pair；若 union path 穿过额外 mapped semantic nodes，必须保持 rejected 并交由上游分组/锚定处理。
+- 高等级 single 受限重审不是 repair candidate 路径，不读取候选 pair 替换已有端点；single 通过后以 `single_graph_first_longitudinal_retry` 写入 failure business audit，并在 candidates / replaceable / buffer segments 中以 `single_graph_first_longitudinal_retry:<原失败原因>` 记录来源。高等级 dual 默认复用 T05 原始 pair 做 `adaptive_high_grade_dual_buffer_retry`；只有 buffer-only probe 已给出非人工复核高置信候选 pair，且候选 pair 重新经过正式双向 extractor / adaptive buffer / dual graph-first 硬审计时，dual 才可在当前 Segment 内消费该候选 pair；若 union path 破坏 required junction 相对拓扑或形成完全绕开 SWSD buffer 的通路，必须保持 rejected 并交由上游分组/锚定处理。
 
 ### 6.3 输出与审计
 

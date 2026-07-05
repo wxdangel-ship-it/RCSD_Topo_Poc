@@ -22,7 +22,7 @@ T06 消费 T01 `segment.gpkg / roads.gpkg / nodes.gpkg` 与 T05 `intersection_ma
 ## 3. 关键字段语义
 
 - `pair_nodes` 是 Step2 hard required；两端必须是不同 SWSD 语义路口。
-- `junc_nodes` 是 optional 内部通过 + 侧向阻断，不是 Step2 hard-stop。
+- final fusion unit 中未被明确 detached / exempt 的 `junc_nodes` 是 required junction nodes，必须具备可消费 SWSD-RCSD relation，并在 RCSD retained corridor 中保持相对拓扑与方向语义。
 - `status=0 / base_id>0` 的 T05 relation 才能用于 RCSD 映射。
 - `formway & 128 != 0` 表示提前右转；T06 需要识别、审计和在特定 corridor 条件下保留。
 - `execution_scope` 表达 replacement plan 的执行范围，至少包括 `standard_segment / special_junction_group_internal / path_corridor_group`。
@@ -33,7 +33,7 @@ T06 消费 T01 `segment.gpkg / roads.gpkg / nodes.gpkg` 与 T05 `intersection_ma
 
 1. Step1 解析 T01 Segment 的 `pair_nodes / junc_nodes / roads / sgrade`，输出 candidates、final fusion units 和 rejected。
 2. Step2 读取 T05 relation 与 RCSD copy-on-write 网络，基于 SWSD Segment buffer 构建 RCSD candidate graph。
-3. Step2 收缩为 pair required semantic nodes 之间的最小 corridor，并执行方向、叶子端点、buffer overlap、视觉连续性、特殊组局部替换门控等硬审计。
+3. Step2 收缩为 pair nodes + required junction nodes 之间的可解释 corridor，并执行方向、叶子端点、有效 buffer 穿行、视觉连续性、特殊组局部替换门控等硬审计。
 4. Step2 输出 replaceable、rejected、probe、repair candidates、failure audit、replacement plan 和 problem registry。
 5. Step3 只执行 replacement plan ready action，输出 F-RCSD 和最终拓扑审计。
 

@@ -1758,10 +1758,9 @@ def _optional_allowed_rcsd_nodes(
     junc_kind2_exempt_nodes: list[str],
     relation_map: dict[str, RelationRecord],
 ) -> list[str]:
+    _ = relation, relation_junc_nodes
     return unique_preserve_order(
         [
-            *relation.rcsd_junc_nodes,
-            *_accepted_base_ids_for_nodes_ordered(relation_junc_nodes, relation_map),
             *_accepted_base_ids_for_nodes_ordered(junc_kind2_exempt_nodes, relation_map),
         ]
     )

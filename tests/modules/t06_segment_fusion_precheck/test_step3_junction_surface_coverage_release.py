@@ -110,15 +110,17 @@ def test_step3_releases_formal_corridor_gap_inside_anchored_junction_surface(tmp
     assert "manual_review_required" in relation["risk_flags"]
 
 
-def test_step3_keeps_formal_corridor_gap_without_junction_surface_hard_failed(tmp_path: Path) -> None:
+def test_step3_records_formal_corridor_gap_without_junction_surface_as_review_risk(tmp_path: Path) -> None:
     artifacts = _run_case(tmp_path, with_surface=False)
 
     [unit] = _rows(artifacts.replacement_units_gpkg_path)
     [relation] = _rows(artifacts.swsd_frcsd_segment_relation_gpkg_path)
 
-    assert unit["unit_status"] == "failed"
-    assert unit["unit_reason"] == "formal_replacement_corridor_coverage_unavailable"
-    assert relation["relation_status"] == "retained_swsd"
+    assert unit["unit_status"] == "passed"
+    assert relation["relation_status"] == "replaced"
+    assert "formal_replacement_corridor_coverage_review" in relation["risk_flags"]
+    assert "formal_replacement_corridor_coverage_unavailable" in relation["risk_flags"]
+    assert "manual_review_required" in relation["risk_flags"]
 
 
 def test_step3_releases_buffer_corridor_controlled_gap_without_junction_surface(tmp_path: Path) -> None:
@@ -139,4 +141,24 @@ def test_step3_releases_buffer_corridor_controlled_gap_without_junction_surface(
     assert unit["retained_detached_swsd_road_ids"] == []
     assert relation["relation_status"] == "replaced"
     assert "swsd_buffer_corridor_controlled_release" in relation["risk_flags"]
+    assert "manual_review_required" in relation["risk_flags"]
+
+
+def test_step3_releases_visual_consistency_controlled_gap_without_junction_surface(tmp_path: Path) -> None:
+    artifacts = _run_case(
+        tmp_path,
+        with_surface=False,
+        risk_flags=[
+            "visual_consistency_controlled_release",
+            "manual_review_required",
+            "no_formal_trunk_road_conflict",
+        ],
+    )
+
+    [unit] = _rows(artifacts.replacement_units_gpkg_path)
+    [relation] = _rows(artifacts.swsd_frcsd_segment_relation_gpkg_path)
+
+    assert unit["unit_status"] == "passed"
+    assert relation["relation_status"] == "replaced"
+    assert "visual_consistency_controlled_release" in relation["risk_flags"]
     assert "manual_review_required" in relation["risk_flags"]

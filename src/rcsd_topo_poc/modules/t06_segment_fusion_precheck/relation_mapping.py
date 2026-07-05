@@ -52,6 +52,16 @@ def check_segment_relations(
     if not pair_ok:
         return RelationCheck(False, [str(item) for item in pair_base], [], pair_reason, failed_pair_nodes=pair_failed)
     junc_base, junc_failed, junc_reasons = _map_optional_nodes(junc_nodes, relation_map, prefix="junc")
+    if junc_failed:
+        reason = junc_reasons.get(junc_failed[0]) or "junc_relation_failed"
+        return RelationCheck(
+            False,
+            [str(item) for item in pair_base],
+            [str(item) for item in junc_base],
+            reason,
+            failed_junc_nodes=junc_failed,
+            failed_junc_reasons=junc_reasons,
+        )
     return RelationCheck(
         True,
         [str(item) for item in pair_base],

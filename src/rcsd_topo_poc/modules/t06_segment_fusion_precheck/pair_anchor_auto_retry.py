@@ -16,6 +16,8 @@ def high_confidence_pair_anchor_relation(
     relation_map: dict[str, RelationRecord],
     allow_single_missing_candidate_anchor_mismatch: bool = False,
 ) -> RelationCheck | None:
+    if relation.failed_junc_nodes:
+        return None
     if failure_business_category != "pair_anchor_mismatch":
         return None
     if probe_result.status not in {"corridor_found", "corridor_found_with_anchor_mismatch"}:

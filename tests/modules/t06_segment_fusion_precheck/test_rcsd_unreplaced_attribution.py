@@ -25,16 +25,18 @@ def _segment(segment_id: str, x0: float, y: float = 0.0) -> dict:
     }
 
 
-def _road(road_id: str, x0: float, y: float = 1.0) -> dict:
+def _road(road_id: str, x0: float, y: float = 1.0, **props) -> dict:
+    payload = {
+        "id": road_id,
+        "snodeid": f"{road_id}_s",
+        "enodeid": f"{road_id}_e",
+        "direction": 0,
+        "source": 1,
+        "length_m": 10.0,
+    }
+    payload.update(props)
     return {
-        "properties": {
-            "id": road_id,
-            "snodeid": f"{road_id}_s",
-            "enodeid": f"{road_id}_e",
-            "direction": 0,
-            "source": 1,
-            "length_m": 10.0,
-        },
+        "properties": payload,
         "geometry": LineString([(x0, y), (x0 + 10, y)]),
     }
 
@@ -65,6 +67,7 @@ def test_unreplaced_rcsd_attribution_uses_formal_funnel_priority(tmp_path: Path,
             _segment("s3_required_disconnected", 700),
             _segment("s4_directionality", 800),
             _segment("s4_required_ready", 900),
+            _segment("s5_replaced_unreferenced", 1100),
         ],
     )
     rcsdroad = _write(
@@ -81,6 +84,7 @@ def test_unreplaced_rcsd_attribution_uses_formal_funnel_priority(tmp_path: Path,
             _road("rr_required_disconnected", 700),
             _road("rr_directionality", 800),
             _road("rr_required_ready", 900),
+            _road("rr_replaced_unreferenced", 1100),
         ],
     )
 
@@ -96,6 +100,7 @@ def test_unreplaced_rcsd_attribution_uses_formal_funnel_priority(tmp_path: Path,
             _segment_row("s3_required_disconnected"),
             _segment_row("s4_directionality"),
             _segment_row("s4_required_ready"),
+            _segment_row("s5_replaced_unreferenced"),
         ],
     )
     _write(
@@ -110,6 +115,7 @@ def test_unreplaced_rcsd_attribution_uses_formal_funnel_priority(tmp_path: Path,
         [
             _segment_row("s5", replacement_ready=True),
             _segment_row("s5_plan_blocked_unreferenced", replacement_ready=True),
+            _segment_row("s5_replaced_unreferenced", replacement_ready=True),
         ],
     )
     _write(
@@ -133,6 +139,7 @@ def test_unreplaced_rcsd_attribution_uses_formal_funnel_priority(tmp_path: Path,
                 rcsd_road_ids='["different_road"]',
             ),
             _segment_row("s4_required_ready", plan_status="ready", rcsd_road_ids='["different_road"]'),
+            _segment_row("s5_replaced_unreferenced", plan_status="ready", rcsd_road_ids='["different_road"]'),
         ],
     )
     _write(
@@ -141,7 +148,10 @@ def test_unreplaced_rcsd_attribution_uses_formal_funnel_priority(tmp_path: Path,
     )
     _write(
         run_root / "step3_segment_replacement" / "t06_step3_swsd_frcsd_segment_relation.gpkg",
-        [_segment_row("s5", relation_status="failed")],
+        [
+            _segment_row("s5", relation_status="failed"),
+            _segment_row("s5_replaced_unreferenced", relation_status="retained_swsd"),
+        ],
     )
     _write(
         run_root / "step3_segment_replacement" / "t06_step3_unreplaced_rcsd_roads.gpkg",
@@ -157,6 +167,7 @@ def test_unreplaced_rcsd_attribution_uses_formal_funnel_priority(tmp_path: Path,
             _road("rr_required_disconnected", 700),
             _road("rr_directionality", 800),
             _road("rr_required_ready", 900),
+            _road("rr_replaced_unreferenced", 1100),
         ],
     )
     (run_root / "step3_segment_replacement" / "t06_step3_summary.json").write_text(
@@ -214,6 +225,10 @@ def test_unreplaced_rcsd_attribution_uses_formal_funnel_priority(tmp_path: Path,
     assert by_id["rr_plan_blocked_unreferenced"]["final_attribution_class"] == "5_replaceable_scope_unreplaced"
     assert by_id["rr_plan_blocked_unreferenced"]["final_attribution_subclass"] == "5_plan_blocked"
     assert by_id["rr_plan_blocked_unreferenced"]["final_attribution_confidence"] == "approximate"
+    assert by_id["rr_replaced_unreferenced"]["final_attribution_class"] == "5_replaceable_scope_unreplaced"
+    assert by_id["rr_replaced_unreferenced"]["final_attribution_subclass"] == "5_replaceable_scope_not_consumed"
+    assert by_id["rr_replaced_unreferenced"]["final_attribution_basis"] == "approx_candidate_only_after_segment_replaced"
+    assert by_id["rr_replaced_unreferenced"]["ppt_review_flag"] == "candidate_only_post_replacement_review"
     assert by_id["rr_required_disconnected"]["final_attribution_class"] == "3_evidence_scope_relation_incomplete"
     assert by_id["rr_required_disconnected"]["final_attribution_subclass"] == "required_semantic_nodes_not_connected_in_buffer"
     assert by_id["rr_directionality"]["final_attribution_class"] == "4_relation_scope_not_replaceable"
@@ -222,29 +237,181 @@ def test_unreplaced_rcsd_attribution_uses_formal_funnel_priority(tmp_path: Path,
     assert by_id["rr_required_ready"]["final_attribution_subclass"] == "required_semantic_nodes_not_connected_in_buffer"
 
     summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
-    assert summary["total_rcsd_road_count"] == 11
-    assert summary["unreplaced_rcsd_road_count"] == 11
+    assert summary["total_rcsd_road_count"] == 12
+    assert summary["raw_step3_unreplaced_rcsd_road_count"] == 12
+    assert summary["unreplaced_rcsd_road_count"] == 12
     assert {item["value"]: item["count"] for item in summary["by_attribution_class"]} == {
         "1_outside_swsd_segment_scope": 1,
         "2_swsd_scope_no_t06_evidence": 1,
         "3_evidence_scope_relation_incomplete": 1,
         "4_relation_scope_not_replaceable": 4,
-        "5_replaceable_scope_unreplaced": 4,
+        "5_replaceable_scope_unreplaced": 5,
     }
     assert {item["value"]: item["count"] for item in summary["by_final_attribution_class"]} == {
         "1_outside_swsd_segment_scope": 1,
         "2_swsd_scope_no_t06_evidence": 3,
         "3_evidence_scope_relation_incomplete": 2,
         "4_relation_scope_not_replaceable": 3,
-        "5_replaceable_scope_unreplaced": 2,
+        "5_replaceable_scope_unreplaced": 3,
     }
     assert {item["value"]: item["count"] for item in summary["by_ppt_attribution_class"]} == {
-        "1_segment_rcsd_quality_unreplaceable": 5,
+        "1_segment_rcsd_quality_unreplaceable": 6,
         "2_segment_replacement_prerequisite_unsatisfied": 5,
         "3_rcsd_outside_segment_scope": 1,
+    }
+    assert {item["value"]: item["count"] for item in summary["by_ppt_review_flag"]} == {
+        "": 10,
+        "candidate_only_post_replacement_review": 1,
+        "mixed_partial_segment_coverage": 1,
     }
     patched_summary = json.loads(
         (run_root / "step3_segment_replacement" / "t06_step3_summary.json").read_text(encoding="utf-8")
     )
     assert "unreplaced_rcsd_attribution_gpkg" in patched_summary["outputs"]
     assert "rcsd_unreplaced_ppt_attribution_by_class" in patched_summary
+    assert "rcsd_passed_review_count" not in patched_summary
+
+
+def test_candidate_road_consumed_by_other_segment_is_not_unreplaced_for_target(tmp_path: Path) -> None:
+    run_root = tmp_path / "t06_run"
+    swsd_segment = _write(
+        tmp_path / "segment.gpkg",
+        [_segment("target", 0), _segment("other", 0, y=2)],
+    )
+    rcsdroad = _write(tmp_path / "rcsdroad_out.gpkg", [_road("rr_cross", 0)])
+
+    _write(
+        run_root / "step1_identify_fusion_units" / "t06_swsd_segment_candidates.gpkg",
+        [_segment_row("target")],
+    )
+    _write(
+        run_root / "step1_identify_fusion_units" / "t06_swsd_segment_final_fusion_units.gpkg",
+        [_segment_row("target")],
+    )
+    _write(
+        run_root / "step2_extract_rcsd_segments" / "t06_rcsd_segment_candidates.gpkg",
+        [_segment_row("target", candidate_status="passed", candidate_rcsd_road_ids='["rr_cross"]')],
+    )
+    _write(
+        run_root / "step3_segment_replacement" / "t06_step3_swsd_frcsd_segment_relation.gpkg",
+        [_segment_row("target", relation_status="replaced")],
+    )
+    frcsd_road = _road("rr_cross", 0)
+    frcsd_road["properties"]["t06_swsd_segment_ids"] = '["other"]'
+    _write(run_root / "step3_segment_replacement" / "t06_frcsd_road.gpkg", [frcsd_road])
+    (run_root / "step3_segment_replacement" / "t06_step3_summary.json").write_text(
+        json.dumps({"outputs": {}}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    artifacts = run_t06_rcsd_unreplaced_attribution(
+        t06_run_root=run_root,
+        swsd_segment_path=swsd_segment,
+        rcsdroad_path=rcsdroad,
+        audit_buffer_m=50.0,
+    )
+
+    rows = gpd.read_file(artifacts.attribution_gpkg_path)
+    assert len(rows) == 0
+
+    summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
+    assert summary["raw_step3_unreplaced_rcsd_road_count"] == 0
+    assert summary["unreplaced_rcsd_road_count"] == 0
+
+
+def test_plan_road_missing_from_frcsd_is_added_to_unreplaced_attribution(tmp_path: Path) -> None:
+    run_root = tmp_path / "t06_run"
+    swsd_segment = _write(tmp_path / "segment.gpkg", [_segment("target", 0)])
+    rcsdroad = _write(tmp_path / "rcsdroad_out.gpkg", [_road("rr_missing", 0)])
+
+    _write(
+        run_root / "step1_identify_fusion_units" / "t06_swsd_segment_candidates.gpkg",
+        [_segment_row("target")],
+    )
+    _write(
+        run_root / "step1_identify_fusion_units" / "t06_swsd_segment_final_fusion_units.gpkg",
+        [_segment_row("target")],
+    )
+    _write(
+        run_root / "step2_extract_rcsd_segments" / "t06_rcsd_segment_replaceable.gpkg",
+        [_segment_row("target", replacement_ready=True)],
+    )
+    _write(
+        run_root / "step2_extract_rcsd_segments" / "t06_segment_replacement_plan.gpkg",
+        [_segment_row("target", plan_status="ready", rcsd_road_ids='["rr_missing"]')],
+    )
+    _write(
+        run_root / "step3_segment_replacement" / "t06_step3_swsd_frcsd_segment_relation.gpkg",
+        [_segment_row("target", relation_status="replaced")],
+    )
+    _write(run_root / "step3_segment_replacement" / "t06_frcsd_road.gpkg", [_road("rr_other", 100)])
+    (run_root / "step3_segment_replacement" / "t06_step3_summary.json").write_text(
+        json.dumps({"outputs": {}}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    artifacts = run_t06_rcsd_unreplaced_attribution(
+        t06_run_root=run_root,
+        swsd_segment_path=swsd_segment,
+        rcsdroad_path=rcsdroad,
+        audit_buffer_m=50.0,
+    )
+
+    rows = gpd.read_file(artifacts.attribution_gpkg_path)
+    assert len(rows) == 1
+    row = rows.iloc[0]
+    assert row["id"] == "rr_missing"
+    assert row["final_attribution_subclass"] == "5_replaceable_scope_not_consumed"
+    assert row["final_attribution_basis"] == "exact_plan_or_unit_road_missing_from_frcsd"
+
+
+def test_plan_road_split_into_frcsd_is_not_added_to_unreplaced_attribution(tmp_path: Path) -> None:
+    run_root = tmp_path / "t06_run"
+    swsd_segment = _write(tmp_path / "segment.gpkg", [_segment("target", 0)])
+    rcsdroad = _write(tmp_path / "rcsdroad_out.gpkg", [_road("rr_split_original", 0)])
+
+    _write(
+        run_root / "step1_identify_fusion_units" / "t06_swsd_segment_candidates.gpkg",
+        [_segment_row("target")],
+    )
+    _write(
+        run_root / "step1_identify_fusion_units" / "t06_swsd_segment_final_fusion_units.gpkg",
+        [_segment_row("target")],
+    )
+    _write(
+        run_root / "step2_extract_rcsd_segments" / "t06_rcsd_segment_replaceable.gpkg",
+        [_segment_row("target", replacement_ready=True)],
+    )
+    _write(
+        run_root / "step2_extract_rcsd_segments" / "t06_segment_replacement_plan.gpkg",
+        [_segment_row("target", plan_status="ready", rcsd_road_ids='["rr_split_original"]')],
+    )
+    _write(
+        run_root / "step3_segment_replacement" / "t06_step3_swsd_frcsd_segment_relation.gpkg",
+        [_segment_row("target", relation_status="replaced")],
+    )
+    _write(
+        run_root / "step3_segment_replacement" / "t06_frcsd_road.gpkg",
+        [
+            _road(
+                "generated_split_1",
+                0,
+                t06_split_original_road_id="rr_split_original",
+                t06_swsd_segment_ids='["target"]',
+            )
+        ],
+    )
+    (run_root / "step3_segment_replacement" / "t06_step3_summary.json").write_text(
+        json.dumps({"outputs": {}}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    artifacts = run_t06_rcsd_unreplaced_attribution(
+        t06_run_root=run_root,
+        swsd_segment_path=swsd_segment,
+        rcsdroad_path=rcsdroad,
+        audit_buffer_m=50.0,
+    )
+
+    rows = gpd.read_file(artifacts.attribution_gpkg_path)
+    assert len(rows) == 0

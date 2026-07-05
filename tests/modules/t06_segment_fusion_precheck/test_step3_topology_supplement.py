@@ -132,7 +132,7 @@ def test_materialize_topology_supplement_preserves_non_advance_carrier() -> None
         segment_id="s1",
         retained_detached_swsd_road_ids=["sw_regular"],
         detached_junc_nodes=[],
-        swsd_road_ids=[],
+        swsd_road_ids=["sw_regular"],
         rcsd_road_ids=[],
     )
 
@@ -799,7 +799,7 @@ def test_duplicate_advance_exclusion_removes_mixed_swsd_carrier_when_rcsd_corrid
     assert "t06_mixed_advance_right_carrier" not in carrier["properties"]
 
 
-def test_exclude_retained_body_carrier_blocks_formal_replacement() -> None:
+def test_exclude_retained_body_carrier_records_formal_corridor_review_risk() -> None:
     retained_body = _road("body", "a", "d", [(0, 0), (100, 0)])
     rcsd_road = {
         "properties": {"id": "rr", "snodeid": "10", "enodeid": "20", "source": 1},
@@ -826,10 +826,14 @@ def test_exclude_retained_body_carrier_blocks_formal_replacement() -> None:
         rcsd_road_by_id={"rr": rcsd_road},
     )
 
-    assert stats["deactivated_segment_count"] == 1
-    assert unit.status == "failed"
-    assert unit.reason == FORMAL_REPLACEMENT_CORRIDOR_UNAVAILABLE_REASON
-    assert added_road_to_segments == {}
+    assert stats["deactivated_segment_count"] == 0
+    assert stats["corridor_unavailable_segment_count"] == 1
+    assert unit.status == "passed"
+    assert unit.reason == ""
+    assert FORMAL_REPLACEMENT_CORRIDOR_UNAVAILABLE_REASON in unit.risk_flags
+    assert "formal_replacement_corridor_coverage_review" in unit.risk_flags
+    assert "manual_review_required" in unit.risk_flags
+    assert added_road_to_segments == {"rr": ["s1"]}
 
 
 def test_surface_aware_release_allows_wide_formal_body_corridor() -> None:
@@ -910,7 +914,7 @@ def test_relation_release_allows_wide_formal_body_corridor() -> None:
     assert added_road_to_segments == {"rr": ["s1"]}
 
 
-def test_wide_formal_body_corridor_still_blocks_without_surface_release() -> None:
+def test_wide_formal_body_corridor_records_review_risk_without_surface_release() -> None:
     retained_body = _road("body", "a", "d", [(0, 0), (100, 0)])
     retained_body["properties"]["segmentid"] = "s1"
     rcsd_road = {
@@ -939,10 +943,14 @@ def test_wide_formal_body_corridor_still_blocks_without_surface_release() -> Non
         rcsd_road_by_id={"rr": rcsd_road},
     )
 
-    assert stats["deactivated_segment_count"] == 1
-    assert unit.status == "failed"
-    assert unit.reason == FORMAL_REPLACEMENT_CORRIDOR_UNAVAILABLE_REASON
-    assert added_road_to_segments == {}
+    assert stats["deactivated_segment_count"] == 0
+    assert stats["corridor_unavailable_segment_count"] == 1
+    assert unit.status == "passed"
+    assert unit.reason == ""
+    assert FORMAL_REPLACEMENT_CORRIDOR_UNAVAILABLE_REASON in unit.risk_flags
+    assert "formal_replacement_corridor_coverage_review" in unit.risk_flags
+    assert "manual_review_required" in unit.risk_flags
+    assert added_road_to_segments == {"rr": ["s1"]}
 
 
 def test_exclude_retained_carrier_allows_side_attachment_merge() -> None:

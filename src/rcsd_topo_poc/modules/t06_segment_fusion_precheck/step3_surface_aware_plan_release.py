@@ -1013,9 +1013,13 @@ def _visual_conflict_non_replaced_plan_ids(step_root: Path, released: list[dict[
             continue
         segment_ids = {str(item.get("segment_id") or ""), *_ids(item.get("group_segment_ids"))}
         segment_ids.discard("")
-        if not any(status_by_segment.get(segment_id) == "replaced" for segment_id in segment_ids):
+        if not any(_is_successful_replacement_status(status_by_segment.get(segment_id)) for segment_id in segment_ids):
             result.add(plan_id)
     return result
+
+
+def _is_successful_replacement_status(status: str | None) -> bool:
+    return str(status or "") in {"replaced", "replaced+retained_swsd"}
 
 
 def _rollback_plan_ids(

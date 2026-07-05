@@ -1731,12 +1731,14 @@ def test_visual_conflict_non_replaced_release_is_rolled_back(tmp_path: Path) -> 
         step_root / "t06_step3_swsd_frcsd_segment_relation.gpkg",
         [
             _feature({"swsd_segment_id": "s_replaced", "relation_status": "replaced"}, LineString([(0, 0), (1, 0)])),
+            _feature({"swsd_segment_id": "s_mixed", "relation_status": "replaced+retained_swsd"}, LineString([(0, 0), (1, 1)])),
             _feature({"swsd_segment_id": "s_retained", "relation_status": "retained_swsd"}, LineString([(0, 1), (1, 1)])),
         ],
         crs_text="EPSG:3857",
     )
     released = [
         {"plan_id": "standard:s_replaced", "segment_id": "s_replaced", "group_segment_ids": []},
+        {"plan_id": "standard:s_mixed", "segment_id": "s_mixed", "group_segment_ids": []},
         {"plan_id": "standard:s_retained", "segment_id": "s_retained", "group_segment_ids": []},
     ]
 

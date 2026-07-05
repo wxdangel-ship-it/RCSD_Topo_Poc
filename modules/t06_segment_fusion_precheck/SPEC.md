@@ -12,7 +12,7 @@ T06 消费 T01 SWSD Segment 与 T05 SWSD-RCSD 语义路口关系，构建 RCSDSe
 - 输出 `t06_segment_replacement_problem_registry.*`，把未替换或由当前计划覆盖的问题按根因和建议归属回流到 T01/T03/T04/T05/T08/T06 或数据裁剪审计。
 - Step3 优先消费 Step2 replacement plan 执行替换，旧 replaceable + group/special audit 只作为兼容 fallback。
 - 对失败 Segment 输出诊断、候选修复证据和上游责任归因；默认不覆盖 T05 relation，但 pair anchor 锚定错误在满足受限高置信安全门槛时，可在 T06 当前 Segment 内使用候选 pair 执行一次自动重试；普通缺失 pair 端点补全必须保留 T05 已知端点所在 SWSD pair 侧，只补失败侧；高等级 single 当缺失端点同时伴随已知端点被 `candidate_anchor_mismatch` 判错时，必须由诊断明确覆盖两个 SWSD pair 端点并通过正式硬审计后，才可整体采用候选 pair；两端 pair relation 均缺失时，只允许非人工复核、连通与方向评分满分、shape similarity 不低于 `0.95` 的 buffer-only 候选 pair 进入正式硬审计重试。
-- 对高等级 Segment 的裁剪窗口不足失败，允许在 T05 原始 pair relation 不变且全图拓扑证据充分时执行受限重审；单向采用 RCSD graph-first 纵向联通并要求经过 50m buffer core，双向优先采用 adaptive buffer，必要时采用 dual graph-first 双向联通且不得跨越额外 mapped semantic nodes；重审通过仍必须满足全部硬审计并输出实际审计来源。
+- 对高等级 Segment 的裁剪窗口不足失败，允许在 T05 原始 pair relation 不变且全图拓扑证据充分时执行受限重审；单向采用 RCSD graph-first 纵向联通并要求经过 50m buffer core，双向优先采用 adaptive buffer，必要时采用 dual graph-first 双向联通；重审通过仍必须满足方向、required junction 相对拓扑、有效 buffer 穿行和特殊组门控，并输出实际审计来源。
 - 在 50m buffer 覆盖通过后继续执行窄通道视觉连续性复核，防止 RCSD 虽然处在宽 buffer 内、但实际替换后主线目视断裂或明显偏离 SWSD 主通道。
 - Step3 在不重判可替换性的前提下处理真实数据差异：正式替换道路保持 RCSD source 边界，保留 SWSD carrier 只作为局部通行承载和风险审计；提前右转挂接、端点补齐、surface-assisted node closure、surface-aware retained-junction gate 风险释放和最终 topology connectivity audit 用于提高 F-RCSD 可用性。
 
@@ -35,7 +35,7 @@ T06 消费 T01 SWSD Segment 与 T05 SWSD-RCSD 语义路口关系，构建 RCSDSe
 
 - 不修改 T01 / T05 输出。
 - 不新增 repo CLI。
-- Step2 对 `swsd_geometry_not_covered_by_retained_rcsd` 必须按受控审计风险处理：正式 relation 已消费、pair required graph / candidate graph / 方向性全部通过，且 retained RCSD corridor 完全位于 SWSD 50m buffer 内时，可发布 `swsd_buffer_corridor_controlled_release` replacement plan，并写入 `manual_review_required` 风险；该路径只接受 SWSD 反向覆盖差异，不接受 RCSD 跑出 buffer。
+- Step2 对 reverse coverage / buffer 覆盖差异必须按受控审计风险处理：正式 relation 已消费、pair + required junction graph / candidate graph / 方向性全部通过，且 pair-to-pair 不存在完全绕开 SWSD Segment buffer 的连续通路时，可发布 replacement plan，并写入 `manual_review_required` 风险；该路径允许 RCSD 局部跑出 buffer，不要求 retained RCSD corridor 完全位于 SWSD 50m buffer 内。
 - Step3 不处理未进入 Step2 replacement plan 的 rejected Segment。
 - Step3 不通过几何猜测补救未通过 Step2 的 Segment。
 - Step2 不再执行旧 pair-to-pair BFS、主轴趋势、长度趋势或唯一性筛选。
@@ -90,11 +90,11 @@ Step3 正式成果同样以 GPKG/CSV 为稳定载体；标准 CLI 默认 `suppre
 | 步骤 | 业务说明 |
 |---|---|
 | Step1 eligibility | 解析 `pair_nodes + junc_nodes`，先排除 `pair_nodes` 两端相同的非替换主通道，再基于 T04 `final_swsd_nodes` 中的 `has_evd / is_anchor` 识别候选与 final fusion units；T05 audit 中可消费的 `T11_MANUAL` 人工正向 relation 可释放对应 `fail3/fail4` anchor gate，也可释放人工确认的 `has_evd=no / missing` no-evidence relation。 |
-| Step2 relation mapping | 用 T05 relation 映射 pair required nodes，optional junc 只做审计和受控约束。 |
+| Step2 relation mapping | 用 T05 relation 映射 pair nodes 和 required junction nodes；被明确 detached / exempt 的 junc 只做审计和受控约束。 |
 | Step2 buffer candidate | 以 SWSD Segment 50m buffer 筛选 RCSDRoad/RCSDNode 候选。 |
-| Step2 corridor 构建 | 基于 pair required semantic nodes 构建最小 corridor 子图，不直接发布连通分量。 |
-| Step2 pruning / hard audit | 裁剪 out seeds，检查叶子端点、双向 / 单向可达、buffer overlap、窄通道视觉连续性和额外 mapped semantic nodes。 |
-| 高等级受限重审 | 对 `0-0* / 0-1*` Segment 的裁剪窗口不足失败，在原始 pair relation 不变时执行受限重审；single 以 RCSD 有向图联通 pair 路口并经过 50m buffer core，dual 优先 adaptive 到 125m，仍失败时可在不跨越额外 mapped semantic nodes 的前提下执行 dual graph-first 双向联通。 |
+| Step2 corridor 构建 | 基于 pair nodes + required junction nodes 构建可解释 corridor 子图，不直接发布连通分量。 |
+| Step2 pruning / hard audit | 裁剪 out seeds，检查叶子端点、双向 / 单向可达、required junction 相对拓扑、有效 buffer 穿行和窄通道视觉连续性。 |
+| 高等级受限重审 | 对 `0-0* / 0-1*` Segment 的裁剪窗口不足失败，在原始 pair relation 不变时执行受限重审；single 以 RCSD 有向图联通 pair 路口并经过 50m buffer core，dual 优先 adaptive 到 125m，仍失败时可执行 dual graph-first 双向联通，但仍必须满足 required junction 相对拓扑和有效 buffer 穿行。 |
 | 特殊组门控 | 环岛和复杂路口关联 Segment 支持局部替换；已通过硬审计的关联 Segment 保留在 replaceable，未通过的关联 Segment 保留 SWSD carrier。只有全组可替换时才发布特殊组内部 RCSD Road/Node；局部环岛必须保留 SWSD 环岛内部 road，不引入 RCSD 环岛内部端点间 road。 |
 | Step2 replacement plan | 把标准 replaceable、特殊组内部对象、path-corridor group replacement 统一发布为 Step3 执行计划。 |
 | Step2 problem registry | 将 rejected、当前 plan 覆盖和 Step2 自动解决的问题登记为可回流上游模块的审计记录。 |
@@ -106,7 +106,7 @@ Step3 正式成果同样以 GPKG/CSV 为稳定载体；标准 CLI 默认 `suppre
 
 - Step2 只接受 `status=0 / base_id>0` 的 T05 relation。
 - Step1 final fusion units 只包含 `pair_nodes` 两端不同的 SWSD Segment；T01 `oneway_single_road_fallback` 生成的同一语义路口内部 self-pair fallback 必须进入 Step1 rejected 审计，不进入 Step2 替换分母。高等级 `0-0* / 0-1*` Segment 中，`has_evd=yes` 且 `is_anchor` 明确不可用的 `pair_nodes.kind_2=2048`、`junc_nodes.kind_2 in {16,2048}` 可被放行到 Step2 probe；`sgrade=0-2双` 且两个 `pair_nodes.kind_2` 均为 `2048` 的虚拟 T 型 pair 也可仅对 pair 主通道放行到 Step2 probe。T11 人工正向 relation 可释放对应 `fail3/fail4` anchor gate，也可释放 `has_evd=no / missing` 的人工确认 no-evidence relation；`is_anchor=no/fail1/fail2` 仍不放行。上述放行都不被视为 anchor 成功，不回写 T05 relation。
-- `pair_nodes` 是 hard required，`junc_nodes` 是 optional 内部通过 + 侧向阻断。
+- `pair_nodes` 和未被明确 detached / exempt 的 `junc_nodes` 都是 hard required relation / topology 对象；detached / exempt junc 只做风险审计和局部 carrier 处理。
 - retained RCSD graph 的叶子端点只能是 pair 对应 RCSD semantic nodes。
 - 单向 Segment 的 source/target 只能由 SWSDRoad directed graph 推导。若 Segment 物理端点落在 `kind_2 in {64,128}` 特殊语义路口的 subnode 上，不能把 `mainnodeid` 折叠后的 pair 顺序当成唯一方向事实；初始 RCSD 有向 corridor 失败时，不能翻转 Segment 方向，只允许在原方向本地 corridor 存在、且方向缺口全部落在 `formway & 128 != 0` 的短 connector / 提前右转 Road 上时受限释放。
 - 高等级受限重审不能修改 T05 pair anchor，且通过后必须记录 `adaptive_buffer_status / adaptive_buffer_distance_m / adaptive_buffer_source_reason`；single 的 `adaptive_buffer_source_reason` 以 `single_graph_first_longitudinal_retry:` 前缀标识。
@@ -127,7 +127,7 @@ Step3 正式成果同样以 GPKG/CSV 为稳定载体；标准 CLI 默认 `suppre
 - 用 buffer 连通分量直接作为 RCSDSegment。
 - 未满足高置信安全门槛时，用 repair candidate 覆盖 T05 relation 并继续生成 replaceable。
 - 将 `candidate_anchor_mismatch` 直接视为 T05 relation 修正并绕过 Step2 buffer / direction / geometry / 叶子端点 / 特殊组硬审计。
-- 用高等级受限重审绕过 direction、geometry、叶子端点、额外 mapped semantic node 或特殊组硬审计。
+- 用高等级受限重审绕过 direction、有效 buffer 穿行、叶子端点、required junction 相对拓扑或特殊组硬审计。
 - 用 `pair_nodes` 字段顺序或 `segmentid A_B` 顺序推断单向 direction。
 - 在特殊语义路口 subnode 端点场景中，只按 `mainnodeid` 折叠后的语义节点方向判定单向 corridor，而不复核 Segment 内物理端点方向。
 - 绕过 Step2 replacement plan 对 rejected Segment 执行 Step3 替换。

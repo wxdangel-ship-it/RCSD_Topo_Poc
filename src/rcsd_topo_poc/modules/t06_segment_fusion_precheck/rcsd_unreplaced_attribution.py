@@ -11,7 +11,7 @@ from typing import Any
 import geopandas as gpd
 
 from .io import write_feature_triplet, write_json
-from .parsing import normalize_id, parse_id_list
+from .parsing import normalize_id, parse_id_list, unique_preserve_order
 from .schemas import STEP3_SUMMARY
 
 PROCESS_CRS = "EPSG:3857"
@@ -23,9 +23,11 @@ STEP1_CANDIDATES_STEM = "t06_swsd_segment_candidates"
 STEP1_FINAL_FUSION_UNITS_STEM = "t06_swsd_segment_final_fusion_units"
 STEP1_REJECTED_STEM = "t06_swsd_segment_rejected"
 STEP2_REPLACEABLE_STEM = "t06_rcsd_segment_replaceable"
+STEP2_CANDIDATES_STEM = "t06_rcsd_segment_candidates"
 STEP2_REJECTED_STEM = "t06_rcsd_segment_rejected"
 STEP2_PLAN_STEM = "t06_segment_replacement_plan"
 STEP2_PROBLEM_REGISTRY_STEM = "t06_segment_replacement_problem_registry"
+STEP3_FRCSD_ROAD_STEM = "t06_frcsd_road"
 STEP3_REPLACEMENT_UNITS_STEM = "t06_step3_replacement_units"
 STEP3_RELATION_STEM = "t06_step3_swsd_frcsd_segment_relation"
 STEP3_UNREPLACED_RCSD_STEM = "t06_step3_unreplaced_rcsd_roads"
@@ -49,7 +51,9 @@ RELATION_INCOMPLETE_IF_NOT_REPLACEABLE_REASONS = {
 
 STEP3_FAILURE_STATUSES = {"failed", "topology_failed", "connectivity_failed"}
 STEP3_PARTIAL_STATUSES = {"replaced+retained_swsd", "partial_replaced"}
+STEP3_SUCCESS_STATUSES = {"replaced", "replaced+retained_swsd", "retained_swsd"}
 STEP3_REPLACED_STATUSES = {"replaced", "replaced+retained_swsd", "failed"}
+CANDIDATE_ONLY_POST_REPLACEMENT_REVIEW_FLAG = "candidate_only_post_replacement_review"
 
 PRIMARY_BUFFER_M = 20.0
 PRIMARY_MIN_COVER_RATIO = 0.5
@@ -126,10 +130,12 @@ def run_t06_rcsd_unreplaced_attribution(
     swsd_segments = _ensure_crs(swsd_segments, target_crs)
     rcsd_roads = _ensure_crs(rcsd_roads, target_crs)
     unreplaced_roads = _ensure_crs(unreplaced_roads, target_crs)
+    raw_unreplaced_roads = unreplaced_roads
 
     step1_candidates = _read_gdf(step1_root / f"{STEP1_CANDIDATES_STEM}.gpkg")
     step1_final_fusion_units = _read_gdf(step1_root / f"{STEP1_FINAL_FUSION_UNITS_STEM}.gpkg")
     step1_rejected = _read_gdf(step1_root / f"{STEP1_REJECTED_STEM}.gpkg")
+    step2_candidates = _read_gdf(step2_root / f"{STEP2_CANDIDATES_STEM}.gpkg")
     step2_replaceable = _read_gdf(step2_root / f"{STEP2_REPLACEABLE_STEM}.gpkg")
     step2_rejected = _read_gdf(step2_root / f"{STEP2_REJECTED_STEM}.gpkg")
     step2_plan = _read_gdf(step2_root / f"{STEP2_PLAN_STEM}.gpkg")
@@ -147,6 +153,13 @@ def run_t06_rcsd_unreplaced_attribution(
             input_step3_root / f"{STEP3_RELATION_STEM}.gpkg",
         )
     )
+    frcsd_roads = _read_gdf(
+        _prefer_existing(
+            step3_root / f"{STEP3_FRCSD_ROAD_STEM}.gpkg",
+            input_step3_root / f"{STEP3_FRCSD_ROAD_STEM}.gpkg",
+        )
+    )
+    frcsd_roads = _ensure_crs(frcsd_roads, target_crs)
 
     all_segment_ids = _ids_from_column(swsd_segments, "id")
     evidence_ids = _ids_from_column(step1_candidates, "swsd_segment_id")
@@ -174,6 +187,24 @@ def run_t06_rcsd_unreplaced_attribution(
         exclude_statuses={"ready"},
     )
     unit_segments_by_road = _road_segment_map(step3_units, road_column="rcsd_road_ids")
+    frcsd_segments_by_road = _frcsd_segment_map(frcsd_roads)
+    raw_unreplaced_road_ids = {
+        road_id
+        for _, row in raw_unreplaced_roads.iterrows()
+        if (road_id := _road_id(row))
+    }
+    candidate_only_missing_segments_by_road = _planned_missing_segments_by_road(
+        ready_plan_segments_by_road=ready_plan_segments_by_road,
+        blocked_plan_segments_by_road=blocked_plan_segments_by_road,
+        unit_segments_by_road=unit_segments_by_road,
+        frcsd_segments_by_road=frcsd_segments_by_road,
+        excluded_road_ids=raw_unreplaced_road_ids,
+    )
+    unreplaced_roads = _append_missing_planned_roads(
+        unreplaced_roads,
+        rcsd_roads=rcsd_roads,
+        missing_segments_by_road=candidate_only_missing_segments_by_road,
+    )
 
     segment_matches_by_road = _match_roads_to_segment_metrics(
         unreplaced_roads,
@@ -212,6 +243,7 @@ def run_t06_rcsd_unreplaced_attribution(
             ready_plan_segments_by_road=ready_plan_segments_by_road,
             blocked_plan_segments_by_road=blocked_plan_segments_by_road,
             unit_segments_by_road=unit_segments_by_road,
+            candidate_only_missing_segments_by_road=candidate_only_missing_segments_by_road,
             unit_status_by_segment=unit_status_by_segment,
             evidence_ids=evidence_ids,
             relation_scope_ids=relation_scope_ids,
@@ -255,7 +287,7 @@ def run_t06_rcsd_unreplaced_attribution(
     summary = _build_summary(
         features=features,
         rcsd_roads=rcsd_roads,
-        unreplaced_roads=unreplaced_roads,
+        unreplaced_roads=raw_unreplaced_roads,
         audit_buffer_m=audit_buffer_m,
         target_crs=target_crs,
         swsd_segment_count=len(all_segment_ids),
@@ -462,6 +494,7 @@ def _road_segment_map(
     status_column: str | None = None,
     include_statuses: set[str] | None = None,
     exclude_statuses: set[str] | None = None,
+    sort_segments: bool = True,
 ) -> dict[str, list[str]]:
     out: dict[str, list[str]] = defaultdict(list)
     if frame.empty or road_column not in frame.columns:
@@ -479,7 +512,86 @@ def _road_segment_map(
             road_id = _norm(road_id)
             if road_id and segment_id not in out[road_id]:
                 out[road_id].append(segment_id)
+    if sort_segments:
+        return {road_id: sorted(segment_ids) for road_id, segment_ids in out.items()}
+    return dict(out)
+
+
+def _frcsd_segment_map(frame: gpd.GeoDataFrame) -> dict[str, list[str]]:
+    out: dict[str, list[str]] = defaultdict(list)
+    if frame.empty or "id" not in frame.columns or "t06_swsd_segment_ids" not in frame.columns:
+        return out
+    for _, row in frame.iterrows():
+        for segment_id in parse_id_list(row.get("t06_swsd_segment_ids")):
+            segment_id = _norm(segment_id)
+            if not segment_id:
+                continue
+            for road_id in _frcsd_covered_road_ids(row):
+                if segment_id not in out[road_id]:
+                    out[road_id].append(segment_id)
     return {road_id: sorted(segment_ids) for road_id, segment_ids in out.items()}
+
+
+def _frcsd_covered_road_ids(row: Any) -> list[str]:
+    ids = [_road_id(row)]
+    for column in (
+        "source_road_id",
+        "t06_split_original_road_id",
+        "t06_mixed_advance_right_rcsd_road_ids",
+    ):
+        if column in row:
+            ids.extend(_ids_from_scalar_or_list(row.get(column)))
+    return unique_preserve_order([road_id for road_id in ids if road_id])
+
+
+def _ids_from_scalar_or_list(value: Any) -> list[str]:
+    ids = [_norm(item) for item in parse_id_list(value)]
+    if not ids and _norm(value):
+        ids = [_norm(value)]
+    return [item for item in ids if item]
+
+
+def _planned_missing_segments_by_road(
+    *,
+    ready_plan_segments_by_road: dict[str, list[str]],
+    blocked_plan_segments_by_road: dict[str, list[str]],
+    unit_segments_by_road: dict[str, list[str]],
+    frcsd_segments_by_road: dict[str, list[str]],
+    excluded_road_ids: set[str],
+) -> dict[str, list[str]]:
+    out: dict[str, list[str]] = {}
+    for mapping in (ready_plan_segments_by_road, blocked_plan_segments_by_road, unit_segments_by_road):
+        for road_id, segment_ids in mapping.items():
+            if road_id in excluded_road_ids or frcsd_segments_by_road.get(road_id):
+                continue
+            out[road_id] = unique_preserve_order([*out.get(road_id, []), *segment_ids])
+    return out
+
+
+def _append_missing_planned_roads(
+    unreplaced_roads: gpd.GeoDataFrame,
+    *,
+    rcsd_roads: gpd.GeoDataFrame,
+    missing_segments_by_road: dict[str, list[str]],
+) -> gpd.GeoDataFrame:
+    if not missing_segments_by_road or rcsd_roads.empty:
+        return unreplaced_roads
+    existing_ids = {_road_id(row) for _, row in unreplaced_roads.iterrows()} if not unreplaced_roads.empty else set()
+    rows: list[dict[str, Any]] = []
+    for _, row in rcsd_roads.iterrows():
+        road_id = _road_id(row)
+        if not road_id or road_id in existing_ids or road_id not in missing_segments_by_road:
+            continue
+        props = dict(row)
+        props["replacement_status"] = "not_replaced"
+        props["audit_reason"] = "planned_road_missing_from_frcsd"
+        props["candidate_unlanded_segment_ids"] = _join_ids(missing_segments_by_road[road_id])
+        props["length_m"] = float(row.geometry.length) if row.geometry is not None else 0.0
+        rows.append(props)
+    if not rows:
+        return unreplaced_roads
+    combined_rows = [*unreplaced_roads.to_dict("records"), *rows]
+    return gpd.GeoDataFrame(combined_rows, geometry="geometry", crs=unreplaced_roads.crs or rcsd_roads.crs)
 
 
 def _match_roads_to_segment_metrics(
@@ -658,6 +770,7 @@ def _finalize_attribution(
     ready_plan_segments_by_road: dict[str, list[str]],
     blocked_plan_segments_by_road: dict[str, list[str]],
     unit_segments_by_road: dict[str, list[str]],
+    candidate_only_missing_segments_by_road: dict[str, list[str]],
     unit_status_by_segment: dict[str, list[str]],
     evidence_ids: set[str],
     relation_scope_ids: set[str],
@@ -668,6 +781,32 @@ def _finalize_attribution(
     plan_status_by_segment: dict[str, list[str]],
     step3_status_by_segment: dict[str, list[str]],
 ) -> dict[str, Any]:
+    candidate_only_missing_ids = candidate_only_missing_segments_by_road.get(road_id, [])
+    if candidate_only_missing_ids:
+        primary_segment_id = candidate_only_missing_ids[0]
+        return _final_class_props(
+            coarse_classification,
+            class_code="5_replaceable_scope_unreplaced",
+            subclass="5_replaceable_scope_not_consumed",
+            owner="T06_algorithm_strategy",
+            reason=(
+                "RCSDRoad 被 replacement plan 或 replacement unit 精确引用，但最终未进入 FRCSD；"
+                "作为未替换问题保留。"
+            ),
+            confidence="approximate",
+            basis="exact_plan_or_unit_road_missing_from_frcsd",
+            primary_segment_id=primary_segment_id,
+            primary_scope="plan_or_unit_road_ids_missing_from_frcsd",
+            segment_matches=segment_matches,
+            dominant_source_class="5_replaceable_scope_unreplaced",
+            review_flag="",
+            competing_match=None,
+            step1_reason_by_segment=step1_reason_by_segment,
+            step2_reason_by_segment=step2_reason_by_segment,
+            problem_reason_by_segment=problem_reason_by_segment,
+            plan_status_by_segment=plan_status_by_segment,
+            step3_status_by_segment=step3_status_by_segment,
+        )
     unit_ids = unit_segments_by_road.get(road_id, [])
     ready_plan_ids = ready_plan_segments_by_road.get(road_id, [])
     blocked_plan_ids = blocked_plan_segments_by_road.get(road_id, [])
@@ -827,12 +966,12 @@ def _finalize_attribution(
         owner=class_props["owner"],
         reason=class_props["reason"],
         confidence="approximate",
-        basis="approx_geometry_primary_segment",
+        basis=class_props.get("basis", "approx_geometry_primary_segment"),
         primary_segment_id=primary_match.segment_id,
         primary_scope="geometry_primary_segment",
         segment_matches=segment_matches,
         dominant_source_class=class_props["class_code"],
-        review_flag="",
+        review_flag=class_props.get("review_flag", ""),
         competing_match=None,
         step1_reason_by_segment=step1_reason_by_segment,
         step2_reason_by_segment=step2_reason_by_segment,
@@ -905,6 +1044,18 @@ def _segment_based_final_class(
         [segment_id],
         step2_reason_by_segment,
     ) and not _collect([segment_id], problem_reason_by_segment):
+        if _has_successful_step3_relation(segment_id, step3_status_by_segment):
+            return {
+                "class_code": "5_replaceable_scope_unreplaced",
+                "subclass": _class5_subclass([segment_id], plan_status_by_segment, step3_status_by_segment),
+                "owner": "T06_algorithm_strategy",
+                "reason": (
+                    "RCSDRoad 仅通过候选/几何范围关联到已替换或已保留闭合 Segment，未被 replacement "
+                    "unit 或 plan 精确引用，保留正式归因并标记为人工后审风险项。"
+                ),
+                "basis": "approx_candidate_only_after_segment_replaced",
+                "review_flag": CANDIDATE_ONLY_POST_REPLACEMENT_REVIEW_FLAG,
+            }
         return {
             "class_code": "5_replaceable_scope_unreplaced",
             "subclass": _class5_subclass([segment_id], plan_status_by_segment, step3_status_by_segment),
@@ -922,6 +1073,10 @@ def _segment_based_final_class(
         "owner": "RCSD_quality_under_segment",
         "reason": "Segment Relation 已满足，但 RCSD 仍无法形成满足要求的替换结果。",
     }
+
+
+def _has_successful_step3_relation(segment_id: str, step3_status_by_segment: dict[str, list[str]]) -> bool:
+    return any(status in STEP3_SUCCESS_STATUSES for status in _collect([segment_id], step3_status_by_segment))
 
 
 def _mixed_competing_match(
@@ -1174,8 +1329,10 @@ def _build_summary(
 ) -> dict[str, Any]:
     total_count = int(len(rcsd_roads))
     total_length = _frame_length_m(rcsd_roads)
-    unreplaced_count = int(len(unreplaced_roads))
-    unreplaced_length = _frame_length_m(unreplaced_roads)
+    raw_unreplaced_count = int(len(unreplaced_roads))
+    raw_unreplaced_length = _frame_length_m(unreplaced_roads)
+    unreplaced_count = int(len(features))
+    unreplaced_length = _features_length_m(features)
     replaced_count = max(total_count - unreplaced_count, 0)
     replaced_length = max(total_length - unreplaced_length, 0.0)
     rows = [dict(feature.get("properties") or {}) for feature in features]
@@ -1200,7 +1357,8 @@ def _build_summary(
         "final_classification_rule": (
             "road-level exact plan/unit evidence first; otherwise choose the geometric primary SWSD Segment "
             "before applying the six-class attribution; weak primary matches become class 1; mixed partial "
-            "coverage keeps the primary Segment class with low confidence and a PPT review flag."
+            "coverage keeps the primary Segment class with low confidence and a PPT review flag; candidate-only "
+            "roads already present in final FRCSD are treated as replaced and excluded from unreplaced attribution."
         ),
         "ppt_class_mapping": {
             "1_segment_rcsd_quality_unreplaceable": [
@@ -1216,6 +1374,8 @@ def _build_summary(
         },
         "total_rcsd_road_count": total_count,
         "total_rcsd_road_length_m": round(total_length, 3),
+        "raw_step3_unreplaced_rcsd_road_count": raw_unreplaced_count,
+        "raw_step3_unreplaced_rcsd_road_length_m": round(raw_unreplaced_length, 3),
         "unreplaced_rcsd_road_count": unreplaced_count,
         "unreplaced_rcsd_road_length_m": round(unreplaced_length, 3),
         "replaced_rcsd_road_count": replaced_count,
@@ -1257,6 +1417,10 @@ def _frame_length_m(frame: gpd.GeoDataFrame) -> float:
     if "length_m" in frame.columns:
         return float(frame["length_m"].fillna(0).sum())
     return float(frame.geometry.length.sum())
+
+
+def _features_length_m(features: list[dict[str, Any]]) -> float:
+    return float(sum(float((feature.get("properties") or {}).get("length_m") or 0.0) for feature in features))
 
 
 def _aggregate(rows: list[dict[str, Any]], key: str, total_length: float, unreplaced_length: float) -> list[dict[str, Any]]:

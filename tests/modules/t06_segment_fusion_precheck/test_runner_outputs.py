@@ -594,7 +594,7 @@ def test_step2_rejects_rcsd_pair_nodes_that_collapse_to_one_semantic_node(tmp_pa
     assert props["failed_metric_value"]["canonical_rcsd_pair_nodes"] == ["100"]
 
 
-def test_step2_missing_junc_relation_is_optional_and_audited_as_auto_lift(tmp_path: Path) -> None:
+def test_step2_missing_required_junc_relation_rejects_segment(tmp_path: Path) -> None:
     segment = _write(
         tmp_path / "segment.gpkg",
         [
@@ -654,24 +654,18 @@ def test_step2_missing_junc_relation_is_optional_and_audited_as_auto_lift(tmp_pa
     )
 
     summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
-    assert summary["replaceable_count"] == 1
-    assert summary["junc_required_blocked_count"] == 1
-    assert summary["scenario_b_auto_lift_count"] == 1
+    assert summary["replaceable_count"] == 0
+    assert summary["rejected_count"] == 1
     assert Path(summary["outputs"]["failure_business_audit_json"]).exists()
 
-    replaceable_payload = json.loads(artifacts.replaceable_gpkg_path.with_suffix(".json").read_text(encoding="utf-8"))
-    replaceable_props = replaceable_payload["features"][0]["properties"]
-    assert replaceable_props["required_rcsd_nodes"] == ["10", "20"]
-    assert replaceable_props["dropped_junc_nodes"] == ["3"]
-    assert replaceable_props["junc_attach_loss_reason"] == "junc_relation_missing_or_invalid"
-
-    audit = json.loads((artifacts.step_root / "t06_rcsd_segment_failure_business_audit.json").read_text(encoding="utf-8"))
-    audit_props = audit["features"][0]["properties"]
-    assert audit_props["failure_business_category"] == "junc_required_blocked"
-    assert audit_props["auto_fix_candidate"] is True
+    rejected_payload = json.loads(artifacts.rejected_gpkg_path.with_suffix(".json").read_text(encoding="utf-8"))
+    rejected_props = rejected_payload["features"][0]["properties"]
+    assert rejected_props["reject_stage"] == "relation_mapping"
+    assert rejected_props["reject_reason"] == "missing_junc_relation"
+    assert rejected_props["failed_junc_nodes"] == ["3"]
 
 
-def test_step2_promotes_non_conflicting_isolated_attach_roads(tmp_path: Path) -> None:
+def test_step2_retains_required_junc_leaf_attach_as_expected_endpoint(tmp_path: Path) -> None:
     segment = _write(
         tmp_path / "segment.gpkg",
         [
@@ -737,23 +731,15 @@ def test_step2_promotes_non_conflicting_isolated_attach_roads(tmp_path: Path) ->
 
     summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
     assert summary["replaceable_count"] == 1
-    assert summary["isolated_attach_promoted_segment_count"] == 1
-    assert summary["isolated_attach_promoted_road_unique_count"] == 1
-
-    candidate = json.loads((artifacts.step_root / "t06_rcsd_segment_candidates.json").read_text(encoding="utf-8"))
-    candidate_props = candidate["features"][0]["properties"]
-    assert candidate_props["retained_rcsd_road_ids"] == ["rr_main"]
-    assert candidate_props["lost_attach_road_ids"] == ["rr_attach"]
-    assert candidate_props["promoted_attach_road_ids"] == ["rr_attach"]
+    assert summary["rejected_count"] == 0
 
     replaceable = json.loads((artifacts.step_root / "t06_rcsd_segment_replaceable.json").read_text(encoding="utf-8"))
     replaceable_props = replaceable["features"][0]["properties"]
     assert replaceable_props["rcsd_road_ids"] == ["rr_main", "rr_attach"]
-    assert replaceable_props["attach_promotion_status"] == "promoted"
-    assert replaceable_props["attach_promotion_reason"] == "global_unique_attach_roads"
+    assert replaceable_props["unexpected_endpoint_node_ids"] == []
 
 
-def test_step2_blocks_isolated_attach_promotion_when_requested_by_multiple_segments(tmp_path: Path) -> None:
+def test_step2_retains_required_junc_leaf_attach_for_multiple_segments(tmp_path: Path) -> None:
     segment_rows = [
         {
             "properties": {"id": segment_id, "sgrade": "主双", "pair_nodes": [1, 2], "junc_nodes": [3], "roads": [road_id]},
@@ -825,17 +811,14 @@ def test_step2_blocks_isolated_attach_promotion_when_requested_by_multiple_segme
 
     summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
     assert summary["replaceable_count"] == 2
-    assert summary["isolated_attach_promoted_road_unique_count"] == 0
-    assert summary["isolated_attach_blocked_road_unique_count"] == 1
-    assert summary["isolated_attach_blocked_road_reference_count"] == 2
+    assert summary["rejected_count"] == 0
 
     replaceable = json.loads((artifacts.step_root / "t06_rcsd_segment_replaceable.json").read_text(encoding="utf-8"))
     by_segment = {item["properties"]["swsd_segment_id"]: item["properties"] for item in replaceable["features"]}
+    assert set(by_segment) == {"s_a", "s_b"}
     for props in by_segment.values():
-        assert props["rcsd_road_ids"] == ["rr_main"]
-        assert props["promoted_attach_road_ids"] == []
-        assert props["blocked_attach_road_ids"] == ["rr_attach"]
-        assert props["attach_promotion_status"] == "blocked_conflict"
+        assert props["rcsd_road_ids"] == ["rr_main", "rr_attach"]
+        assert props["unexpected_endpoint_node_ids"] == []
 
 
 def test_step2_pair_relation_failure_outputs_buffer_only_repair_candidate(tmp_path: Path) -> None:
@@ -1505,26 +1488,14 @@ def test_step2_high_grade_single_retries_graph_first_without_anchor_change(tmp_p
     summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
     assert summary["replaceable_count"] == 1
     assert summary["rejected_count"] == 0
-    assert summary["adaptive_high_grade_single_buffer_retry_count"] == 1
+    assert summary["adaptive_high_grade_single_buffer_retry_count"] == 0
 
     replaceable = json.loads((artifacts.step_root / "t06_rcsd_segment_replaceable.json").read_text(encoding="utf-8"))
     replaceable_props = replaceable["features"][0]["properties"]
     assert replaceable_props["original_rcsd_pair_nodes"] == ["10", "20"]
     assert replaceable_props["rcsd_pair_nodes"] == ["10", "20"]
-    assert replaceable_props["adaptive_buffer_status"] == "applied"
-    assert replaceable_props["adaptive_buffer_distance_m"] == 75.0
-    assert (
-        replaceable_props["adaptive_buffer_source_reason"]
-        == "single_graph_first_longitudinal_retry:retained_geometry_outside_swsd_buffer_scope"
-    )
-
-    audit = json.loads((artifacts.step_root / "t06_rcsd_segment_failure_business_audit.json").read_text(encoding="utf-8"))
-    audit_props = audit["features"][0]["properties"]
-    assert audit_props["segment_outcome"] == "replaceable"
-    assert audit_props["failure_business_category"] == "geometry_shape_mismatch"
-    assert audit_props["auto_fix_candidate"] is True
-    assert audit_props["manual_review_required"] is False
-    assert audit_props["repair_recommendation"] == "single_graph_first_longitudinal_retry"
+    assert replaceable_props["adaptive_buffer_status"] == "not_applied"
+    assert replaceable_props["geometry_buffer_coverage_issue"] == "retained_geometry_outside_swsd_buffer_scope"
 
 
 def test_step2_high_grade_dual_retries_adaptive_buffer_without_anchor_change(tmp_path: Path) -> None:

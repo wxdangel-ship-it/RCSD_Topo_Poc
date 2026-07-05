@@ -39,6 +39,11 @@ JUNCTION_SURFACE_COVERAGE_RELEASE_RISK_FLAGS = [
     "junction_surface_coverage_release",
     "manual_review_required",
 ]
+FORMAL_REPLACEMENT_CORRIDOR_REVIEW_RISK_FLAGS = [
+    "formal_replacement_corridor_coverage_review",
+    FORMAL_REPLACEMENT_CORRIDOR_UNAVAILABLE_REASON,
+    "manual_review_required",
+]
 SWSD_BUFFER_CORRIDOR_RELEASE_RISK = "swsd_buffer_corridor_controlled_release"
 
 
@@ -150,11 +155,8 @@ def exclude_retained_swsd_carriers_from_formal_replacements(
         )
         if not corridor_unavailable:
             continue
-        stats["deactivated_segment_count"] += 1
         stats["corridor_unavailable_segment_count"] += 1
-        unit.status = "failed"
-        unit.reason = FORMAL_REPLACEMENT_CORRIDOR_UNAVAILABLE_REASON
-        deactivated_segment_ids.add(str(getattr(unit, "segment_id", "")))
+        append_formal_corridor_review_risk(unit)
     if deactivated_segment_ids:
         for road_id, segment_ids in list(added_road_to_segments.items()):
             kept = [segment_id for segment_id in segment_ids if segment_id not in deactivated_segment_ids]
@@ -227,6 +229,11 @@ def append_junction_surface_release_risk(unit: Any) -> None:
 def _append_surface_aware_formal_corridor_release_risk(unit: Any) -> None:
     current = parse_id_list(getattr(unit, "risk_flags", []), allow_empty=True)
     setattr(unit, "risk_flags", unique_preserve_order([*current, *SURFACE_AWARE_FORMAL_CORRIDOR_RELEASE_RISK_FLAGS]))
+
+
+def append_formal_corridor_review_risk(unit: Any) -> None:
+    current = parse_id_list(getattr(unit, "risk_flags", []), allow_empty=True)
+    setattr(unit, "risk_flags", unique_preserve_order([*current, *FORMAL_REPLACEMENT_CORRIDOR_REVIEW_RISK_FLAGS]))
 
 
 def _append_group_corridor_review_risk(unit: Any) -> None:
@@ -401,7 +408,7 @@ def _unit_corridor_coverage_unavailable(
             if failed and _surface_aware_formal_corridor_release_available(unit, swsd_road, unit_roads):
                 _append_surface_aware_formal_corridor_release_risk(unit)
                 continue
-            if failed and swsd_buffer_corridor_release_allows_coverage_gap(unit):
+            if failed and formal_corridor_release_allows_coverage_gap(unit):
                 continue
             if failed:
                 return True
@@ -413,7 +420,7 @@ def _unit_corridor_coverage_unavailable(
             append_junction_surface_release_risk(unit)
         if not failed:
             continue
-        if swsd_buffer_corridor_release_allows_coverage_gap(unit):
+        if formal_corridor_release_allows_coverage_gap(unit):
             continue
         return True
     return False
@@ -473,6 +480,20 @@ def swsd_buffer_corridor_release_allows_coverage_gap(unit: Any) -> bool:
     except ParseError:
         return False
     return SWSD_BUFFER_CORRIDOR_RELEASE_RISK in risk_flags
+
+
+def formal_corridor_release_allows_coverage_gap(unit: Any) -> bool:
+    try:
+        risk_flags = set(parse_id_list(getattr(unit, "risk_flags", []), allow_empty=True))
+    except ParseError:
+        return False
+    if swsd_buffer_corridor_release_allows_coverage_gap(unit):
+        return True
+    return {
+        "visual_consistency_controlled_release",
+        "manual_review_required",
+        "no_formal_trunk_road_conflict",
+    }.issubset(risk_flags)
 
 
 def materialize_topology_supplement_rcsd_roads(
@@ -645,6 +666,9 @@ def materialize_topology_supplement_rcsd_roads(
         if materialized_rcsd_ids:
             unit.swsd_road_ids = unique_preserve_order([*unit.swsd_road_ids, *materialized_original_ids])
             stats["materialized_road_count"] += len(materialized_rcsd_ids)
+        if still_retained:
+            retained_set = set(still_retained)
+            unit.swsd_road_ids = [road_id for road_id in unit.swsd_road_ids if road_id not in retained_set]
         unit.retained_detached_swsd_road_ids = unique_preserve_order(still_retained)
         stats["formal_body_retained_restored_count"] = stats.get(
             "formal_body_retained_restored_count", 0

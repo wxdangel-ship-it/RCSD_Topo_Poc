@@ -35,6 +35,15 @@ VISUAL_CONSISTENCY_STRATEGIES = {
     "visual_consistency_controlled_release",
     "swsd_buffer_corridor_controlled_release",
 }
+BUFFER_CORRIDOR_REVIEW_ISSUES = {
+    "retained_geometry_outside_swsd_buffer_scope",
+    "swsd_geometry_not_covered_by_retained_rcsd",
+}
+POST_REPLACEMENT_COVERAGE_REVIEW_ISSUES = {
+    *BUFFER_CORRIDOR_REVIEW_ISSUES,
+    "retained_geometry_outside_swsd_visual_consistency_scope",
+    "swsd_visual_continuity_not_covered_by_retained_rcsd",
+}
 
 
 def build_replacement_plan_rows(
@@ -226,9 +235,16 @@ def _standard_plan_rows(
         if not segment_id:
             continue
         source_strategy = str(props.get("replacement_strategy") or "buffer_segment_extraction")
-        controlled_visual_release = props.get("geometry_buffer_coverage_issue") == "retained_geometry_outside_swsd_visual_consistency_scope"
+        coverage_issue = str(props.get("geometry_buffer_coverage_issue") or "")
+        controlled_visual_release = coverage_issue == "retained_geometry_outside_swsd_visual_consistency_scope"
+        post_replacement_coverage_review = coverage_issue in POST_REPLACEMENT_COVERAGE_REVIEW_ISSUES
+        buffer_corridor_review = coverage_issue in BUFFER_CORRIDOR_REVIEW_ISSUES
         high_visual_deviation = controlled_visual_release and _has_high_visual_consistency_deviation(props)
-        strategy = "visual_consistency_controlled_release" if controlled_visual_release else source_strategy
+        strategy = (
+            "visual_consistency_controlled_release"
+            if controlled_visual_release
+            else "swsd_buffer_corridor_controlled_release" if buffer_corridor_review else source_strategy
+        )
         pair_nodes = _parse_list(props.get("swsd_pair_nodes"))
         reverse_blocker = _blocker_for_pair(pair_nodes, reverse_blockers)
         bridge = pair_anchor_bridges.get(segment_id, {})
@@ -257,12 +273,16 @@ def _standard_plan_rows(
                 props.get("geometry_buffer_coverage_issue") if controlled_visual_release else strategy
             )
         else:
-            reason = props.get("geometry_buffer_coverage_issue") if controlled_visual_release else strategy
+            reason = coverage_issue if post_replacement_coverage_review else strategy
         risk_flags = ["reverse_retained_swsd_pair_blocked"] if reverse_blocker else []
         if buffer_distance_risk:
             risk_flags.append("adaptive_buffer_exceeds_topology_connectivity_audit_threshold")
         if pair_anchor_bridge_road_ids:
             risk_flags.append("pair_anchor_bridge_roads_added")
+        if post_replacement_coverage_review:
+            risk_flags.extend([coverage_issue, "manual_review_required"])
+            if buffer_corridor_review:
+                risk_flags.append("swsd_buffer_corridor_controlled_release")
         if controlled_visual_release:
             risk_flags.extend(
                 [
@@ -277,9 +297,11 @@ def _standard_plan_rows(
         if reverse_blocker:
             notes = f"blocked by reverse retained SWSD segment {reverse_blocker['segment_id']}"
         else:
-            if controlled_visual_release:
+            if post_replacement_coverage_review:
                 notes = "standard Step2 replaceable segment with retained RCSD visual consistency mismatch accepted as controlled release audit risk"
-                if visual_coverage_manual_audit or high_visual_deviation:
+                if buffer_corridor_review:
+                    notes = "standard Step2 replaceable segment with SWSD buffer coverage mismatch accepted as post-replacement manual audit risk"
+                elif visual_coverage_manual_audit or high_visual_deviation:
                     notes = f"{notes}; visual consistency deviation requires manual review unless blocked by primary RCSDRoad conflict"
                 outside_road_ids = _visual_outside_swsd_buffer_road_ids(
                     rcsd_road_ids,
@@ -346,7 +368,7 @@ def _standard_plan_rows(
                     "rcsd_outside_swsd_buffer_ratio": props.get("rcsd_outside_swsd_buffer_ratio"),
                     "swsd_uncovered_by_rcsd_length_m": props.get("swsd_uncovered_by_rcsd_length_m"),
                     "swsd_uncovered_by_rcsd_ratio": props.get("swsd_uncovered_by_rcsd_ratio"),
-                    "risk_flags": risk_flags,
+                    "risk_flags": unique_preserve_order(risk_flags),
                     "notes": notes,
                 },
                 row.get("geometry"),

@@ -26,6 +26,8 @@ case-package 用于本地复现单 case，internal full-input 用于全量批处
 
 T04 relation evidence 必须解释 `base_id_candidate`、`required_rcsd_node_ids`、`support_rcsdroad_ids`、`surface_scenario_type` 和 `rcsd_alignment_type`。`road_surface_fork + partial` 场景中，局部 RCSD 基点可以作为下游 relation handoff base，但原语义主点必须保留为审计链，避免 T06 再反推复杂路口基点。
 
+Step8 relation fallback 若使用 `RCSDIntersection` 作为单节点 RCSD 侧语义证据，必须在 fallback audit 中独立记录 reason：`required_rcsd_singleton_node_resolved_from_rcsdintersection`。该 reason 只表示可信 RCSDIntersection 补偿 SWSD/RCSD 几何偏差，不表示 T04 Step6 几何面成功，也不得与 `required_rcsd_singleton_node_resolved_from_strong_rcsd_profile` 合并统计。
+
 ## 5. Baseline 证据
 
 Anchor_2 official 39-case baseline 是当前唯一正式冻结基线。历史 23/30 case 只能作为旧审计材料或子集投影，不能覆盖 official baseline 结论。

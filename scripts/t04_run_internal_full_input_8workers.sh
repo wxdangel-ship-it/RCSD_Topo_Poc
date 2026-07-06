@@ -11,6 +11,7 @@ DRIVEZONE_PATH="${DRIVEZONE_PATH:-/mnt/d/TestData/POC_Data/patch_all/DriveZone.g
 DIVSTRIPZONE_PATH="${DIVSTRIPZONE_PATH:-/mnt/d/TestData/POC_Data/patch_all/DivStripZone.gpkg}"
 RCSDROAD_PATH="${RCSDROAD_PATH:-/mnt/d/TestData/POC_Data/RC4/RCSDRoad.gpkg}"
 RCSDNODE_PATH="${RCSDNODE_PATH:-/mnt/d/TestData/POC_Data/RC4/RCSDNode.gpkg}"
+RCSD_INTERSECTION_PATH="${RCSD_INTERSECTION_PATH:-}"
 INTERSECTION_MATCH_T07_PATH="${INTERSECTION_MATCH_T07_PATH:-}"
 INTERSECTION_MATCH_T03_PATH="${INTERSECTION_MATCH_T03_PATH:-}"
 
@@ -26,6 +27,8 @@ RCSDROAD_LAYER="${RCSDROAD_LAYER:-}"
 RCSDROAD_CRS="${RCSDROAD_CRS:-}"
 RCSDNODE_LAYER="${RCSDNODE_LAYER:-}"
 RCSDNODE_CRS="${RCSDNODE_CRS:-}"
+RCSD_INTERSECTION_LAYER="${RCSD_INTERSECTION_LAYER:-}"
+RCSD_INTERSECTION_CRS="${RCSD_INTERSECTION_CRS:-}"
 
 OUT_ROOT="${OUT_ROOT:-$REPO_DIR/outputs/_work/t04_internal_full_input}"
 RUN_ID="${RUN_ID:-t04_internal_full_input_$(date +%Y%m%d_%H%M%S)}"
@@ -60,6 +63,13 @@ choose_python() {
 
 PYTHON_BIN="$(choose_python)"
 
+if [[ -z "$RCSD_INTERSECTION_PATH" ]]; then
+  inferred_rcsd_intersection_path="$(dirname "$(dirname "$RCSDNODE_PATH")")/rcsd_intersection/rcsd_intersection_slice.gpkg"
+  if [[ -f "$inferred_rcsd_intersection_path" ]]; then
+    RCSD_INTERSECTION_PATH="$inferred_rcsd_intersection_path"
+  fi
+fi
+
 if ! "$PYTHON_BIN" - <<'PY'
 import sys
 raise SystemExit(0 if sys.version_info >= (3, 10) else 1)
@@ -76,6 +86,11 @@ for path_var in NODES_PATH ROADS_PATH DRIVEZONE_PATH DIVSTRIPZONE_PATH RCSDROAD_
     exit 2
   fi
 done
+
+if [[ -n "$RCSD_INTERSECTION_PATH" && ! -f "$RCSD_INTERSECTION_PATH" ]]; then
+  echo "[BLOCK] RCSD_INTERSECTION_PATH does not exist: $RCSD_INTERSECTION_PATH" >&2
+  exit 2
+fi
 
 for path_var in INTERSECTION_MATCH_T07_PATH INTERSECTION_MATCH_T03_PATH; do
   path_value="${!path_var}"
@@ -135,13 +150,15 @@ echo "[RUN] DEBUG_FLAG=$DEBUG_FLAG RESUME=$RESUME RETRY_FAILED=$RETRY_FAILED PER
 echo "[RUN] VISUAL_CHECK_DIR=$VISUAL_CHECK_DIR"
 echo "[RUN] INTERSECTION_MATCH_T07_PATH=${INTERSECTION_MATCH_T07_PATH:-<not provided>}"
 echo "[RUN] INTERSECTION_MATCH_T03_PATH=${INTERSECTION_MATCH_T03_PATH:-<not provided>}"
+echo "[RUN] RCSD_INTERSECTION_PATH=${RCSD_INTERSECTION_PATH:-<not provided>}"
 echo "[RUN] CASE_SCAN=$CASE_SCAN CASE_SCAN_THRESHOLD=$CASE_SCAN_THRESHOLD"
 echo "[RUN] Candidate discovery: representative node, has_evd=yes, is_anchor=no, kind_2 in {8,16,128}."
 
-export NODES_PATH ROADS_PATH DRIVEZONE_PATH DIVSTRIPZONE_PATH RCSDROAD_PATH RCSDNODE_PATH
+export NODES_PATH ROADS_PATH DRIVEZONE_PATH DIVSTRIPZONE_PATH RCSDROAD_PATH RCSDNODE_PATH RCSD_INTERSECTION_PATH
 export INTERSECTION_MATCH_T07_PATH INTERSECTION_MATCH_T03_PATH
 export NODES_LAYER NODES_CRS ROADS_LAYER ROADS_CRS DRIVEZONE_LAYER DRIVEZONE_CRS
 export DIVSTRIPZONE_LAYER DIVSTRIPZONE_CRS RCSDROAD_LAYER RCSDROAD_CRS RCSDNODE_LAYER RCSDNODE_CRS
+export RCSD_INTERSECTION_LAYER RCSD_INTERSECTION_CRS
 export OUT_ROOT RUN_ID WORKERS MAX_CASES DEBUG_FLAG VISUAL_CHECK_DIR
 export RESUME RETRY_FAILED PERF_AUDIT PERF_AUDIT_INTERVAL_SEC PERF_AUDIT_MAX_SAMPLES PERF_AUDIT_MAX_BYTES
 export PROGRESS_FLUSH_INTERVAL_SEC PROGRESS_FLUSH_INTERVAL_CASES LOCAL_CONTEXT_SNAPSHOT_MODE LOCAL_QUERY_BUFFER_M
@@ -166,6 +183,7 @@ artifacts = run_t04_internal_full_input(
     divstripzone_path=os.environ["DIVSTRIPZONE_PATH"],
     rcsdroad_path=os.environ["RCSDROAD_PATH"],
     rcsdnode_path=os.environ["RCSDNODE_PATH"],
+    rcsdintersection_path=os.environ.get("RCSD_INTERSECTION_PATH") or None,
     intersection_match_t07_path=os.environ.get("INTERSECTION_MATCH_T07_PATH") or None,
     intersection_match_t03_path=os.environ.get("INTERSECTION_MATCH_T03_PATH") or None,
     out_root=os.environ["OUT_ROOT"],
@@ -190,12 +208,14 @@ artifacts = run_t04_internal_full_input(
     divstripzone_layer=os.environ.get("DIVSTRIPZONE_LAYER") or None,
     rcsdroad_layer=os.environ.get("RCSDROAD_LAYER") or None,
     rcsdnode_layer=os.environ.get("RCSDNODE_LAYER") or None,
+    rcsdintersection_layer=os.environ.get("RCSD_INTERSECTION_LAYER") or None,
     nodes_crs=os.environ.get("NODES_CRS") or None,
     roads_crs=os.environ.get("ROADS_CRS") or None,
     drivezone_crs=os.environ.get("DRIVEZONE_CRS") or None,
     divstripzone_crs=os.environ.get("DIVSTRIPZONE_CRS") or None,
     rcsdroad_crs=os.environ.get("RCSDROAD_CRS") or None,
     rcsdnode_crs=os.environ.get("RCSDNODE_CRS") or None,
+    rcsdintersection_crs=os.environ.get("RCSD_INTERSECTION_CRS") or None,
 )
 print(f"[PY] T04 run root: {artifacts.run_root}")
 print(f"[PY] Selected case count: {len(artifacts.selected_case_ids)}")

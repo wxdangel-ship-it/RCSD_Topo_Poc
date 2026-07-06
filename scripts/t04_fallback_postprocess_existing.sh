@@ -17,6 +17,8 @@ Environment overrides:
   PY             Python interpreter. Defaults to <repo>/.venv/bin/python.
   NODES_LAYER    Optional GeoPackage layer for existing T04 nodes.gpkg.
   RCSDNODE_LAYER Optional GeoPackage layer for RCSDNode from preflight.json or case-package dirs.
+  RCSD_INTERSECTION_PATH  Optional RCSDIntersection GeoPackage/GeoJSON/Shapefile.
+  RCSD_INTERSECTION_LAYER Optional RCSDIntersection layer name.
 EOF
 }
 
@@ -49,6 +51,8 @@ fi
 export RUN_ROOT
 export NODES_LAYER="${NODES_LAYER:-}"
 export RCSDNODE_LAYER="${RCSDNODE_LAYER:-}"
+export RCSD_INTERSECTION_PATH="${RCSD_INTERSECTION_PATH:-}"
+export RCSD_INTERSECTION_LAYER="${RCSD_INTERSECTION_LAYER:-}"
 
 cd "$REPO_ROOT"
 
@@ -115,6 +119,33 @@ def _read_case_package_rcsdnodes(case_root: Path, selected_cases: list[dict]) ->
             ).features
         )
     return features
+
+
+def _read_case_package_rcsdintersections(case_root: Path, selected_cases: list[dict]) -> list:
+    features = []
+    for case_doc in selected_cases:
+        case_id = str(case_doc.get("case_id") or "").strip()
+        if not case_id:
+            continue
+        intersection_path = case_root / case_id / "external_inputs" / "rcsd_intersection" / "rcsd_intersection_slice.gpkg"
+        if not intersection_path.exists():
+            intersection_path = case_root / case_id / "rcsd_intersection.gpkg"
+        if not intersection_path.exists():
+            continue
+        features.extend(
+            read_vector_layer(
+                intersection_path,
+                layer_name=os.environ.get("RCSD_INTERSECTION_LAYER") or None,
+            ).features
+        )
+    return features
+
+
+def _infer_rcsdintersection_path(rcsdnode_path: Path) -> Path:
+    if not rcsdnode_path:
+        return Path("")
+    candidate = rcsdnode_path.parent.parent / "rcsd_intersection" / "rcsd_intersection_slice.gpkg"
+    return candidate if candidate.is_file() else Path("")
 
 
 def _int_or_zero(value) -> int:
@@ -209,6 +240,13 @@ summary = _load_json(summary_path)
 
 input_paths = preflight.get("input_paths") or {}
 rcsdnode_path = Path(input_paths.get("rcsdnode_path") or "")
+rcsdintersection_path = Path(
+    os.environ.get("RCSD_INTERSECTION_PATH")
+    or input_paths.get("rcsdintersection_path")
+    or ""
+)
+if not rcsdintersection_path.is_file():
+    rcsdintersection_path = _infer_rcsdintersection_path(rcsdnode_path)
 case_package_root = Path(preflight.get("case_root") or "")
 if not rcsdnode_path.is_file() and not case_package_root.is_dir():
     raise SystemExit(
@@ -304,12 +342,20 @@ else:
     rcsdnodes = _read_case_package_rcsdnodes(case_package_root, selected_cases)
     if not rcsdnodes:
         raise SystemExit(f"No RCSDNode features found under case-package root: {case_package_root}")
+if rcsdintersection_path.is_file():
+    rcsdintersections = read_vector_layer(
+        rcsdintersection_path,
+        layer_name=os.environ.get("RCSD_INTERSECTION_LAYER") or None,
+    ).features
+else:
+    rcsdintersections = _read_case_package_rcsdintersections(case_package_root, selected_cases)
 
 fallback = enrich_t04_relation_evidence_with_fallback(
     run_root=run_root,
     selected_cases=selected_cases,
     source_node_features=source_nodes,
     rcsdnode_features=rcsdnodes,
+    rcsdintersection_features=rcsdintersections,
     failure_status_by_case=failure_status_by_case,
     input_dataset_id=str(preflight.get("input_dataset_id") or ""),
 )

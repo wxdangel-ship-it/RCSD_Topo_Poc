@@ -4,7 +4,7 @@ import csv
 import json
 from pathlib import Path
 
-from shapely.geometry import Point
+from shapely.geometry import Point, Polygon
 
 from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.final_publish import RELATION_EVIDENCE_FIELDNAMES
 from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon.relation_fallback import (
@@ -178,3 +178,57 @@ def test_t04_relation_fallback_accepts_zero_mainnode_singleton_with_strong_rcsd_
     assert rows["1206756"]["relation_state"] == "success_required_rcsd_junction"
     assert audit_rows["1206756"]["fallback_state"] == "success"
     assert audit_rows["1206756"]["reason"] == "required_rcsd_singleton_node_resolved_from_strong_rcsd_profile"
+
+
+def test_t04_relation_fallback_accepts_zero_mainnode_singleton_from_rcsdintersection(tmp_path: Path) -> None:
+    run_root = tmp_path / "run"
+    run_root.mkdir()
+    _write_relation_csv(
+        run_root / "t04_swsd_rcsd_relation_evidence.csv",
+        [
+            {
+                "target_id": "1207216",
+                "case_id": "1207216",
+                "junction_type": "diverge",
+                "final_state": "rejected",
+                "required_rcsd_node_ids": "5395337158267852",
+                "selected_rcsdnode_ids": "5395337158267852",
+                "rcsd_profile": "A=0|B=1|C=0",
+                "surface_candidate_present": 0,
+                "base_id_candidate": -1,
+                "status_suggested": 1,
+                "relation_state": "geometry_not_accepted",
+                "reason": "b_node_not_covered",
+            }
+        ],
+    )
+
+    outputs = enrich_t04_relation_evidence_with_fallback(
+        run_root=run_root,
+        selected_cases=[{"case_id": "1207216", "mainnodeid": "1207216"}],
+        source_node_features=[
+            {"properties": {"id": "1207216", "mainnodeid": "1207216", "kind_2": 8}, "geometry": Point(0, 0)},
+        ],
+        rcsdnode_features=[
+            {"properties": {"id": "5395337158267852", "mainnodeid": 0}, "geometry": Point(10, 10)},
+        ],
+        rcsdintersection_features=[
+            {
+                "properties": {"id": "5395337158267852", "node_ids": "[5395337158267852]"},
+                "geometry": Polygon([(9, 9), (11, 9), (11, 11), (9, 11)]),
+            },
+        ],
+        input_dataset_id="unit-test-input",
+    )
+
+    with (run_root / "t04_swsd_rcsd_relation_evidence.csv").open("r", encoding="utf-8-sig", newline="") as handle:
+        rows = {row["case_id"]: row for row in csv.DictReader(handle)}
+    with (run_root / "t04_relation_fallback_audit.csv").open("r", encoding="utf-8-sig", newline="") as handle:
+        audit_rows = {row["case_id"]: row for row in csv.DictReader(handle)}
+
+    assert outputs["fallback_success_case_ids"] == ["1207216"]
+    assert rows["1207216"]["status_suggested"] == "0"
+    assert rows["1207216"]["base_id_candidate"] == "5395337158267852"
+    assert rows["1207216"]["relation_state"] == "success_required_rcsd_junction"
+    assert audit_rows["1207216"]["fallback_state"] == "success"
+    assert audit_rows["1207216"]["reason"] == "required_rcsd_singleton_node_resolved_from_rcsdintersection"

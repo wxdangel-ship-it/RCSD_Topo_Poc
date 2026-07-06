@@ -11,6 +11,7 @@ from typing import Any
 
 from rcsd_topo_poc.modules.t00_utility_toolbox.common import build_run_id, normalize_runtime_path, write_json
 
+from ._runtime_io import _load_layer
 from ._runtime_step4_geometry_core import REASON_RCS_OUTSIDE_DRIVEZONE, Stage4RunError
 from .final_publish import T04Step7CaseArtifact, write_step7_batch_outputs
 from .full_input_bootstrap import (
@@ -253,6 +254,7 @@ def run_t04_internal_full_input(
     divstripzone_path: str | Path,
     rcsdroad_path: str | Path,
     rcsdnode_path: str | Path,
+    rcsdintersection_path: str | Path | None = None,
     intersection_match_t07_path: str | Path | None = None,
     intersection_match_t03_path: str | Path | None = None,
     out_root: str | Path = DEFAULT_OUT_ROOT,
@@ -277,12 +279,14 @@ def run_t04_internal_full_input(
     divstripzone_layer: str | None = None,
     rcsdroad_layer: str | None = None,
     rcsdnode_layer: str | None = None,
+    rcsdintersection_layer: str | None = None,
     nodes_crs: str | None = None,
     roads_crs: str | None = None,
     drivezone_crs: str | None = None,
     divstripzone_crs: str | None = None,
     rcsdroad_crs: str | None = None,
     rcsdnode_crs: str | None = None,
+    rcsdintersection_crs: str | None = None,
 ) -> T04InternalFullInputArtifacts:
     resolved_run_id = run_id or build_run_id("t04_internal_full_input")
     resolved_out_root = normalize_runtime_path(out_root)
@@ -296,6 +300,11 @@ def run_t04_internal_full_input(
         "rcsdroad_path": normalize_runtime_path(rcsdroad_path),
         "rcsdnode_path": normalize_runtime_path(rcsdnode_path),
     }
+    resolved_rcsdintersection_path = _optional_path(rcsdintersection_path)
+    if resolved_rcsdintersection_path is not None:
+        if not resolved_rcsdintersection_path.is_file():
+            raise ValueError(f"rcsdintersection_path does not exist: {resolved_rcsdintersection_path}")
+        input_paths["rcsdintersection_path"] = resolved_rcsdintersection_path
     resolved_intersection_match_t07_path = _optional_path(intersection_match_t07_path)
     resolved_intersection_match_t03_path = _optional_path(intersection_match_t03_path)
     max_workers = max(1, int(workers or 1))
@@ -399,7 +408,12 @@ def run_t04_internal_full_input(
         _flush_progress("shared_bootstrap", "running", "loading shared full-input layers once")
         bootstrap_started = perf_counter()
         shared_layers = load_shared_full_input_layers(
-            **input_paths,
+            nodes_path=input_paths["nodes_path"],
+            roads_path=input_paths["roads_path"],
+            drivezone_path=input_paths["drivezone_path"],
+            divstripzone_path=input_paths["divstripzone_path"],
+            rcsdroad_path=input_paths["rcsdroad_path"],
+            rcsdnode_path=input_paths["rcsdnode_path"],
             nodes_layer=nodes_layer,
             roads_layer=roads_layer,
             drivezone_layer=drivezone_layer,
@@ -414,6 +428,15 @@ def run_t04_internal_full_input(
             rcsdnode_crs=rcsdnode_crs,
         )
         bootstrap_seconds = perf_counter() - bootstrap_started
+        rcsdintersection_features: tuple[Any, ...] = ()
+        if resolved_rcsdintersection_path is not None:
+            rcsdintersection_layer_data = _load_layer(
+                resolved_rcsdintersection_path,
+                layer_name=rcsdintersection_layer,
+                crs_override=rcsdintersection_crs,
+                allow_null_geometry=False,
+            )
+            rcsdintersection_features = tuple(rcsdintersection_layer_data.features)
 
         _flush_progress("candidate_discovery", "running", "discovering T04 candidate mainnodeids once")
         discovered_case_ids = discover_candidate_case_ids(shared_layers)
@@ -449,6 +472,10 @@ def run_t04_internal_full_input(
                 if resolved_intersection_match_t03_path is not None
                 else ""
             ),
+        }
+        preflight_doc["relation_fallback_inputs"] = {
+            "rcsdintersection_path": str(resolved_rcsdintersection_path) if resolved_rcsdintersection_path is not None else "",
+            "rcsdintersection_feature_count": len(rcsdintersection_features),
         }
         write_json(run_root / "preflight.json", preflight_doc)
         candidate_artifacts = write_candidate_artifacts(
@@ -704,6 +731,7 @@ def run_t04_internal_full_input(
             selected_cases=selected_case_docs,
             source_node_features=shared_layers.node_layer.features,
             rcsdnode_features=shared_layers.rcsdnode_layer.features,
+            rcsdintersection_features=rcsdintersection_features,
             failure_status_by_case=failure_status_by_case,
             input_dataset_id=str(preflight_doc.get("input_dataset_id") or ""),
         )

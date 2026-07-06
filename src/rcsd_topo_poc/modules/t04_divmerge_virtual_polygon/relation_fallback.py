@@ -39,11 +39,14 @@ def enrich_t04_relation_evidence_with_fallback(
     selected_cases: Iterable[Mapping[str, Any]],
     source_node_features: Iterable[Any],
     rcsdnode_features: Iterable[Any],
+    rcsdintersection_features: Iterable[Any] | None = None,
     failure_status_by_case: Mapping[str, Any] | None = None,
     input_dataset_id: str | None = None,
 ) -> dict[str, Any]:
     """Rewrite T04 relation evidence with relation-only fallback successes."""
     failure_status_by_case = {} if failure_status_by_case is None else dict(failure_status_by_case)
+    rcsdnode_feature_list = list(rcsdnode_features)
+    rcsdintersection_feature_list = list(rcsdintersection_features or [])
     selected = [
         {"case_id": str(item.get("case_id")), "mainnodeid": str(item.get("mainnodeid") or item.get("case_id"))}
         for item in selected_cases
@@ -58,7 +61,12 @@ def enrich_t04_relation_evidence_with_fallback(
         for node_id in [_feature_id(feature)]
         if node_id is not None
     }
-    rcsd_group_by_node_id, rcsd_point_by_group_id = _rcsd_group_indexes(rcsdnode_features)
+    rcsd_group_by_node_id, rcsd_point_by_group_id = _rcsd_group_indexes(rcsdnode_feature_list)
+    rcsd_geometry_by_node_id = _rcsd_node_geometry_index(rcsdnode_feature_list)
+    rcsdintersection_by_singleton_node_id = _rcsdintersection_singleton_index(
+        rcsdintersection_feature_list,
+        rcsd_geometry_by_node_id=rcsd_geometry_by_node_id,
+    )
 
     enriched_rows: list[dict[str, Any]] = []
     audit_rows: list[dict[str, Any]] = []
@@ -87,6 +95,7 @@ def enrich_t04_relation_evidence_with_fallback(
             row=row,
             required_nodes=required_nodes,
             rcsd_group_by_node_id=rcsd_group_by_node_id,
+            rcsdintersection_by_singleton_node_id=rcsdintersection_by_singleton_node_id,
         )
         if fallback_state == "success":
             row["base_id_candidate"] = base_id_candidate
@@ -224,6 +233,7 @@ def _fallback_decision(
     row: Mapping[str, Any],
     required_nodes: list[str],
     rcsd_group_by_node_id: Mapping[str, str],
+    rcsdintersection_by_singleton_node_id: Mapping[str, str],
 ) -> tuple[str, str | int, str]:
     if str(row.get("final_state") or "") == "accepted":
         return "skipped_accepted_surface", row.get("base_id_candidate", -1), "accepted_surface"
@@ -235,18 +245,19 @@ def _fallback_decision(
     if missing_nodes:
         return "failed", -1, "missing_rcsdnode_group_id:" + "|".join(missing_nodes)
     group_ids_by_node: dict[str, str] = {}
-    singleton_resolved_nodes: set[str] = set()
+    singleton_resolution_reasons: set[str] = set()
     for node_id in required_nodes:
         raw_group_id = rcsd_group_by_node_id[node_id]
-        resolved_group_id, resolved_from_singleton = _resolved_rcsd_group_id(
+        resolved_group_id, singleton_reason = _resolved_rcsd_group_id(
             node_id=node_id,
             raw_group_id=raw_group_id,
             row=row,
             required_node_count=len(required_nodes),
+            rcsdintersection_by_singleton_node_id=rcsdintersection_by_singleton_node_id,
         )
         group_ids_by_node[node_id] = resolved_group_id
-        if resolved_from_singleton:
-            singleton_resolved_nodes.add(node_id)
+        if singleton_reason:
+            singleton_resolution_reasons.add(singleton_reason)
     invalid_group_nodes = [
         f"{node_id}={group_id}"
         for node_id, group_id in group_ids_by_node.items()
@@ -257,8 +268,8 @@ def _fallback_decision(
     group_ids = _ordered_values(group_ids_by_node.values())
     if len(group_ids) != 1:
         return "failed", -1, "ambiguous_rcsd_group_id:" + "|".join(group_ids)
-    if singleton_resolved_nodes:
-        return "success", group_ids[0], "required_rcsd_singleton_node_resolved_from_strong_rcsd_profile"
+    if singleton_resolution_reasons:
+        return "success", group_ids[0], sorted(singleton_resolution_reasons)[0]
     return "success", group_ids[0], "required_rcsd_node_group_resolved"
 
 
@@ -268,13 +279,16 @@ def _resolved_rcsd_group_id(
     raw_group_id: Any,
     row: Mapping[str, Any],
     required_node_count: int,
-) -> tuple[str, bool]:
+    rcsdintersection_by_singleton_node_id: Mapping[str, str],
+) -> tuple[str, str]:
     group_id = normalize_id(raw_group_id)
     if group_id not in {"0", "-1"}:
-        return group_id or "", False
+        return group_id or "", ""
     if _has_single_strong_rcsd_profile(row) and required_node_count == 1:
-        return node_id, True
-    return group_id or "", False
+        return node_id, "required_rcsd_singleton_node_resolved_from_strong_rcsd_profile"
+    if required_node_count == 1 and node_id in rcsdintersection_by_singleton_node_id:
+        return node_id, "required_rcsd_singleton_node_resolved_from_rcsdintersection"
+    return group_id or "", ""
 
 
 def _has_single_strong_rcsd_profile(row: Mapping[str, Any]) -> bool:
@@ -350,6 +364,82 @@ def _rcsd_group_indexes(features: Iterable[Any]) -> tuple[dict[str, str], dict[s
     for node_id, group_id in group_by_node.items():
         point_by_group.setdefault(group_id, point_by_node.get(node_id, ("", "")))
     return group_by_node, point_by_group
+
+
+def _rcsd_node_geometry_index(features: Iterable[Any]) -> dict[str, Any]:
+    by_node: dict[str, Any] = {}
+    for feature in features:
+        node_id = normalize_id(_properties(feature).get("id"))
+        if node_id is None:
+            continue
+        geometry = _geometry(feature)
+        if geometry is None or getattr(geometry, "is_empty", False):
+            continue
+        by_node[node_id] = geometry
+    return by_node
+
+
+def _rcsdintersection_singleton_index(
+    features: Iterable[Any],
+    *,
+    rcsd_geometry_by_node_id: Mapping[str, Any],
+) -> dict[str, str]:
+    by_node: dict[str, str] = {}
+    ambiguous_nodes: set[str] = set()
+    for feature in features:
+        props = _properties(feature)
+        node_id = _intersection_singleton_node_id(props)
+        if node_id is None:
+            continue
+        node_geometry = rcsd_geometry_by_node_id.get(node_id)
+        if node_geometry is None:
+            continue
+        intersection_geometry = _geometry(feature)
+        if not _covers_node(intersection_geometry, node_geometry):
+            continue
+        intersection_id = normalize_id(props.get("id")) or node_id
+        previous = by_node.get(node_id)
+        if previous is not None and previous != intersection_id:
+            ambiguous_nodes.add(node_id)
+            continue
+        by_node[node_id] = intersection_id
+    for node_id in ambiguous_nodes:
+        by_node.pop(node_id, None)
+    return by_node
+
+
+def _intersection_singleton_node_id(props: Mapping[str, Any]) -> str | None:
+    node_ids = _intersection_node_ids(props.get("node_ids"))
+    return node_ids[0] if len(node_ids) == 1 else None
+
+
+def _intersection_node_ids(value: Any) -> list[str]:
+    if isinstance(value, str):
+        text = value.strip()
+        if text.startswith("[") and text.endswith("]"):
+            try:
+                parsed = json.loads(text)
+            except json.JSONDecodeError:
+                parsed = None
+            if isinstance(parsed, list):
+                return _ordered_values(
+                    normalized
+                    for item in parsed
+                    for normalized in [normalize_id(item)]
+                    if normalized is not None and normalized != "-1"
+                )
+    return _split_values(value)
+
+
+def _covers_node(intersection_geometry: Any, node_geometry: Any) -> bool:
+    if intersection_geometry is None or node_geometry is None:
+        return False
+    if getattr(intersection_geometry, "is_empty", False) or getattr(node_geometry, "is_empty", False):
+        return False
+    try:
+        return bool(intersection_geometry.covers(node_geometry))
+    except Exception:
+        return False
 
 
 def _patch_closeout_documents(*, run_root: Path, relation_row_count: int, fallback_success_case_ids: list[str]) -> None:

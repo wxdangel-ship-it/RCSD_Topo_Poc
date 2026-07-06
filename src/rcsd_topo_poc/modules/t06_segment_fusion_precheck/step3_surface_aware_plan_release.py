@@ -30,6 +30,10 @@ SURFACE_RELEASE_AUDIT = "t06_step3_surface_aware_plan_release_audit.json"
 VISUAL_CONFLICT_REASON = "visual_consistency_road_conflict_with_primary_replacement_plan"
 VISUAL_CONFLICT_RELEASE_RISK = "visual_conflict_controlled_release"
 VISUAL_CONFLICT_ROLLBACK_REASON = "visual_conflict_release_failed_topology_gate"
+VISUAL_CONFLICT_UNCONDITIONAL_ROLLBACK_FAIL_REASONS = {
+    ("segment_road_connectivity", "segment_road_directed_path_missing"),
+    ("segment_road_connectivity", "segment_road_endpoints_not_connected"),
+}
 RETAINED_JUNCTION_ATTACHMENT_GAP_M = 20.0
 OPTIONAL_JUNCTION_ANCHOR_RELEASE_MAX_GAP_M = 50.0
 OPTIONAL_JUNCTION_ANCHOR_RELEASE_REASON = "auto_closed_step2_optional_junc_anchor"
@@ -219,9 +223,16 @@ def run_surface_aware_step3_segment_replacement(
                 swsd_segment_path,
                 incident_segments_by_node=incident_segments_by_node,
             )
+            unconditional_visual_rollback_plan_ids = _visual_conflict_unconditional_rollback_plan_ids(
+                visual_added_fail_keys,
+                visual_released,
+                swsd_segment_path,
+                incident_segments_by_node=incident_segments_by_node,
+            )
             visual_rollback_plan_ids = _filter_visual_topology_rollback_plan_ids(
                 visual_rollback_plan_ids,
                 candidate_rows,
+                unconditional_plan_ids=unconditional_visual_rollback_plan_ids,
             )
             visual_rollback_plan_ids.update(visual_non_replaced_plan_ids)
         recommended_rollback_plan_ids = rollback_plan_ids | external_rollback_plan_ids | visual_rollback_plan_ids
@@ -419,9 +430,16 @@ def _run_preplanned_release_step3(
             swsd_segment_path,
             incident_segments_by_node=incident_segments_by_node,
         )
+        unconditional_visual_rollback_plan_ids = _visual_conflict_unconditional_rollback_plan_ids(
+            visual_added_fail_keys,
+            visual_released,
+            swsd_segment_path,
+            incident_segments_by_node=incident_segments_by_node,
+        )
         visual_rollback_plan_ids = _filter_visual_topology_rollback_plan_ids(
             visual_rollback_plan_ids,
             candidate_rows,
+            unconditional_plan_ids=unconditional_visual_rollback_plan_ids,
         )
         visual_rollback_plan_ids.update(visual_non_replaced_plan_ids)
 
@@ -949,19 +967,41 @@ def _visual_conflict_rollback_plan_ids(
 def _filter_visual_topology_rollback_plan_ids(
     rollback_plan_ids: set[str],
     plan_rows: list[dict[str, Any]],
+    unconditional_plan_ids: set[str] | None = None,
 ) -> set[str]:
-    if not rollback_plan_ids:
+    unconditional_plan_ids = unconditional_plan_ids or set()
+    if not rollback_plan_ids and not unconditional_plan_ids:
         return set()
     rows_by_plan_id = {
         str((row.get("properties") or {}).get("replacement_plan_id") or ""): row.get("properties") or {}
         for row in plan_rows
     }
     result: set[str] = set()
-    for plan_id in rollback_plan_ids:
+    for plan_id in rollback_plan_ids | unconditional_plan_ids:
+        if plan_id in unconditional_plan_ids:
+            result.add(plan_id)
+            continue
         props = rows_by_plan_id.get(plan_id) or {}
         if _float_value(props.get("swsd_uncovered_by_rcsd_ratio")) > 0.0:
             result.add(plan_id)
     return result
+
+
+def _visual_conflict_unconditional_rollback_plan_ids(
+    added_fail_keys: set[tuple[str, str, str, str, str]],
+    released: list[dict[str, Any]],
+    swsd_segment_path: str | Path,
+    incident_segments_by_node: dict[str, list[str]] | None = None,
+) -> set[str]:
+    incident = incident_segments_by_node
+    if incident is None:
+        incident = _incident_segments_by_node(read_features(swsd_segment_path))
+    hard_fail_keys = {
+        key
+        for key in _visual_conflict_rollback_fail_keys(added_fail_keys)
+        if (key[0], key[4]) in VISUAL_CONFLICT_UNCONDITIONAL_ROLLBACK_FAIL_REASONS
+    }
+    return _rollback_plan_ids_for_failed_segments(hard_fail_keys, released, incident)
 
 
 def _visual_conflict_rollback_fail_keys(

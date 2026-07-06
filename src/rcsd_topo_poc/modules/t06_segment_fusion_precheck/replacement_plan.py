@@ -1226,6 +1226,20 @@ def _apply_junction_alignment_plan_gate(
             for right_props, right_rcsd_node_id in mappings[left_index + 1 :]:
                 if left_rcsd_node_id == right_rcsd_node_id:
                     continue
+                left_canonical_node_id = _canonicalize_node_id(rcsd_node_canonicalizer, left_rcsd_node_id)
+                right_canonical_node_id = _canonicalize_node_id(rcsd_node_canonicalizer, right_rcsd_node_id)
+                if left_canonical_node_id and left_canonical_node_id == right_canonical_node_id:
+                    _mark_plan_row_risk(
+                        left_props,
+                        reason="junction_alignment_between_replacement_plans_semantic_group_aligned",
+                        risk_flag="junction_alignment_between_replacement_plans_semantic_group_aligned",
+                    )
+                    _mark_plan_row_risk(
+                        right_props,
+                        reason="junction_alignment_between_replacement_plans_semantic_group_aligned",
+                        risk_flag="junction_alignment_between_replacement_plans_semantic_group_aligned",
+                    )
+                    continue
                 right_point = _feature_point(rcsd_node_by_id.get(right_rcsd_node_id))
                 if right_point is None:
                     continue

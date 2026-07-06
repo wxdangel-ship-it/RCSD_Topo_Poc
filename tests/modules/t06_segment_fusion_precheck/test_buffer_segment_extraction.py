@@ -707,6 +707,136 @@ def test_dual_corridor_retains_internal_non_uturn_edge_between_retained_nodes() 
     assert "side_branch" not in result.retained_road_ids
 
 
+def test_dual_corridor_retains_internal_edge_inside_segment_buffer() -> None:
+    extractor = BufferSegmentExtractor(
+        rcsd_road_features=[
+            _road("forward_a", 10, 30, [(0, 0), (50, 0)], direction=2),
+            _road("forward_b", 30, 20, [(50, 0), (100, 0)], direction=2),
+            _road("reverse_a", 20, 40, [(100, 2), (50, 2)], direction=2),
+            _road("reverse_b", 40, 10, [(50, 2), (0, 2)], direction=2),
+            _road("internal_swing", 30, 40, [(50, 0), (50, 5), (50, 2)], direction=2),
+            _road("outside_loop", 30, 40, [(50, 60), (70, 70), (50, 65)], direction=2),
+        ],
+        rcsd_node_features=[
+            _node(10, 0, 0),
+            _node(20, 100, 0),
+            _node(30, 50, 0),
+            _node(40, 50, 2),
+        ],
+    )
+
+    result = extractor.extract(
+        segment_geometry=LineString([(0, 0), (100, 0)]),
+        relation=RelationCheck(True, ["10", "20"], []),
+        optional_allowed_rcsd_nodes=[],
+        all_relation_base_ids={"10", "20"},
+        require_bidirectional=True,
+        config=BufferExtractionConfig(buffer_distance_m=10),
+    )
+
+    assert result.ok
+    assert "internal_swing" in result.retained_road_ids
+    assert "outside_loop" not in result.retained_road_ids
+
+
+def test_dual_corridor_does_not_expand_internal_edge_outside_visual_buffer() -> None:
+    extractor = BufferSegmentExtractor(
+        rcsd_road_features=[
+            _road("forward_a", 10, 30, [(0, 0), (50, 0)], direction=2),
+            _road("forward_b", 30, 20, [(50, 0), (100, 0)], direction=2),
+            _road("reverse", 20, 10, [(100, 2), (0, 2)], direction=2),
+            _road("supplement_carrier_a", 30, 40, [(50, 0), (50, 2)], direction=2),
+            _road("supplement_carrier_b", 40, 10, [(50, 2), (0, 2)], direction=2),
+            _road("wide_internal_swing", 30, 40, [(50, 0), (50, 40), (50, 2)], direction=2),
+        ],
+        rcsd_node_features=[
+            _node(10, 0, 0),
+            _node(20, 100, 0),
+            _node(30, 50, 0),
+            _node(40, 50, 2),
+        ],
+    )
+
+    result = extractor.extract(
+        segment_geometry=LineString([(0, 0), (100, 0)]),
+        relation=RelationCheck(True, ["10", "20"], []),
+        optional_allowed_rcsd_nodes=[],
+        all_relation_base_ids={"10", "20"},
+        require_bidirectional=True,
+        config=BufferExtractionConfig(buffer_distance_m=50, visual_consistency_buffer_distance_m=10),
+    )
+
+    assert result.ok
+    assert "wide_internal_swing" not in result.retained_road_ids
+
+
+def test_dual_corridor_retains_internal_edge_after_supplement_expands_nodes() -> None:
+    extractor = BufferSegmentExtractor(
+        rcsd_road_features=[
+            _road("forward_a", 10, 30, [(0, 0), (50, 0)], direction=2),
+            _road("forward_b", 30, 20, [(50, 0), (100, 0)], direction=2),
+            _road("reverse", 20, 10, [(100, 2), (0, 2)], direction=2),
+            _road("supplement_carrier_a", 30, 40, [(50, 0), (50, 2)], direction=2),
+            _road("supplement_carrier_b", 40, 10, [(50, 2), (0, 2)], direction=2),
+            _road("internal_after_supplement", 30, 40, [(50, 0), (50, 5), (50, 2)], direction=2),
+            _road("outside_after_supplement", 30, 40, [(50, 60), (70, 70), (50, 65)], direction=2),
+        ],
+        rcsd_node_features=[
+            _node(10, 0, 0),
+            _node(20, 100, 0),
+            _node(30, 50, 0),
+            _node(40, 50, 2),
+        ],
+    )
+
+    result = extractor.extract(
+        segment_geometry=LineString([(0, 0), (100, 0)]),
+        relation=RelationCheck(True, ["10", "20"], []),
+        optional_allowed_rcsd_nodes=[],
+        all_relation_base_ids={"10", "20"},
+        require_bidirectional=True,
+        config=BufferExtractionConfig(buffer_distance_m=10),
+    )
+
+    assert result.ok
+    assert "supplement_carrier_a" in result.retained_road_ids
+    assert "supplement_carrier_b" in result.retained_road_ids
+    assert "internal_after_supplement" in result.retained_road_ids
+    assert "outside_after_supplement" not in result.retained_road_ids
+
+
+def test_directed_corridor_retains_parallel_internal_edge_between_required_junctions() -> None:
+    extractor = BufferSegmentExtractor(
+        rcsd_road_features=[
+            _road("main_a", 10, 30, [(0, 0), (40, 0)], direction=2),
+            _road("main_b", 30, 40, [(40, 0), (60, 0)], direction=2),
+            _road("main_c", 40, 20, [(60, 0), (100, 0)], direction=2),
+            _road("parallel_internal", 30, 40, [(40, 0), (50, 5), (60, 0)], direction=2),
+            _road("outside_parallel", 30, 40, [(40, 60), (50, 70), (60, 60)], direction=2),
+        ],
+        rcsd_node_features=[
+            _node(10, 0, 0),
+            _node(20, 100, 0),
+            _node(30, 40, 0),
+            _node(40, 60, 0),
+        ],
+    )
+
+    result = extractor.extract(
+        segment_geometry=LineString([(0, 0), (100, 0)]),
+        relation=RelationCheck(True, ["10", "20"], ["30", "40"]),
+        optional_allowed_rcsd_nodes=[],
+        all_relation_base_ids={"10", "20", "30", "40"},
+        directed_pair_nodes=["10", "20"],
+        require_directed_pair=True,
+        config=BufferExtractionConfig(buffer_distance_m=10),
+    )
+
+    assert result.ok
+    assert "parallel_internal" in result.retained_road_ids
+    assert "outside_parallel" not in result.retained_road_ids
+
+
 def test_dual_corridor_supplements_connected_carrier_inside_narrow_corridor() -> None:
     extractor = BufferSegmentExtractor(
         rcsd_road_features=[

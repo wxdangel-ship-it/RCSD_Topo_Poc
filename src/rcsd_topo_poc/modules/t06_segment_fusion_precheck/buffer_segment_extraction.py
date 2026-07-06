@@ -200,6 +200,15 @@ class BufferSegmentExtractor:
             require_bidirectional=require_bidirectional,
             reference_geometry=segment_geometry,
         )
+        internal_visual_buffer_geometry: BaseGeometry | None = None
+        visual_buffer_distance = cfg.visual_consistency_buffer_distance_m
+        if (
+            segment_geometry is not None
+            and not segment_geometry.is_empty
+            and visual_buffer_distance is not None
+            and 0 < visual_buffer_distance < cfg.buffer_distance_m
+        ):
+            internal_visual_buffer_geometry = segment_geometry.buffer(visual_buffer_distance)
         corridor_edges = _build_corridor_subgraph(
             pruned.retained_edges,
             required_nodes,
@@ -218,6 +227,7 @@ class BufferSegmentExtractor:
             optional_nodes=protected_optional_nodes,
             reference_geometry=segment_geometry,
         )
+        pre_supplement_nodes = _nodes_from_edges(corridor_edges)
         allowed_supplement_endpoint_nodes: set[str] = set()
         if not require_directed_pair:
             corridor_edges, allowed_supplement_endpoint_nodes = _include_connected_corridor_supplement_edges(
@@ -230,6 +240,21 @@ class BufferSegmentExtractor:
                 require_optional_terminal=not require_bidirectional,
                 allow_single_optional_boundary=require_bidirectional,
             )
+        internal_touch_nodes: set[str] | None = None
+        if not require_directed_pair:
+            internal_touch_nodes = _nodes_from_edges(corridor_edges) - pre_supplement_nodes
+        corridor_edges = _include_internal_corridor_edges(
+            selected_edges,
+            corridor_edges,
+            required_nodes=set(required_nodes),
+            allowed_touch_nodes=internal_touch_nodes,
+            reference_buffer_geometry=buffer_geometry,
+            reference_visual_buffer_geometry=internal_visual_buffer_geometry,
+            max_mismatch_ratio=cfg.max_geometry_buffer_mismatch_ratio,
+            min_mismatch_length_m=cfg.min_geometry_buffer_mismatch_length_m,
+            max_visual_mismatch_ratio=cfg.max_visual_consistency_mismatch_ratio,
+            min_visual_mismatch_length_m=cfg.min_visual_consistency_mismatch_length_m,
+        )
         corridor_nodes = _nodes_from_edges(corridor_edges)
         unexpected_mapped_semantic_nodes = sorted((unexpected_base_ids - set(pruned.inner_nodes)) & corridor_nodes)
         ok, reason, unexpected_endpoint_nodes = _retained_status(
@@ -774,8 +799,11 @@ def _build_corridor_subgraph(
     *,
     reference_geometry: BaseGeometry | None,
     reference_buffer_geometry: BaseGeometry | None = None,
+    reference_visual_buffer_geometry: BaseGeometry | None = None,
     max_mismatch_ratio: float = 0.1,
     min_mismatch_length_m: float = 20.0,
+    max_visual_mismatch_ratio: float = 0.1,
+    min_visual_mismatch_length_m: float = 20.0,
     require_directed_pair: bool,
     require_bidirectional: bool,
 ) -> list[Edge]:
@@ -813,8 +841,11 @@ def _build_corridor_subgraph(
             selected_edges,
             required_nodes=set(required_nodes),
             reference_buffer_geometry=reference_buffer_geometry,
+            reference_visual_buffer_geometry=reference_visual_buffer_geometry,
             max_mismatch_ratio=max_mismatch_ratio,
             min_mismatch_length_m=min_mismatch_length_m,
+            max_visual_mismatch_ratio=max_visual_mismatch_ratio,
+            min_visual_mismatch_length_m=min_visual_mismatch_length_m,
         )
     return selected_edges
 
@@ -1152,9 +1183,13 @@ def _include_internal_corridor_edges(
     selected_edges: list[Edge],
     *,
     required_nodes: set[str],
+    allowed_touch_nodes: set[str] | None = None,
     reference_buffer_geometry: BaseGeometry | None,
+    reference_visual_buffer_geometry: BaseGeometry | None = None,
     max_mismatch_ratio: float,
     min_mismatch_length_m: float,
+    max_visual_mismatch_ratio: float = 0.1,
+    min_visual_mismatch_length_m: float = 20.0,
 ) -> list[Edge]:
     retained_nodes = _nodes_from_edges(selected_edges)
     selected_edge_ids = {edge.edge_id for edge in selected_edges}
@@ -1164,13 +1199,23 @@ def _include_internal_corridor_edges(
             continue
         if edge.source not in retained_nodes or edge.target not in retained_nodes:
             continue
+        if allowed_touch_nodes is not None and edge.source not in allowed_touch_nodes and edge.target not in allowed_touch_nodes:
+            continue
         if edge.source in required_nodes and edge.target in required_nodes:
             continue
-        if not _edge_within_buffer_scope(
+        within_buffer_scope = _edge_within_buffer_scope(
             edge,
             reference_buffer_geometry=reference_buffer_geometry,
             max_mismatch_ratio=max_mismatch_ratio,
             min_mismatch_length_m=min_mismatch_length_m,
+        )
+        if not within_buffer_scope:
+            continue
+        if reference_visual_buffer_geometry is not None and not _edge_within_buffer_scope(
+            edge,
+            reference_buffer_geometry=reference_visual_buffer_geometry,
+            max_mismatch_ratio=max_visual_mismatch_ratio,
+            min_mismatch_length_m=min_visual_mismatch_length_m,
         ):
             continue
         result.append(edge)

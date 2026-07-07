@@ -444,20 +444,23 @@ manifest 至少记录：
 
 当前 T10 全量 Case 端到端统计基线登记如下：
 
-- 当前有效基线目录：`/mnt/e/work/rcsd_topo_poc/outputs/baselines/t10_all_cases_c5085f0_20260630_181345`
-- 当前有效 run root：`/mnt/e/work/rcsd_topo_poc/outputs/baselines/t10_all_cases_c5085f0_20260630_181345/e2e_full`
+- 当前有效基线目录：`/mnt/e/Work/RCSD_Topo_Poc/outputs/baselines/t10_all_cases_ce1cc72_20260707_153701`
+- 当前有效 6 Case run root：`/mnt/e/Work/RCSD_Topo_Poc/outputs/baselines/t10_all_cases_ce1cc72_20260707_153701/e2e_full`
+- 当前有效 Segment20 run root：`/mnt/e/Work/RCSD_Topo_Poc/outputs/baselines/t10_all_cases_ce1cc72_20260707_153701/segment20_error2`
 - 当前指针文件：
-  - `/mnt/e/work/rcsd_topo_poc/outputs/baselines/LATEST_T10_ALL_CASES_BASELINE.txt`
-  - `/mnt/e/work/rcsd_topo_poc/outputs/baselines/LATEST_T10_BASELINE.txt`
-- 版本：`c5085f0`，注册时 `main = origin/main = c5085f0`。
-- Case 范围：`1885118`、`605415675`、`609214532`、`706247`、`74155468`、`991176`。
-- 完成口径：T10 `status = passed`，6 个 Case 全部通过，失败 Case 数为 0。
-- 刷新口径：从 `/mnt/e/TestData/POC_Data/T10` 全量端到端重跑，不复用旧基线上游 handoff。
-- 基线产物：`case_stage_status_baseline.csv`、`case_stage_status_compare.csv`、`t06_funnel_baseline.csv`、`t06_funnel_compare.csv`、`t06_rcsd_base_replacement_rate_baseline.csv`、`t06_rcsd_base_replacement_rate_compare.csv`、`baseline_summary.json`、`BASELINE_REFRESH_NOTE.md`、`BASELINE_FREEZE.md`、`BASELINE_USAGE.md`。
+  - `/mnt/e/Work/RCSD_Topo_Poc/outputs/baselines/LATEST_T10_ALL_CASES_BASELINE.txt`
+  - `/mnt/e/Work/RCSD_Topo_Poc/outputs/baselines/LATEST_T10_BASELINE.txt`
+  - `/mnt/e/Work/RCSD_Topo_Poc/outputs/baselines/LATEST_T10_ERROR2_SEGMENT20_BASELINE.txt`
+- 版本：`ce1cc72`。
+- 6 Case 范围：`1885118`、`605415675`、`609214532`、`706247`、`74155468`、`991176`。
+- Segment20 范围：`/mnt/e/TestData/POC_Data/T10-Error-2` 下 20 个 Segment case。
+- 完成口径：T10 `status = passed`；6 个主基准 Case 全部通过，Segment20 全部通过，失败 Case 数为 0。
+- 刷新口径：从 `/mnt/e/TestData/POC_Data/T10` 和 `/mnt/e/TestData/POC_Data/T10-Error-2` 全量端到端重跑，不复用旧基线上游 handoff。
+- 基线产物：`case_stage_status_baseline.csv`、`case_stage_status_compare.csv`、`t06_funnel_baseline.csv`、`t06_funnel_compare.csv`、`t06_rcsd_base_replacement_rate_baseline.csv`、`t06_rcsd_base_replacement_rate_compare.csv`、`segment20_t06_funnel_baseline.csv`、`segment20_t06_funnel_compare.csv`、`segment20_t06_rcsd_base_replacement_rate_baseline.csv`、`segment20_t06_rcsd_base_replacement_rate_compare.csv`、`segment20_metric_summary.json`、`baseline_summary.json`、`BASELINE_REFRESH_NOTE.md`、`BASELINE_FREEZE.md`、`BASELINE_USAGE.md`。
 
-旧四 Case 基线 `outputs/baselines/t10_4cases_08aa76c_20260628_155754` 已被本全量基线替代并从本地清理；旧指针 `LATEST_T10_4CASES_BASELINE.txt` 不再作为有效入口保留。后续自动化或人工审计必须优先读取 `LATEST_T10_ALL_CASES_BASELINE.txt` 或通用 `LATEST_T10_BASELINE.txt`，不得硬编码旧目录。
+旧登记基线 `outputs/baselines/t10_all_cases_3cd626d_20260701_214807` 保留为历史对照；旧四 Case 指针 `LATEST_T10_4CASES_BASELINE.txt` 仍不作为有效入口。后续自动化或人工审计必须优先读取 `LATEST_T10_ALL_CASES_BASELINE.txt`、通用 `LATEST_T10_BASELINE.txt`，或 Segment20 专项指针 `LATEST_T10_ERROR2_SEGMENT20_BASELINE.txt`，不得硬编码旧目录。
 
-该登记只定义 T10 全量 Case 统计对比基线，不新增执行入口，不改变 T01-T09 算法接口。完整漏斗、RCSD Base 替换率、GIS / 拓扑 / 性能审计状态见 `architecture/statistical-baseline.md`。
+该登记只定义 T10 全量 Case 与 Segment20 专项统计对比基线，不新增执行入口，不改变 T01-T09 算法接口。完整漏斗、RCSD Base 替换率、GIS / 拓扑 / 性能审计状态见 `architecture/statistical-baseline.md`。
 
 ## 4. EntryPoints
 

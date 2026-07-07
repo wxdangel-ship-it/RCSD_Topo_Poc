@@ -17,6 +17,7 @@ from .step3_semantic_junction_groups import (
     valid_t05_relation_targets,
 )
 from .step3_output_slimming import retire_intermediate_step3_plan
+from .step3_replacement_plan_reader import read_replacement_plan_rows
 from .step3_segment_replacement import T06Step3Artifacts, run_t06_step3_segment_replacement
 from .step3_topology_connectivity_audit import STEP3_TOPOLOGY_CONNECTIVITY_AUDIT_STEM
 from .step3_surface_topology_audit import run_surface_topology_postprocess
@@ -138,7 +139,7 @@ def run_surface_aware_step3_segment_replacement(
     baseline_fail_keys = _topology_fail_keys(artifacts.step_root)
     external_baseline_root = _external_baseline_step3_root(step2_replaceable_path, artifacts.step_root)
     external_baseline_fail_keys = _topology_fail_keys(external_baseline_root) if external_baseline_root else set()
-    plan_rows = read_features(original_plan_path)
+    plan_rows = read_replacement_plan_rows(original_plan_path)
     incident_segments_by_node = _incident_segments_by_node(read_features(swsd_segment_path))
     release_rows, released = _surface_release_plan_rows(
         plan_rows,
@@ -1059,7 +1060,8 @@ def _visual_conflict_non_replaced_plan_ids(step_root: Path, released: list[dict[
 
 
 def _is_successful_replacement_status(status: str | None) -> bool:
-    return str(status or "") in {"replaced", "replaced+retained_swsd"}
+    # Visual-conflict release may only survive as a pure RCSD replacement.
+    return str(status or "") == "replaced"
 
 
 def _rollback_plan_ids(
@@ -1252,10 +1254,11 @@ def _summary_input_path(summary_path: Path, key: str) -> Path | None:
 
 def _preflight_replacement_plan_rows(step2_replaceable_path: str | Path) -> list[dict[str, Any]]:
     step2_root = Path(step2_replaceable_path).resolve().parent
-    plan_path = step2_root / f"{STEP2_REPLACEMENT_PLAN_STEM}.gpkg"
-    if not plan_path.is_file():
-        return []
-    return read_features(plan_path)
+    for suffix in (".json", ".geojson", ".gpkg", ".csv"):
+        plan_path = step2_root / f"{STEP2_REPLACEMENT_PLAN_STEM}{suffix}"
+        if plan_path.is_file():
+            return read_replacement_plan_rows(plan_path)
+    return []
 
 
 def _external_baseline_step3_root(step2_replaceable_path: str | Path, current_step_root: Path) -> Path | None:

@@ -20,9 +20,10 @@ from .buffer_segment_extraction import (
     _effective_directed_pair_nodes,
     _feature_road_id,
     _nodes_from_edges,
+    _ordered_edge_path_covering_nodes,
+    _ordered_required_rcsd_nodes,
     _retained_geometry_buffer_coverage_status,
     _retained_status,
-    _shortest_directed_path_covering_nodes,
 )
 from .graph_builders import Edge, NodeCanonicalizer
 from .relation_mapping import RelationCheck
@@ -89,15 +90,22 @@ class SingleGraphConnectivityRetry:
         if segment_geometry is None or segment_geometry.is_empty:
             return None
 
-        required_nodes = _canonical_ids(relation.rcsd_pair_nodes, self.node_canonicalizer)
+        pair_nodes = _canonical_ids(relation.rcsd_pair_nodes, self.node_canonicalizer)
         directed_nodes = _effective_directed_pair_nodes(
-            required_nodes,
+            pair_nodes,
             _canonical_ids(directed_pair_nodes, self.node_canonicalizer),
         )
-        if len(set(required_nodes)) != 2 or len(directed_nodes) != 2:
+        if len(set(pair_nodes)) != 2 or len(directed_nodes) != 2:
             return None
 
-        optional_nodes = _canonical_ids([*relation.rcsd_junc_nodes, *optional_allowed_rcsd_nodes], self.node_canonicalizer)
+        junc_nodes = _canonical_ids(relation.rcsd_junc_nodes, self.node_canonicalizer)
+        required_nodes = _ordered_required_rcsd_nodes(
+            pair_nodes,
+            junc_nodes,
+            directed_nodes=directed_nodes,
+            require_directed_pair=True,
+        )
+        optional_nodes = _canonical_ids(optional_allowed_rcsd_nodes, self.node_canonicalizer)
         blocked_nodes = _blocked_external_semantic_nodes(
             unexpected_relation_base_ids,
             required_nodes=required_nodes,
@@ -162,7 +170,7 @@ class SingleGraphConnectivityRetry:
             retained_nodes,
             path_edges,
             required_nodes,
-            required_nodes,
+            pair_nodes,
             directed_nodes,
             unexpected_mapped_semantic_nodes=unexpected_mapped_nodes,
             allowed_endpoint_nodes=set(),
@@ -237,11 +245,18 @@ class SingleGraphConnectivityRetry:
         if segment_geometry is None or segment_geometry.is_empty:
             return None
 
-        required_nodes = _canonical_ids(relation.rcsd_pair_nodes, self.node_canonicalizer)
-        if len(set(required_nodes)) != 2:
+        pair_nodes = _canonical_ids(relation.rcsd_pair_nodes, self.node_canonicalizer)
+        if len(set(pair_nodes)) != 2:
             return None
-        source, target = required_nodes
-        optional_nodes = _canonical_ids([*relation.rcsd_junc_nodes, *optional_allowed_rcsd_nodes], self.node_canonicalizer)
+        source, target = pair_nodes
+        junc_nodes = _canonical_ids(relation.rcsd_junc_nodes, self.node_canonicalizer)
+        required_nodes = _ordered_required_rcsd_nodes(
+            pair_nodes,
+            junc_nodes,
+            directed_nodes=[],
+            require_directed_pair=False,
+        )
+        optional_nodes = _canonical_ids(optional_allowed_rcsd_nodes, self.node_canonicalizer)
         blocked_nodes = _blocked_external_semantic_nodes(
             unexpected_relation_base_ids,
             required_nodes=required_nodes,
@@ -258,7 +273,7 @@ class SingleGraphConnectivityRetry:
         reverse_edges = self._directed_path_edges(
             directed_source=target,
             directed_target=source,
-            required_nodes=required_nodes,
+            required_nodes=list(reversed(required_nodes)),
             segment_geometry=segment_geometry,
             blocked_nodes=blocked_nodes,
         )
@@ -283,7 +298,7 @@ class SingleGraphConnectivityRetry:
             retained_nodes,
             path_edges,
             required_nodes,
-            required_nodes,
+            pair_nodes,
             [],
             unexpected_mapped_semantic_nodes=unexpected_mapped_nodes,
             allowed_endpoint_nodes=set(),
@@ -391,11 +406,15 @@ class SingleGraphConnectivityRetry:
             (self.all_edges, self.all_edge_by_id),
         ):
             scoped_edges = _without_blocked_nodes(edges, blocked_nodes)
-            path = _shortest_directed_path_covering_nodes(
-                scoped_edges,
-                directed_source,
-                directed_target,
+            ordered_nodes = _unique_ordered_required_nodes_for_direction(
                 required_nodes,
+                directed_source=directed_source,
+                directed_target=directed_target,
+            )
+            path = _ordered_edge_path_covering_nodes(
+                scoped_edges,
+                ordered_nodes,
+                directed=True,
                 reference_geometry=segment_geometry,
             )
             if path is None:
@@ -419,6 +438,23 @@ def _full_graph_supports_bidirectional_retry(diagnostic: dict[str, Any]) -> bool
     if diagnostic.get("full_graph_status") != "required_nodes_connected":
         return False
     return "full=bidirectional" in str(diagnostic.get("directional_status") or "")
+
+
+def _unique_ordered_required_nodes_for_direction(
+    required_nodes: list[str],
+    *,
+    directed_source: str,
+    directed_target: str,
+) -> list[str]:
+    middle = [node for node in required_nodes if node not in {directed_source, directed_target}]
+    result: list[str] = []
+    seen: set[str] = set()
+    for node in [directed_source, *middle, directed_target]:
+        if node in seen:
+            continue
+        seen.add(node)
+        result.append(node)
+    return result
 
 
 def _reference_distances(base_buffer_distance_m: float) -> tuple[float, ...]:

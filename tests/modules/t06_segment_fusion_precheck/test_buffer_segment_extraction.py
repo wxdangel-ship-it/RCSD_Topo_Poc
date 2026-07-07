@@ -475,7 +475,7 @@ def test_junc_kind2_optional_nodes_are_not_required() -> None:
     assert result.missing_required_node_ids == []
 
 
-def test_relation_junc_nodes_do_not_block_pair_corridor_extraction() -> None:
+def test_relation_junc_nodes_missing_from_rcsd_graph_do_not_block_main_corridor() -> None:
     extractor = BufferSegmentExtractor(
         rcsd_road_features=[_road("main", 10, 20, [(0, 0), (100, 0)])],
         rcsd_node_features=[_node(10, 0, 0), _node(20, 100, 0)],
@@ -494,6 +494,7 @@ def test_relation_junc_nodes_do_not_block_pair_corridor_extraction() -> None:
     assert result.required_rcsd_nodes == ["10", "20"]
     assert result.optional_allowed_rcsd_nodes == ["30"]
     assert result.missing_required_node_ids == []
+    assert result.retained_road_ids == ["main"]
 
 
 def test_seed_pruning_allows_inner_extra_mapped_semantic_nodes_on_required_corridor() -> None:
@@ -983,6 +984,147 @@ def test_single_corridor_does_not_supplement_unselected_parallel_carrier() -> No
     assert not {"carrier_a", "carrier_b"} & set(result.retained_road_ids)
 
 
+def test_single_corridor_supplements_semantic_junction_bridge_inside_reference_corridor() -> None:
+    extractor = BufferSegmentExtractor(
+        rcsd_road_features=[
+            _road("main_a", 10, 30, [(0, 0), (80, 0)], direction=2),
+            _road("main_b", 30, 40, [(80, 0), (120, 0)], direction=2),
+            _road("main_c", 40, 20, [(120, 0), (200, 0)], direction=2),
+            _road("sibling_bridge_a", 30, 50, [(80, 0), (120, 3)], direction=2),
+            _road("sibling_bridge_b", 50, 20, [(120, 3), (200, 0)], direction=2),
+        ],
+        rcsd_node_features=[
+            _node(10, 0, 0),
+            _node(20, 200, 0),
+            _node(30, 80, 0, kind=16),
+            _node(40, 120, 0),
+            _node(50, 120, 3),
+        ],
+    )
+
+    result = extractor.extract(
+        segment_geometry=LineString([(0, 0), (200, 0)]),
+        relation=RelationCheck(True, ["10", "20"], ["30"]),
+        optional_allowed_rcsd_nodes=[],
+        all_relation_base_ids={"10", "20", "30"},
+        directed_pair_nodes=["10", "20"],
+        require_directed_pair=True,
+        config=BufferExtractionConfig(buffer_distance_m=25),
+    )
+
+    assert result.ok
+    assert set(result.retained_road_ids) == {
+        "main_a",
+        "main_b",
+        "main_c",
+        "sibling_bridge_a",
+        "sibling_bridge_b",
+    }
+    assert result.unexpected_endpoint_node_ids == []
+
+
+def test_single_corridor_supplements_selected_required_pair_parallel_sibling_edge() -> None:
+    extractor = BufferSegmentExtractor(
+        rcsd_road_features=[
+            _road("main", 10, 20, [(0, 0), (100, 0)], direction=2),
+            _road("parallel_sibling", 11, 21, [(0, 2), (100, 2)], direction=2),
+            _road("reverse_only_sibling", 12, 22, [(0, 4), (100, 4)], direction=3),
+            _road("shortcut_branch", 10, 30, [(0, 0), (50, 20)], direction=2),
+        ],
+        rcsd_node_features=[
+            _node(10, 0, 0, mainnodeid=10, subnodeid=[11, 12]),
+            _node(11, 0, 2, mainnodeid=10),
+            _node(12, 0, 4, mainnodeid=10),
+            _node(20, 100, 0, mainnodeid=20, subnodeid=[21, 22]),
+            _node(21, 100, 2, mainnodeid=20),
+            _node(22, 100, 4, mainnodeid=20),
+            _node(30, 50, 20),
+        ],
+    )
+
+    result = extractor.extract(
+        segment_geometry=LineString([(0, 0), (100, 0)]),
+        relation=RelationCheck(True, ["10", "20"], []),
+        optional_allowed_rcsd_nodes=[],
+        all_relation_base_ids={"10", "20", "30"},
+        directed_pair_nodes=["10", "20"],
+        require_directed_pair=True,
+        config=BufferExtractionConfig(buffer_distance_m=25),
+    )
+
+    assert result.ok
+    assert set(result.retained_road_ids) == {"main", "parallel_sibling"}
+
+
+def test_single_corridor_supplements_semantic_junction_bridge_with_blocked_side_branch() -> None:
+    extractor = BufferSegmentExtractor(
+        rcsd_road_features=[
+            _road("main_a", 10, 30, [(0, 0), (80, 0)], direction=2),
+            _road("main_b", 30, 40, [(80, 0), (120, 0)], direction=2),
+            _road("main_c", 40, 20, [(120, 0), (200, 0)], direction=2),
+            _road("sibling_bridge_a", 30, 50, [(80, 0), (120, 3)], direction=2),
+            _road("sibling_bridge_b", 50, 20, [(120, 3), (200, 0)], direction=2),
+            _road("blocked_side_branch", 50, 60, [(120, 3), (120, 8)], direction=2),
+        ],
+        rcsd_node_features=[
+            _node(10, 0, 0),
+            _node(20, 200, 0),
+            _node(30, 80, 0, kind=16),
+            _node(40, 120, 0),
+            _node(50, 120, 3),
+            _node(60, 120, 8),
+        ],
+    )
+
+    result = extractor.extract(
+        segment_geometry=LineString([(0, 0), (200, 0)]),
+        relation=RelationCheck(True, ["10", "20"], ["30"]),
+        optional_allowed_rcsd_nodes=[],
+        all_relation_base_ids={"10", "20", "30", "60"},
+        unexpected_relation_base_ids={"60"},
+        directed_pair_nodes=["10", "20"],
+        require_directed_pair=True,
+        config=BufferExtractionConfig(buffer_distance_m=25),
+    )
+
+    assert result.ok
+    assert {"sibling_bridge_a", "sibling_bridge_b"} <= set(result.retained_road_ids)
+    assert "blocked_side_branch" not in result.retained_road_ids
+
+
+def test_single_corridor_does_not_supplement_semantic_junction_bridge_outside_reference_corridor() -> None:
+    extractor = BufferSegmentExtractor(
+        rcsd_road_features=[
+            _road("main_a", 10, 30, [(0, 0), (80, 0)], direction=2),
+            _road("main_b", 30, 40, [(80, 0), (120, 0)], direction=2),
+            _road("main_c", 40, 20, [(120, 0), (200, 0)], direction=2),
+            _road("far_bridge_a", 30, 50, [(80, 0), (120, 40)], direction=2),
+            _road("far_bridge_b", 50, 20, [(120, 40), (200, 0)], direction=2),
+        ],
+        rcsd_node_features=[
+            _node(10, 0, 0),
+            _node(20, 200, 0),
+            _node(30, 80, 0, kind=16),
+            _node(40, 120, 0),
+            _node(50, 120, 40),
+        ],
+    )
+
+    result = extractor.extract(
+        segment_geometry=LineString([(0, 0), (200, 0)]),
+        relation=RelationCheck(True, ["10", "20"], ["30"]),
+        optional_allowed_rcsd_nodes=[],
+        all_relation_base_ids={"10", "20", "30"},
+        directed_pair_nodes=["10", "20"],
+        require_directed_pair=True,
+        config=BufferExtractionConfig(buffer_distance_m=60, visual_consistency_buffer_distance_m=10),
+    )
+
+    assert result.ok
+    assert set(result.retained_road_ids) == {"main_a", "main_b", "main_c"}
+    assert not {"far_bridge_a", "far_bridge_b"} & set(result.retained_road_ids)
+
+
 def test_dual_corridor_supplements_retained_boundary_bridge_without_required_endpoint() -> None:
     extractor = BufferSegmentExtractor(
         rcsd_road_features=[
@@ -1107,6 +1249,67 @@ def test_single_corridor_uses_one_directed_path_covering_required_nodes() -> Non
     assert set(result.retained_road_ids) == {"start", "lower_a", "lower_b", "end"}
     assert not {"upper_a", "upper_b"} & set(result.retained_road_ids)
     assert result.retained_node_ids == ["10", "20", "30", "40", "60"]
+
+
+def test_single_corridor_does_not_skip_ordered_required_junction_nodes() -> None:
+    extractor = BufferSegmentExtractor(
+        rcsd_road_features=[
+            _road("direct_pair_path", 10, 20, [(0, 0), (100, 0)], direction=2),
+            _road("ordered_a", 10, 30, [(0, 4), (30, 4)], direction=2),
+            _road("ordered_b", 30, 40, [(30, 4), (70, 4)], direction=2),
+            _road("ordered_c", 40, 20, [(70, 4), (100, 4)], direction=2),
+        ],
+        rcsd_node_features=[
+            _node(10, 0, 0),
+            _node(20, 100, 0),
+            _node(30, 30, 4),
+            _node(40, 70, 4),
+        ],
+    )
+
+    result = extractor.extract(
+        segment_geometry=LineString([(0, 0), (100, 0)]),
+        relation=RelationCheck(True, ["10", "20"], ["30", "40"]),
+        optional_allowed_rcsd_nodes=[],
+        all_relation_base_ids={"10", "20", "30", "40"},
+        directed_pair_nodes=["10", "20"],
+        require_directed_pair=True,
+        config=BufferExtractionConfig(buffer_distance_m=10),
+    )
+
+    assert result.ok
+    assert set(result.retained_road_ids) == {"ordered_a", "ordered_b", "ordered_c"}
+    assert "direct_pair_path" not in result.retained_road_ids
+
+
+def test_single_corridor_rejects_reversed_required_junction_order() -> None:
+    extractor = BufferSegmentExtractor(
+        rcsd_road_features=[
+            _road("reverse_a", 10, 40, [(0, 0), (70, 0)], direction=2),
+            _road("reverse_b", 40, 30, [(70, 0), (30, 0)], direction=2),
+            _road("reverse_c", 30, 20, [(30, 0), (100, 0)], direction=2),
+        ],
+        rcsd_node_features=[
+            _node(10, 0, 0),
+            _node(20, 100, 0),
+            _node(30, 30, 0),
+            _node(40, 70, 0),
+        ],
+    )
+
+    result = extractor.extract(
+        segment_geometry=LineString([(0, 0), (100, 0)]),
+        relation=RelationCheck(True, ["10", "20"], ["30", "40"]),
+        optional_allowed_rcsd_nodes=[],
+        all_relation_base_ids={"10", "20", "30", "40"},
+        directed_pair_nodes=["10", "20"],
+        require_directed_pair=True,
+        config=BufferExtractionConfig(buffer_distance_m=10),
+    )
+
+    assert not result.ok
+    assert result.reason == "rcsd_directed_path_missing"
+    assert result.retained_road_ids == []
 
 
 def test_single_corridor_uses_supplied_directed_pair_order() -> None:
@@ -1274,7 +1477,7 @@ def test_non_bidirectional_optional_terminal_supplements_connected_corridor() ->
 
     assert result.ok
     assert result.reason == "passed"
-    assert result.retained_road_ids == ["direct", "branch_a", "branch_b"]
+    assert result.retained_road_ids == ["branch_a", "branch_b"]
     assert result.unexpected_endpoint_node_ids == []
 
 
@@ -1302,8 +1505,8 @@ def test_seed_pruning_keeps_paths_between_optional_terminals_and_prunes_leaf_noi
 
     result = extractor.extract(
         segment_geometry=LineString([(0, 0), (100, 0)]),
-        relation=RelationCheck(True, ["10", "20"], ["30", "40"]),
-        optional_allowed_rcsd_nodes=[],
+        relation=RelationCheck(True, ["10", "20"], []),
+        optional_allowed_rcsd_nodes=["30", "40"],
         all_relation_base_ids={"10", "20", "30", "40", "50", "60", "70"},
         config=BufferExtractionConfig(buffer_distance_m=20),
     )
@@ -1339,16 +1542,15 @@ def test_optional_terminal_pruning_preserves_required_pair_corridor_in_same_seed
 
     result = extractor.extract(
         segment_geometry=LineString([(0, 0), (100, 0)]),
-        relation=RelationCheck(True, ["10", "20"], ["30", "40"]),
-        optional_allowed_rcsd_nodes=[],
+        relation=RelationCheck(True, ["10", "20"], []),
+        optional_allowed_rcsd_nodes=["30", "40"],
         all_relation_base_ids={"10", "20", "30", "40", "50", "60", "70", "80"},
         config=BufferExtractionConfig(buffer_distance_m=25),
     )
 
     assert result.ok
     assert {"pair_a", "pair_b", "pair_c"}.issubset(set(result.retained_road_ids))
-    assert {"optional_b", "optional_c"}.issubset(set(result.retained_road_ids))
-    assert "leaf_noise" not in result.retained_road_ids
+    assert not {"optional_a", "optional_b", "optional_c", "leaf_noise"} & set(result.retained_road_ids)
 
 
 def test_seed_pruning_keeps_required_corridor_and_removes_out_branch() -> None:

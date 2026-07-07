@@ -1742,7 +1742,10 @@ def test_visual_conflict_non_replaced_release_is_rolled_back(tmp_path: Path) -> 
         {"plan_id": "standard:s_retained", "segment_id": "s_retained", "group_segment_ids": []},
     ]
 
-    assert _visual_conflict_non_replaced_plan_ids(step_root, released) == {"standard:s_retained"}
+    assert _visual_conflict_non_replaced_plan_ids(step_root, released) == {
+        "standard:s_mixed",
+        "standard:s_retained",
+    }
 
 
 def test_surface_aware_visual_release_reuses_candidate_when_no_rollback(monkeypatch, tmp_path) -> None:
@@ -1781,6 +1784,8 @@ def test_surface_aware_visual_release_reuses_candidate_when_no_rollback(monkeypa
     monkeypatch.setattr(release_module, "_run_surface", lambda *args, **kwargs: {})
     monkeypatch.setattr(release_module, "_topology_fail_keys", lambda *args, **kwargs: set())
     monkeypatch.setattr(release_module, "_external_baseline_step3_root", lambda *args, **kwargs: None)
+    monkeypatch.setattr(release_module, "_preflight_replacement_plan_rows", lambda *args, **kwargs: [_feature({"replacement_plan_id": "standard:s1"})])
+    monkeypatch.setattr(release_module, "read_replacement_plan_rows", lambda *args, **kwargs: [_feature({"replacement_plan_id": "standard:s1"})])
     monkeypatch.setattr(release_module, "read_features", lambda *_args, **_kwargs: [_feature({"replacement_plan_id": "standard:s1"})])
     monkeypatch.setattr(
         release_module,
@@ -1863,6 +1868,8 @@ def test_surface_aware_visual_release_skips_surface_safe_intermediate_rerun(monk
     monkeypatch.setattr(release_module, "_run_surface", lambda *args, **kwargs: {})
     monkeypatch.setattr(release_module, "_topology_fail_keys", fake_topology_fail_keys)
     monkeypatch.setattr(release_module, "_external_baseline_step3_root", lambda *args, **kwargs: None)
+    monkeypatch.setattr(release_module, "_preflight_replacement_plan_rows", lambda *args, **kwargs: [_feature({"replacement_plan_id": "standard:s1"})])
+    monkeypatch.setattr(release_module, "read_replacement_plan_rows", lambda *args, **kwargs: [_feature({"replacement_plan_id": "standard:s1"})])
     monkeypatch.setattr(release_module, "read_features", lambda *_args, **_kwargs: [_feature({"replacement_plan_id": "standard:s1"})])
     monkeypatch.setattr(release_module, "_incident_segments_by_node", lambda _rows: {})
     monkeypatch.setattr(

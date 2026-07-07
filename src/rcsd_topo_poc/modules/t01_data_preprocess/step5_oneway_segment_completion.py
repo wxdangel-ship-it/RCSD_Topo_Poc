@@ -67,6 +67,9 @@ SIDE_ATTACHMENT_MIN_MAIN_ATTACHMENT_COUNT = 2
 DEAD_END_ANCHOR_KIND_VALUES = frozenset({4, 64, 128, 2048})
 DEAD_END_ANCHOR_GRADE_VALUES = frozenset({1, 2, 3})
 DEAD_END_ANCHOR_CLOSED_CON_VALUES = frozenset({2, 3})
+INTERNAL_CROSSING_BLOCK_KIND_VALUES = frozenset({4, 16, 64, 128})
+T_JUNCTION_KIND_VALUE = 2048
+T_JUNCTION_HORIZONTAL_TURN_ANGLE_RADIANS = math.radians(35.0)
 STEP5_CONTINUATION_MARKER_NAMES = (
     "step5_summary.json",
     "step5_validated_pairs_merged.csv",
@@ -522,6 +525,42 @@ def _select_min_angle_successor(
     )
 
 
+def _is_t_junction_horizontal_traversal(
+    *,
+    current_edge: OnewayTraversalEdge,
+    next_edge: OnewayTraversalEdge,
+    road_by_id: dict[str, RoadFeatureRecord],
+) -> bool:
+    current_bearing = _arrival_bearing(current_edge, road_by_id[current_edge.road_id])
+    next_bearing = _departure_bearing(next_edge, road_by_id[next_edge.road_id])
+    return _turn_angle(current_bearing, next_bearing) <= T_JUNCTION_HORIZONTAL_TURN_ANGLE_RADIANS
+
+
+def _allows_internal_oneway_traversal(
+    *,
+    semantic_node_id: str,
+    current_edge: OnewayTraversalEdge,
+    next_edge: OnewayTraversalEdge,
+    road_by_id: dict[str, RoadFeatureRecord],
+    mainnode_groups: dict[str, MainnodeGroup],
+    node_properties_map: dict[str, dict[str, Any]],
+) -> bool:
+    kind_2 = _semantic_representative_kind_2(
+        semantic_node_id=semantic_node_id,
+        mainnode_groups=mainnode_groups,
+        node_properties_map=node_properties_map,
+    )
+    if kind_2 in INTERNAL_CROSSING_BLOCK_KIND_VALUES:
+        return False
+    if kind_2 == T_JUNCTION_KIND_VALUE:
+        return _is_t_junction_horizontal_traversal(
+            current_edge=current_edge,
+            next_edge=next_edge,
+            road_by_id=road_by_id,
+        )
+    return True
+
+
 def _trace_oneway_segment_from_seed(
     *,
     start_node_id: str,
@@ -530,6 +569,8 @@ def _trace_oneway_segment_from_seed(
     terminate_ids: set[str],
     available_road_ids: set[str],
     road_by_id: dict[str, RoadFeatureRecord],
+    mainnode_groups: dict[str, MainnodeGroup],
+    node_properties_map: dict[str, dict[str, Any]],
 ) -> Optional[_TraceResult]:
     if first_edge.road_id not in available_road_ids:
         return None
@@ -570,15 +611,25 @@ def _trace_oneway_segment_from_seed(
         if not candidate_edges:
             return None
 
-        through_node_ids.append(current_node_id)
         if len(candidate_edges) == 1:
-            current_edge = candidate_edges[0]
+            next_edge = candidate_edges[0]
         else:
-            current_edge = _select_min_angle_successor(
+            next_edge = _select_min_angle_successor(
                 current_edge=current_edge,
                 candidate_edges=candidate_edges,
                 road_by_id=road_by_id,
             )
+        if not _allows_internal_oneway_traversal(
+            semantic_node_id=current_node_id,
+            current_edge=current_edge,
+            next_edge=next_edge,
+            road_by_id=road_by_id,
+            mainnode_groups=mainnode_groups,
+            node_properties_map=node_properties_map,
+        ):
+            return None
+        through_node_ids.append(current_node_id)
+        current_edge = next_edge
         current_node_id = current_edge.to_node_id
 
 
@@ -675,6 +726,8 @@ def _directed_oneway_semantic_endpoints(
     enode_group = physical_to_semantic.get(road.enodeid)
     if snode_group is None or enode_group is None:
         return None
+    if snode_group == enode_group:
+        return None
     if road.direction == 2:
         return snode_group, enode_group
     if road.direction == 3:
@@ -693,8 +746,19 @@ def _single_road_fallback_semantic_endpoints(
         enode_group = physical_to_semantic.get(road.enodeid)
         if snode_group is None or enode_group is None:
             return None
+        if snode_group == enode_group:
+            return None
         return snode_group, enode_group
     return None
+
+
+def _is_same_semantic_mainnode_road(
+    road: RoadFeatureRecord,
+    physical_to_semantic: dict[str, str],
+) -> bool:
+    snode_group = physical_to_semantic.get(road.snodeid)
+    enode_group = physical_to_semantic.get(road.enodeid)
+    return snode_group is not None and snode_group == enode_group
 
 
 def _single_road_fallback_sgrade(road: RoadFeatureRecord) -> str:
@@ -752,6 +816,8 @@ def _trace_residual_corridor_from_seed(
     incident_road_ids_by_node: dict[str, set[str]],
     available_road_ids: set[str],
     road_by_id: dict[str, RoadFeatureRecord],
+    mainnode_groups: dict[str, MainnodeGroup],
+    node_properties_map: dict[str, dict[str, Any]],
 ) -> Optional[_TraceResult]:
     if first_edge.road_id not in available_road_ids:
         return None
@@ -793,15 +859,30 @@ def _trace_residual_corridor_from_seed(
         if not candidate_edges:
             return None
 
-        through_node_ids.append(current_node_id)
         if len(candidate_edges) == 1:
-            current_edge = candidate_edges[0]
+            next_edge = candidate_edges[0]
         else:
-            current_edge = _select_min_angle_successor(
+            next_edge = _select_min_angle_successor(
                 current_edge=current_edge,
                 candidate_edges=candidate_edges,
                 road_by_id=road_by_id,
             )
+        if not _allows_internal_oneway_traversal(
+            semantic_node_id=current_node_id,
+            current_edge=current_edge,
+            next_edge=next_edge,
+            road_by_id=road_by_id,
+            mainnode_groups=mainnode_groups,
+            node_properties_map=node_properties_map,
+        ):
+            return _TraceResult(
+                start_node_id=start_node_id,
+                end_node_id=current_node_id,
+                road_ids=tuple(road_ids),
+                through_node_ids=tuple(through_node_ids),
+            )
+        through_node_ids.append(current_node_id)
+        current_edge = next_edge
         current_node_id = current_edge.to_node_id
 
 
@@ -865,6 +946,8 @@ def _run_residual_corridor_fallback(
             incident_road_ids_by_node=incident_road_ids_by_node,
             available_road_ids=available_road_ids,
             road_by_id=road_by_id,
+            mainnode_groups=mainnode_groups,
+            node_properties_map=node_properties_map,
         )
         if trace is None:
             trace_fail_count += 1
@@ -1442,6 +1525,7 @@ def _run_final_oneway_fallback(
     built_segments: list[OnewayBuiltSegment] = []
     assigned_road_ids: set[str] = set()
     skipped_missing_endpoint_count = 0
+    skipped_same_semantic_endpoint_count = 0
     bidirectional_built_road_count = 0
     oneway_built_road_count = 0
 
@@ -1450,7 +1534,10 @@ def _run_final_oneway_fallback(
             continue
         endpoints = _single_road_fallback_semantic_endpoints(road, physical_to_semantic)
         if endpoints is None:
-            skipped_missing_endpoint_count += 1
+            if _is_same_semantic_mainnode_road(road, physical_to_semantic):
+                skipped_same_semantic_endpoint_count += 1
+            else:
+                skipped_missing_endpoint_count += 1
             continue
         start_node_id, end_node_id = endpoints
         sgrade = _single_road_fallback_sgrade(road)
@@ -1497,6 +1584,7 @@ def _run_final_oneway_fallback(
             if _coerce_int(road_properties_map[road_id].get("road_kind")) == 1
         ),
         "skipped_missing_endpoint_count": skipped_missing_endpoint_count,
+        "skipped_same_semantic_endpoint_count": skipped_same_semantic_endpoint_count,
     }
 
 
@@ -1558,6 +1646,8 @@ def _run_phase(
             terminate_ids=terminate_ids,
             available_road_ids=available_road_ids,
             road_by_id=road_by_id,
+            mainnode_groups=mainnode_groups,
+            node_properties_map=node_properties_map,
         )
         if trace is None:
             trace_fail_count += 1
@@ -1637,11 +1727,18 @@ def _build_segment_road_features(
     return features
 
 
-def _unsegmented_audit_reason(*, road: RoadFeatureRecord, properties: dict[str, Any]) -> str:
+def _unsegmented_audit_reason(
+    *,
+    road: RoadFeatureRecord,
+    properties: dict[str, Any],
+    physical_to_semantic: dict[str, str],
+) -> str:
     if _has_formway_bit7_or_bit8(properties):
         return "formway_bit7_or_bit8"
     if road.direction not in {0, 1, 2, 3}:
         return "unsupported_direction"
+    if _is_same_semantic_mainnode_road(road, physical_to_semantic):
+        return "same_semantic_mainnode_internal_road"
     if road.direction in {2, 3}:
         return "oneway_trace_failed_or_no_terminate"
     road_kind = _coerce_int(properties.get("road_kind")) if "road_kind" in properties else road.road_kind
@@ -1654,6 +1751,7 @@ def _write_unsegmented_roads_outputs(
     *,
     roads: list[RoadFeatureRecord],
     road_properties_map: dict[str, dict[str, Any]],
+    physical_to_semantic: dict[str, str],
     out_root: Path,
     run_id: str,
 ) -> tuple[Path, Path, Path, dict[str, Any]]:
@@ -1674,7 +1772,11 @@ def _write_unsegmented_roads_outputs(
         if get_road_segmentid(props):
             continue
         formway_has_bit7_or_bit8 = _has_formway_bit7_or_bit8(props)
-        audit_reason = _unsegmented_audit_reason(road=road, properties=props)
+        audit_reason = _unsegmented_audit_reason(
+            road=road,
+            properties=props,
+            physical_to_semantic=physical_to_semantic,
+        )
         if formway_has_bit7_or_bit8:
             formway_bit7_or_bit8_count += 1
         else:
@@ -1892,6 +1994,7 @@ def run_step5_oneway_segment_completion(
         _write_unsegmented_roads_outputs(
             roads=roads,
             road_properties_map=road_properties_map,
+            physical_to_semantic=physical_to_semantic,
             out_root=resolved_out_root,
             run_id=resolved_run_id,
         )

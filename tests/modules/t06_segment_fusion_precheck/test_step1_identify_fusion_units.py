@@ -453,21 +453,24 @@ def test_step1_allows_only_dual_0_2_virtual_t_pair_nodes_for_step2_probe(tmp_pat
     assert rejected_rows["dual_0_2_junc_still_rejected"]["failed_node_ids"] == ["32"]
 
 
-def test_step1_allows_high_grade_pair_fail1_multi_rcsd_group_for_step2_probe(tmp_path: Path) -> None:
+def test_step1_allows_grade0_single_kind4_pair_no_evd_for_step2_probe(tmp_path: Path) -> None:
     segment_path = _write(
         tmp_path / "segment.gpkg",
         [
-            _seg("high_grade_pair_fail1_multi_rcsd", [40, 41], [], sgrade="0-0双"),
-            _seg("low_grade_pair_fail1_still_rejected", [42, 43], [], sgrade="2-0双"),
+            _seg("grade0_single_pair_no_evd_probe", [50, 51], [], sgrade="0-2单"),
+            _seg("grade0_single_pair_no_evd_anchor_yes_rejected", [52, 51], [], sgrade="0-2单"),
+            _seg("grade0_single_pair_no_evd_kind2048_rejected", [53, 51], [], sgrade="0-2单"),
+            _seg("low_grade_pair_no_evd_rejected", [54, 51], [], sgrade="2-0单"),
         ],
     )
     nodes_path = _write(
         tmp_path / "nodes.gpkg",
         [
-            _node(40, "yes", "fail1", kind_2=4),
-            _node(41, "yes", "yes", kind_2=4),
-            _node(42, "yes", "fail1", kind_2=4),
-            _node(43, "yes", "yes", kind_2=4),
+            _node(50, "no", None, kind_2=4),
+            _node(51, "yes", "yes", kind_2=4),
+            _node(52, "no", "yes", kind_2=4),
+            _node(53, "no", None, kind_2=2048),
+            _node(54, "no", None, kind_2=4),
         ],
     )
 
@@ -479,13 +482,58 @@ def test_step1_allows_high_grade_pair_fail1_multi_rcsd_group_for_step2_probe(tmp
     )
 
     summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
-    assert summary["evd_candidate_count"] == 2
+    assert summary["evd_candidate_count"] == 1
     assert summary["final_fusion_unit_count"] == 1
+    assert summary["reject_reason_counts"]["has_evd_not_yes"] == 3
+
+    fusion_payload = json.loads(artifacts.fusion_units_gpkg_path.with_suffix(".json").read_text(encoding="utf-8"))
+    assert [item["properties"]["swsd_segment_id"] for item in fusion_payload["features"]] == [
+        "grade0_single_pair_no_evd_probe"
+    ]
+    rejected_payload = json.loads(artifacts.rejected_gpkg_path.with_suffix(".json").read_text(encoding="utf-8"))
+    rejected_rows = {item["properties"]["swsd_segment_id"]: item["properties"] for item in rejected_payload["features"]}
+    assert rejected_rows["grade0_single_pair_no_evd_anchor_yes_rejected"]["failed_node_ids"] == ["52"]
+    assert rejected_rows["grade0_single_pair_no_evd_kind2048_rejected"]["failed_node_ids"] == ["53"]
+    assert rejected_rows["low_grade_pair_no_evd_rejected"]["failed_node_ids"] == ["54"]
+
+
+def test_step1_allows_high_grade_pair_fail1_multi_rcsd_group_for_step2_probe(tmp_path: Path) -> None:
+    segment_path = _write(
+        tmp_path / "segment.gpkg",
+        [
+            _seg("high_grade_pair_fail1_multi_rcsd", [40, 41], [], sgrade="0-0双"),
+            _seg("grade0_single_pair_fail1_multi_rcsd", [44, 45], [], sgrade="0-2单"),
+            _seg("low_grade_pair_fail1_still_rejected", [42, 43], [], sgrade="2-0双"),
+        ],
+    )
+    nodes_path = _write(
+        tmp_path / "nodes.gpkg",
+        [
+            _node(40, "yes", "fail1", kind_2=4),
+            _node(41, "yes", "yes", kind_2=4),
+            _node(42, "yes", "fail1", kind_2=4),
+            _node(43, "yes", "yes", kind_2=4),
+            _node(44, "yes", "fail1", kind_2=4),
+            _node(45, "yes", "yes", kind_2=4),
+        ],
+    )
+
+    artifacts = run_t06_step1_identify_fusion_units(
+        swsd_segment_path=segment_path,
+        swsd_nodes_path=nodes_path,
+        out_root=tmp_path / "out",
+        run_id="run",
+    )
+
+    summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
+    assert summary["evd_candidate_count"] == 3
+    assert summary["final_fusion_unit_count"] == 2
     assert summary["reject_reason_counts"]["is_anchor_not_eligible"] == 1
 
     fusion_payload = json.loads(artifacts.fusion_units_gpkg_path.with_suffix(".json").read_text(encoding="utf-8"))
     assert [item["properties"]["swsd_segment_id"] for item in fusion_payload["features"]] == [
-        "high_grade_pair_fail1_multi_rcsd"
+        "high_grade_pair_fail1_multi_rcsd",
+        "grade0_single_pair_fail1_multi_rcsd",
     ]
     rejected_payload = json.loads(artifacts.rejected_gpkg_path.with_suffix(".json").read_text(encoding="utf-8"))
     rejected_rows = {item["properties"]["swsd_segment_id"]: item["properties"] for item in rejected_payload["features"]}

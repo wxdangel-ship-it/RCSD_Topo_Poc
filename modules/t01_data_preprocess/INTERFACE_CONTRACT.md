@@ -192,6 +192,7 @@
 - 在 `Step2 / Step4 / Step5A / Step5B / Step5C` 中：
   - 若该 T 型路口不是当前 segment 的起点 / 终点，则禁止内部竖向追溯
   - 横方向允许继续追溯
+- 单向 Segment 追溯不得把普通交叉 / 复杂交叉语义路口作为内部 through 节点穿越；`kind_2 in {4,64,128}` 的内部节点必须截断当前追溯。`kind_2 = 2048` 仅当进入 road 与离开 road 近似共线、属于 T 型横方向时可继续追溯，否则同样截断。
 
 ### 5.3 历史高等级边界
 - 更低等级构段不得跨越更高等级轮次中已成立的段边界语义路口。
@@ -359,6 +360,7 @@
 - final single-road fallback：
   - 在常规单向 terminate-to-terminate、dead-end leaf 与 residual corridor fallback 之后、`Step6` 之前执行
   - 处理仍未构段、`direction in {0,1,2,3}`、非 `formway = 128`、非右转专用道，且两端可解析到 semantic endpoint 的 road
+  - 若 road 两端归属同一个 SWSD semantic mainnode，视为复杂路口内部 road，不构建 self-pair Segment；该 road 必须保留为 unsegmented，并在 audit 中以 `same_semantic_mainnode_internal_road` 标识
   - 不放宽前序 phase terminate 规则；phase 不闭合、端点 phase 不一致、同 semantic group residual road，或未满足 dead-end leaf 的双向 residual road，只在本阶段兜底
   - 每条 road 形成一个单 road Segment
   - 新构成单向 road：`sgrade = 0-2单`

@@ -1219,11 +1219,20 @@ def _apply_junction_alignment_plan_gate(
                     risk_flag=RETAINED_JUNCTION_GATE_REASON,
                 )
 
+        _resolve_junction_alignment_buffer_corridor_outliers(
+            mappings,
+            rcsd_node_canonicalizer=rcsd_node_canonicalizer,
+        )
+
         for left_index, (left_props, left_rcsd_node_id) in enumerate(mappings):
+            if not _is_replace_ready_plan(left_props):
+                continue
             left_point = _feature_point(rcsd_node_by_id.get(left_rcsd_node_id))
             if left_point is None:
                 continue
             for right_props, right_rcsd_node_id in mappings[left_index + 1 :]:
+                if not _is_replace_ready_plan(right_props):
+                    continue
                 if left_rcsd_node_id == right_rcsd_node_id:
                     continue
                 left_canonical_node_id = _canonicalize_node_id(rcsd_node_canonicalizer, left_rcsd_node_id)
@@ -1309,6 +1318,71 @@ def _apply_junction_alignment_plan_gate(
                     reason="junction_alignment_between_replacement_plans_diverged",
                     risk_flag="junction_alignment_between_replacement_plans_diverged",
                 )
+
+
+def _resolve_junction_alignment_buffer_corridor_outliers(
+    mappings: list[tuple[dict[str, Any], str]],
+    *,
+    rcsd_node_canonicalizer: NodeCanonicalizer,
+) -> None:
+    canonical_groups: dict[str, list[tuple[dict[str, Any], str]]] = defaultdict(list)
+    for props, rcsd_node_id in mappings:
+        if not _is_replace_ready_plan(props):
+            continue
+        canonical_node_id = _canonicalize_node_id(rcsd_node_canonicalizer, rcsd_node_id)
+        if canonical_node_id:
+            canonical_groups[canonical_node_id].append((props, rcsd_node_id))
+    if len(canonical_groups) < 2:
+        return
+
+    sizes = {canonical_node_id: len(group) for canonical_node_id, group in canonical_groups.items()}
+    majority_size = max(sizes.values())
+    majority_ids = [canonical_node_id for canonical_node_id, size in sizes.items() if size == majority_size]
+    if majority_size < 2 or len(majority_ids) != 1:
+        return
+
+    majority_id = majority_ids[0]
+    outlier_mappings = [
+        item
+        for canonical_node_id, group in canonical_groups.items()
+        if canonical_node_id != majority_id
+        for item in group
+    ]
+    if not outlier_mappings or not all(_is_buffer_corridor_alignment_outlier(props) for props, _node_id in outlier_mappings):
+        return
+
+    marked_majority: set[int] = set()
+    for props, _node_id in canonical_groups[majority_id]:
+        props_id = id(props)
+        if props_id in marked_majority:
+            continue
+        marked_majority.add(props_id)
+        _mark_plan_row_risk(
+            props,
+            reason="junction_alignment_buffer_corridor_outlier_ignored",
+            risk_flag="junction_alignment_buffer_corridor_outlier_ignored",
+        )
+
+    blocked_outliers: set[int] = set()
+    for props, _node_id in outlier_mappings:
+        props_id = id(props)
+        if props_id in blocked_outliers:
+            continue
+        blocked_outliers.add(props_id)
+        _block_plan_row(
+            props,
+            reason="junction_alignment_outlier_buffer_corridor_plan",
+            risk_flag="junction_alignment_outlier_buffer_corridor_plan",
+        )
+
+
+def _is_buffer_corridor_alignment_outlier(props: dict[str, Any]) -> bool:
+    risk_flags = set(_parse_list(props.get("risk_flags")))
+    return (
+        str(props.get("replacement_strategy") or "") == "swsd_buffer_corridor_controlled_release"
+        or str(props.get("geometry_buffer_coverage_issue") or "") == "retained_geometry_outside_swsd_buffer_scope"
+        or "swsd_buffer_corridor_controlled_release" in risk_flags
+    )
 
 
 def _apply_group_member_plan_gate(rows: list[dict[str, Any]]) -> None:

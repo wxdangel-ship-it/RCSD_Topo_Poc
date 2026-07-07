@@ -133,6 +133,12 @@ def run_t06_step1_identify_fusion_units(
             for node_id in pair_nodes
             if not yes_value(node_index[node_id].get("has_evd"))
             and not _manual_relation_evd_override_allowed(node_id=node_id, manual_anchor_override_nodes=manual_anchor_override_nodes)
+            and not _step2_probe_relaxation_allowed(
+                node_id=node_id,
+                pair_nodes=pair_nodes,
+                node_index=node_index,
+                sgrade=sgrade_key,
+            )
         ]
         if pair_has_evd_failed:
             rejected.append(_rejected(segment_id, "before_evd", "has_evd_not_yes", pair_has_evd_failed, props, segment.get("geometry"), node_index))
@@ -500,6 +506,8 @@ def _step2_probe_relaxation_allowed(
     sgrade: str,
 ) -> bool:
     attrs = node_index[node_id]
+    if _single_kind4_pair_no_evd_probe_allowed(node_id=node_id, pair_nodes=pair_nodes, node_index=node_index, sgrade=sgrade):
+        return True
     if not yes_value(attrs.get("has_evd")):
         return False
     if attrs.get("is_anchor") in (None, "") or anchor_eligible(attrs.get("is_anchor")):
@@ -511,6 +519,8 @@ def _step2_probe_relaxation_allowed(
         if anchor_state == "fail1":
             return kind2 in STEP2_PROBE_RELAXED_PAIR_FAIL1_KIND2_VALUES
         return kind2 in STEP2_PROBE_RELAXED_PAIR_KIND2_VALUES
+    if node_id in pair_node_set and _is_grade0_single_probe_sgrade(sgrade):
+        return anchor_state == "fail1" and kind2 in STEP2_PROBE_RELAXED_PAIR_FAIL1_KIND2_VALUES
     if _is_high_grade_sgrade(sgrade):
         return kind2 in STEP2_PROBE_RELAXED_JUNC_KIND2_VALUES
     if node_id in pair_node_set and _is_virtual_t_pair_probe_sgrade(sgrade):
@@ -518,9 +528,33 @@ def _step2_probe_relaxation_allowed(
     return False
 
 
+def _single_kind4_pair_no_evd_probe_allowed(
+    *,
+    node_id: str,
+    pair_nodes: list[str],
+    node_index: dict[str, dict[str, Any]],
+    sgrade: str,
+) -> bool:
+    if node_id not in set(pair_nodes) or not _is_grade0_single_probe_sgrade(sgrade):
+        return False
+    attrs = node_index[node_id]
+    has_evd = attrs.get("has_evd")
+    if has_evd in (None, "") or yes_value(has_evd):
+        return False
+    if _parse_kind2(attrs.get("kind_2")) not in STEP2_PROBE_RELAXED_PAIR_FAIL1_KIND2_VALUES:
+        return False
+    anchor_state = str(attrs.get("is_anchor") or "").strip().lower()
+    return anchor_state in {"", "no", "fail1"}
+
+
 def _is_high_grade_sgrade(value: Any) -> bool:
     text = str(value or "").strip()
     return text.startswith("0-0") or text.startswith("0-1")
+
+
+def _is_grade0_single_probe_sgrade(value: Any) -> bool:
+    text = str(value or "").strip()
+    return text.startswith("0-") and "单" in text
 
 
 def _is_virtual_t_pair_probe_sgrade(value: Any) -> bool:

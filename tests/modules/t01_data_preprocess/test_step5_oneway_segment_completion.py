@@ -261,6 +261,55 @@ def test_oneway_completion_merges_residual_degree2_corridor_before_single_road_f
     assert artifacts.summary["final_fallback_road_count"] == 2
 
 
+def test_oneway_completion_residual_corridor_stops_at_kind_16_crossing(
+    tmp_path: Path,
+) -> None:
+    node_path = tmp_path / "nodes.geojson"
+    road_path = tmp_path / "roads.geojson"
+    out_root = tmp_path / "out"
+
+    write_geojson(
+        node_path,
+        [
+            _node_feature(1, 0.0, 0.0, kind_2=1, grade_2=1, closed_con=1),
+            _node_feature(2, 1.0, 0.0, kind_2=1, grade_2=1, closed_con=1),
+            _node_feature(3, 2.0, 0.0, kind_2=16, grade_2=0, closed_con=0),
+            _node_feature(4, 3.0, 0.0, kind_2=128, grade_2=1, closed_con=1),
+        ],
+    )
+    write_geojson(
+        road_path,
+        [
+            _road_feature("r1", 1, 2, [(0.0, 0.0), (1.0, 0.0)]),
+            _road_feature("r2", 2, 3, [(1.0, 0.0), (2.0, 0.0)]),
+            _road_feature("r3", 3, 4, [(2.0, 0.0), (3.0, 0.0)]),
+        ],
+    )
+
+    artifacts = run_step5_oneway_segment_completion(
+        step5_artifacts=_build_step5_artifacts(node_path, road_path),
+        out_root=out_root,
+        run_id="residual_kind16_stop",
+        debug=False,
+    )
+
+    road_props = _road_props_by_id(artifacts.refreshed_roads_path)
+    assert road_props["r1"]["segmentid"] == "1_3"
+    assert road_props["r2"]["segmentid"] == "1_3"
+    assert road_props["r3"]["segmentid"] == "3_4"
+    assert road_props["r1"]["segment_build_source"] == "oneway_residual_corridor_fallback"
+    assert road_props["r2"]["segment_build_source"] == "oneway_residual_corridor_fallback"
+    assert road_props["r3"]["segment_build_source"] == "oneway_single_road_fallback"
+
+    rows = _read_csv_rows(artifacts.build_table_path)
+    corridor_row = next(row for row in rows if row["segmentid"] == "1_3")
+    single_row = next(row for row in rows if row["segmentid"] == "3_4")
+    assert corridor_row["road_ids"] == "r1,r2"
+    assert corridor_row["through_node_ids"] == "2"
+    assert single_row["road_ids"] == "r3"
+    assert single_row["segment_build_source"] == "oneway_single_road_fallback"
+
+
 def test_oneway_completion_respects_through_branch_choice_and_existing_segmentid(tmp_path: Path) -> None:
     node_path = tmp_path / "nodes.geojson"
     road_path = tmp_path / "roads.geojson"
@@ -511,16 +560,95 @@ def test_oneway_completion_final_fallback_handles_phase_mismatch_and_same_group(
     assert road_props["phase_mismatch"]["segmentid"] == "1_2"
     assert road_props["phase_mismatch"]["sgrade"] == "0-2单"
     assert road_props["phase_mismatch"]["segment_build_source"] == "oneway_single_road_fallback"
-    assert road_props["same_group"]["segmentid"] == "30_30"
-    assert road_props["same_group"]["sgrade"] == "0-2单"
-    assert road_props["same_group"]["segment_build_source"] == "oneway_single_road_fallback"
-    assert road_props["same_group_dual"]["segmentid"] == "30_30_1"
-    assert road_props["same_group_dual"]["sgrade"] == "0-2双"
-    assert road_props["same_group_dual"]["segment_build_source"] == "oneway_single_road_fallback"
-    assert artifacts.summary["final_fallback_segment_count"] == 3
-    assert artifacts.summary["final_fallback_road_count"] == 3
+    assert road_props["same_group"]["segmentid"] is None
+    assert road_props["same_group"]["sgrade"] is None
+    assert road_props["same_group"]["segment_build_source"] is None
+    assert road_props["same_group_dual"]["segmentid"] is None
+    assert road_props["same_group_dual"]["sgrade"] is None
+    assert road_props["same_group_dual"]["segment_build_source"] is None
+    assert artifacts.summary["final_fallback_segment_count"] == 1
+    assert artifacts.summary["final_fallback_road_count"] == 1
     assert artifacts.summary["road_kind_1_built_road_count"] == 1
-    assert artifacts.summary["unsegmented_road_count"] == 0
+    assert artifacts.summary["final_fallback_summary"]["skipped_same_semantic_endpoint_count"] == 2
+    assert artifacts.summary["unsegmented_road_count"] == 2
+    unsegmented_rows = _read_csv_rows(artifacts.unsegmented_csv_path)
+    assert {row["road_id"]: row["audit_reason"] for row in unsegmented_rows} == {
+        "same_group": "same_semantic_mainnode_internal_road",
+        "same_group_dual": "same_semantic_mainnode_internal_road",
+    }
+
+
+def test_oneway_completion_blocks_internal_crossing_node(tmp_path: Path) -> None:
+    node_path = tmp_path / "nodes.geojson"
+    road_path = tmp_path / "roads.geojson"
+    out_root = tmp_path / "out"
+
+    write_geojson(
+        node_path,
+        [
+            _node_feature(1, 0.0, 0.0, kind_2=8, grade_2=1, closed_con=1),
+            _node_feature(2, 1.0, 0.0, kind_2=4, grade_2=2, closed_con=2),
+            _node_feature(3, 2.0, 0.0, kind_2=8, grade_2=1, closed_con=3),
+        ],
+    )
+    write_geojson(
+        road_path,
+        [
+            _road_feature("to_cross", 1, 2, [(0.0, 0.0), (1.0, 0.0)]),
+            _road_feature("from_cross", 2, 3, [(1.0, 0.0), (2.0, 0.0)]),
+        ],
+    )
+
+    artifacts = run_step5_oneway_segment_completion(
+        step5_artifacts=_build_step5_artifacts(node_path, road_path),
+        out_root=out_root,
+        run_id="oneway_crossing_block",
+        debug=False,
+    )
+
+    road_props = _road_props_by_id(artifacts.refreshed_roads_path)
+    assert road_props["to_cross"]["segmentid"] != "1_3"
+    assert road_props["from_cross"]["segmentid"] != "1_3"
+    assert road_props["to_cross"]["segmentid"] != road_props["from_cross"]["segmentid"]
+    assert not any(row["segmentid"] == "1_3" for row in _read_csv_rows(artifacts.build_table_path))
+
+
+def test_oneway_completion_allows_t_junction_horizontal_traversal(tmp_path: Path) -> None:
+    node_path = tmp_path / "nodes.geojson"
+    road_path = tmp_path / "roads.geojson"
+    out_root = tmp_path / "out"
+
+    write_geojson(
+        node_path,
+        [
+            _node_feature(1, 0.0, 0.0, kind_2=8, grade_2=1, closed_con=1),
+            _node_feature(2, 1.0, 0.0, kind_2=2048, grade_2=2, closed_con=2),
+            _node_feature(3, 2.0, 0.0, kind_2=8, grade_2=1, closed_con=3),
+            _node_feature(4, 1.0, 1.0, kind_2=4, grade_2=2, closed_con=3),
+        ],
+    )
+    write_geojson(
+        road_path,
+        [
+            _road_feature("main_in", 1, 2, [(0.0, 0.0), (1.0, 0.0)]),
+            _road_feature("main_out", 2, 3, [(1.0, 0.0), (2.0, 0.0)]),
+            _road_feature("side", 2, 4, [(1.0, 0.0), (1.0, 1.0)]),
+        ],
+    )
+
+    artifacts = run_step5_oneway_segment_completion(
+        step5_artifacts=_build_step5_artifacts(node_path, road_path),
+        out_root=out_root,
+        run_id="oneway_t_horizontal",
+        debug=False,
+    )
+
+    road_props = _road_props_by_id(artifacts.refreshed_roads_path)
+    assert road_props["main_in"]["segmentid"] == "1_3"
+    assert road_props["main_out"]["segmentid"] == "1_3"
+    row = next(row for row in _read_csv_rows(artifacts.build_table_path) if row["segmentid"] == "1_3")
+    assert row["road_ids"] == "main_in,main_out"
+    assert row["through_node_ids"] == "2"
 
 
 def test_oneway_completion_builds_bidirectional_dead_end_leaf_segment(tmp_path: Path) -> None:

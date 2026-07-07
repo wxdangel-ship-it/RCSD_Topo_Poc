@@ -183,6 +183,13 @@ def run_t06_step2_extract_rcsd_segments(
         if parse_reason is not None:
             rejected_rows.append(_reject(segment_id, None, "parse", parse_reason))
             continue
+        junc_nodes = _order_swsd_junc_nodes_by_connectivity(
+            pair_nodes=pair_nodes,
+            junc_nodes=junc_nodes,
+            road_ids=_roads,
+            swsd_roads=swsd_roads,
+            swsd_node_canonicalizer=swsd_node_canonicalizer,
+        )
         special_junction_ids = _segment_special_junction_ids(
             [*pair_nodes, *junc_nodes],
             special_swsd_junction_types,
@@ -1663,6 +1670,77 @@ def _directed_reachable(adjacency: dict[str, set[str]], source: str, target: str
             seen.add(neighbor)
             queue.append(neighbor)
     return False
+
+
+def _order_swsd_junc_nodes_by_connectivity(
+    *,
+    pair_nodes: list[str],
+    junc_nodes: list[str],
+    road_ids: list[str],
+    swsd_roads: dict[str, dict[str, Any]],
+    swsd_node_canonicalizer: NodeCanonicalizer,
+) -> list[str]:
+    if len(pair_nodes) != 2 or len(junc_nodes) <= 1 or not road_ids:
+        return junc_nodes
+    adjacency: dict[str, set[str]] = defaultdict(set)
+    for road_id in road_ids:
+        road = swsd_roads.get(road_id)
+        if road is None:
+            continue
+        endpoints = _swsd_road_canonical_endpoints(road, swsd_node_canonicalizer)
+        if endpoints is None:
+            continue
+        source, target = endpoints
+        if source == target:
+            continue
+        adjacency[source].add(target)
+        adjacency[target].add(source)
+    try:
+        source = swsd_node_canonicalizer.canonicalize(pair_nodes[0])
+        target = swsd_node_canonicalizer.canonicalize(pair_nodes[1])
+        junc_canonical = [swsd_node_canonicalizer.canonicalize(node_id) for node_id in junc_nodes]
+    except ParseError:
+        return junc_nodes
+    path = _shortest_node_path(adjacency, source, target)
+    if not path:
+        return junc_nodes
+    path_index = {node_id: index for index, node_id in enumerate(path)}
+    if any(node_id not in path_index for node_id in junc_canonical):
+        return junc_nodes
+    return [
+        node_id
+        for _index, node_id in sorted(
+            ((path_index[canonical], node_id) for node_id, canonical in zip(junc_nodes, junc_canonical)),
+            key=lambda item: item[0],
+        )
+    ]
+
+
+def _shortest_node_path(adjacency: dict[str, set[str]], source: str, target: str) -> list[str]:
+    seen = {source}
+    previous: dict[str, str] = {}
+    queue: deque[str] = deque([source])
+    while queue:
+        node = queue.popleft()
+        if node == target:
+            break
+        for neighbor in sorted(adjacency.get(node, set())):
+            if neighbor in seen:
+                continue
+            seen.add(neighbor)
+            previous[neighbor] = node
+            queue.append(neighbor)
+    if target not in seen:
+        return []
+    path = [target]
+    node = target
+    while node != source:
+        node = previous.get(node, "")
+        if not node:
+            return []
+        path.append(node)
+    path.reverse()
+    return path
 
 
 def _relation_required_junc_nodes(junc_nodes: list[str], junc_kind2_exempt_nodes: list[str]) -> list[str]:

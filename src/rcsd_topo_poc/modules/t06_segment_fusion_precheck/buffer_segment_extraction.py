@@ -129,9 +129,15 @@ class BufferSegmentExtractor:
         pair_nodes = _canonical_ids(relation.rcsd_pair_nodes, self.node_canonicalizer)
         directed_nodes = _effective_directed_pair_nodes(pair_nodes, _canonical_ids(directed_pair_nodes or [], self.node_canonicalizer))
         junc_nodes = _canonical_ids(relation.rcsd_junc_nodes, self.node_canonicalizer)
+        ordered_corridor_nodes = _ordered_required_rcsd_nodes(
+            pair_nodes,
+            junc_nodes,
+            directed_nodes=directed_nodes,
+            require_directed_pair=require_directed_pair,
+        )
         required_nodes = pair_nodes
-        protected_optional_nodes = set(junc_nodes)
         optional_nodes = _canonical_ids([*junc_nodes, *optional_allowed_rcsd_nodes], self.node_canonicalizer)
+        protected_optional_nodes: set[str] = set(junc_nodes)
         relation_base_ids = set(_canonical_ids(list(all_relation_base_ids), self.node_canonicalizer))
         unexpected_base_ids = (
             set(_canonical_ids(list(unexpected_relation_base_ids or set()), self.node_canonicalizer))
@@ -149,7 +155,7 @@ class BufferSegmentExtractor:
         candidate_roads, excluded_roads = _restore_required_corridor_advance_roads(
             selected_roads=candidate_roads,
             excluded_roads=excluded_roads,
-            required_nodes=required_nodes,
+            required_nodes=ordered_corridor_nodes,
             pair_nodes=pair_nodes,
             directed_pair_nodes=directed_nodes,
             require_directed_pair=require_directed_pair,
@@ -209,9 +215,10 @@ class BufferSegmentExtractor:
             and 0 < visual_buffer_distance < cfg.buffer_distance_m
         ):
             internal_visual_buffer_geometry = segment_geometry.buffer(visual_buffer_distance)
+        corridor_anchor_nodes = ordered_corridor_nodes
         corridor_edges = _build_corridor_subgraph(
             pruned.retained_edges,
-            required_nodes,
+            corridor_anchor_nodes,
             pair_nodes,
             directed_nodes,
             reference_geometry=segment_geometry,
@@ -221,12 +228,36 @@ class BufferSegmentExtractor:
             require_directed_pair=require_directed_pair,
             require_bidirectional=require_bidirectional,
         )
+        if not require_directed_pair and not corridor_edges and corridor_anchor_nodes != required_nodes:
+            corridor_anchor_nodes = required_nodes
+            corridor_edges = _build_corridor_subgraph(
+                pruned.retained_edges,
+                corridor_anchor_nodes,
+                pair_nodes,
+                directed_nodes,
+                reference_geometry=segment_geometry,
+                reference_buffer_geometry=buffer_geometry,
+                max_mismatch_ratio=cfg.max_geometry_buffer_mismatch_ratio,
+                min_mismatch_length_m=cfg.min_geometry_buffer_mismatch_length_m,
+                require_directed_pair=require_directed_pair,
+                require_bidirectional=require_bidirectional,
+            )
         corridor_edges = _include_reachable_optional_terminal_paths(
             pruned.retained_edges,
             corridor_edges,
             optional_nodes=protected_optional_nodes,
             reference_geometry=segment_geometry,
         )
+        if require_directed_pair:
+            corridor_edges = _include_directed_semantic_junction_bridge_edges(
+                selected_edges,
+                corridor_edges,
+                required_nodes=set(required_nodes),
+                optional_nodes=set(junc_nodes),
+                pair_nodes=set(pair_nodes),
+                blocked_nodes=unexpected_base_ids - set(pruned.inner_nodes),
+                reference_geometry=segment_geometry,
+            )
         pre_supplement_nodes = _nodes_from_edges(corridor_edges)
         allowed_supplement_endpoint_nodes: set[str] = set()
         if not require_directed_pair:
@@ -246,7 +277,8 @@ class BufferSegmentExtractor:
         corridor_edges = _include_internal_corridor_edges(
             selected_edges,
             corridor_edges,
-            required_nodes=set(required_nodes),
+            required_nodes=set(corridor_anchor_nodes),
+            ordered_anchor_pairs=_ordered_anchor_pairs(corridor_anchor_nodes) if len(corridor_anchor_nodes) > 2 else set(),
             allowed_touch_nodes=internal_touch_nodes,
             reference_buffer_geometry=buffer_geometry,
             reference_visual_buffer_geometry=internal_visual_buffer_geometry,
@@ -254,7 +286,20 @@ class BufferSegmentExtractor:
             min_mismatch_length_m=cfg.min_geometry_buffer_mismatch_length_m,
             max_visual_mismatch_ratio=cfg.max_visual_consistency_mismatch_ratio,
             min_visual_mismatch_length_m=cfg.min_visual_consistency_mismatch_length_m,
+            allow_selected_required_pair_parallel_edges=require_directed_pair,
         )
+        required_leaf_endpoint_nodes: set[str] = set()
+        if not require_directed_pair:
+            corridor_edges, required_leaf_endpoint_nodes = _include_required_leaf_attach_edges(
+                selected_edges,
+                corridor_edges,
+                required_nodes=set(required_nodes),
+                pair_nodes=set(pair_nodes),
+                blocked_nodes=unexpected_base_ids - set(pruned.inner_nodes),
+                reference_buffer_geometry=buffer_geometry,
+                max_mismatch_ratio=cfg.max_geometry_buffer_mismatch_ratio,
+                min_mismatch_length_m=cfg.min_geometry_buffer_mismatch_length_m,
+            )
         corridor_nodes = _nodes_from_edges(corridor_edges)
         unexpected_mapped_semantic_nodes = sorted((unexpected_base_ids - set(pruned.inner_nodes)) & corridor_nodes)
         ok, reason, unexpected_endpoint_nodes = _retained_status(
@@ -264,7 +309,7 @@ class BufferSegmentExtractor:
             pair_nodes,
             directed_nodes,
             unexpected_mapped_semantic_nodes=unexpected_mapped_semantic_nodes,
-            allowed_endpoint_nodes=allowed_supplement_endpoint_nodes | protected_optional_nodes,
+            allowed_endpoint_nodes=allowed_supplement_endpoint_nodes | protected_optional_nodes | required_leaf_endpoint_nodes,
             require_directed_pair=require_directed_pair,
             require_bidirectional=require_bidirectional,
         )
@@ -463,22 +508,22 @@ def _restore_required_corridor_advance_roads(
         edge for edge in combined_graph.edges if edge.source in component_nodes and edge.target in component_nodes
     ]
     if require_directed_pair and len(directed_pair_nodes) == 2:
-        corridor_path = _shortest_directed_path_covering_nodes(
+        corridor_path = _ordered_edge_path_covering_nodes(
             component_edges,
-            directed_pair_nodes[0],
-            directed_pair_nodes[1],
             required_nodes,
+            directed=True,
             reference_geometry=reference_geometry,
         )
         corridor_edge_ids = set(corridor_path or [])
         if corridor_path is None:
             corridor_edge_ids = {edge.edge_id for edge in component_edges}
     else:
-        corridor_edge_ids = {
-            edge_id
-            for path in _minimum_terminal_edge_paths(component_edges, required_nodes, reference_geometry=reference_geometry)
-            for edge_id in path
-        }
+        ordered_path = _best_undirected_ordered_anchor_path(
+            component_edges,
+            required_nodes,
+            reference_geometry=reference_geometry,
+        )
+        corridor_edge_ids = set(ordered_path or [])
         if require_bidirectional and len(pair_nodes) == 2:
             source, target = pair_nodes
             for path in (
@@ -559,6 +604,13 @@ def _selected_graph_satisfies_required_corridor(
     components = _connected_components(_adjacency_from_edges(edges))
     if _select_component(components, required_nodes) is None:
         return False
+    ordered_path = _best_undirected_ordered_anchor_path(
+        edges,
+        required_nodes,
+        reference_geometry=reference_geometry,
+    )
+    if ordered_path is None:
+        return False
     if require_bidirectional:
         return _pair_nodes_bidirectionally_reachable(edges, pair_nodes)
     if not require_directed_pair:
@@ -566,11 +618,10 @@ def _selected_graph_satisfies_required_corridor(
     if len(directed_pair_nodes) != 2:
         return False
     return (
-        _shortest_directed_path_covering_nodes(
+        _ordered_edge_path_covering_nodes(
             edges,
-            directed_pair_nodes[0],
-            directed_pair_nodes[1],
             required_nodes,
+            directed=True,
             reference_geometry=reference_geometry,
         )
         is not None
@@ -808,12 +859,10 @@ def _build_corridor_subgraph(
     require_bidirectional: bool,
 ) -> list[Edge]:
     if require_directed_pair and len(pair_nodes) == 2:
-        source, target = _effective_directed_pair_nodes(pair_nodes, directed_pair_nodes)
-        path = _shortest_directed_path_covering_nodes(
+        path = _ordered_edge_path_covering_nodes(
             edges,
-            source,
-            target,
             required_nodes,
+            directed=True,
             reference_geometry=reference_geometry,
         )
         if path is None:
@@ -821,8 +870,13 @@ def _build_corridor_subgraph(
         return [edge for edge in edges if edge.edge_id in set(path)]
 
     selected_edge_ids: set[str] = set()
-    for path in _minimum_terminal_edge_paths(edges, required_nodes, reference_geometry=reference_geometry):
-        selected_edge_ids.update(path)
+    ordered_path = _best_undirected_ordered_anchor_path(
+        edges,
+        required_nodes,
+        reference_geometry=reference_geometry,
+    )
+    if ordered_path is not None:
+        selected_edge_ids.update(ordered_path)
 
     if len(pair_nodes) == 2:
         source, target = pair_nodes
@@ -840,6 +894,7 @@ def _build_corridor_subgraph(
             edges,
             selected_edges,
             required_nodes=set(required_nodes),
+            ordered_anchor_pairs=_ordered_anchor_pairs(required_nodes) if len(required_nodes) > 2 else set(),
             reference_buffer_geometry=reference_buffer_geometry,
             reference_visual_buffer_geometry=reference_visual_buffer_geometry,
             max_mismatch_ratio=max_mismatch_ratio,
@@ -951,6 +1006,109 @@ def _shortest_edge_path(
         if node == target:
             break
         for neighbor, weight, edge_id in adjacency.get(node, []):
+            next_distance = distance + weight
+            if next_distance >= distances.get(neighbor, float("inf")):
+                continue
+            distances[neighbor] = next_distance
+            previous[neighbor] = (node, edge_id)
+            sequence += 1
+            heapq.heappush(queue, (next_distance, sequence, neighbor))
+    if target not in distances:
+        return None
+
+    path: list[str] = []
+    node = target
+    while node != source:
+        prev = previous.get(node)
+        if prev is None:
+            return None
+        node, edge_id = prev
+        path.append(edge_id)
+    path.reverse()
+    return path
+
+
+def _best_undirected_ordered_anchor_path(
+    edges: list[Edge],
+    ordered_nodes: list[str],
+    *,
+    reference_geometry: BaseGeometry | None,
+) -> list[str] | None:
+    forward = _ordered_edge_path_covering_nodes(
+        edges,
+        ordered_nodes,
+        directed=False,
+        reference_geometry=reference_geometry,
+    )
+    reverse = _ordered_edge_path_covering_nodes(
+        edges,
+        list(reversed(ordered_nodes)),
+        directed=False,
+        reference_geometry=reference_geometry,
+    )
+    candidates = [path for path in (forward, reverse) if path is not None]
+    if not candidates:
+        return None
+    required = set(ordered_nodes)
+    return min(candidates, key=lambda path: _path_weight(edges, path, reference_geometry=reference_geometry, required_nodes=required))
+
+
+def _ordered_edge_path_covering_nodes(
+    edges: list[Edge],
+    ordered_nodes: list[str],
+    *,
+    directed: bool,
+    reference_geometry: BaseGeometry | None,
+) -> list[str] | None:
+    anchors = _unique_ids(ordered_nodes)
+    graph_nodes = _nodes_from_edges(edges)
+    if any(anchor not in graph_nodes for anchor in anchors):
+        return None
+    if len(anchors) < 2:
+        return []
+    required = set(anchors)
+    result: list[str] = []
+    for source, target in zip(anchors, anchors[1:]):
+        path = _shortest_anchor_edge_path(
+            edges,
+            source,
+            target,
+            directed=directed,
+            reference_geometry=reference_geometry,
+            required_nodes=required,
+            blocked_intermediate_nodes=required - {source, target},
+        )
+        if path is None:
+            return None
+        result.extend(path)
+    return result
+
+
+def _shortest_anchor_edge_path(
+    edges: list[Edge],
+    source: str,
+    target: str,
+    *,
+    directed: bool,
+    reference_geometry: BaseGeometry | None,
+    required_nodes: set[str],
+    blocked_intermediate_nodes: set[str],
+) -> list[str] | None:
+    adjacency = _weighted_adjacency(edges, directed=directed, reference_geometry=reference_geometry, required_nodes=required_nodes)
+    queue: list[tuple[float, int, str]] = []
+    sequence = 0
+    heapq.heappush(queue, (0.0, sequence, source))
+    distances: dict[str, float] = {source: 0.0}
+    previous: dict[str, tuple[str, str]] = {}
+    while queue:
+        distance, _sequence, node = heapq.heappop(queue)
+        if distance > distances.get(node, float("inf")):
+            continue
+        if node == target:
+            break
+        for neighbor, weight, edge_id in adjacency.get(node, []):
+            if neighbor in blocked_intermediate_nodes:
+                continue
             next_distance = distance + weight
             if next_distance >= distances.get(neighbor, float("inf")):
                 continue
@@ -1183,6 +1341,7 @@ def _include_internal_corridor_edges(
     selected_edges: list[Edge],
     *,
     required_nodes: set[str],
+    ordered_anchor_pairs: set[frozenset[str]] | None = None,
     allowed_touch_nodes: set[str] | None = None,
     reference_buffer_geometry: BaseGeometry | None,
     reference_visual_buffer_geometry: BaseGeometry | None = None,
@@ -1190,6 +1349,7 @@ def _include_internal_corridor_edges(
     min_mismatch_length_m: float,
     max_visual_mismatch_ratio: float = 0.1,
     min_visual_mismatch_length_m: float = 20.0,
+    allow_selected_required_pair_parallel_edges: bool = False,
 ) -> list[Edge]:
     retained_nodes = _nodes_from_edges(selected_edges)
     selected_edge_ids = {edge.edge_id for edge in selected_edges}
@@ -1201,7 +1361,15 @@ def _include_internal_corridor_edges(
             continue
         if allowed_touch_nodes is not None and edge.source not in allowed_touch_nodes and edge.target not in allowed_touch_nodes:
             continue
-        if edge.source in required_nodes and edge.target in required_nodes:
+        if (
+            edge.source in required_nodes
+            and edge.target in required_nodes
+            and frozenset((edge.source, edge.target)) not in (ordered_anchor_pairs or set())
+            and not (
+                allow_selected_required_pair_parallel_edges
+                and _has_direction_compatible_selected_parallel_edge(edge, selected_edges)
+            )
+        ):
             continue
         within_buffer_scope = _edge_within_buffer_scope(
             edge,
@@ -1221,6 +1389,28 @@ def _include_internal_corridor_edges(
         result.append(edge)
         selected_edge_ids.add(edge.edge_id)
     return result
+
+
+def _has_direction_compatible_selected_parallel_edge(edge: Edge, selected_edges: list[Edge]) -> bool:
+    edge_pair = frozenset((edge.source, edge.target))
+    edge_travel = _directed_travel_pairs(edge)
+    if not edge_travel:
+        return False
+    return any(
+        frozenset((selected.source, selected.target)) == edge_pair
+        and bool(edge_travel & _directed_travel_pairs(selected))
+        for selected in selected_edges
+    )
+
+
+def _directed_travel_pairs(edge: Edge) -> set[tuple[str, str]]:
+    direction = _coerce_int(edge.properties.get("direction")) if edge.properties else None
+    pairs: set[tuple[str, str]] = set()
+    if direction in {0, 1, 2}:
+        pairs.add((edge.source, edge.target))
+    if direction in {0, 1, 3}:
+        pairs.add((edge.target, edge.source))
+    return pairs
 
 
 def _include_connected_corridor_supplement_edges(
@@ -1270,9 +1460,14 @@ def _include_connected_corridor_supplement_edges(
             for path in _minimum_terminal_edge_paths(component_edges, boundary_nodes, reference_geometry=reference_geometry):
                 supplement_ids.update(path)
             continue
-        if allow_single_optional_boundary and len(boundary_nodes) >= 1 and set(boundary_nodes) & optional_nodes:
+        if allow_single_optional_boundary and len(boundary_nodes) == 1 and component & optional_nodes:
             component_edges = [edge for edge in supplement_edges if edge.source in component and edge.target in component]
-            supplement_ids.update(edge.edge_id for edge in component_edges)
+            if set(boundary_nodes) & optional_nodes:
+                supplement_ids.update(edge.edge_id for edge in component_edges)
+            else:
+                terminals = [*boundary_nodes, *sorted(component & optional_nodes)]
+                for path in _minimum_terminal_edge_paths(component_edges, terminals, reference_geometry=reference_geometry):
+                    supplement_ids.update(path)
             allowed_endpoint_nodes.update(_leaf_nodes(component_edges) - retained_nodes - required_nodes - optional_nodes)
     if not supplement_ids:
         return selected_edges, set()
@@ -1283,6 +1478,110 @@ def _include_connected_corridor_supplement_edges(
             result.append(edge)
             selected_edge_ids.add(edge.edge_id)
     return result, allowed_endpoint_nodes
+
+
+def _include_required_leaf_attach_edges(
+    edges: list[Edge],
+    selected_edges: list[Edge],
+    *,
+    required_nodes: set[str],
+    pair_nodes: set[str],
+    blocked_nodes: set[str],
+    reference_buffer_geometry: BaseGeometry | None,
+    max_mismatch_ratio: float,
+    min_mismatch_length_m: float,
+) -> tuple[list[Edge], set[str]]:
+    if reference_buffer_geometry is None or reference_buffer_geometry.is_empty or not selected_edges:
+        return selected_edges, set()
+    retained_nodes = _nodes_from_edges(selected_edges)
+    missing_required = required_nodes - retained_nodes - pair_nodes
+    if not missing_required:
+        return selected_edges, set()
+    full_adjacency = _adjacency_from_edges(edges)
+    leaf_required = {node_id for node_id in missing_required if len(full_adjacency.get(node_id, set())) <= 1}
+    if not leaf_required:
+        return selected_edges, set()
+
+    selected_edge_ids = {edge.edge_id for edge in selected_edges}
+    result = list(selected_edges)
+    allowed_endpoint_nodes: set[str] = set()
+    for edge in edges:
+        if edge.edge_id in selected_edge_ids:
+            continue
+        leaf_nodes = {edge.source, edge.target} & leaf_required
+        if not leaf_nodes:
+            continue
+        other_nodes = {edge.source, edge.target} - leaf_nodes
+        if len(leaf_nodes) != 1 or len(other_nodes) != 1:
+            continue
+        other_node = next(iter(other_nodes))
+        if other_node not in retained_nodes or other_node in blocked_nodes:
+            continue
+        if not _edge_within_buffer_scope(
+            edge,
+            reference_buffer_geometry=reference_buffer_geometry,
+            max_mismatch_ratio=max_mismatch_ratio,
+            min_mismatch_length_m=min_mismatch_length_m,
+        ):
+            continue
+        result.append(edge)
+        selected_edge_ids.add(edge.edge_id)
+        retained_nodes.update((edge.source, edge.target))
+        allowed_endpoint_nodes.update(leaf_nodes)
+    return result, allowed_endpoint_nodes
+
+
+def _include_directed_semantic_junction_bridge_edges(
+    edges: list[Edge],
+    selected_edges: list[Edge],
+    *,
+    required_nodes: set[str],
+    optional_nodes: set[str],
+    pair_nodes: set[str],
+    blocked_nodes: set[str],
+    reference_geometry: BaseGeometry | None,
+) -> list[Edge]:
+    if reference_geometry is None or reference_geometry.is_empty or not selected_edges or not optional_nodes:
+        return selected_edges
+    selected_edge_ids = {edge.edge_id for edge in selected_edges}
+    retained_nodes = _nodes_from_edges(selected_edges)
+    supplement_buffer = reference_geometry.buffer(CONNECTED_CORRIDOR_SUPPLEMENT_BUFFER_M)
+    supplement_edges = [
+        edge
+        for edge in edges
+        if edge.edge_id not in selected_edge_ids
+        and not (edge.source in required_nodes and edge.target in required_nodes)
+        and _edge_within_buffer_scope(
+            edge,
+            reference_buffer_geometry=supplement_buffer,
+            max_mismatch_ratio=CONNECTED_CORRIDOR_SUPPLEMENT_MAX_OUTSIDE_RATIO,
+            min_mismatch_length_m=CONNECTED_CORRIDOR_SUPPLEMENT_MAX_OUTSIDE_LENGTH_M,
+        )
+    ]
+    supplement_edges = [
+        edge for edge in supplement_edges if edge.source not in blocked_nodes and edge.target not in blocked_nodes
+    ]
+    supplement_ids: set[str] = set()
+    for component in _connected_components(_adjacency_from_edges(supplement_edges)):
+        boundary_nodes = sorted(component & retained_nodes)
+        boundary_node_set = set(boundary_nodes)
+        if (
+            len(boundary_nodes) < 2
+            or not (boundary_node_set & optional_nodes)
+            or not (boundary_node_set & pair_nodes)
+        ):
+            continue
+        component_edges = [edge for edge in supplement_edges if edge.source in component and edge.target in component]
+        for path in _minimum_terminal_edge_paths(component_edges, boundary_nodes, reference_geometry=reference_geometry):
+            supplement_ids.update(path)
+    if not supplement_ids:
+        return selected_edges
+    result = list(selected_edges)
+    for edge in edges:
+        if edge.edge_id in supplement_ids and edge.edge_id not in selected_edge_ids:
+            result.append(edge)
+            selected_edge_ids.add(edge.edge_id)
+    return result
 
 
 def _edge_within_buffer_scope(
@@ -1352,11 +1651,10 @@ def _retained_status(
         return False, "unexpected_mapped_semantic_nodes", []
     if require_bidirectional and not _pair_nodes_bidirectionally_reachable(retained_edges, pair_nodes):
         return False, "rcsd_not_bidirectional_for_swsd_dual", []
-    expected_endpoint_nodes = set(required_nodes) - set(pair_nodes)
     unexpected_endpoint_nodes = _unexpected_endpoint_nodes(
         retained_edges,
         pair_nodes,
-        allowed_endpoint_nodes=set(allowed_endpoint_nodes) | expected_endpoint_nodes,
+        allowed_endpoint_nodes=set(allowed_endpoint_nodes),
     )
     if unexpected_endpoint_nodes:
         return False, "unexpected_retained_endpoint_nodes", unexpected_endpoint_nodes
@@ -1505,6 +1803,26 @@ def _pair_nodes_reachable_in_order(edges: list[Edge], pair_nodes: list[str]) -> 
     source, target = pair_nodes
     adjacency = _directed_adjacency_from_edges(edges)
     return _directed_reachable(adjacency, source, target)
+
+
+def _ordered_required_rcsd_nodes(
+    pair_nodes: list[str],
+    junc_nodes: list[str],
+    *,
+    directed_nodes: list[str],
+    require_directed_pair: bool,
+) -> list[str]:
+    if len(pair_nodes) != 2:
+        return _unique_ids([*pair_nodes, *junc_nodes])
+    if require_directed_pair and len(directed_nodes) == 2:
+        if directed_nodes[0] == pair_nodes[1] and directed_nodes[1] == pair_nodes[0]:
+            return _unique_ids([directed_nodes[0], *reversed(junc_nodes), directed_nodes[1]])
+        return _unique_ids([directed_nodes[0], *junc_nodes, directed_nodes[1]])
+    return _unique_ids([pair_nodes[0], *junc_nodes, pair_nodes[1]])
+
+
+def _ordered_anchor_pairs(ordered_nodes: list[str]) -> set[frozenset[str]]:
+    return {frozenset((source, target)) for source, target in zip(ordered_nodes, ordered_nodes[1:])}
 
 
 def _effective_directed_pair_nodes(pair_nodes: list[str], directed_pair_nodes: list[str]) -> list[str]:

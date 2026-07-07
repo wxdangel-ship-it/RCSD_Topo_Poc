@@ -64,6 +64,9 @@ from .step3_output_utils import (
     unreplaced_rcsd_road_rows as _unreplaced_rcsd_road_rows,
 )
 from .step3_relation_node_map import backfill_relation_node_maps_from_attachment_audit, sync_retained_swsd_carrier_mainnodes
+from .step3_replacement_plan_reader import read_replacement_plan_rows as _read_replacement_plan_rows
+from .step3_unreplaced_bridge_fallback import apply_unreplaced_second_degree_bridge_fallback
+from .step3_special_junction_internal import apply_special_junction_internal_swsd_replacement as _apply_sji
 from .step3_semantic_junction_groups import (
     SEMANTIC_JUNCTION_GROUP_FIELD,
     STEP3_SEMANTIC_JUNCTION_GROUP_FIELDS,
@@ -282,6 +285,9 @@ def run_t06_step3_segment_replacement(
     for road_id, segment_ids in special_added_road_to_segments.items():
         if road_id in rcsd_road_by_id:
             _append_unique_segments(added_road_to_segments[road_id], segment_ids)
+    special_internal_stats = _apply_sji(
+        special_groups, passed_unit_ids, swsd_roads, swsd_nodes, removed_road_to_segments, removed_node_to_segments, added_road_to_segments
+    )
 
     retained_swsd_roads = [road for road in swsd_roads if _feature_id(road) not in removed_road_to_segments]
     retained_swsd_endpoint_node_stats = ensure_retained_swsd_road_endpoint_nodes(
@@ -365,6 +371,15 @@ def run_t06_step3_segment_replacement(
             swsd_road_by_id=swsd_road_by_id,
         )
         removed_road_to_segments.update(retained_swsd_excluded_stats.get("extra_removed_road_to_segments", {}))
+        special_internal_stats = _apply_sji(
+            special_groups, passed_unit_ids, swsd_roads, swsd_nodes, removed_road_to_segments, removed_node_to_segments, added_road_to_segments
+        )
+    second_degree_bridge_stats = apply_unreplaced_second_degree_bridge_fallback(
+        passed_units,
+        rcsd_roads=rcsd_roads,
+        canonicalizer=canonicalizer,
+        added_road_to_segments=added_road_to_segments,
+    )
     _flatten_node_mainnode_chains(rcsd_nodes, source_field_name=source_field_name)
     generated_endpoint_node_stats = ensure_added_rcsd_road_endpoint_nodes(
         units=passed_units,
@@ -463,13 +478,6 @@ def run_t06_step3_segment_replacement(
     replacement_unit_rows = [feature(_replacement_unit_row(unit), unit.geometry) for unit in units]
     removed_road_rows = _change_rows(removed_road_to_segments, "road", swsd_source_value, "replaced_swsd_segment")
     removed_node_rows = _change_rows(removed_node_to_segments, "node", swsd_source_value, "removed_swsd_road_endpoint")
-    added_road_rows = _change_rows(added_road_to_segments, "road", rcsd_source_value, "retained_rcsd_segment_road")
-    added_node_rows = _change_rows(added_node_to_segments, "node", rcsd_source_value, "retained_rcsd_segment_node")
-    unreplaced_rcsd_road_rows = _unreplaced_rcsd_road_rows(
-        rcsd_roads=rcsd_roads,
-        added_road_ids=set(added_road_to_segments),
-        source_value=rcsd_source_value,
-    )
     collision_rows = _id_collision_rows(
         retained_swsd_road_ids=_feature_id_set(frcsd_roads, source_field_name, swsd_source_value),
         retained_swsd_node_ids=_feature_id_set(frcsd_nodes, source_field_name, swsd_source_value),
@@ -530,6 +538,13 @@ def run_t06_step3_segment_replacement(
             added_rcsd_road_ids=set(added_road_to_segments),
             added_rcsd_node_ids=set(added_node_to_segments),
         )
+    added_road_rows = _change_rows(added_road_to_segments, "road", rcsd_source_value, "retained_rcsd_segment_road")
+    added_node_rows = _change_rows(added_node_to_segments, "node", rcsd_source_value, "retained_rcsd_segment_node")
+    unreplaced_rcsd_road_rows = _unreplaced_rcsd_road_rows(
+        rcsd_roads=rcsd_roads,
+        added_road_ids=set(added_road_to_segments),
+        source_value=rcsd_source_value,
+    )
     semantic_junction_group_rows, semantic_junction_group_stats = build_semantic_junction_groups(
         step2_replaceable_path=step2_replaceable_path,
         frcsd_nodes=frcsd_nodes,
@@ -657,116 +672,50 @@ def run_t06_step3_segment_replacement(
             "detached_junc_retained_swsd_road_count": sum(len(unit.retained_detached_swsd_road_ids) for unit in passed_units),
             "topology_supplement_retained_segment_count": topology_supplement_stats["affected_segment_count"],
             "topology_supplement_retained_swsd_road_count": topology_supplement_stats["retained_swsd_road_count"],
-            "topology_supplement_materialized_candidate_road_count": topology_supplement_materialized_stats[
-                "candidate_road_count"
-            ],
-            "topology_supplement_materialized_rcsd_road_count": topology_supplement_materialized_stats[
-                "materialized_road_count"
-            ],
-            "topology_supplement_materialized_missing_attachment_node_count": topology_supplement_materialized_stats[
-                "missing_attachment_node_count"
-            ],
-            "topology_supplement_formal_body_retained_restored_count": topology_supplement_materialized_stats.get(
-                "formal_body_retained_restored_count", 0
-            ),
+            "topology_supplement_materialized_candidate_road_count": topology_supplement_materialized_stats["candidate_road_count"],
+            "topology_supplement_materialized_rcsd_road_count": topology_supplement_materialized_stats["materialized_road_count"],
+            "topology_supplement_materialized_missing_attachment_node_count": topology_supplement_materialized_stats["missing_attachment_node_count"],
+            "topology_supplement_formal_body_retained_restored_count": topology_supplement_materialized_stats.get("formal_body_retained_restored_count", 0),
             "removed_swsd_node_preserved_by_retained_road_count": preserved_removed_node_count,
             "removed_swsd_road_count": len(removed_road_to_segments),
             "removed_swsd_node_count": len(removed_node_to_segments),
-            "retained_swsd_missing_endpoint_node_generated_count": retained_swsd_endpoint_node_stats[
-                "generated_node_count"
-            ],
+            "retained_swsd_missing_endpoint_node_generated_count": retained_swsd_endpoint_node_stats["generated_node_count"],
             "added_rcsd_road_count": len(added_road_to_segments),
             "added_rcsd_node_count": len(added_node_to_segments),
-            "post_advance_right_attachment_added_road_count": post_advance_right_attachment_stats[
-                "added_road_count"
-            ],
-            "post_advance_right_attachment_component_count": post_advance_right_attachment_stats[
-                "component_count"
-            ],
-            "post_advance_right_attachment_attached_road_count": post_advance_right_attachment_stats[
-                "attached_road_count"
-            ],
-            "post_advance_right_swsd_carrier_retained_road_count": post_advance_right_swsd_carrier_stats[
-                "retained_road_count"
-            ],
-            "post_advance_right_mixed_boundary_component_count": post_advance_right_attachment_stats[
-                "mixed_boundary_component_count"
-            ],
-            "post_advance_right_paired_advance_road_count": post_advance_right_attachment_stats[
-                "paired_advance_road_count"
-            ],
-            "post_advance_right_midroad_split_original_road_count": post_advance_right_attachment_stats[
-                "midroad_split_original_road_count"
-            ],
-            "post_advance_right_midroad_split_road_count": post_advance_right_attachment_stats[
-                "midroad_split_road_count"
-            ],
-            "post_advance_right_midroad_attached_road_count": post_advance_right_attachment_stats[
-                "midroad_attached_road_count"
-            ],
-            "post_advance_right_swsd_carrier_rcsd_split_original_road_count": post_advance_right_attachment_stats[
-                "swsd_carrier_split_original_road_count"
-            ],
-            "post_advance_right_swsd_carrier_rcsd_split_road_count": post_advance_right_attachment_stats[
-                "swsd_carrier_split_road_count"
-            ],
-            "post_advance_right_swsd_carrier_rcsd_generated_node_count": post_advance_right_attachment_stats[
-                "swsd_carrier_generated_node_count"
-            ],
-            "post_advance_right_swsd_carrier_snapped_node_count": post_advance_right_attachment_stats[
-                "swsd_carrier_snapped_node_count"
-            ],
+            "post_advance_right_attachment_added_road_count": post_advance_right_attachment_stats["added_road_count"],
+            "post_advance_right_attachment_component_count": post_advance_right_attachment_stats["component_count"],
+            "post_advance_right_attachment_attached_road_count": post_advance_right_attachment_stats["attached_road_count"],
+            "post_advance_right_swsd_carrier_retained_road_count": post_advance_right_swsd_carrier_stats["retained_road_count"],
+            "post_advance_right_mixed_boundary_component_count": post_advance_right_attachment_stats["mixed_boundary_component_count"],
+            "post_advance_right_paired_advance_road_count": post_advance_right_attachment_stats["paired_advance_road_count"],
+            "post_advance_right_midroad_split_original_road_count": post_advance_right_attachment_stats["midroad_split_original_road_count"],
+            "post_advance_right_midroad_split_road_count": post_advance_right_attachment_stats["midroad_split_road_count"],
+            "post_advance_right_midroad_attached_road_count": post_advance_right_attachment_stats["midroad_attached_road_count"],
+            "post_advance_right_swsd_carrier_rcsd_split_original_road_count": post_advance_right_attachment_stats["swsd_carrier_split_original_road_count"],
+            "post_advance_right_swsd_carrier_rcsd_split_road_count": post_advance_right_attachment_stats["swsd_carrier_split_road_count"],
+            "post_advance_right_swsd_carrier_rcsd_generated_node_count": post_advance_right_attachment_stats["swsd_carrier_generated_node_count"],
+            "post_advance_right_swsd_carrier_snapped_node_count": post_advance_right_attachment_stats["swsd_carrier_snapped_node_count"],
             "generated_missing_rcsd_endpoint_node_count": generated_endpoint_node_stats["generated_node_count"],
-            "rcsd_advance_right_closure_candidate_road_count": adv_closure_stats[
-                "candidate_road_count"
-            ],
-            "rcsd_advance_right_closure_repaired_endpoint_count": adv_closure_stats[
-                "repaired_endpoint_count"
-            ],
-            "rcsd_advance_right_closure_failed_endpoint_count": adv_closure_stats[
-                "failed_endpoint_count"
-            ],
-            "generated_rcsd_endpoint_node_geometry_synced_count": generated_endpoint_geometry_sync_stats[
-                "synced_node_count"
-            ],
-            "generated_rcsd_endpoint_node_geometry_conflict_count": generated_endpoint_geometry_sync_stats[
-                "conflict_node_count"
-            ],
-            "generated_rcsd_endpoint_road_geometry_snapped_count": generated_endpoint_geometry_sync_stats[
-                "snapped_road_endpoint_count"
-            ],
+            "rcsd_advance_right_closure_candidate_road_count": adv_closure_stats["candidate_road_count"],
+            "rcsd_advance_right_closure_repaired_endpoint_count": adv_closure_stats["repaired_endpoint_count"],
+            "rcsd_advance_right_closure_failed_endpoint_count": adv_closure_stats["failed_endpoint_count"],
+            "generated_rcsd_endpoint_node_geometry_synced_count": generated_endpoint_geometry_sync_stats["synced_node_count"],
+            "generated_rcsd_endpoint_node_geometry_conflict_count": generated_endpoint_geometry_sync_stats["conflict_node_count"],
+            "generated_rcsd_endpoint_road_geometry_snapped_count": generated_endpoint_geometry_sync_stats["snapped_road_endpoint_count"],
             "advance_right_contract_candidate_road_count": right_attach_contract_stats["candidate_road_count"],
-            "advance_right_contract_retained_candidate_road_count": right_attach_contract_stats[
-                "retained_candidate_road_count"
-            ],
-            "advance_right_contract_swsd_mainnode_normalized_node_count": right_attach_contract_stats[
-                "swsd_mainnode_normalized_node_count"
-            ],
+            "advance_right_contract_retained_candidate_road_count": right_attach_contract_stats["retained_candidate_road_count"],
+            "advance_right_contract_swsd_mainnode_normalized_node_count": right_attach_contract_stats["swsd_mainnode_normalized_node_count"],
             "advance_right_contract_swsd_node_snapped_count": right_attach_contract_stats["swsd_node_snapped_count"],
             "advance_right_contract_rcsd_node_generated_count": right_attach_contract_stats["rcsd_node_generated_count"],
-            "advance_right_contract_rcsd_split_original_road_count": right_attach_contract_stats[
-                "rcsd_split_original_road_count"
-            ],
+            "advance_right_contract_rcsd_split_original_road_count": right_attach_contract_stats["rcsd_split_original_road_count"],
             "advance_right_contract_rcsd_split_road_count": right_attach_contract_stats["rcsd_split_road_count"],
             "advance_right_contract_audit_row_count": len(right_attach_contract_stats["audit_rows"]),
-            "advance_right_attachment_swsd_mainnode_synced_count": attachment_mainnode_sync_stats[
-                "synced_node_count"
-            ],
-            "retained_swsd_attachment_candidate_road_count": retained_swsd_attach_contract_stats[
-                "candidate_road_count"
-            ],
-            "retained_swsd_attachment_candidate_endpoint_count": retained_swsd_attach_contract_stats[
-                "candidate_endpoint_count"
-            ],
-            "retained_swsd_attachment_swsd_node_snapped_count": retained_swsd_attach_contract_stats[
-                "swsd_node_snapped_count"
-            ],
-            "retained_swsd_attachment_rcsd_node_generated_count": retained_swsd_attach_contract_stats[
-                "rcsd_node_generated_count"
-            ],
-            "retained_swsd_attachment_rcsd_split_original_road_count": retained_swsd_attach_contract_stats[
-                "rcsd_split_original_road_count"
-            ],
+            "advance_right_attachment_swsd_mainnode_synced_count": attachment_mainnode_sync_stats["synced_node_count"],
+            "retained_swsd_attachment_candidate_road_count": retained_swsd_attach_contract_stats["candidate_road_count"],
+            "retained_swsd_attachment_candidate_endpoint_count": retained_swsd_attach_contract_stats["candidate_endpoint_count"],
+            "retained_swsd_attachment_swsd_node_snapped_count": retained_swsd_attach_contract_stats["swsd_node_snapped_count"],
+            "retained_swsd_attachment_rcsd_node_generated_count": retained_swsd_attach_contract_stats["rcsd_node_generated_count"],
+            "retained_swsd_attachment_rcsd_split_original_road_count": retained_swsd_attach_contract_stats["rcsd_split_original_road_count"],
             "retained_swsd_attachment_rcsd_split_road_count": retained_swsd_attach_contract_stats[
                 "rcsd_split_road_count"
             ],
@@ -795,6 +744,8 @@ def run_t06_step3_segment_replacement(
             **retained_carrier_mainnode_sync_stats,
             **semantic_junction_group_stats,
             **gcf_stats,
+            **second_degree_bridge_stats,
+            **special_internal_stats,
             **semantic_junction_topology_stats,
             **topology_connectivity_summary,
             "outputs": {
@@ -893,16 +844,6 @@ def _resolve_replacement_plan_path(
         if path.is_file():
             return path
     return None
-
-
-def _read_replacement_plan_rows(path: Path | None) -> list[dict[str, Any]]:
-    if path is None:
-        return []
-    if path.suffix.lower() == ".json":
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        features = payload.get("features", []) if isinstance(payload, dict) else []
-        return [{"properties": dict(item.get("properties") or {}), "geometry": item.get("geometry")} for item in features]
-    return read_features(path)
 
 
 def _replacement_plan_standard_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:

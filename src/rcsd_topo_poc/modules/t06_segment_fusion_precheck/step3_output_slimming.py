@@ -71,6 +71,8 @@ COMPAT_TOP_LEVEL_KEYS = [
     "replacement_unit_count",
     "replacement_unit_success_count",
     "replacement_unit_failure_count",
+    "special_junction_internal_swsd_group_count",
+    "special_junction_internal_swsd_removed_road_count",
     "removed_swsd_road_count",
     "removed_swsd_node_count",
     "added_rcsd_road_count",
@@ -175,6 +177,8 @@ def _compact_summary(*, payload: dict[str, Any], detail_path: Path, manifest_pat
         "final_frcsd": _section(payload, [
             "frcsd_road_count",
             "frcsd_node_count",
+            "special_junction_internal_swsd_group_count",
+            "special_junction_internal_swsd_removed_road_count",
             "removed_swsd_road_count",
             "removed_swsd_node_count",
             "added_rcsd_road_count",

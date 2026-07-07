@@ -115,6 +115,38 @@ def test_single_graph_retry_rejects_long_detour_even_when_path_touches_50m_buffe
     assert outcome is None
 
 
+def test_single_graph_retry_does_not_bypass_required_junction_nodes() -> None:
+    retry = SingleGraphConnectivityRetry(
+        rcsd_road_features=[
+            {
+                "properties": {"id": "direct", "snodeid": 10, "enodeid": 20, "direction": 2},
+                "geometry": LineString([(0, 0), (100, 0)]),
+            },
+            {
+                "properties": {"id": "junc_stub", "snodeid": 10, "enodeid": 30, "direction": 2},
+                "geometry": LineString([(0, 0), (50, 10)]),
+            },
+        ],
+        rcsd_node_features=_nodes([10, 20, 30]),
+    )
+
+    outcome = retry.retry(
+        LineString([(0, 0), (100, 0)]),
+        RelationCheck(True, ["10", "20"], ["30"]),
+        [],
+        set(),
+        ["10", "20"],
+        "0-1单",
+        "single",
+        _failed_result("retained_geometry_outside_swsd_buffer_scope"),
+        {},
+        BufferExtractionConfig(),
+        2.5,
+    )
+
+    assert outcome is None
+
+
 def test_dual_graph_retry_keeps_two_directed_corridors_that_cross_50m_core() -> None:
     retry = SingleGraphConnectivityRetry(
         rcsd_road_features=[

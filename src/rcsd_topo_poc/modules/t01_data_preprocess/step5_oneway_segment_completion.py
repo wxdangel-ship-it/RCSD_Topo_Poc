@@ -24,6 +24,7 @@ from rcsd_topo_poc.modules.t01_data_preprocess.s2_baseline_refresh import (
     _build_mainnode_groups,
     _load_nodes_and_roads,
 )
+from rcsd_topo_poc.modules.t01_data_preprocess.segment_shape_control import apply_segment_shape_control
 from rcsd_topo_poc.modules.t01_data_preprocess.step1_pair_poc import (
     _coerce_int,
     _find_repo_root,
@@ -1923,6 +1924,15 @@ def run_step5_oneway_segment_completion(
         road_properties_map=road_properties_map,
         physical_to_semantic=physical_to_semantic,
     )
+    shape_control_summary = apply_segment_shape_control(
+        nodes=nodes,
+        roads=roads,
+        node_properties_map=node_properties_map,
+        road_properties_map=road_properties_map,
+        mainnode_groups=mainnode_groups,
+        physical_to_semantic=physical_to_semantic,
+        used_segmentids=used_segmentids,
+    )
 
     group_to_allowed_road_ids = _build_group_to_allowed_road_ids(
         roads=roads,
@@ -2010,6 +2020,7 @@ def run_step5_oneway_segment_completion(
         "residual_corridor_fallback_summary": residual_corridor_summary,
         "final_fallback_summary": final_fallback_summary,
         "side_attachment_merge_summary": side_attachment_merge_summary,
+        "shape_control_summary": shape_control_summary,
         "built_segment_count": len(all_built_segments),
         "built_segment_road_count": sum(len(segment.road_ids) for segment in all_built_segments),
         "road_kind_1_built_road_count": sum(
@@ -2029,6 +2040,8 @@ def run_step5_oneway_segment_completion(
         "final_fallback_road_count": final_fallback_summary["new_segment_road_count"],
         "side_attachment_merged_segment_count": side_attachment_merge_summary["merged_segment_count"],
         "side_attachment_merged_road_count": side_attachment_merge_summary["merged_road_count"],
+        "shape_control_split_segment_count": shape_control_summary["split_segment_count"],
+        "shape_control_split_road_count": shape_control_summary["split_road_count"],
         "unsegmented_road_count": unsegmented_summary["unsegmented_road_count"],
         "unsegmented_excluded_formway_128_count": unsegmented_summary["excluded_formway_128_count"],
         "unsegmented_formway_bit7_or_bit8_count": unsegmented_summary[

@@ -391,6 +391,17 @@
     - 写入 `side_attachment_merged_into_segmentid / side_attachment_merge_distance_m / side_attachment_merge_nodes`
   - 普通 `0-0双` 候选 Segment 不作为被并入对象，避免跨主走廊级联合并
   - `oneway_segment_summary.json` 必须输出 `side_attachment_merge_summary`、`side_attachment_merged_segment_count`、`side_attachment_merged_road_count`、候选连通分量数、挂接不足跳过数与多主 Segment 仲裁审计
+- Segment 形态控制：
+  - 在 final side-attachment merge 之后、`Step6` 之前执行
+  - 只处理已构成的双向 Segment；`sgrade in {0-0单,0-1单,0-2单}` 不进入形态控制拆分
+  - 仅使用已启用字段：`closed_con`、`kind_2`、`grade_2`、Road `kind` 前两位道路等级、road geometry、working mainnode 映射
+  - 内部节点不包括当前 Segment pair 两端 endpoint
+  - 内部语义节点必须满足 `closed_con in {2,3}`、`grade_2 >= 1`、`kind_2 in {4,64,128,2048}`，且全局有效 incident road 数不少于 `3`
+  - 当 Segment 在该节点两侧的进入 / 离开 road 转角大于 `60°` 时，必须切分，并写 `shape_control_split_reason = internal_turn_angle_conflict`
+  - 当源 Segment 仅由 `2` 条 road 构成，且该节点两侧 road 的最高道路等级不一致时，必须切分，并写 `shape_control_split_reason = internal_road_kind_level_conflict`；多 road 长链路不得仅因局部道路等级差异触发切分，除非同时命中转角规则
+  - 形态控制不得按 Segment 长度单独触发拆分；近直行、同等级、拓扑连续的长 Segment 必须保留
+  - 拆分后 road 必须保留 `pre_shape_control_segmentid / pre_shape_control_sgrade / pre_shape_control_segment_build_source`，并写 `shape_control_source_segmentid / shape_control_split_node_ids / shape_control_split_reason`；切分审计必须包含 `source_segment_road_count`
+  - `oneway_segment_summary.json` 必须输出 `shape_control_summary`、`shape_control_split_segment_count` 与 `shape_control_split_road_count`
 - 新增 runner 对外产物：
   - `oneway_segment_roads.gpkg`
   - `oneway_segment_build_table.csv`

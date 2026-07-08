@@ -4,6 +4,8 @@
 
 T01 输出的每个 Segment 都必须能解释端点来源、road body 归属、构段阶段、方向属性和冲突状态。Step1 candidate 不能被当作成立 Segment；只有 validated pair、单向补段或受控 fallback 才能进入最终构段结果。
 
+Step6 前形态控制造成的 Segment 拆分必须能解释到内部语义节点、转角或道路等级证据；不得以长度作为唯一理由拆分。
+
 ## 2. GIS 与拓扑要求
 
 - CRS 必须在输入、working layers 和输出之间保持一致；需要坐标变换时必须显式记录，不允许 silent fix。
@@ -21,7 +23,7 @@ T01 输出的每个 Segment 都必须能解释端点来源、road body 归属、
 
 ## 4. 诊断质量
 
-`debug=true` 可以增加中间阶段、审计图层和性能诊断，但不得改变最终业务结果。trunk gate、side gate、T-junction gate、endpoint pool、same-stage arbitration 的拒绝原因必须能在证据中定位。
+`debug=true` 可以增加中间阶段、审计图层和性能诊断，但不得改变最终业务结果。trunk gate、side gate、T-junction gate、endpoint pool、same-stage arbitration、segment shape control 的拒绝 / 拆分原因必须能在证据中定位。
 
 ## 5. 性能要求
 

@@ -225,9 +225,14 @@ def test_unreplaced_rcsd_attribution_uses_formal_funnel_priority(tmp_path: Path,
     assert by_id["rr_plan_blocked_unreferenced"]["final_attribution_class"] == "5_replaceable_scope_unreplaced"
     assert by_id["rr_plan_blocked_unreferenced"]["final_attribution_subclass"] == "5_plan_blocked"
     assert by_id["rr_plan_blocked_unreferenced"]["final_attribution_confidence"] == "approximate"
-    assert by_id["rr_replaced_unreferenced"]["final_attribution_class"] == "5_replaceable_scope_unreplaced"
-    assert by_id["rr_replaced_unreferenced"]["final_attribution_subclass"] == "5_replaceable_scope_not_consumed"
+    assert by_id["rr_replaced_unreferenced"]["final_attribution_class"] == (
+        "6_unattributed_manual_audit_without_dominant_class"
+    )
+    assert by_id["rr_replaced_unreferenced"]["final_attribution_subclass"] == (
+        "6_candidate_only_post_replacement_review"
+    )
     assert by_id["rr_replaced_unreferenced"]["final_attribution_basis"] == "approx_candidate_only_after_segment_replaced"
+    assert by_id["rr_replaced_unreferenced"]["ppt_attribution_class"] == "6_manual_audit"
     assert by_id["rr_replaced_unreferenced"]["ppt_review_flag"] == "candidate_only_post_replacement_review"
     assert by_id["rr_required_disconnected"]["final_attribution_class"] == "3_evidence_scope_relation_incomplete"
     assert by_id["rr_required_disconnected"]["final_attribution_subclass"] == "required_semantic_nodes_not_connected_in_buffer"
@@ -252,12 +257,14 @@ def test_unreplaced_rcsd_attribution_uses_formal_funnel_priority(tmp_path: Path,
         "2_swsd_scope_no_t06_evidence": 3,
         "3_evidence_scope_relation_incomplete": 2,
         "4_relation_scope_not_replaceable": 3,
-        "5_replaceable_scope_unreplaced": 3,
+        "5_replaceable_scope_unreplaced": 2,
+        "6_unattributed_manual_audit_without_dominant_class": 1,
     }
     assert {item["value"]: item["count"] for item in summary["by_ppt_attribution_class"]} == {
-        "1_segment_rcsd_quality_unreplaceable": 6,
+        "1_segment_rcsd_quality_unreplaceable": 5,
         "2_segment_replacement_prerequisite_unsatisfied": 5,
         "3_rcsd_outside_segment_scope": 1,
+        "6_manual_audit": 1,
     }
     assert {item["value"]: item["count"] for item in summary["by_ppt_review_flag"]} == {
         "": 10,

@@ -54,6 +54,8 @@ STEP3_PARTIAL_STATUSES = {"replaced+retained_swsd", "partial_replaced"}
 STEP3_SUCCESS_STATUSES = {"replaced", "replaced+retained_swsd", "retained_swsd"}
 STEP3_REPLACED_STATUSES = {"replaced", "replaced+retained_swsd", "failed"}
 CANDIDATE_ONLY_POST_REPLACEMENT_REVIEW_FLAG = "candidate_only_post_replacement_review"
+CANDIDATE_ONLY_MANUAL_AUDIT_CLASS = "6_unattributed_manual_audit_without_dominant_class"
+CANDIDATE_ONLY_MANUAL_AUDIT_SUBCLASS = "6_candidate_only_post_replacement_review"
 
 PRIMARY_BUFFER_M = 20.0
 PRIMARY_MIN_COVER_RATIO = 0.5
@@ -1046,12 +1048,12 @@ def _segment_based_final_class(
     ) and not _collect([segment_id], problem_reason_by_segment):
         if _has_successful_step3_relation(segment_id, step3_status_by_segment):
             return {
-                "class_code": "5_replaceable_scope_unreplaced",
-                "subclass": _class5_subclass([segment_id], plan_status_by_segment, step3_status_by_segment),
-                "owner": "T06_algorithm_strategy",
+                "class_code": CANDIDATE_ONLY_MANUAL_AUDIT_CLASS,
+                "subclass": CANDIDATE_ONLY_MANUAL_AUDIT_SUBCLASS,
+                "owner": "manual_audit_candidate_only_after_replacement",
                 "reason": (
                     "RCSDRoad 仅通过候选/几何范围关联到已替换或已保留闭合 Segment，未被 replacement "
-                    "unit 或 plan 精确引用，保留正式归因并标记为人工后审风险项。"
+                    "unit 或 plan 精确引用；该类不再计为确认的 05 未替换，保留人工后审风险项。"
                 ),
                 "basis": "approx_candidate_only_after_segment_replaced",
                 "review_flag": CANDIDATE_ONLY_POST_REPLACEMENT_REVIEW_FLAG,
@@ -1358,7 +1360,9 @@ def _build_summary(
             "road-level exact plan/unit evidence first; otherwise choose the geometric primary SWSD Segment "
             "before applying the six-class attribution; weak primary matches become class 1; mixed partial "
             "coverage keeps the primary Segment class with low confidence and a PPT review flag; candidate-only "
-            "roads already present in final FRCSD are treated as replaced and excluded from unreplaced attribution."
+            "roads already present in final FRCSD are treated as replaced and excluded from unreplaced attribution; "
+            "candidate-only roads on successful replaced/retained segments without exact plan/unit evidence are "
+            "class 6 manual-audit risks rather than confirmed class 5 unreplaced roads."
         ),
         "ppt_class_mapping": {
             "1_segment_rcsd_quality_unreplaceable": [
@@ -1370,7 +1374,9 @@ def _build_summary(
                 "3_evidence_scope_relation_incomplete",
             ],
             "3_rcsd_outside_segment_scope": ["1_outside_swsd_segment_scope"],
-            "6_manual_audit": ["6_unattributed_manual_audit_without_dominant_class"],
+            "6_manual_audit": [
+                "6_unattributed_manual_audit_without_dominant_class",
+            ],
         },
         "total_rcsd_road_count": total_count,
         "total_rcsd_road_length_m": round(total_length, 3),

@@ -114,6 +114,7 @@ def apply_native_rcsd_advance_right_closure(
         if road is not None
     }
     swsd_node_id_seed = _next_numeric_id(swsd_node_by_id or {})
+    excluded_road_ids: set[str] = set()
 
     for road_id in selected_ids:
         road = rcsd_road_by_id.get(road_id)
@@ -122,6 +123,37 @@ def apply_native_rcsd_advance_right_closure(
         endpoint_ids = _road_endpoint_node_ids(road)
         endpoint_points = _road_endpoint_points(road)
         if len(endpoint_ids) < 2 or len(endpoint_points) < 2:
+            continue
+        unsafe_endpoints: list[tuple[int, str, Point, int]] = []
+        for endpoint_index, (node_id, point) in enumerate(zip(endpoint_ids[:2], endpoint_points[:2])):
+            canonical_id = _canonicalize(canonicalizer, node_id)
+            degree = node_degree.get(canonical_id, 0)
+            native_degree = native_node_degree.get(canonical_id, degree)
+            if degree <= 1 and _has_unselected_native_rcsd_neighbors(
+                native_degree=native_degree,
+                selected_degree=degree,
+            ):
+                unsafe_endpoints.append((endpoint_index, node_id, point, degree))
+        if unsafe_endpoints and not _is_sole_selected_road_for_any_segment(
+            road_id,
+            added_road_to_segments=added_road_to_segments,
+        ):
+            excluded_road_ids.add(road_id)
+            segment_ids = added_road_to_segments.get(road_id, [])
+            for endpoint_index, node_id, point, degree in unsafe_endpoints:
+                audit_rows.append(
+                    _audit_row(
+                        road_id=road_id,
+                        node_id=node_id,
+                        endpoint_index=endpoint_index,
+                        status="excluded",
+                        action="exclude_native_rcsd_advance_right_road",
+                        reason="rcsd_advance_right_leaf_endpoint_has_unselected_native_rcsd_neighbor",
+                        degree=degree,
+                        replacement_segment_ids=segment_ids,
+                        geometry=point,
+                    )
+                )
             continue
         for endpoint_index, (node_id, point) in enumerate(zip(endpoint_ids[:2], endpoint_points[:2])):
             canonical_id = _canonicalize(canonicalizer, node_id)
@@ -369,6 +401,11 @@ def apply_native_rcsd_advance_right_closure(
                 )
             )
 
+    if excluded_road_ids:
+        _remove_rcsd_roads_from_units(units, excluded_road_ids)
+        for road_id in excluded_road_ids:
+            added_road_to_segments.pop(road_id, None)
+
     split_stats = _apply_contract_split_points(
         units,
         split_points_by_road=split_points_by_road,
@@ -391,6 +428,7 @@ def apply_native_rcsd_advance_right_closure(
         "retained_swsd_split_original_road_count": swsd_split_stats["split_original_road_count"],
         "retained_swsd_split_road_count": swsd_split_stats["split_road_count"],
         "generated_swsd_node_count": generated_swsd_node_count,
+        "excluded_road_count": len(excluded_road_ids),
         "audit_rows": audit_rows,
     }
 
@@ -763,6 +801,21 @@ def _add_mixed_retained_swsd_endpoint_degrees(
 
 def _has_unselected_native_rcsd_neighbors(*, native_degree: int, selected_degree: int) -> bool:
     return native_degree > 1 and native_degree > selected_degree
+
+
+def _is_sole_selected_road_for_any_segment(
+    road_id: str,
+    *,
+    added_road_to_segments: dict[str, list[str]],
+) -> bool:
+    segment_ids = set(added_road_to_segments.get(road_id, []))
+    if not segment_ids:
+        return False
+    road_count_by_segment: dict[str, int] = defaultdict(int)
+    for segment_list in added_road_to_segments.values():
+        for segment_id in segment_list:
+            road_count_by_segment[str(segment_id)] += 1
+    return any(road_count_by_segment.get(str(segment_id), 0) <= 1 for segment_id in segment_ids)
 
 
 def _road_has_unselected_native_rcsd_boundary_endpoint(
@@ -1190,6 +1243,13 @@ def _replace_rcsd_road_in_units(units: list[Any], original_id: str, replacement_
             else:
                 replaced.append(road_id)
         unit.rcsd_road_ids = unique_preserve_order(replaced)
+
+
+def _remove_rcsd_roads_from_units(units: list[Any], road_ids: set[str]) -> None:
+    for unit in units:
+        unit.rcsd_road_ids = unique_preserve_order(
+            [road_id for road_id in unit.rcsd_road_ids if road_id not in road_ids]
+        )
 
 
 def _replace_feature_by_id(features: list[dict[str, Any]], original_id: str, replacements: list[dict[str, Any]]) -> None:

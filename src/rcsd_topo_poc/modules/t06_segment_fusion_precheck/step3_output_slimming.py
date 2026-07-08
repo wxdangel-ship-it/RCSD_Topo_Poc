@@ -84,6 +84,7 @@ COMPAT_TOP_LEVEL_KEYS = [
     "frcsd_node_count",
     "segment_relation_count",
     "segment_relation_replaced_count",
+    "segment_relation_mixed_count",
     "segment_relation_retained_swsd_count",
     "segment_relation_failed_count",
     "topology_connectivity_fail_count",

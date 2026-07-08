@@ -316,7 +316,8 @@ def _formal_replacement_source_rows(
         if not relation_status.startswith("replaced"):
             continue
         segment_id = str(props.get("swsd_segment_id") or "")
-        road_ids = _as_id_list(props.get("frcsd_road_ids"))
+        retained_ids = set(_as_id_list(props.get("retained_detached_swsd_road_ids")))
+        road_ids = [road_id for road_id in _as_id_list(props.get("frcsd_road_ids")) if road_id not in retained_ids]
         non_rcsd_ids: list[str] = []
         swsd_derived_ids: list[str] = []
         missing_ids: list[str] = []

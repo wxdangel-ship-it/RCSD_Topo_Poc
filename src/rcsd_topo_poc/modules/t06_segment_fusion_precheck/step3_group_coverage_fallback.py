@@ -39,12 +39,16 @@ def retain_group_coverage_fallback(
         segment_relation_rows=segment_relation_rows,
         units=units,
     )
+    fallback_audit_relation_rows = _relation_rows_for_group_fallback_audit(
+        segment_relation_rows,
+        swsd_source_value=swsd_source_value,
+    )
     audit_rows = build_topology_connectivity_audit_rows(
         swsd_segments=swsd_segments,
         swsd_roads=swsd_roads,
         frcsd_roads=frcsd_roads,
         frcsd_nodes=frcsd_nodes,
-        segment_relation_rows=segment_relation_rows,
+        segment_relation_rows=fallback_audit_relation_rows,
         advance_right_audit_rows=advance_right_audit_rows,
         source_field_name=source_field_name,
         swsd_source_value=swsd_source_value,
@@ -220,6 +224,37 @@ def _replace_split_original_refs(
         else:
             synced.append(road_id)
     return unique_preserve_order(synced)
+
+
+def _relation_rows_for_group_fallback_audit(
+    rows: list[dict[str, Any]],
+    *,
+    swsd_source_value: int,
+) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    swsd_source = str(swsd_source_value)
+    swsd_source_mix = f"source_{swsd_source}"
+    for row in rows:
+        props = dict(row.get("properties") or {})
+        if _is_group_path_corridor_relation({"properties": props}):
+            retained_ids = set(_ids(props.get("retained_detached_swsd_road_ids")))
+            current_ids = _ids(props.get("frcsd_road_ids"))
+            formal_ids = [road_id for road_id in current_ids if road_id not in retained_ids]
+            if formal_ids != current_ids:
+                props["frcsd_road_ids"] = formal_ids
+                props["frcsd_road_source_values"] = [
+                    int(value) if value.isdigit() else value
+                    for value in unique_preserve_order(
+                        [value for value in _ids(props.get("frcsd_road_source_values")) if value != swsd_source]
+                    )
+                ]
+                props["source_mix"] = "+".join(
+                    unique_preserve_order(
+                        [value for value in _source_mix_values(props.get("source_mix")) if value != swsd_source_mix]
+                    )
+                )
+        result.append(feature(props, row.get("geometry")))
+    return result
 
 
 def _fallback_segment_reasons(

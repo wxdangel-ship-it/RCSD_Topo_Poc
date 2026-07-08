@@ -21,7 +21,7 @@
 |---|---|---|---|---|
 | RCSD road 替换率 | 被替换为 RCSD 的 SWSD Road 数 / 可替换分母 Road 数 | 部分满足 | T06 Step3 已有 `removed_swsd_road_count`、`added_rcsd_road_count`、`t06_step3_swsd_frcsd_segment_relation.*` | 需要 T06 明确 road 分母，并直接输出 `road_replacement_rate`。 |
 | RCSD 里程替换率 | 被替换为 RCSD 的 SWSD 里程 / 可替换分母 SWSD 里程 | 不满足为顶层指标 | T06 Step2 有 RCSD 侧 `rcsd_road_total_length_m / replaceable_rcsd_road_unique_length_m` 契约；Step3 有 `unreplaced_rcsd_road_length_m` | 需要 T06 Step3 汇总 SWSD 分母里程、已替换 SWSD 里程、保留 SWSD 里程、RCSD 承载里程。 |
-| RCSD 替换 Segment 数 | `relation_status in {replaced, replaced+retained_swsd}` 的 Segment 数 | 明细满足，summary 部分满足 | T06 Step3 relation 明细；summary 直接有 `segment_relation_replaced_count`，但缺少 `replaced+retained_swsd` 顶层计数 | 需要 T06 summary 增加 `segment_relation_replaced_retained_swsd_count` 和总替换率。 |
+| RCSD 替换 Segment 数 | `relation_status in {replaced, replaced+retained_swsd}` 的 Segment 数 | 计数满足，替换率待补 | T06 Step3 relation 明细；summary 有 `segment_relation_replaced_count` 与 `segment_relation_mixed_count` | 可选增加 `segment_replacement_success_count` 和总替换率，减少 PPT 二次计算。 |
 
 建议 L0 首屏用 road 和里程替换率作为主指标，Segment 替换率作为辅助解释。road / 里程能更接近业务效果，Segment 更适合解释流程漏斗。
 
@@ -62,11 +62,11 @@
 | Segment 所有路口均锚定数量 | 具备进入 T06 Step2 替换审查资格的 Segment 数 | 满足 | T06 Step1 `final_fusion_unit_count / swsd_final_fusion_unit_count` | 无，但需说明这使用 T04 downstream `final_swsd_nodes.is_anchor`，不是直接读取 T05 relation。 |
 | Segment 两端具备可用 relation 数 | pair required nodes 在 T05 中 `status=0 / base_id>0` 的 Segment 数 | 满足 | T06 Step2 `relation_success_count` | 建议把该指标纳入正式漏斗命名，因为它比 Step1 anchor 更贴近 T06 可消费 relation。 |
 | RCSD 符合替换要求数量 | 通过 Step2 硬审计、特殊组门控、replacement plan 的 Segment 数 | 满足 | T06 Step2 `replaceable_count`、`replacement_plan_ready_count` | 无。 |
-| 最终替换成功 Segment 数 | Step3 relation 中 `replaced` 与 `replaced+retained_swsd` | 部分满足 | `t06_step3_swsd_frcsd_segment_relation.*`；summary 有 `segment_relation_replaced_count` | 需要 T06 summary 增加 `replaced+retained_swsd` 计数和最终替换成功率。 |
+| 最终替换成功 Segment 数 | Step3 relation 中 `replaced` 与 `replaced+retained_swsd` | 计数满足，替换率待补 | `t06_step3_swsd_frcsd_segment_relation.*`；summary 有 `segment_relation_replaced_count` 与 `segment_relation_mixed_count` | 可选增加最终替换成功率顶层字段。 |
 | 最终保留 / 失败数量 | Step3 relation 中 `retained_swsd / failed` | 满足 | `segment_relation_retained_swsd_count`、`segment_relation_failed_count` | 无。 |
 | 损失原因 | Step1 / Step2 拒绝原因、problem registry、failure business audit | 满足 | `reject_reason_counts`、`buffer_reject_reason_counts`、`problem_registry_status_counts`、`t06_rcsd_segment_failure_business_audit.*` | 无。 |
 
-结论：T06 当前已经能支撑 Segment 漏斗主链；缺口主要是“最终成功替换的 summary 细分字段”和“road / 里程替换率的顶层汇总”。
+结论：T06 当前已经能支撑 Segment 漏斗主链；`segment_relation_mixed_count` 已能呈现混合替换数量，剩余缺口主要是“最终成功替换率”和“road / 里程替换率的顶层汇总”。
 
 ## 5. 需要模块完善的内容
 
@@ -82,7 +82,7 @@
 
 | 优先级 | 完善项 | 目的 |
 |---|---|---|
-| P0 | Step3 summary 增加 `segment_relation_replaced_retained_swsd_count`、`segment_replacement_success_count`、`segment_replacement_success_rate` | 让“最终替换成功 Segment 数”成为顶层字段。 |
+| P0 | Step3 summary 增加 `segment_replacement_success_count`、`segment_replacement_success_rate` | 让“最终替换成功 Segment 数 / 率”成为顶层字段；混合替换数量已由 `segment_relation_mixed_count` 暴露。 |
 | P0 | 新增 L0 road 替换率汇总：road 分母、已替换 SWSD road 数、保留 SWSD road 数、RCSD 承载 road 数、替换率 | 支撑高层总览指标。 |
 | P0 | 新增 L0 里程替换率汇总：SWSD 分母里程、已替换 SWSD 里程、保留 SWSD 里程、RCSD 承载里程、替换率 | 支撑高层总览指标。 |
 | P1 | 新增按 Segment 去重的拓扑通过率：Segment pass/warn/fail 和 hard fail reason | 避免用 audit row count 误代表 Segment 连通率。 |

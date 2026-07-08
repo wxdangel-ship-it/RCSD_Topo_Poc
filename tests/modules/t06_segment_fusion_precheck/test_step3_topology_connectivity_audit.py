@@ -316,14 +316,14 @@ def test_topology_audit_treats_retained_detached_swsd_road_as_carrier() -> None:
                     "relation_status": "replaced+retained_swsd",
                     "swsd_pair_nodes": ["1", "2"],
                     "swsd_junc_nodes": [],
-                    "frcsd_road_ids": ["r1"],
+                    "frcsd_road_ids": ["r1", "sr1"],
                     "retained_detached_swsd_road_ids": ["sr1"],
-                    "frcsd_road_source_values": [1],
+                    "frcsd_road_source_values": [1, 2],
                     "swsd_to_frcsd_node_map": [
                         {"swsd_node_id": "1", "frcsd_node_ids": ["10"], "mapping_status": "mapped"},
                         {"swsd_node_id": "2", "frcsd_node_ids": ["20"], "mapping_status": "mapped"},
                     ],
-                    "source_mix": "source_1",
+                    "source_mix": "source_1+source_2",
                 },
                 "geometry": None,
             }
@@ -335,10 +335,12 @@ def test_topology_audit_treats_retained_detached_swsd_road_as_carrier() -> None:
     )
 
     road = [row["properties"] for row in rows if row["properties"]["audit_layer"] == "segment_road_connectivity"][0]
-    assert road["audit_status"] == "warn"
-    assert road["audit_reason"] == "segment_road_relation_scope_incomplete_but_final_graph_connected"
+    assert road["audit_status"] == "pass"
+    assert road["audit_reason"] == "segment_road_connectivity_passed"
     assert road["frcsd_node_ids"] == ["1", "2"]
     assert road["final_undirected_connected"] is True
+    formal = [row["properties"] for row in rows if row["properties"]["audit_layer"] == "formal_replacement_source_consistency"][0]
+    assert formal["audit_status"] == "pass"
 
 
 def test_topology_audit_fails_retained_swsd_endpoint_without_mainnode_closure() -> None:

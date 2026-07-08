@@ -886,6 +886,7 @@ def test_step3_excludes_detached_junc_swsd_roads_from_formal_replacement(tmp_pat
 
     summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
     assert summary["detached_junc_retained_segment_count"] == 1
+    assert summary["segment_relation_mixed_count"] == 1
     assert summary["detached_junc_retained_swsd_road_count"] == 1
     assert summary["removed_swsd_road_count"] == 1
 
@@ -903,10 +904,10 @@ def test_step3_excludes_detached_junc_swsd_roads_from_formal_replacement(tmp_pat
     relations = _props(artifacts.swsd_frcsd_segment_relation_gpkg_path)
     relation = relations[0]
     assert relation["relation_status"] == "replaced+retained_swsd"
-    assert relation["frcsd_road_ids"] == ["rr1"]
-    assert relation["frcsd_road_source_values"] == [1]
+    assert relation["frcsd_road_ids"] == ["rr1", "side"]
+    assert relation["frcsd_road_source_values"] == [1, 2]
     assert relation["retained_detached_swsd_road_ids"] == ["side"]
-    assert relation["source_mix"] == "source_1"
+    assert relation["source_mix"] == "source_1+source_2"
     assert "retained_swsd_excluded_from_formal_replacement" in relation["risk_flags"]
     identity_maps = [
         item

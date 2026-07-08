@@ -738,6 +738,7 @@ def run_t06_step3_segment_replacement(
             "frcsd_node_count": len(frcsd_nodes),
             "segment_relation_count": len(segment_relation_rows),
             "segment_relation_replaced_count": sum(1 for row in segment_relation_rows if row["properties"].get("relation_status") == "replaced"),
+            "segment_relation_mixed_count": sum(1 for row in segment_relation_rows if row["properties"].get("relation_status") == "replaced+retained_swsd"),
             "segment_relation_retained_swsd_count": sum(1 for row in segment_relation_rows if row["properties"].get("relation_status") == "retained_swsd"),
             "segment_relation_failed_count": sum(1 for row in segment_relation_rows if row["properties"].get("relation_status") == "failed"),
             **relation_node_map_backfill_stats,
@@ -1743,10 +1744,12 @@ def _build_swsd_frcsd_segment_relation_rows(
                 for road_id in unit.retained_detached_swsd_road_ids
                 if (str(swsd_source_value), road_id) in frcsd_road_by_source_id
             ]
-            frcsd_road_ids = unique_preserve_order(present_rcsd_road_ids)
+            frcsd_road_ids = unique_preserve_order([*present_rcsd_road_ids, *retained_swsd_road_ids])
             frcsd_road_source_values = []
             if present_rcsd_road_ids:
                 frcsd_road_source_values.append(rcsd_source_value)
+            if retained_swsd_road_ids:
+                frcsd_road_source_values.append(swsd_source_value)
             if present_rcsd_road_ids and retained_swsd_road_ids:
                 relation_status = "replaced+retained_swsd"
                 relation_reason = "replacement_unit_passed_with_retained_swsd_topology_supplement"

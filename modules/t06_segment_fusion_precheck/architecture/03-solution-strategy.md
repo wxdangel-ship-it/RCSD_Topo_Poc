@@ -242,7 +242,7 @@ T06 采用三步链路：
 - 对：surface、提前右转和 topology supplement 只补齐已选承载的可用性；retained-junction gate 释放只能把已存在 plan 的单一距离 gate 降级为风险项，不能扩大 Step2 可替换范围。
 - 对：最终 relation、topology audit 和 surface audit 能解释正式替换道路、保留 SWSD carrier、节点闭合和挂接风险。
 - 错：因 SWSD/RCSD 原始 id 冲突而重写 id；应保留原 id 并依赖 `source` 区分。
-- 错：把保留 SWSD carrier、surface fallback 或提前右转补丁混入正式 RCSD 替换道路清单。
+- 错：在未通过 `relation_status / frcsd_road_source_values / source_mix` 区分来源的情况下，把保留 SWSD carrier、surface fallback 或提前右转补丁当成正式 RCSD 替换道路。
 - 错：surface-aware gate 释放后只看候选 plan 成功，不看最终 topology hard fail 和外部 baseline 新增 fail。
 - 错：用 surface evidence 绕过 T04 reject、Patch 冲突、多候选冲突或 Step2 replacement plan。
 

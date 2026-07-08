@@ -45,7 +45,8 @@ def test_group_path_corridor_local_coverage_gap_retains_swsd_carrier() -> None:
         feature(
             {"id": "R1", "snodeid": "RA", "enodeid": "RB", "source": 1, "t06_swsd_segment_ids": [segment_id]},
             LineString([(0, 100), (100, 100)]),
-        )
+        ),
+        feature({"id": "S1", "snodeid": "A", "enodeid": "B", "source": 2}, LineString([(0, 0), (100, 0)])),
     ]
     frcsd_nodes = [feature({"id": "RA", "mainnodeid": "RA", "source": 1}, Point(0, 100)), feature({"id": "RB", "mainnodeid": "RB", "source": 1}, Point(100, 100))]
     relation_rows = [
@@ -158,16 +159,16 @@ def test_group_path_corridor_local_coverage_source_not_formal_becomes_retained_s
                 "swsd_junc_nodes": [],
                 "swsd_road_ids": ["S1"],
                 "removed_swsd_road_ids": ["S1"],
-                "retained_detached_swsd_road_ids": [],
-                "frcsd_road_ids": ["R1"],
-                "frcsd_road_source_values": [1],
+                "retained_detached_swsd_road_ids": ["S1"],
+                "frcsd_road_ids": ["R1", "S1"],
+                "frcsd_road_source_values": [1, 2],
                 "rcsd_pair_nodes": ["RA", "RB"],
                 "rcsd_junc_nodes": [],
                 "swsd_to_frcsd_node_map": [
                     {"swsd_node_id": "A", "frcsd_node_ids": ["RA"], "node_role": "pair_node", "mapping_status": "mapped"},
                     {"swsd_node_id": "B", "frcsd_node_ids": ["RB"], "node_role": "pair_node", "mapping_status": "mapped"},
                 ],
-                "source_mix": "source_1",
+                "source_mix": "source_1+source_2",
                 "risk_flags": ["group_path_corridor_replacement", "path_corridor_source_segment_not_formal_replaceable"],
             },
             None,

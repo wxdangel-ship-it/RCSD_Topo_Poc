@@ -133,7 +133,7 @@ Step3 正式成果同样以 GPKG/CSV 为稳定载体；标准 CLI 默认 `suppre
 - 绕过 Step2 replacement plan 对 rejected Segment 执行 Step3 替换。
 - 将 detached junc 的 `identity_retained_swsd` node map 解释成 RCSD 锚定成功，或因此回写 T05 relation。
 - 因 SWSD/RCSD 原始 `id` 冲突而重写 ID；应依赖 `source` 区分并输出 collision audit。
-- 把保留 SWSD carrier 或 topology supplement 混入正式 RCSD 替换道路清单。
+- 在未通过 `relation_status / frcsd_road_source_values / source_mix` 区分来源的情况下，把保留 SWSD carrier 或 topology supplement 当成正式 RCSD 替换道路。
 - 对 `replaced+retained_swsd` 的保留 SWSD carrier 只写 `semantic_junction_group_id`，但未把 endpoint `mainnodeid` 闭合到已映射 RCSD endpoint，就把 topology connectivity 记为 pass。
 - 用 surface evidence 绕过 T04 reject、多 RCSD 候选、Patch 冲突或 Step2 可替换性判定；或在 surface-aware gate 释放后忽略无法由 T05 语义路口组解释的新增 topology hard fail。
 - 因宽 buffer 审计通过就忽略窄通道主线断裂风险。

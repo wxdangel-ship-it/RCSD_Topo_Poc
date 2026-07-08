@@ -16,7 +16,7 @@
 - `formway` 必须按 bit mask 判断，提前右转为 `formway & 128 != 0`。
 - Step3 不重写 SWSD/RCSD 原始 id，通过 `source` 区分。
 - F-RCSD Road 的端点必须存在于 F-RCSD Node。
-- retained SWSD carrier、topology supplement 和提前右转补丁不能混入正式 RCSD 替换道路清单。
+- retained SWSD carrier、topology supplement 和提前右转补丁可作为最终可消费 carrier 暴露，但必须通过 `relation_status / frcsd_road_source_values / source_mix` 与风险标记区分来源，不得被正式 RCSD 来源审计当成 `source=1` 替换道路。
 - surface-assisted closure 只能补节点语义或 relation node map，不能新增替换道路。
 
 ## 3. 业务边界质量

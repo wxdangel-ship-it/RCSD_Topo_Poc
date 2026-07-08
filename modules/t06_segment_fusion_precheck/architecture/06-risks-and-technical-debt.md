@@ -4,7 +4,7 @@
 
 - 如果把 T05 relation 视为可直接替换 Segment，RCSD 数据裁剪、方向、短连接和路口内部结构差异会导致误替换。
 - 如果把 buffer-only probe 或 repair candidates 当作白名单，会绕过 Step2 硬审计。
-- 如果 Step3 混入 retained SWSD carrier 到正式 `frcsd_road_ids`，T09 会误判真实替换道路来源。
+- 如果 Step3 在 `replaced+retained_swsd` 中未通过 `relation_status / frcsd_road_source_values / source_mix` 明确区分 RCSD 替换 carrier 与 retained SWSD carrier，T09 会误判真实替换道路来源。
 
 ## 2. 数据风险
 

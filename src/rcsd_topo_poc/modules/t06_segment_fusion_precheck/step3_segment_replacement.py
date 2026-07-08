@@ -379,6 +379,7 @@ def run_t06_step3_segment_replacement(
         rcsd_roads=rcsd_roads,
         canonicalizer=canonicalizer,
         added_road_to_segments=added_road_to_segments,
+        replacement_plan_rows=replacement_plan_rows,
     )
     _flatten_node_mainnode_chains(rcsd_nodes, source_field_name=source_field_name)
     generated_endpoint_node_stats = ensure_added_rcsd_road_endpoint_nodes(

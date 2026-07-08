@@ -3,11 +3,17 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any
 
+from shapely.geometry import shape
+
 from .graph_builders import NodeCanonicalizer
 from .parsing import ParseError, normalize_id, parse_id_list, unique_preserve_order
 
 
 SECOND_DEGREE_BRIDGE_RISK = "second_degree_unreplaced_rcsd_bridge_fallback"
+GEOMETRY_COMPONENT_RISK = "geometry_matched_unreplaced_rcsd_component_fallback"
+GEOMETRY_COMPONENT_BUFFER_M = 20.0
+GEOMETRY_COMPONENT_MAX_DISTANCE_M = 3.0
+GEOMETRY_COMPONENT_MIN_COVER_RATIO = 0.99
 
 
 def apply_unreplaced_second_degree_bridge_fallback(
@@ -16,6 +22,8 @@ def apply_unreplaced_second_degree_bridge_fallback(
     rcsd_roads: list[dict[str, Any]],
     canonicalizer: NodeCanonicalizer,
     added_road_to_segments: dict[str, list[str]],
+    blocked_road_ids: set[str] | None = None,
+    replacement_plan_rows: list[dict[str, Any]] | None = None,
 ) -> dict[str, int]:
     stats = {
         "second_degree_bridge_candidate_component_count": 0,
@@ -86,7 +94,295 @@ def apply_unreplaced_second_degree_bridge_fallback(
         stats["second_degree_bridge_added_group_count"] += 1
         stats["second_degree_bridge_added_road_count"] += len(component["road_ids"])
     stats["second_degree_bridge_added_segment_count"] = len(touched_segments)
+    stats.update(
+        _apply_geometry_matched_component_fallback(
+            units,
+            rcsd_roads=rcsd_roads,
+            canonicalizer=canonicalizer,
+            added_road_to_segments=added_road_to_segments,
+            blocked_road_ids=_blocked_road_ids(blocked_road_ids, replacement_plan_rows),
+        )
+    )
     return stats
+
+
+def _apply_geometry_matched_component_fallback(
+    units: list[Any],
+    *,
+    rcsd_roads: list[dict[str, Any]],
+    canonicalizer: NodeCanonicalizer,
+    added_road_to_segments: dict[str, list[str]],
+    blocked_road_ids: set[str] | None,
+) -> dict[str, int]:
+    stats = {
+        "geometry_component_candidate_road_count": 0,
+        "geometry_component_added_group_count": 0,
+        "geometry_component_added_road_count": 0,
+        "geometry_component_added_segment_count": 0,
+        "geometry_component_blocked_open_component_count": 0,
+        "geometry_component_blocked_non_linear_component_count": 0,
+        "geometry_component_blocked_existing_boundary_count": 0,
+    }
+    edges = _road_edges(rcsd_roads, canonicalizer)
+    road_by_id = _road_by_id(rcsd_roads)
+    unit_by_segment: dict[str, Any] = {}
+    unit_geometry_by_segment: dict[str, Any] = {}
+    for unit in units:
+        unit_geometry = _as_geometry(getattr(unit, "geometry", None))
+        if getattr(unit, "status", "passed") != "passed" or unit_geometry is None:
+            continue
+        segment_id = str(unit.segment_id)
+        unit_by_segment[segment_id] = unit
+        unit_geometry_by_segment[segment_id] = unit_geometry
+    if not edges or not unit_by_segment:
+        return stats
+
+    incident_segments_by_node = _incident_segments_by_node(edges, added_road_to_segments)
+    unit_nodes_by_segment = _unit_nodes_by_segment(unit_by_segment, edges, canonicalizer)
+    road_ids_by_node = _road_ids_by_node(edges)
+    scope_nodes_by_segment = _scope_nodes_by_segment(incident_segments_by_node, unit_nodes_by_segment)
+    added_road_ids = set(added_road_to_segments) | set(blocked_road_ids or [])
+    candidate_road_ids: set[str] = set()
+    touched_segments: set[str] = set()
+
+    for segment_id, unit in unit_by_segment.items():
+        unit_geometry = unit_geometry_by_segment[segment_id]
+        candidate_edges = _geometry_matched_edges_reachable_from_scope(
+            edges=edges,
+            road_by_id=road_by_id,
+            road_ids_by_node=road_ids_by_node,
+            scope_nodes=scope_nodes_by_segment.get(segment_id, set()),
+            unit_geometry=unit_geometry,
+            added_road_ids=added_road_ids,
+        )
+        candidate_road_ids.update(candidate_edges)
+        for component in _connected_unadded_components(candidate_edges):
+            terminal_nodes = _linear_component_terminal_nodes(component["degree"])
+            if terminal_nodes is None:
+                stats["geometry_component_blocked_non_linear_component_count"] += 1
+                continue
+            if not all(
+                _terminal_matches_unit_scope(
+                    terminal_node,
+                    segment_id=segment_id,
+                    incident_segments_by_node=incident_segments_by_node,
+                    unit_nodes_by_segment=unit_nodes_by_segment,
+                )
+                for terminal_node in terminal_nodes
+            ):
+                stats["geometry_component_blocked_open_component_count"] += 1
+                continue
+            if _has_existing_direct_boundary_road(
+                terminal_nodes,
+                segment_id=segment_id,
+                edges=edges,
+                added_road_to_segments=added_road_to_segments,
+            ):
+                stats["geometry_component_blocked_existing_boundary_count"] += 1
+                continue
+            _add_geometry_component_to_unit(
+                component["road_ids"],
+                segment_id,
+                unit=unit,
+                added_road_to_segments=added_road_to_segments,
+                touched_segments=touched_segments,
+            )
+            added_road_ids.update(component["road_ids"])
+            stats["geometry_component_added_group_count"] += 1
+            stats["geometry_component_added_road_count"] += len(component["road_ids"])
+
+    stats["geometry_component_candidate_road_count"] = len(candidate_road_ids)
+    stats["geometry_component_added_segment_count"] = len(touched_segments)
+    return stats
+
+
+def _blocked_road_ids(
+    explicit_road_ids: set[str] | None,
+    replacement_plan_rows: list[dict[str, Any]] | None,
+) -> set[str]:
+    result = set(explicit_road_ids or [])
+    for row in replacement_plan_rows or []:
+        props = row.get("properties") or {}
+        if props.get("plan_status") == "blocked":
+            result.update(_parse_list(props.get("rcsd_road_ids")))
+    return result
+
+
+def _geometry_matched_edges_reachable_from_scope(
+    *,
+    edges: dict[str, tuple[str, str]],
+    road_by_id: dict[str, dict[str, Any]],
+    road_ids_by_node: dict[str, list[str]],
+    scope_nodes: set[str],
+    unit_geometry: Any,
+    added_road_ids: set[str],
+) -> dict[str, tuple[str, str]]:
+    if not scope_nodes:
+        return {}
+    pending: list[str] = []
+    seen: set[str] = set()
+    for node_id in scope_nodes:
+        for road_id in road_ids_by_node.get(node_id, []):
+            if road_id in added_road_ids or road_id in seen:
+                continue
+            seen.add(road_id)
+            pending.append(road_id)
+
+    result: dict[str, tuple[str, str]] = {}
+    while pending:
+        road_id = pending.pop(0)
+        if road_id in added_road_ids:
+            continue
+        edge = edges.get(road_id)
+        if edge is None or not _road_geometry_matches_unit(road_by_id.get(road_id), unit_geometry):
+            continue
+        result[road_id] = edge
+        for node_id in edge:
+            for next_road_id in road_ids_by_node.get(node_id, []):
+                if next_road_id in added_road_ids or next_road_id in seen:
+                    continue
+                seen.add(next_road_id)
+                pending.append(next_road_id)
+    return result
+
+
+def _road_geometry_matches_unit(road: dict[str, Any] | None, unit_geometry: Any) -> bool:
+    if road is None:
+        return False
+    road_geometry = _as_geometry(road.get("geometry"))
+    unit_geometry = _as_geometry(unit_geometry)
+    if road_geometry is None or unit_geometry is None:
+        return False
+    road_length = float(getattr(road_geometry, "length", 0.0) or 0.0)
+    if road_length <= 0.0:
+        return False
+    if float(road_geometry.distance(unit_geometry)) > GEOMETRY_COMPONENT_MAX_DISTANCE_M:
+        return False
+    try:
+        covered_length = float(road_geometry.intersection(unit_geometry.buffer(GEOMETRY_COMPONENT_BUFFER_M)).length)
+    except Exception:
+        return False
+    return covered_length / road_length >= GEOMETRY_COMPONENT_MIN_COVER_RATIO
+
+
+def _road_by_id(roads: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    result: dict[str, dict[str, Any]] = {}
+    for road in roads:
+        try:
+            result[_feature_id(road)] = road
+        except ParseError:
+            continue
+    return result
+
+
+def _as_geometry(value: Any) -> Any:
+    if _is_geometry(value):
+        return value
+    if isinstance(value, dict):
+        try:
+            geometry = shape(value)
+        except Exception:
+            return None
+        return geometry if _is_geometry(geometry) else None
+    return None
+
+
+def _is_geometry(geometry: Any) -> bool:
+    return (
+        geometry is not None
+        and hasattr(geometry, "distance")
+        and hasattr(geometry, "buffer")
+        and hasattr(geometry, "intersection")
+        and not bool(getattr(geometry, "is_empty", False))
+    )
+
+
+def _road_ids_by_node(edges: dict[str, tuple[str, str]]) -> dict[str, list[str]]:
+    result: dict[str, list[str]] = defaultdict(list)
+    for road_id, edge in edges.items():
+        for node_id in edge:
+            result[node_id].append(road_id)
+    return result
+
+
+def _scope_nodes_by_segment(
+    incident_segments_by_node: dict[str, dict[str, list[str]]],
+    unit_nodes_by_segment: dict[str, set[str]],
+) -> dict[str, set[str]]:
+    result: dict[str, set[str]] = defaultdict(set)
+    for node_id, by_segment in incident_segments_by_node.items():
+        for segment_id in by_segment:
+            result[str(segment_id)].add(node_id)
+    for segment_id, node_ids in unit_nodes_by_segment.items():
+        result[str(segment_id)].update(node_ids)
+    return dict(result)
+
+
+def _unit_nodes_by_segment(
+    unit_by_segment: dict[str, Any],
+    edges: dict[str, tuple[str, str]],
+    canonicalizer: NodeCanonicalizer,
+) -> dict[str, set[str]]:
+    result: dict[str, set[str]] = {}
+    for segment_id, unit in unit_by_segment.items():
+        nodes: set[str] = set()
+        for attr in ("rcsd_pair_nodes", "rcsd_junc_nodes", "retained_node_ids", "optional_allowed_rcsd_nodes"):
+            for node_id in _parse_list(getattr(unit, attr, [])):
+                try:
+                    nodes.add(canonicalizer.canonicalize(node_id))
+                except ParseError:
+                    continue
+        for road_id in _parse_list(getattr(unit, "rcsd_road_ids", [])):
+            edge = edges.get(road_id)
+            if edge is not None:
+                nodes.update(edge)
+        result[segment_id] = nodes
+    return result
+
+
+def _terminal_matches_unit_scope(
+    terminal_node: str,
+    *,
+    segment_id: str,
+    incident_segments_by_node: dict[str, dict[str, list[str]]],
+    unit_nodes_by_segment: dict[str, set[str]],
+) -> bool:
+    return bool(incident_segments_by_node.get(terminal_node, {}).get(segment_id)) or terminal_node in unit_nodes_by_segment.get(segment_id, set())
+
+
+def _has_existing_direct_boundary_road(
+    terminal_nodes: list[str],
+    *,
+    segment_id: str,
+    edges: dict[str, tuple[str, str]],
+    added_road_to_segments: dict[str, list[str]],
+) -> bool:
+    terminal_set = set(terminal_nodes)
+    for road_id, segment_ids in added_road_to_segments.items():
+        if segment_id not in segment_ids:
+            continue
+        edge = edges.get(road_id)
+        if edge is not None and set(edge) == terminal_set:
+            return True
+    return False
+
+
+def _add_geometry_component_to_unit(
+    road_ids: list[str],
+    segment_id: str,
+    *,
+    unit: Any,
+    added_road_to_segments: dict[str, list[str]],
+    touched_segments: set[str],
+) -> None:
+    for road_id in road_ids:
+        if road_id not in unit.rcsd_road_ids:
+            unit.rcsd_road_ids.append(road_id)
+        segment_list = added_road_to_segments.setdefault(road_id, [])
+        if segment_id not in segment_list:
+            segment_list.append(segment_id)
+    unit.risk_flags = unique_preserve_order([*getattr(unit, "risk_flags", []), GEOMETRY_COMPONENT_RISK])
+    touched_segments.add(segment_id)
 
 
 def _apply_direct_bridge_roads_from_non_linear_component(

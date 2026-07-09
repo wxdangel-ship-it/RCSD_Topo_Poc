@@ -42,6 +42,12 @@ def buffer_segment_row(segment_id: str, result: BufferSegmentResult) -> dict[str
         "retained_road_count": result.retained_road_count,
         "candidate_node_count": result.candidate_node_count,
         "retained_node_count": result.retained_node_count,
+        "directionality_conflict_status": "",
+        "directionality_conflict_action": "",
+        "directionality_conflict_reason": "",
+        "forward_rcsd_road_ids": [],
+        "bidirectional_rcsd_road_ids": [],
+        "reverse_or_extra_rcsd_road_ids": [],
         **_geometry_audit_props(result),
     }
 
@@ -106,6 +112,12 @@ def buffer_candidate_row(
         "retained_road_count": result.retained_road_count,
         "candidate_node_count": result.candidate_node_count,
         "retained_node_count": result.retained_node_count,
+        "directionality_conflict_status": "",
+        "directionality_conflict_action": "",
+        "directionality_conflict_reason": "",
+        "forward_rcsd_road_ids": [],
+        "bidirectional_rcsd_road_ids": [],
+        "reverse_or_extra_rcsd_road_ids": [],
         **_geometry_audit_props(result),
     }
 
@@ -151,6 +163,12 @@ def buffer_replaceable_row(candidate_feature: dict[str, Any]) -> dict[str, Any]:
             "unexpected_endpoint_node_ids": props.get("unexpected_endpoint_node_ids"),
             "unexpected_mapped_semantic_node_ids": props.get("unexpected_mapped_semantic_node_ids"),
             "excluded_advance_right_turn_road_ids": props.get("excluded_advance_right_turn_road_ids"),
+            "directionality_conflict_status": props.get("directionality_conflict_status", ""),
+            "directionality_conflict_action": props.get("directionality_conflict_action", ""),
+            "directionality_conflict_reason": props.get("directionality_conflict_reason", ""),
+            "forward_rcsd_road_ids": props.get("forward_rcsd_road_ids"),
+            "bidirectional_rcsd_road_ids": props.get("bidirectional_rcsd_road_ids"),
+            "reverse_or_extra_rcsd_road_ids": props.get("reverse_or_extra_rcsd_road_ids"),
             "geometry_buffer_coverage_issue": props.get("geometry_buffer_coverage_issue"),
             "rcsd_outside_swsd_buffer_length_m": props.get("rcsd_outside_swsd_buffer_length_m"),
             "rcsd_outside_swsd_buffer_ratio": props.get("rcsd_outside_swsd_buffer_ratio"),

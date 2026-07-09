@@ -469,10 +469,16 @@ def test_step2_runner_uses_swsd_road_direction_for_single_segments(tmp_path: Pat
     by_segment = {feature["properties"]["swsd_segment_id"]: feature["properties"] for feature in payload["features"]}
     assert by_segment["s_forward"]["directed_swsd_pair_nodes"] == ["1", "2"]
     assert by_segment["s_forward"]["directed_rcsd_pair_nodes"] == ["10", "20"]
-    assert set(by_segment["s_forward"]["rcsd_road_ids"]) == {"forward_a", "forward_b"}
+    assert set(by_segment["s_forward"]["rcsd_road_ids"]) == {"forward_a", "forward_b", "reverse_a", "reverse_b"}
+    assert by_segment["s_forward"]["directionality_conflict_status"] == "swsd_single_rcsd_bidirectional_reality_conflict"
+    assert set(by_segment["s_forward"]["forward_rcsd_road_ids"]) == {"forward_a", "forward_b"}
+    assert set(by_segment["s_forward"]["reverse_or_extra_rcsd_road_ids"]) == {"reverse_a", "reverse_b"}
     assert by_segment["s_reverse"]["directed_swsd_pair_nodes"] == ["2", "1"]
     assert by_segment["s_reverse"]["directed_rcsd_pair_nodes"] == ["20", "10"]
-    assert set(by_segment["s_reverse"]["rcsd_road_ids"]) == {"reverse_a", "reverse_b"}
+    assert set(by_segment["s_reverse"]["rcsd_road_ids"]) == {"forward_a", "forward_b", "reverse_a", "reverse_b"}
+    assert by_segment["s_reverse"]["directionality_conflict_status"] == "swsd_single_rcsd_bidirectional_reality_conflict"
+    assert set(by_segment["s_reverse"]["forward_rcsd_road_ids"]) == {"reverse_a", "reverse_b"}
+    assert set(by_segment["s_reverse"]["reverse_or_extra_rcsd_road_ids"]) == {"forward_a", "forward_b"}
 
 
 def test_step2_rejects_swsd_pair_nodes_that_are_not_distinct(tmp_path: Path) -> None:

@@ -44,6 +44,10 @@ from .replacement_plan import (
     build_problem_registry_rows as _build_problem_registry_rows,
     build_replacement_plan_rows as _build_replacement_plan_rows,
 )
+from .single_direction_reality import (
+    SingleDirectionRealityContext as _SingleRealityContext,
+    resolve_single_rcsd_bidirectional_reality as _resolve_single_reality,
+)
 from .single_graph_connectivity_retry import SingleGraphConnectivityRetry as _SGR
 from .single_direction_semantic_retry import semantic_endpoint_local_undirected_single_retry as _semantic_endpoint_local_single_retry
 from .step2_progress import Step2Progress
@@ -203,6 +207,13 @@ def run_t06_step2_extract_rcsd_segments(
         relation_junc_nodes = _relation_required_junc_nodes(junc_nodes, junc_kind2_exempt_nodes)
         all_base_ids_for_segment = all_base_ids - _accepted_base_ids_for_nodes(junc_kind2_exempt_nodes, relation_map)
         unexpected_base_ids_for_segment = relation_base_index.unexpected_for([*pair_nodes, *junc_nodes])
+        single_reality_ctx = _SingleRealityContext(
+            buffer_extractor,
+            segment.get("geometry"),
+            all_base_ids_for_segment,
+            unexpected_base_ids_for_segment,
+            buffer_config,
+        )
         if junc_kind2_exempt_nodes:
             junc_kind2_relation_exempt_segment_count += 1
             junc_kind2_relation_exempt_node_count += len(junc_kind2_exempt_nodes)
@@ -783,6 +794,16 @@ def run_t06_step2_extract_rcsd_segments(
             )
             if semantic_retry_result is not None:
                 buffer_result = semantic_retry_result
+        directionality_conflict_props: dict[str, Any] = {}
+        if buffer_result.ok:
+            buffer_result, directionality_conflict_props = _resolve_single_reality(
+                single_reality_ctx,
+                directionality,
+                relation,
+                optional_allowed_rcsd_nodes,
+                directed_rcsd_pair_nodes,
+                buffer_result,
+            )
         junc_audit = _junc_attach_audit(
             junc_nodes=relation_junc_nodes,
             relation=relation,
@@ -793,6 +814,8 @@ def run_t06_step2_extract_rcsd_segments(
         )
         if buffer_result.ok:
             buffer_feature = feature(_buffer_segment_row(segment_id, buffer_result), buffer_result.geometry)
+            if directionality_conflict_props:
+                buffer_feature["properties"].update(directionality_conflict_props)
             if semantic_endpoint_source_reason:
                 _annotate_adaptive_buffer_metadata(
                     buffer_feature,
@@ -817,6 +840,8 @@ def run_t06_step2_extract_rcsd_segments(
                 ),
                 buffer_result.geometry,
             )
+            if directionality_conflict_props:
+                candidate_feature["properties"].update(directionality_conflict_props)
             if semantic_endpoint_source_reason:
                 _annotate_adaptive_buffer_metadata(
                     candidate_feature,
@@ -929,6 +954,16 @@ def run_t06_step2_extract_rcsd_segments(
                     require_bidirectional=directionality == "dual",
                     config=buffer_config,
                 )
+                auto_conflict_props = {}
+                if auto_buffer_result.ok:
+                    auto_buffer_result, auto_conflict_props = _resolve_single_reality(
+                        single_reality_ctx,
+                        directionality,
+                        auto_relation,
+                        auto_optional_allowed_rcsd_nodes,
+                        auto_directed_rcsd_pair_nodes,
+                        auto_buffer_result,
+                    )
                 auto_junc_audit = _junc_attach_audit(
                     junc_nodes=relation_junc_nodes,
                     relation=auto_relation,
@@ -966,6 +1001,8 @@ def run_t06_step2_extract_rcsd_segments(
                         )
                     )
                     buffer_feature = feature(_buffer_segment_row(segment_id, auto_buffer_result), auto_buffer_result.geometry)
+                    if auto_conflict_props:
+                        buffer_feature["properties"].update(auto_conflict_props)
                     buffer_segment_rows.append(buffer_feature)
                     candidate_feature = feature(
                         _buffer_candidate_row(
@@ -982,6 +1019,8 @@ def run_t06_step2_extract_rcsd_segments(
                         ),
                         auto_buffer_result.geometry,
                     )
+                    if auto_conflict_props:
+                        candidate_feature["properties"].update(auto_conflict_props)
                     candidate_rows.append(candidate_feature)
                     replaceable_rows.append(_buffer_replaceable_row(candidate_feature))
                     failure_business_audit_rows.append(
@@ -1019,6 +1058,7 @@ def run_t06_step2_extract_rcsd_segments(
                     adaptive_attempts = (*adaptive_attempts, None)
                 for adaptive_distance_m in adaptive_attempts:
                     src_reason = buffer_result.reason
+                    retry_config = buffer_config
                     if adaptive_distance_m is None:
                         graph = graph_retry.retry_dual_bidirectional(
                             segment.get("geometry"),
@@ -1056,6 +1096,7 @@ def run_t06_step2_extract_rcsd_segments(
                         adaptive_distance_m = graph.reference_distance_m
                         src_reason = graph.source_reason
                     else:
+                        retry_config = _buffer_config_with_distance(buffer_config, adaptive_distance_m)
                         r = buffer_extractor.extract(
                             segment_geometry=segment.get("geometry"),
                             relation=relation,
@@ -1065,7 +1106,23 @@ def run_t06_step2_extract_rcsd_segments(
                             directed_pair_nodes=directed_rcsd_pair_nodes,
                             require_directed_pair=False,
                             require_bidirectional=True,
-                            config=_buffer_config_with_distance(buffer_config, adaptive_distance_m),
+                            config=retry_config,
+                        )
+                    conflict_props = {}
+                    if r.ok:
+                        r, conflict_props = _resolve_single_reality(
+                            _SingleRealityContext(
+                                buffer_extractor,
+                                segment.get("geometry"),
+                                all_base_ids_for_segment,
+                                unexpected_base_ids_for_segment,
+                                retry_config,
+                            ),
+                            directionality,
+                            relation,
+                            optional_allowed_rcsd_nodes,
+                            directed_rcsd_pair_nodes,
+                            r,
                         )
                     adaptive_junc_audit = _junc_attach_audit(
                         junc_nodes=relation_junc_nodes,
@@ -1078,6 +1135,8 @@ def run_t06_step2_extract_rcsd_segments(
                     if not r.ok:
                         continue
                     buffer_feature = feature(_buffer_segment_row(segment_id, r), r.geometry)
+                    if conflict_props:
+                        buffer_feature["properties"].update(conflict_props)
                     _annotate_adaptive_buffer_metadata(
                         buffer_feature,
                         distance_m=adaptive_distance_m,
@@ -1099,6 +1158,8 @@ def run_t06_step2_extract_rcsd_segments(
                         ),
                         r.geometry,
                     )
+                    if conflict_props:
+                        candidate_feature["properties"].update(conflict_props)
                     _annotate_adaptive_buffer_metadata(
                         candidate_feature,
                         distance_m=adaptive_distance_m,

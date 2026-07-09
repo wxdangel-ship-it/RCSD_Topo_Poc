@@ -253,6 +253,9 @@ def _standard_plan_rows(
             road_id for road_id in _parse_list(bridge.get("road_ids")) if road_id in rcsd_road_by_id
         ]
         rcsd_road_ids = unique_preserve_order([*_parse_list(props.get("rcsd_road_ids")), *pair_anchor_bridge_road_ids])
+        directionality_conflict_status = str(props.get("directionality_conflict_status") or "")
+        directionality_conflict_action = str(props.get("directionality_conflict_action") or "")
+        directionality_conflict_reason = str(props.get("directionality_conflict_reason") or "")
         buffer_distances = _parse_float_list(props.get("adaptive_buffer_distance_m"))
         buffer_distance_risk = bool(buffer_distances and max(buffer_distances) > MAX_FORMAL_REPLACEMENT_BUFFER_M)
         visual_coverage_manual_audit = controlled_visual_release and _visual_consistency_coverage_gate_failed(props)
@@ -279,6 +282,10 @@ def _standard_plan_rows(
             risk_flags.append("adaptive_buffer_exceeds_topology_connectivity_audit_threshold")
         if pair_anchor_bridge_road_ids:
             risk_flags.append("pair_anchor_bridge_roads_added")
+        if directionality_conflict_status:
+            risk_flags.append(directionality_conflict_status)
+        if directionality_conflict_action:
+            risk_flags.append(directionality_conflict_action)
         if post_replacement_coverage_review:
             risk_flags.extend([coverage_issue, "manual_review_required"])
             if buffer_corridor_review:
@@ -321,6 +328,8 @@ def _standard_plan_rows(
                     f"{notes}; adaptive buffer exceeds {MAX_FORMAL_REPLACEMENT_BUFFER_M:g}m "
                     "topology connectivity audit threshold; released as risk audit only"
                 )
+            if directionality_conflict_reason:
+                notes = f"{notes}; {directionality_conflict_reason}"
         rows.append(
             feature(
                 {
@@ -363,6 +372,12 @@ def _standard_plan_rows(
                     "group_segment_ids": [segment_id],
                     "source_segment_ids": [segment_id],
                     "buffer_distances_m": buffer_distances,
+                    "directionality_conflict_status": directionality_conflict_status,
+                    "directionality_conflict_action": directionality_conflict_action,
+                    "directionality_conflict_reason": directionality_conflict_reason,
+                    "forward_rcsd_road_ids": _parse_list(props.get("forward_rcsd_road_ids")),
+                    "bidirectional_rcsd_road_ids": _parse_list(props.get("bidirectional_rcsd_road_ids")),
+                    "reverse_or_extra_rcsd_road_ids": _parse_list(props.get("reverse_or_extra_rcsd_road_ids")),
                     "geometry_buffer_coverage_issue": props.get("geometry_buffer_coverage_issue"),
                     "rcsd_outside_swsd_buffer_length_m": props.get("rcsd_outside_swsd_buffer_length_m"),
                     "rcsd_outside_swsd_buffer_ratio": props.get("rcsd_outside_swsd_buffer_ratio"),

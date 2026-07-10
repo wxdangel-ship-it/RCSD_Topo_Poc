@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import platform
+import sys
 import time
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
@@ -20,9 +22,11 @@ from rcsd_topo_poc.modules.t09_swsd_field_rule_restoration.outputs import (
 from rcsd_topo_poc.modules.t09_swsd_field_rule_restoration.restoration import restore_field_rules
 from rcsd_topo_poc.modules.t09_swsd_field_rule_restoration.schemas import (
     RestorationResult,
+    RestorationStrategy,
     SWSDRoadInput,
     T09ArmMovement,
     T09SwsdArm,
+    normalize_restoration_strategy,
     to_jsonable,
 )
 
@@ -48,8 +52,10 @@ def run_t09_swsd_field_rule_restoration(
     restriction_layer: str | None = None,
     arrow_layer: str | None = None,
     target_epsg: int = 3857,
+    strategy_version: str | RestorationStrategy = RestorationStrategy.RESTRICTION_ONLY_V1,
 ) -> T09RunResult:
     started = time.perf_counter()
+    strategy = normalize_restoration_strategy(strategy_version)
     effective_run_id = run_id or _default_run_id()
     loaded = load_t09_inputs(
         swnode_gpkg=swnode_gpkg,
@@ -63,8 +69,14 @@ def run_t09_swsd_field_rule_restoration(
         restriction_layer=restriction_layer,
         arrow_layer=arrow_layer,
         target_epsg=target_epsg,
+        strategy_version=strategy,
     )
-    arms, movements = build_t09_arm_universe(loaded)
+    input_loaded_at = time.perf_counter()
+    arms, movements = build_t09_arm_universe(
+        loaded,
+        strategy_version=strategy,
+    )
+    arm_movement_built_at = time.perf_counter()
     result = restore_field_rules(
         arms=arms,
         movements=movements,
@@ -73,8 +85,15 @@ def run_t09_swsd_field_rule_restoration(
         road_attributes=loaded.road_attributes,
         roads=loaded.roads,
         road_geometries=loaded.road_geometries,
+        strategy_version=strategy,
     )
-    elapsed_seconds = time.perf_counter() - started
+    decision_restored_at = time.perf_counter()
+    elapsed_seconds = decision_restored_at - started
+    stage_durations_seconds = {
+        "input_load": input_loaded_at - started,
+        "arm_movement_build": arm_movement_built_at - input_loaded_at,
+        "decision_restore": decision_restored_at - arm_movement_built_at,
+    }
     result = replace(
         result,
         summary=_summary(
@@ -84,6 +103,8 @@ def run_t09_swsd_field_rule_restoration(
             run_id=effective_run_id,
             output_dir=output_dir,
             target_epsg=target_epsg,
+            strategy=strategy,
+            stage_durations_seconds=stage_durations_seconds,
         ),
     )
     artifacts = write_restoration_outputs(
@@ -96,7 +117,12 @@ def run_t09_swsd_field_rule_restoration(
     return T09RunResult(result=result, artifacts=artifacts)
 
 
-def build_t09_arm_universe(loaded: T09LoadedInputs) -> tuple[tuple[T09SwsdArm, ...], tuple[T09ArmMovement, ...]]:
+def build_t09_arm_universe(
+    loaded: T09LoadedInputs,
+    *,
+    strategy_version: str | RestorationStrategy = RestorationStrategy.RESTRICTION_ONLY_V1,
+) -> tuple[tuple[T09SwsdArm, ...], tuple[T09ArmMovement, ...]]:
+    strategy = normalize_restoration_strategy(strategy_version)
     roads_by_id = {road.road_id: road for road in loaded.roads}
     road_ids_by_node: dict[str, set[str]] = {}
     for road in loaded.roads:
@@ -117,6 +143,7 @@ def build_t09_arm_universe(loaded: T09LoadedInputs) -> tuple[tuple[T09SwsdArm, .
             roads=junction_roads,
             segments=loaded.segments,
             road_geometries=loaded.road_geometries,
+            strategy_version=strategy,
         )
         arms = annotate_arm_angles(arms, roads_by_id=roads_by_id, road_geometries=loaded.road_geometries)
         movements = build_arm_movements(junction_id=junction_id, arms=arms)
@@ -133,6 +160,8 @@ def _summary(
     run_id: str | None,
     output_dir: str | Path,
     target_epsg: int,
+    strategy: RestorationStrategy,
+    stage_durations_seconds: dict[str, float],
 ) -> dict[str, Any]:
     summary = dict(result.summary)
     summary.update(
@@ -142,10 +171,22 @@ def _summary(
             "run_id": run_id,
             "produced_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "target_epsg": target_epsg,
+            "strategy_version": strategy.value,
             "output_dir": str(Path(output_dir).expanduser().resolve()),
             "input_audit": loaded.input_audit,
+            "runtime_environment": {
+                "python_version": platform.python_version(),
+                "python_implementation": platform.python_implementation(),
+                "python_executable": str(Path(sys.executable).resolve()),
+                "platform": platform.platform(),
+            },
             "performance": {
-                "elapsed_seconds": round(elapsed_seconds, 6),
+                "elapsed_seconds": _non_negative_seconds(elapsed_seconds),
+                "stage_durations_seconds": {
+                    name: _non_negative_seconds(duration)
+                    for name, duration in stage_durations_seconds.items()
+                },
+                "timed_scope": "input_load_through_decision_restore",
                 "junctions_per_second": _items_per_second(
                     len(loaded.junction_member_node_ids),
                     elapsed_seconds,
@@ -157,7 +198,7 @@ def _summary(
     qa = dict(summary.get("qa", {}))
     qa.update(
         {
-            "crs_transform_executed": loaded.crs_transform_executed,
+            "crs_transform_executed": bool(loaded.crs_transform_executed),
             "crs_note": f"inputs read through vector_io target EPSG:{target_epsg}",
             "topology_silent_fix": False,
             "geometry_semantics": "arm angles derived from seed road geometry and explicit snodeid/enodeid topology",
@@ -177,6 +218,10 @@ def _items_per_second(count: int, elapsed_seconds: float) -> float:
     if elapsed_seconds <= 0:
         return float(count)
     return round(count / elapsed_seconds, 6)
+
+
+def _non_negative_seconds(value: float) -> float:
+    return round(max(0.0, float(value)), 6)
 
 
 def _sort_key(value: str) -> tuple[int, Any]:

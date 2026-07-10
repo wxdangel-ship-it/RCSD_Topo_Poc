@@ -444,23 +444,25 @@ manifest 至少记录：
 
 当前 T10 全量 Case 端到端统计基线登记如下：
 
-- 当前有效基线目录：`/mnt/e/Work/RCSD_Topo_Poc/outputs/baselines/t10_all_cases_ce1cc72_20260707_153701`
-- 当前有效 6 Case run root：`/mnt/e/Work/RCSD_Topo_Poc/outputs/baselines/t10_all_cases_ce1cc72_20260707_153701/e2e_full`
-- 当前有效 Segment20 run root：`/mnt/e/Work/RCSD_Topo_Poc/outputs/baselines/t10_all_cases_ce1cc72_20260707_153701/segment20_error2`
+- 当前有效基线目录：`/mnt/e/Work/RCSD_Topo_Poc/outputs/baselines/t10_full_96b0ea5_20260710_060735`
+- 当前有效 T10 6 Case run root：`/mnt/e/Work/RCSD_Topo_Poc/outputs/baselines/t10_full_96b0ea5_20260710_060735/t10/e2e_full`
+- 当前有效 T10-Error 26 Case run root：`/mnt/e/Work/RCSD_Topo_Poc/outputs/baselines/t10_full_96b0ea5_20260710_060735/t10_error/e2e_full`
+- 当前有效 T10-Error-2 20 Case run root：`/mnt/e/Work/RCSD_Topo_Poc/outputs/baselines/t10_full_96b0ea5_20260710_060735/t10_error2/e2e_full`
 - 当前指针文件：
   - `/mnt/e/Work/RCSD_Topo_Poc/outputs/baselines/LATEST_T10_ALL_CASES_BASELINE.txt`
   - `/mnt/e/Work/RCSD_Topo_Poc/outputs/baselines/LATEST_T10_BASELINE.txt`
-  - `/mnt/e/Work/RCSD_Topo_Poc/outputs/baselines/LATEST_T10_ERROR2_SEGMENT20_BASELINE.txt`
-- 版本：`ce1cc72`。
+  - `/mnt/e/Work/RCSD_Topo_Poc/outputs/baselines/LATEST_T10_FULL_BASELINE.txt`
+- 刷新日期：`2026-07-10`；版本：`96b0ea5`。
 - 6 Case 范围：`1885118`、`605415675`、`609214532`、`706247`、`74155468`、`991176`。
-- Segment20 范围：`/mnt/e/TestData/POC_Data/T10-Error-2` 下 20 个 Segment case。
-- 完成口径：T10 `status = passed`；6 个主基准 Case 全部通过，Segment20 全部通过，失败 Case 数为 0。
-- 刷新口径：从 `/mnt/e/TestData/POC_Data/T10` 和 `/mnt/e/TestData/POC_Data/T10-Error-2` 全量端到端重跑，不复用旧基线上游 handoff。
-- 基线产物：`case_stage_status_baseline.csv`、`case_stage_status_compare.csv`、`t06_funnel_baseline.csv`、`t06_funnel_compare.csv`、`t06_rcsd_base_replacement_rate_baseline.csv`、`t06_rcsd_base_replacement_rate_compare.csv`、`segment20_t06_funnel_baseline.csv`、`segment20_t06_funnel_compare.csv`、`segment20_t06_rcsd_base_replacement_rate_baseline.csv`、`segment20_t06_rcsd_base_replacement_rate_compare.csv`、`segment20_metric_summary.json`、`baseline_summary.json`、`BASELINE_REFRESH_NOTE.md`、`BASELINE_FREEZE.md`、`BASELINE_USAGE.md`。
+- 完成口径：T10 `6/6 passed`、T10-Error `26/26 passed`、T10-Error-2 `20/20 passed`，合计 `52/52 passed`、失败 Case 数为 `0`，`missing_artifacts=[]`。
+- 当前根级基线产物：`baseline_summary.json`、`case_stage_status_baseline.csv`、`package_summary_baseline.csv`、`unreplaced_rcsd_attribution_distribution_baseline.csv`、`qgis_update_manifest.csv`、`qgis_update_manifest.json`。
+- 各 package 的运行清单与汇总位于对应 `<package>/e2e_full/t10_e2e_run_manifest.json` 和 `<package>/e2e_full/t10_e2e_run_summary.json`；是否能单独代表 package 全量完成性，须结合下述续跑事实判断。
 
-旧登记基线 `outputs/baselines/t10_all_cases_3cd626d_20260701_214807` 保留为历史对照；旧四 Case 指针 `LATEST_T10_4CASES_BASELINE.txt` 仍不作为有效入口。后续自动化或人工审计必须优先读取 `LATEST_T10_ALL_CASES_BASELINE.txt`、通用 `LATEST_T10_BASELINE.txt`，或 Segment20 专项指针 `LATEST_T10_ERROR2_SEGMENT20_BASELINE.txt`，不得硬编码旧目录。
+T10 首次运行在两个 Case 完成后中断，随后四个 Case 以 `--case-id` 续写同一 run root；因此当前 T10 顶层 `t10_e2e_run_manifest.json` 与 `t10_e2e_run_summary.json` 都只描述最后一次四 Case 续跑，二者的 `case_count=4` 均不能单独代表六 Case package。正式六 Case 完成口径以根级 `baseline_summary.json`、`case_stage_status_baseline.csv` 及六个 Case 级 `t10_e2e_case_run_manifest.json` 为准，不得把顶层单次续跑产物误解为基线只含四个 Case。
 
-该登记只定义 T10 全量 Case 与 Segment20 专项统计对比基线，不新增执行入口，不改变 T01-T09 算法接口。完整漏斗、RCSD Base 替换率、GIS / 拓扑 / 性能审计状态见 `architecture/statistical-baseline.md`。
+`outputs/baselines/t10_all_cases_ce1cc72_20260707_153701` 及更早的 `outputs/baselines/t10_all_cases_3cd626d_20260701_214807` 仅作为历史快照引用；其中记录的详细漏斗、替换率和 Segment20 专项统计不得冒充当前 `96b0ea5` 基线。旧四 Case 指针 `LATEST_T10_4CASES_BASELINE.txt` 仍不作为有效入口。后续自动化或人工审计必须优先读取上述三个当前指针，不得硬编码历史目录。
+
+该登记定义 T10、T10-Error 与 T10-Error-2 三套 package 的全量 Case 统计对比基线，不新增执行入口，不改变 T01-T09 算法接口。当前可用产物、历史快照边界与复用要求见 `architecture/statistical-baseline.md`。
 
 ## 4. EntryPoints
 

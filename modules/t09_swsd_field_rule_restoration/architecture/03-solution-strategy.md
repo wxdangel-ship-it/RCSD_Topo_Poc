@@ -1,117 +1,140 @@
 # 03 Solution Strategy
 
-本文件是 T09 的架构设计 / 需求具体实现策略说明。模块需求见 `../SPEC.md`，稳定输入输出和入口契约见 `../INTERFACE_CONTRACT.md`。
+本文件是 T09 的需求具体实现策略。模块需求见 `../SPEC.md`，稳定接口和值域见 `../INTERFACE_CONTRACT.md`。
 
-## 1. Step1 输入归一与语义路口准备
+## 1. 策略入口与兼容层
 
-T09 首先读取 SWSD Node、SWSD Road、可选 T01 Segment、可选 restriction、可选 arrow，并统一到处理 CRS。读取阶段必须保留输入路径、图层、字段、计数和 CRS 归一信息，写入 summary。
+两个既有 callable 都接受 `strategy_version`。不传参数时固定为 `restriction_only_v1`；只有显式传入 `multi_evidence_v2` 才启用多证据决策。策略版本必须写入 restored rule 和两个 summary，Step3 不得静默混用不同策略的输入。
 
-业务上，SWSD Node 负责定义语义路口成员关系；有效 `mainnodeid` 表示所属语义路口，缺失或无效时按单 node 处理。SWSD Road 负责定义路口内外的拓扑连接和道路方向。T01 Segment 用于理解道路连续单元和后续 F-RCSD 承载映射，但它不是 Arm 成员的唯一来源。
+v1 保留现有规则：Restriction 是唯一能改变禁行结论的证据，Laneinfo 与 special carrier 仅用于解释、冲突和风险。v2 复用同一 Arm / Movement universe，但增加 Road 级 Laneinfo 决策、Arm 级 special carrier 弱推导、统一覆盖链和 candidate 输出。
 
-正确结果是：每个语义路口都有可审计的 member node 集合，输入缺失或字段异常被显式记录。错误结果是：根据局部样本猜字段语义、忽略 CRS、或在缺字段时继续 silent fix。
+## 2. Step1 输入归一
 
-## 2. Step1 SWSD Arm 构建
+读取 SWSD Node/Road、可选 T01 Segment、Restriction 和 Laneinfo，并统一到 `target_epsg`。输入审计必须记录路径、图层、字段、计数、原始 CRS、变换结果和缺失字段。
 
-Arm 表达一个语义路口的道路方向业务单元。T09 按语义路口收集 member nodes 的 incident roads，并区分：
+Restriction 读取时完整保留 properties，提取 `CondType` 但不猜其值语义。Laneinfo 读取时保留 Road / Link ID、lane code、lane count、序列完整性、方向匹配和 raw properties。缺 CRS、关键字段或不可解释几何必须显式失败、跳过或审计，禁止 silent fix。
 
-- 两端都在当前语义路口内的 internal road；
-- 从外部进入语义路口的 approach road；
-- 从语义路口驶向外部的 exit road；
-- 双向 road 同时具备进入和退出角色；
-- 与提前左转、提前右转、辅路提右等相关的 special carrier road。
+## 3. Step1 Arm 与 Movement
 
-Arm 构建应尽量保留特殊道路和未进入 Segment 的 road，不得因为它们不在主干上就静默丢弃。无法明确解释的 road 应进入 risk 或 audit 字段，而不是从业务视图中消失。
+Arm 按 SWSD 语义路口 member nodes 聚合 incident Roads，区分 internal、approach、exit、bidirectional、seed、trunk、parallel 和 special carrier。special carrier 候选使用 `formway & 128/256`，不得以 `kind` 后缀替代正式字段。
 
-正确结果是：`T09SwsdArm` 能说明每个 Arm 的 member nodes、approach / exit roads、segment_ids、角度、终端 node 和风险。错误结果是：只保留主路，导致 restriction 或 arrow 证据无法追溯到真实承载道路。
+Movement 是同一 junction 内 `from_arm -> to_arm` 的真实候选方向。每个 Movement 建立从 `from_arm.approach_road_ids` 到 `to_arm.exit_road_ids` 的 Road-Pair universe。只有拓扑和方向上真实存在的 Movement 才能参与 Laneinfo 方向排除；不存在的方向是 `not_applicable`，不是 prohibited。
 
-## 3. Step1 Movement 候选构建
+## 4. Step2 Restriction Road-Pair 与条件
 
-Movement 表达同一语义路口内 `from_arm -> to_arm` 的候选通行方向。T09 对 Arm 两两组合生成 Movement，同时建立 carrier universe：从 `from_arm.approach_road_ids` 到 `to_arm.exit_road_ids` 的候选 road-pair 集合。
+Restriction 候选先按 `(in_link_id, out_link_id)` 精确索引，再用几何候选补充匹配。基础 Road-Pair 匹配身份是 `(restriction_id, in_link_id, out_link_id)`，同一 ID 的多组 pair 独立保留；v2 完整证据实例身份还包含 `condition_identity`。
 
-业务判定必须先在 road-pair 粒度成立，再汇总到 Movement 粒度。若只有部分 road-pair 被 restriction 命中，Movement 只能是 `partially_prohibited` 或进入更细审计，不能直接升级为 `fully_prohibited`。
+每条匹配先形成 `road_to_road / prohibited / explicit`。条件处理遵循：
 
-正确结果是：Movement 的 `candidate_road_pair_count`、carrier 状态和不适用原因可解释。错误结果是：把 Arm 级关系当作单一 road-pair，或把局部证据扩张到整个 Movement。
+1. 保存 `CondType` 与全部 raw properties。
+2. 对 raw payload 做确定性序列化，形成 `condition_identity`。
+3. 未有正式定义的字段标记 `condition_semantics_status=unknown`。
+4. 不同 condition identity 不合并计算 Arm 全覆盖。
+5. Step3 原样继承条件，不能硬编码普通全时禁止。
 
-## 4. Step2 restriction 证据匹配
+## 5. Restriction scope 安全提升
 
-restriction 是 T09 当前唯一能改变 Movement 禁行结果的显式禁止证据。restriction 若表达 `inLinkID -> outLinkID`，且该 road-pair 命中 `from_arm` 的 approach road 与 `to_arm` 的 exit road，则生成 restriction evidence。
+Road-Pair Restriction 只有同时满足以下审计条件，才能提升为 `arm_to_arm`：
 
-restriction 证据候选先按 `(in_link_id, out_link_id)` 精确索引匹配 Movement 的 carrier road-pair，再用 restriction 几何与候选 road 几何的空间索引补充邻近候选。候选身份固定为 `(restriction_id, in_link_id, out_link_id)`；同一个 `restriction_id / CondID` 覆盖多组 link-pair 时，每一组都必须作为独立证据参与 Movement 覆盖判断。该候选过滤只减少扫描范围，不改变 raw geometry match 的审计语义。
+- 所有证据属于同一 from Arm、to Arm 和 condition identity；
+- 覆盖该 Movement 经审计后的全部等价 carrier；
+- 并行 Road、等价 Road 切分和方向关系由正式 T01 Segment membership 或显式 parallel-branch 审计证明；显式 parallel 只在 v2 产生，且将同角色、同 terminal、同方向 bundle 全部作为一个等价组，不按 Road ID 指定 core / branch；Road 自带 segmentid 只能交叉审计，不能覆盖 T01 冲突；
+- Restriction 几何覆盖核心通行路径或精确 link identity 已充分证明；
+- 同一 raw Restriction identity 的 exact / geometry evidence 必须跨本次 restore run 的全部 Movement 汇总；geometry 不得通过一对多邻近匹配拼出完整覆盖，exact 仍保持权威，额外 geometry fallback 必须转人工复核；
+- 没有未被解释的其它 carrier；
+- Laneinfo / special carrier 的支持或冲突已记录，但不反转 Restriction 优先级。
 
-汇总规则：
+不满足时分别保持 `road_pair_explicit`、`partial_coverage`、`suspected_arm_to_arm` 或 `manual_review_required`。禁止把“必须全覆盖”机械替换为“任一命中”，也禁止跨条件 payload 拼出全覆盖。
 
-- carrier universe 全部 road-pair 都被 restriction 覆盖，Movement 才能是 `fully_prohibited`。
-- 仅部分 road-pair 命中 restriction，Movement 是 `partially_prohibited`。
-- 没有 restriction 命中，不输出禁止，只输出 `no_prohibition_evidence` 或 `unknown`。
+## 6. Step2 Laneinfo Road 级推理
 
-正确结果是：每条禁止规则能回溯到 restriction feature、road-pair、Movement 和 confidence。错误结果是：因为没有通行证据就反推出禁行。
+Laneinfo 按进入 Road 聚合全部匹配 arrow，并执行以下 Gate：
 
-## 5. Step2 arrow 与完整排除证据
+1. Road 与 Laneinfo 方向匹配。
+2. 车道序列和 lane count 完整。
+3. 所有 code 可解释，且没有 `9`、字母 `o` 或未知码。
+4. 目标 Movement 在当前路口拓扑中真实存在。
 
-arrow 表达地面车道箭头。T09 必须保留原始 code、规范化 token、车道顺序、车道数量、方向匹配和解析状态。字母箭头大小写不敏感；数字 `0` 与字母 `o` 必须严格区分。
+任一 Gate 失败，输出 `unknown` 和完整审计，不生成确定禁止。全部通过后，对有效 lane directions 取并集：包含目标方向则输出 `road_to_arm / supported / derived`；不包含则输出 `road_direction_exclusion / prohibited / derived`。
 
-完整 arrow 排除只表示“现场箭头没有支持该 Movement”。它可以作为现场证据、解释证据或冲突证据，但在没有 restriction 时不能单独生成禁止规则。
+左转与调头联动：完整方向并集同时缺少 left 与 u-turn 时，左转和调头分别生成 Road 级排除；缺 left 但有明确 u-turn 时，左转排除、调头支持。数字 `0` 与字母 `o` 在解析和审计中严格区分。
 
-arrow 证据候选可按 road id 缓存并结合空间索引补充几何邻近候选；缓存和索引只服务性能，不得把未命中的 road id 解释为无现场证据。
+v1 仍把这些结论映射为兼容的解释 / 冲突证据，不改变最终禁行；v2 才将其纳入统一决策。
 
-正确结果是：`complete_arrow_exclusion` 的 `supports_prohibition=false`，且 Movement 仍保持无禁止证据，除非已有 restriction。错误结果是：把完整箭头排除直接写成 prohibited。
+## 7. Step2 special carrier Arm 级推理
 
-## 6. Step2 special carrier / displacement 证据
+先以 `formway` bit 识别提前左 / 右转候选，再在 Arm 内结合 Road 角色和核心路口拓扑分类：
 
-提前左转、辅路提右、非辅路提前右转等属于现场结构证据。它们说明 Movement 的承载可能不经过中心路口，或通行方向发生位移，但它们不默认等于整个 Arm-Movement 禁止。
+- 提前左转；
+- 辅路提前右转；
+- 绕开核心路口的提前右转；
+- 经过核心路口的路口前提右。
 
-T09 应输出：
+只有拓扑足以解释时才输出具体分类；不足时为 unknown / manual review。special Road 默认对专用方向 `supported / special_carrier / weak_derived`；没有更高优先级证据时，其它方向可成为弱排除候选。主路方向被特殊通道移出核心路口时输出 `core_junction_displacement`，但不能据单 Road 属性把整个 Movement 判为禁止。所有结果都保存实际触发分类的 `source_carrier_road_ids`，避免把目标 Road 当成来源 Road。
 
-- `advance_left_carrier_exists`
-- `auxiliary_right_turn_carrier_exists`
-- `pre_junction_non_aux_advance_right_relation`
-- `special_carrier_displacement`
+若 Laneinfo 明确支持主路或 special Road 的某方向，Laneinfo 覆盖 special 默认推导；Restriction 永远具有最高优先级。
 
-正确结果是：special carrier 进入 evidence 和 risk flags，辅助人工理解 restriction 或 arrow 冲突。错误结果是：无 restriction 时仅凭 special carrier 输出禁行。
+## 8. 统一证据决策
 
-## 7. Step2 restored field rules 生成
-
-T09 将 Movement 证据汇总为 `T09RestoredFieldRule`。只有显式 restriction 支撑的 `fully_prohibited` 才能成为稳定禁止规则。冲突证据不改变禁行结论，但必须进入风险和 conflicting evidence。
-
-无证据、证据不足、拓扑不可达、方向不适用，应分别表达为无禁止证据、未知、不适用或人工复核，不得写成 allowed 或 prohibited。
-
-正确结果是：每条 restored rule 都引用 supporting evidence；无法追溯证据的规则不得输出。错误结果是：输出无法定位输入证据的规则。
-
-## 8. Step3 SWSD Arm 到 F-RCSD Arm 映射
-
-Step3 使用 T06 `t06_step3_swsd_frcsd_segment_relation` 映射 SWSD Arm 的 `segment_ids` 到 F-RCSD Road / Node。
-
-- `relation_status=replaced` 时，使用 `source=1` 的 F-RCSD Road 表达 RCSD 承载。
-- `relation_status=retained_swsd` 时，使用 `source=2` 的 F-RCSD Road 表达保留 SWSD 承载。
-- `relation_status=replaced+retained_swsd` 时，`source=1` 的 F-RCSD Road 表达 RCSD 主通道承载，`source=2` 的 F-RCSD Road 仅表达 detached junc 局部 SWSD carrier。
-- 对 `relation_status=retained_swsd` 或 `relation_status=replaced+retained_swsd` 的 `source=2` relation road，Step3 必须继续受 T09 Arm 的 `approach_road_ids` / `exit_road_ids` 约束：只有属于当前 Arm seed 的 road 才能作为该 Arm 的 approach / exit carrier。T06 Segment relation 可能包含同一 Segment 内多个 Arm 的 SWSD Road，不能仅凭共享 junction alias 将其他 Arm 的 road 混入当前 Movement。
-- 对于 T09 Arm 中未进入 T06 Segment relation 的 seed road，若该 road 仍以 `source=2` 存在于 T06 F-RCSD Road 输出，且按 SWSD junction alias 与 road direction 可解释为 approach / exit，可作为 `retained_swsd_seed_fallback` carrier；该场景必须进入 risk flags，不得静默当作普通 relation。
-- 一个 Arm 涉及多个 Segment 时允许形成混源承载，但必须进入 `source_mix / risk_flags`。
-- 缺失 Segment relation、缺失 F-RCSD Road 或端点 Node 时，不生成 restriction，并记录跳过原因。
-
-正确结果是：F-RCSD Arm 承载来自 T06 relation，或来自 T06 F-RCSD 输出中仍保留的 `source=2` SWSD seed road fallback。错误结果是：跳过 T06 输出校验，直接把任意 SWSD Road ID 当作 F-RCSD Road ID。
-
-## 9. Step3 F-RCSD restriction 生成
-
-Step3 只处理 `field_rule_status=fully_prohibited` 且 Movement `prohibition_reason=explicit_restriction` 的规则。对映射后的 from Arm approach F-RCSD roads 与 to Arm exit F-RCSD roads 做笛卡尔积，生成 `LinkID -> outLinkID`。
-
-去重键是：
+v2 对相同 junction、Movement、Road / Road-Pair 和 condition scope 收集证据，按固定顺序裁定：
 
 ```text
-LinkID + outLinkID + junction_id + movement_type
+restriction > laneinfo > special_carrier
 ```
 
-几何可由进入 road 和退出 road 在路口附近连接生成；几何无法构造时不得 silent fix，应记录跳过或风险。
+决策流程：
 
-正确结果是：`frcsd_restriction.*` 中每条记录都能回溯到 SWSD Movement、T09 evidence、T09 restored rule 和 T06 relation。错误结果是：对 `no_prohibition_evidence / unknown / not_a_traffic_rule` 也生成 restriction。
+1. 先选择最高优先级确定证据。
+2. 同优先级证据矛盾时输出 `conflict` 或 `manual_review_required`，不得仅按 confidence 选择。
+3. 低优先级证据与获胜结果冲突时，加入 `conflicting_evidence_ids` 和 `override_chain`。
+4. `override_chain` 记录获胜 / 被覆盖证据、原因、结果和风险。
+5. 无确定证据时保持 `unknown`；缺 allowed evidence 不能反推 prohibited。
+6. 同一 Movement 的 condition group 同时出现完整与 partial / manual-review 结果时，Movement 聚合为 `manual_review_required / partially_prohibited`，并保留逐 condition 结果。
 
-## 10. 输出与审计策略
+Restored rule 同时保留 v1 兼容字段与 v2 的 DecisionStatus、RuleScope、EvidencePriority、InferenceLevel、VerificationStatus、condition、Road / Arm、supporting / conflicting evidence 和风险。
 
-T09 输出必须同时满足人工可读和机器可审计：
+## 9. Step3 Arm carrier 映射
 
-- GPKG 支持 GIS 目视检查；
-- CSV 支持快速筛选和统计；
-- JSON 支持结构化回放和 T10 Case 证据包组织；
-- summary 记录输入、输出、跳过原因、CRS、性能和 QA 信息。
+Step3 使用 T06 Segment relation、F-RCSD Road/Node 和 junction alias 映射 Arm：
 
-所有失败、跳过、冲突和风险都应进入 summary 或 evidence，而不是只出现在日志中。
+- `replaced` 只接受 `source=1`，`retained_swsd` 只接受 `source=2`，`replaced+retained_swsd` 接受 `{1,2}`；source 声明缺失、越界或与实际 Road 不一致时拒绝 relation carrier。
+- `source=2` Road 仍受当前 Arm approach / exit seed 约束。
+- relation / fallback Road 的两个端点必须存在于正式 F-RCSD Node，方向必须是有限整数 `{0,1,2,3}` 且能在中心 junction alias 上解释角色。
+- 未进入 relation 的 seed 只有同 ID `source=2` Road 仍存在于 F-RCSD 且全部 Gate 通过时才可 fallback，并记录 `retained_swsd_seed_carrier_fallback`；已声明 relation、Road 或中心 Node 存在缺口时阻断当前 Arm 的全局 fallback。
+
+缺 Relation、Road、Node、方向或 junction alias 时跳过并写入结构化原因，不得直接把任意 SWSD Road ID 当作 F-RCSD carrier。
+
+## 10. Step3 scope-aware 投影
+
+### 10.1 Stable restriction
+
+`frcsd_restriction.*` 只接收：
+
+- 已安全提升为 `arm_to_arm` 的 Restriction；可对经审计的 Arm carrier 组合发布。
+- 仍为 `road_to_road`、但 from/to 具体 Road 都能精确映射到 F-RCSD carrier 的 Restriction；只发布这些具体 carrier。
+
+不同 condition identity 分别输出。v1 保持既有兼容路径；v2 不允许兼容去重键折叠不同 condition。
+
+### 10.2 Candidate
+
+Laneinfo / special carrier 的 `road_to_arm`、`road_direction_exclusion`、`special_carrier` 和 `core_junction_displacement` 必须按具体 Road carrier 尝试映射，不能对整个 Arm 做笛卡尔积。当前缺 RCSD Laneinfo，映射结果写入 `frcsd_restriction_candidates.*` 并标记 `unverified_due_to_missing_frcsd_laneinfo`；不能精确映射或需人工确认的 Restriction scope 也可进入 candidate / review 审计。
+
+同一 `source_rule_id` 的全部 Road-Pair proposal 必须先完成整条规则预检并原子分层；同一规则不得同时进入 stable 与 candidate。
+
+## 11. 输出与审计
+
+GPKG 用于 GIS 目视检查，CSV 用于筛选统计，JSON 用于结构化回放。两个 summary 必须记录 strategy、输入、CRS、DecisionStatus / RuleScope / priority / verification 计数、Restriction scope promotion、condition、conflict、override、stable、candidate、skip、risk、阶段耗时与 QA。
+
+所有失败、跳过、冲突、未知条件和未验证状态必须进入输出或 summary，不能只出现在日志。
+
+## 12. 六 Case 对比策略
+
+权威冻结根为：
+
+```text
+/mnt/e/Work/RCSD_Topo_Poc/outputs/baselines/t10_full_96b0ea5_20260710_060735/t10/e2e_full
+```
+
+该基线 T10 六 Case 为 `6/6 passed`；T09 v1 合计 `8947` Arms、`29145` Movements、`31112` Evidence、`3265` rules、`4357` stable。
+
+对 `1885118`、`605415675`、`609214532`、`706247`、`74155468`、`991176` 复用相同 T01/T06/T08 handoff，在两个新输出根分别运行默认 v1 与显式 v2。v1 比较兼容字段、规则身份 / 状态与 stable restriction；v2 按 Case 和合计报告状态、scope、override、condition、candidate / unverified、跳过和耗时。冻结基线只读，不得覆盖。

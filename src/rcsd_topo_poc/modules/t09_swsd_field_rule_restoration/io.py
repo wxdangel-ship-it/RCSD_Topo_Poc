@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -19,10 +19,15 @@ from rcsd_topo_poc.modules.t08_preprocess.vector_io import (
 from rcsd_topo_poc.modules.t09_swsd_field_rule_restoration.schemas import (
     ArrowInput,
     RestrictionInput,
+    RestorationStrategy,
     RoadAttributes,
     SWSDSegmentInput,
     SWSDRoadInput,
     T09SwsdArm,
+    normalize_restoration_strategy,
+)
+from rcsd_topo_poc.modules.t09_swsd_field_rule_restoration.restriction_evidence import (
+    restriction_condition_identity,
 )
 
 
@@ -58,7 +63,9 @@ def load_t09_inputs(
     segment_default_crs_text: str | None = None,
     restriction_default_crs_text: str | None = None,
     arrow_default_crs_text: str | None = None,
+    strategy_version: str | RestorationStrategy = RestorationStrategy.RESTRICTION_ONLY_V1,
 ) -> T09LoadedInputs:
+    strategy = normalize_restoration_strategy(strategy_version)
     node_result = read_vector(
         swnode_gpkg,
         layer_name=swnode_layer,
@@ -110,7 +117,15 @@ def load_t09_inputs(
     restrictions, restriction_audit = (
         _read_tool7_restrictions(restriction_result) if restriction_result else (tuple(), {})
     )
-    arrows, arrow_audit = _read_tool8_arrows(arrow_result) if arrow_result else (tuple(), {})
+    arrows, arrow_audit = (
+        _read_tool8_arrows(
+            arrow_result,
+            roads_by_id={road.road_id: road for road in roads},
+            strict_metadata=strategy == RestorationStrategy.MULTI_EVIDENCE_V2,
+        )
+        if arrow_result
+        else (tuple(), {})
+    )
     input_results = tuple(
         item
         for item in (node_result, road_result, segment_result, restriction_result, arrow_result)
@@ -274,63 +289,129 @@ def _read_segments(
 def _read_tool7_restrictions(result: VectorReadResult) -> tuple[tuple[RestrictionInput, ...], dict[str, Any]]:
     in_link_field = _required_field(result, ["inLinkID", "inlinkid"], "T08 Tool7 restriction")
     out_link_field = _required_field(result, ["outLinkID", "outlinkid"], "T08 Tool7 restriction")
-    id_field = _optional_field(result, ["id", "restriction_id", "cond_id"])
+    id_field = _optional_field(result, ["id", "restriction_id", "CondID", "condid", "cond_id"])
+    condition_type_field = _optional_field(result, ["CondType", "condtype", "condition_type"])
     restrictions: list[RestrictionInput] = []
     for index, feature in enumerate(result.features, start=1):
         in_link = _required_id(feature.properties.get(in_link_field), f"Tool7 inLinkID row {index}")
         out_link = _required_id(feature.properties.get(out_link_field), f"Tool7 outLinkID row {index}")
         source_id = _normalize_id(feature.properties.get(id_field)) if id_field else None
+        raw_properties = dict(feature.properties)
+        restriction = RestrictionInput(
+            restriction_id=source_id or f"tool7:{index}",
+            in_link_id=in_link,
+            out_link_id=out_link,
+            properties=raw_properties,
+            geometry=feature.geometry,
+            condition_type=(
+                _normalize_optional_text(feature.properties.get(condition_type_field))
+                if condition_type_field
+                else None
+            ),
+            condition_payload=raw_properties,
+            condition_semantics_status="unknown",
+        )
         restrictions.append(
-            RestrictionInput(
-                restriction_id=source_id or f"tool7:{index}",
-                in_link_id=in_link,
-                out_link_id=out_link,
-                properties=dict(feature.properties),
-                geometry=feature.geometry,
+            replace(
+                restriction,
+                condition_identity=restriction_condition_identity(restriction),
             )
         )
     return tuple(restrictions), {
         "id_field": id_field,
         "in_link_field": in_link_field,
         "out_link_field": out_link_field,
+        "condition_type_field": condition_type_field,
+        "condition_identity_count": len({item.condition_identity for item in restrictions}),
         "restriction_count": len(restrictions),
     }
 
 
-def _read_tool8_arrows(result: VectorReadResult) -> tuple[tuple[ArrowInput, ...], dict[str, Any]]:
+def _read_tool8_arrows(
+    result: VectorReadResult,
+    *,
+    roads_by_id: dict[str, SWSDRoadInput],
+    strict_metadata: bool,
+) -> tuple[tuple[ArrowInput, ...], dict[str, Any]]:
     link_field = _required_field(result, ["linkid", "LinkID"], "T08 Tool8 arrow")
     arrow_field = _required_field(result, ["arrow"], "T08 Tool8 arrow")
     lane_count_field = _optional_field(result, ["lane_count"])
+    lane_dir_field = _optional_field(result, ["lane_dir", "Lane_Dir"])
+    road_direction_field = _optional_field(result, ["road_direction", "direction"])
+    seq_start_field = _optional_field(result, ["seq_start"])
+    seq_end_field = _optional_field(result, ["seq_end"])
+    source_arrow_dir_field = _optional_field(result, ["source_arrow_dir"])
     id_field = _optional_field(result, ["id", "arrow_id"])
     arrows: list[ArrowInput] = []
     incomplete_count = 0
+    direction_mismatch_count = 0
+    sequence_metadata_status_counts: dict[str, int] = {}
     for index, feature in enumerate(result.features, start=1):
         link_id = _required_id(feature.properties.get(link_field), f"Tool8 linkid row {index}")
         lane_codes = _parse_arrow_codes(feature.properties.get(arrow_field))
-        lane_sequence_complete = bool(lane_codes)
         lane_count = _parse_int(feature.properties.get(lane_count_field)) if lane_count_field else None
-        if lane_count is not None and lane_count != len(lane_codes):
-            lane_sequence_complete = False
+        lane_dir = _parse_int(feature.properties.get(lane_dir_field)) if lane_dir_field else None
+        road_direction = (
+            _parse_int(feature.properties.get(road_direction_field)) if road_direction_field else None
+        )
+        seq_start = _parse_int(feature.properties.get(seq_start_field)) if seq_start_field else None
+        seq_end = _parse_int(feature.properties.get(seq_end_field)) if seq_end_field else None
+        source_arrow_dir = (
+            _normalize_optional_text(feature.properties.get(source_arrow_dir_field))
+            if source_arrow_dir_field
+            else None
+        )
         explicit_complete = get_case_insensitive_property(
             feature.properties,
             ["lane_sequence_complete", "sequence_complete"],
         )
+        strict_sequence_complete, sequence_metadata_status = _tool8_sequence_complete(
+            lane_codes=lane_codes,
+            lane_count=lane_count,
+            seq_start=seq_start,
+            seq_end=seq_end,
+            source_arrow_dir=source_arrow_dir,
+            explicit_complete=explicit_complete,
+        )
+        legacy_sequence_complete = bool(lane_codes)
+        if lane_count is not None and lane_count != len(lane_codes):
+            legacy_sequence_complete = False
         if explicit_complete is not None:
-            lane_sequence_complete = _parse_bool(explicit_complete)
+            legacy_sequence_complete = _parse_bool(explicit_complete)
+        lane_sequence_complete = (
+            strict_sequence_complete if strict_metadata else legacy_sequence_complete
+        )
         if not lane_sequence_complete:
             incomplete_count += 1
+        sequence_metadata_status_counts[sequence_metadata_status] = (
+            sequence_metadata_status_counts.get(sequence_metadata_status, 0) + 1
+        )
+        strict_direction_matched = _tool8_direction_matches_swsd_road(
+            lane_dir=lane_dir,
+            arrow_road_direction=road_direction,
+            swsd_road=roads_by_id.get(link_id),
+        )
+        direction_matched = strict_direction_matched if strict_metadata else True
+        if not direction_matched:
+            direction_mismatch_count += 1
         source_id = _normalize_id(feature.properties.get(id_field)) if id_field else None
         arrows.append(
             ArrowInput(
                 arrow_id=source_id or f"tool8:{index}:{link_id}",
                 road_id=link_id,
                 lane_codes=lane_codes,
-                direction_matched=True,
+                direction_matched=direction_matched,
                 lane_sequence_complete=lane_sequence_complete,
                 geometry_match_method="t08_tool8_linkid_directional_geometry",
                 properties=dict(feature.properties),
                 source_feature_id=source_id,
                 geometry=feature.geometry,
+                lane_dir=lane_dir,
+                road_direction=road_direction,
+                seq_start=seq_start,
+                seq_end=seq_end,
+                source_arrow_dir=source_arrow_dir,
+                sequence_metadata_status=sequence_metadata_status,
             )
         )
     return tuple(arrows), {
@@ -338,9 +419,61 @@ def _read_tool8_arrows(result: VectorReadResult) -> tuple[tuple[ArrowInput, ...]
         "link_field": link_field,
         "arrow_field": arrow_field,
         "lane_count_field": lane_count_field,
+        "lane_dir_field": lane_dir_field,
+        "road_direction_field": road_direction_field,
+        "seq_start_field": seq_start_field,
+        "seq_end_field": seq_end_field,
+        "source_arrow_dir_field": source_arrow_dir_field,
         "arrow_count": len(arrows),
         "incomplete_arrow_count": incomplete_count,
+        "direction_mismatch_count": direction_mismatch_count,
+        "sequence_metadata_status_counts": sequence_metadata_status_counts,
     }
+
+
+def _tool8_sequence_complete(
+    *,
+    lane_codes: tuple[str, ...],
+    lane_count: int | None,
+    seq_start: int | None,
+    seq_end: int | None,
+    source_arrow_dir: str | None,
+    explicit_complete: Any,
+) -> tuple[bool, str]:
+    if explicit_complete is not None and not _parse_bool(explicit_complete):
+        return False, "explicit_incomplete"
+    if not lane_codes:
+        return False, "empty_arrow_sequence"
+    if lane_count is None or seq_start is None or seq_end is None or source_arrow_dir is None:
+        return False, "sequence_metadata_missing"
+    if lane_count <= 0 or lane_count != len(lane_codes):
+        return False, "lane_count_mismatch"
+    source_record_count = len(tuple(item for item in source_arrow_dir.split("|") if item.strip()))
+    if source_record_count <= 0:
+        return False, "source_record_count_missing"
+    if seq_start != 1 or seq_end < seq_start:
+        return False, "sequence_range_invalid"
+    if seq_end - seq_start + 1 != source_record_count:
+        return False, "sequence_range_source_count_mismatch"
+    if source_record_count > lane_count:
+        return False, "source_record_lane_count_mismatch"
+    return True, "complete"
+
+
+def _tool8_direction_matches_swsd_road(
+    *,
+    lane_dir: int | None,
+    arrow_road_direction: int | None,
+    swsd_road: SWSDRoadInput | None,
+) -> bool:
+    if lane_dir not in {2, 3} or arrow_road_direction not in {0, 1, 2, 3}:
+        return False
+    if swsd_road is not None and arrow_road_direction != swsd_road.direction:
+        return False
+    effective_road_direction = swsd_road.direction if swsd_road is not None else arrow_road_direction
+    if effective_road_direction in {0, 1}:
+        return True
+    return lane_dir == effective_road_direction
 
 
 def _layer_audit(result: VectorReadResult | None) -> dict[str, Any]:

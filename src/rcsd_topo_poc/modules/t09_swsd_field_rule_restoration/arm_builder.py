@@ -8,9 +8,11 @@ from shapely.geometry import LineString, MultiLineString
 from shapely.geometry.base import BaseGeometry
 
 from rcsd_topo_poc.modules.t09_swsd_field_rule_restoration.schemas import (
+    RestorationStrategy,
     SWSDSegmentInput,
     SWSDRoadInput,
     T09SwsdArm,
+    normalize_restoration_strategy,
 )
 
 
@@ -29,6 +31,8 @@ class _SeedItem:
     terminal_node_id: str
     segment_matches: tuple[tuple[str, str], ...]
     segment_ids: tuple[str, ...]
+    t01_segment_ids: tuple[str, ...]
+    segment_membership_status: str
 
 
 def build_swsd_arms(
@@ -38,7 +42,9 @@ def build_swsd_arms(
     roads: tuple[SWSDRoadInput, ...],
     segments: tuple[SWSDSegmentInput, ...] = tuple(),
     road_geometries: dict[str, BaseGeometry] | None = None,
+    strategy_version: str | RestorationStrategy = RestorationStrategy.RESTRICTION_ONLY_V1,
 ) -> tuple[T09SwsdArm, ...]:
+    strategy = normalize_restoration_strategy(strategy_version)
     member_set = set(member_node_ids)
     segment_by_road = _segment_index(segments, member_set)
     internal_roads = tuple(
@@ -64,6 +70,7 @@ def build_swsd_arms(
                 seed_group=group,
                 all_seed_ids=all_seed_ids,
                 segment_by_id=segment_by_id,
+                strategy=strategy,
             )
         )
     return tuple(arms)
@@ -84,6 +91,9 @@ def _seed_items(
             continue
         inbound, outbound = _road_roles_for_junction(road, snode_inside=snode_inside)
         segment_matches = segment_by_road.get(road.road_id, tuple())
+        t01_segment_ids = tuple(
+            sorted({segment_id for segment_id, _ in segment_matches}, key=_sort_key)
+        )
         segment_ids = road.segment_ids or tuple(segment_id for segment_id, _ in segment_matches)
         terminal_node_id = road.enodeid if snode_inside else road.snodeid
         items.append(
@@ -96,6 +106,11 @@ def _seed_items(
                 terminal_node_id=terminal_node_id,
                 segment_matches=segment_matches,
                 segment_ids=segment_ids,
+                t01_segment_ids=t01_segment_ids,
+                segment_membership_status=_segment_membership_status(
+                    t01_segment_ids=t01_segment_ids,
+                    road_segment_ids=road.segment_ids,
+                ),
             )
         )
     return tuple(items)
@@ -109,10 +124,20 @@ def _arm_from_seed_group(
     seed_group: tuple[_SeedItem, ...],
     all_seed_ids: set[str],
     segment_by_id: dict[str, SWSDSegmentInput],
+    strategy: RestorationStrategy,
 ) -> T09SwsdArm:
     seed_ids = tuple(sorted((item.road.road_id for item in seed_group), key=_sort_key))
     segment_ids = tuple(
         sorted({segment_id for item in seed_group for segment_id in item.segment_ids}, key=_sort_key)
+    )
+    t01_segment_ids = tuple(
+        sorted({segment_id for item in seed_group for segment_id in item.t01_segment_ids}, key=_sort_key)
+    )
+    segment_membership_status = _group_segment_membership_status(seed_group)
+    parallel_branch_ids = (
+        _parallel_branch_road_ids(seed_group)
+        if strategy == RestorationStrategy.MULTI_EVIDENCE_V2
+        else tuple()
     )
     inbound_ids = tuple(sorted((item.road.road_id for item in seed_group if item.inbound), key=_sort_key))
     outbound_ids = tuple(sorted((item.road.road_id for item in seed_group if item.outbound), key=_sort_key))
@@ -131,11 +156,24 @@ def _arm_from_seed_group(
         risk_flags.append("segment_membership_missing")
     if len(segment_ids) > 1:
         risk_flags.append("multi_segment_directional_arm")
+    if (
+        strategy == RestorationStrategy.MULTI_EVIDENCE_V2
+        and segment_membership_status == "conflict"
+    ):
+        risk_flags.append("segment_membership_conflict")
     angle = _mean_angle([item.angle_deg for item in seed_group if item.angle_deg is not None])
     audit_refs = (
         f"grouping=segment_local_direction",
         f"seed_road_ids={','.join(seed_ids)}",
         f"terminal_node_ids={','.join(terminal_ids)}",
+        *(
+            (
+                f"parallel_branch_road_ids={','.join(parallel_branch_ids)}",
+                "parallel_branch_proof=same_role_same_terminal_directional_bundle",
+            )
+            if strategy == RestorationStrategy.MULTI_EVIDENCE_V2
+            else tuple()
+        ),
     )
     return T09SwsdArm(
         junction_id=junction_id,
@@ -145,19 +183,70 @@ def _arm_from_seed_group(
         seed_road_ids=seed_ids,
         connector_road_ids=connector_ids,
         segment_ids=segment_ids,
+        t01_segment_ids=t01_segment_ids,
+        segment_membership_status=segment_membership_status,
         inbound_road_ids=inbound_ids,
         outbound_road_ids=outbound_ids,
         bidirectional_road_ids=bidirectional_ids,
         approach_road_ids=tuple(sorted(set(inbound_ids) | set(bidirectional_ids), key=_sort_key)),
         exit_road_ids=tuple(sorted(set(outbound_ids) | set(bidirectional_ids), key=_sort_key)),
         trunk_road_ids=seed_ids,
+        parallel_branch_road_ids=parallel_branch_ids,
         advance_left_road_ids=tuple(sorted((item.road.road_id for item in seed_group if item.road.formway & 256), key=_sort_key)),
+        advance_right_road_ids=tuple(sorted((item.road.road_id for item in seed_group if item.road.formway & 128), key=_sort_key)),
         terminal_node_id=terminal_ids[0] if len(terminal_ids) == 1 else None,
         terminal_kind=_group_terminal_kind(seed_group, segment_ids),
         angle_deg=angle,
         risk_flags=tuple(sorted(risk_flags)),
         audit_refs=audit_refs,
     )
+
+
+def _segment_membership_status(
+    *,
+    t01_segment_ids: tuple[str, ...],
+    road_segment_ids: tuple[str, ...],
+) -> str:
+    t01_ids = set(t01_segment_ids)
+    road_ids = set(road_segment_ids)
+    if t01_ids and road_ids:
+        return "consistent" if t01_ids == road_ids else "conflict"
+    if t01_ids:
+        return "t01_only"
+    if road_ids:
+        return "road_only"
+    return "missing"
+
+
+def _group_segment_membership_status(seed_group: tuple[_SeedItem, ...]) -> str:
+    statuses = {item.segment_membership_status for item in seed_group}
+    if statuses == {"consistent"}:
+        return "consistent"
+    if all(item.t01_segment_ids for item in seed_group) and statuses <= {
+        "consistent",
+        "t01_only",
+    }:
+        return "t01_only"
+    if statuses == {"road_only"}:
+        return "road_only"
+    if statuses == {"missing"}:
+        return "missing"
+    return "conflict"
+
+
+def _parallel_branch_road_ids(seed_group: tuple[_SeedItem, ...]) -> tuple[str, ...]:
+    """Identify only same-role, same-terminal roads from an audited directional bundle."""
+
+    grouped: dict[tuple[str, str], list[_SeedItem]] = {}
+    for item in seed_group:
+        if item.role == "none" or item.angle_deg is None:
+            continue
+        grouped.setdefault((item.role, item.terminal_node_id), []).append(item)
+    branches: set[str] = set()
+    for items in grouped.values():
+        if len(items) > 1:
+            branches.update(item.road.road_id for item in items)
+    return tuple(sorted(branches, key=_sort_key))
 
 
 def _connector_road_ids(

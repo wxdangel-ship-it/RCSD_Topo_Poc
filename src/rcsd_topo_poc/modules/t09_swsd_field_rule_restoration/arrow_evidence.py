@@ -15,15 +15,20 @@ from rcsd_topo_poc.modules.t09_swsd_field_rule_restoration.geometry_match import
 )
 from rcsd_topo_poc.modules.t09_swsd_field_rule_restoration.schemas import (
     ArrowInput,
+    DecisionStatus,
     EvidenceProvenance,
+    EvidencePriority,
     EvidenceType,
     InferenceLevel,
+    MovementApplicability,
     ProhibitionReason,
     ProhibitionStatus,
+    RuleScope,
     SWSDRoadInput,
     T09ArmMovement,
     T09EvidenceItem,
     T09SwsdArm,
+    VerificationStatus,
 )
 
 
@@ -51,6 +56,22 @@ class ArrowEvaluationResult:
 
 
 @dataclass(frozen=True)
+class RoadArrowDecision:
+    road_id: str
+    movement_id: str
+    movement_type: str
+    decision_status: DecisionStatus
+    evidence_items: tuple[T09EvidenceItem, ...]
+    evidence_ids: tuple[str, ...]
+    confidence: float
+    direction_tokens: tuple[str, ...]
+    reason: str
+    risk_flags: tuple[str, ...] = tuple()
+    source_arrow_ids: tuple[str, ...] = tuple()
+    lane_summary: dict[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class _MatchedArrow:
     road_id: str
     arrow: ArrowInput
@@ -75,6 +96,310 @@ class _MatchedArrow:
         if self.endpoint_distance_m is not None:
             audit["endpoint_distance_m"] = round(self.endpoint_distance_m, 3)
         return audit
+
+
+def evaluate_road_arrow_directions(
+    movement: T09ArmMovement,
+    arrows: tuple[ArrowInput, ...],
+    *,
+    evidence_prefix: str = "laneinfo",
+    roads_by_id: dict[str, SWSDRoadInput] | None = None,
+    road_geometries: dict[str, BaseGeometry] | None = None,
+    arms_by_id: dict[str, T09SwsdArm] | None = None,
+) -> tuple[RoadArrowDecision, ...]:
+    """Evaluate v2 Laneinfo once per approach Road without widening it to Arm scope."""
+
+    roads_by_id = roads_by_id or {}
+    road_geometries = road_geometries or {}
+    arms_by_id = arms_by_id or {}
+    approach_road_ids = tuple(sorted({pair.from_road_id for pair in movement.carrier_road_pairs}))
+    matched_by_road = _match_all_arrows_to_approach_roads(
+        movement=movement,
+        approach_road_ids=approach_road_ids,
+        arrows=arrows,
+        roads_by_id=roads_by_id,
+        road_geometries=road_geometries,
+        arms_by_id=arms_by_id,
+    )
+    decisions: list[RoadArrowDecision] = []
+    for road_id in approach_road_ids:
+        matched_arrows = matched_by_road.get(road_id, tuple())
+        decisions.append(
+            _evaluate_one_road_arrow_direction(
+                movement=movement,
+                road_id=road_id,
+                matched_arrows=matched_arrows,
+                evidence_prefix=evidence_prefix,
+            )
+        )
+    return tuple(decisions)
+
+
+def _evaluate_one_road_arrow_direction(
+    *,
+    movement: T09ArmMovement,
+    road_id: str,
+    matched_arrows: tuple[_MatchedArrow, ...],
+    evidence_prefix: str,
+) -> RoadArrowDecision:
+    movement_type = movement.movement_type.strip().lower()
+    source_arrow_ids = tuple(sorted({item.arrow.arrow_id for item in matched_arrows}))
+    lane_summary = _road_arrow_lane_summary(
+        movement_type=movement_type,
+        matched_arrows=matched_arrows,
+    )
+    if movement.movement_applicability != MovementApplicability.APPLICABLE:
+        return RoadArrowDecision(
+            road_id=road_id,
+            movement_id=movement.movement_id,
+            movement_type=movement.movement_type,
+            decision_status=DecisionStatus.NOT_APPLICABLE,
+            evidence_items=tuple(),
+            evidence_ids=tuple(),
+            confidence=0.0,
+            direction_tokens=tuple(),
+            reason=f"movement_not_applicable:{movement.movement_applicability.value}",
+            risk_flags=("movement_not_applicable",),
+            source_arrow_ids=source_arrow_ids,
+            lane_summary=lane_summary,
+        )
+    if not matched_arrows:
+        return RoadArrowDecision(
+            road_id=road_id,
+            movement_id=movement.movement_id,
+            movement_type=movement.movement_type,
+            decision_status=DecisionStatus.UNKNOWN,
+            evidence_items=tuple(),
+            evidence_ids=tuple(),
+            confidence=0.0,
+            direction_tokens=tuple(),
+            reason="missing_laneinfo_for_approach_road",
+            risk_flags=("missing_laneinfo",),
+            source_arrow_ids=tuple(),
+            lane_summary=lane_summary,
+        )
+
+    invalid_reasons: list[str] = []
+    direction_tokens: set[str] = set()
+    if movement_type not in SUPPORTED_ARROW_MOVEMENT_TYPES:
+        invalid_reasons.append(f"unsupported_movement_type:{movement.movement_type}")
+    for matched_arrow in matched_arrows:
+        arrow = matched_arrow.arrow
+        if not arrow.direction_matched:
+            invalid_reasons.append(f"direction_mismatch:{arrow.arrow_id}")
+        if not arrow.lane_sequence_complete:
+            invalid_reasons.append(
+                f"incomplete_lane_sequence:{arrow.arrow_id}:{arrow.sequence_metadata_status}"
+            )
+        elif arrow.sequence_metadata_status != "complete":
+            invalid_reasons.append(
+                f"unverified_lane_sequence_metadata:{arrow.arrow_id}:{arrow.sequence_metadata_status}"
+            )
+        for code in arrow.lane_codes:
+            try:
+                parsed = parse_arrow_code(code)
+            except ValueError:
+                invalid_reasons.append(f"unknown_arrow_code:{arrow.arrow_id}:{code}")
+                continue
+            direction_tokens.update(parsed.tokens)
+            if not parsed.usable_for_prohibition:
+                invalid_reasons.append(f"arrow_not_usable_for_decision:{arrow.arrow_id}:{code}")
+
+    if invalid_reasons:
+        reason = ";".join(dict.fromkeys(invalid_reasons))
+        risk_flags = tuple(sorted({item.split(":", 1)[0] for item in invalid_reasons}))
+        evidence = _road_arrow_evidence(
+            movement=movement,
+            road_id=road_id,
+            matched_arrows=matched_arrows,
+            evidence_id=f"{evidence_prefix}:{movement.movement_id}:{road_id}:unknown",
+            decision_status=DecisionStatus.UNKNOWN,
+            direction_tokens=tuple(sorted(direction_tokens)),
+            reason=reason,
+            confidence=0.0,
+            risk_flags=risk_flags,
+        )
+        return RoadArrowDecision(
+            road_id=road_id,
+            movement_id=movement.movement_id,
+            movement_type=movement.movement_type,
+            decision_status=DecisionStatus.UNKNOWN,
+            evidence_items=(evidence,),
+            evidence_ids=(evidence.evidence_id,),
+            confidence=0.0,
+            direction_tokens=tuple(sorted(direction_tokens)),
+            reason=reason,
+            risk_flags=risk_flags,
+            source_arrow_ids=source_arrow_ids,
+            lane_summary=lane_summary,
+        )
+
+    supported = movement_type in direction_tokens
+    decision_status = DecisionStatus.SUPPORTED if supported else DecisionStatus.PROHIBITED
+    confidence_cap = 0.8 if supported else 0.75
+    confidence = min(
+        confidence_cap,
+        min((item.confidence for item in matched_arrows), default=confidence_cap),
+    )
+    reason = (
+        "lane_direction_union_supports_movement"
+        if supported
+        else "complete_lane_direction_union_excludes_movement"
+    )
+    evidence = _road_arrow_evidence(
+        movement=movement,
+        road_id=road_id,
+        matched_arrows=matched_arrows,
+        evidence_id=f"{evidence_prefix}:{movement.movement_id}:{road_id}:{decision_status.value}",
+        decision_status=decision_status,
+        direction_tokens=tuple(sorted(direction_tokens)),
+        reason=reason,
+        confidence=confidence,
+        risk_flags=tuple(),
+    )
+    return RoadArrowDecision(
+        road_id=road_id,
+        movement_id=movement.movement_id,
+        movement_type=movement.movement_type,
+        decision_status=decision_status,
+        evidence_items=(evidence,),
+        evidence_ids=(evidence.evidence_id,),
+        confidence=confidence,
+        direction_tokens=tuple(sorted(direction_tokens)),
+        reason=reason,
+        source_arrow_ids=source_arrow_ids,
+        lane_summary=lane_summary,
+    )
+
+
+def _road_arrow_evidence(
+    *,
+    movement: T09ArmMovement,
+    road_id: str,
+    matched_arrows: tuple[_MatchedArrow, ...],
+    evidence_id: str,
+    decision_status: DecisionStatus,
+    direction_tokens: tuple[str, ...],
+    reason: str,
+    confidence: float,
+    risk_flags: tuple[str, ...],
+) -> T09EvidenceItem:
+    source_arrow_ids = tuple(sorted({item.arrow.arrow_id for item in matched_arrows}))
+    prohibited = decision_status == DecisionStatus.PROHIBITED
+    determined = decision_status in {DecisionStatus.PROHIBITED, DecisionStatus.SUPPORTED}
+    to_road_ids = tuple(
+        sorted(
+            {
+                pair.to_road_id
+                for pair in movement.carrier_road_pairs
+                if pair.from_road_id == road_id
+            }
+        )
+    )
+    return T09EvidenceItem(
+        evidence_id=evidence_id,
+        evidence_type=(EvidenceType.COMPLETE_ARROW_EXCLUSION if prohibited else EvidenceType.ARROW),
+        junction_id=movement.junction_id,
+        movement_id=movement.movement_id,
+        road_pair=None,
+        evidence_status=(
+            "laneinfo_supports_road_movement"
+            if decision_status == DecisionStatus.SUPPORTED
+            else (
+                "laneinfo_excludes_road_movement"
+                if prohibited
+                else "laneinfo_unknown_for_road_movement"
+            )
+        ),
+        prohibition_reason=(
+            ProhibitionReason.COMPLETE_ARROW_EXCLUSION
+            if prohibited
+            else ProhibitionReason.INSUFFICIENT_EVIDENCE
+        ),
+        inference_level=InferenceLevel.DERIVED if determined else InferenceLevel.UNKNOWN,
+        confidence=confidence,
+        provenance=EvidenceProvenance(
+            source_type="laneinfo",
+            source_id=",".join(source_arrow_ids),
+            matched_object_ids=(movement.movement_id, road_id, *source_arrow_ids),
+            match_method="approach_road_direction_lane_union",
+            field_audit={
+                "approach_road_id": road_id,
+                "movement_type": movement.movement_type,
+                "direction_union": direction_tokens,
+                "laneinfo_records": tuple(
+                    _matched_arrow_raw_audit(item) for item in matched_arrows
+                ),
+            },
+            reason=reason,
+        ),
+        supports_prohibition=prohibited,
+        risk_flags=risk_flags,
+        decision_status=decision_status,
+        decision_scope=(
+            RuleScope.ROAD_DIRECTION_EXCLUSION if prohibited else RuleScope.ROAD_TO_ARM
+        ),
+        evidence_priority=EvidencePriority.LANEINFO,
+        verification_status=(
+            VerificationStatus.VERIFIED_SWSD
+            if determined
+            else VerificationStatus.NOT_REQUIRED
+        ),
+        from_road_ids=(road_id,),
+        to_road_ids=to_road_ids,
+    )
+
+
+def _matched_arrow_raw_audit(item: _MatchedArrow) -> dict[str, object]:
+    arrow = item.arrow
+    return item.audit() | {
+        "lane_codes": arrow.lane_codes,
+        "lane_dir": arrow.lane_dir,
+        "road_direction": arrow.road_direction,
+        "direction_matched": arrow.direction_matched,
+        "lane_sequence_complete": arrow.lane_sequence_complete,
+        "sequence_metadata_status": arrow.sequence_metadata_status,
+        "seq_start": arrow.seq_start,
+        "seq_end": arrow.seq_end,
+        "source_arrow_dir": arrow.source_arrow_dir,
+        "raw_properties": dict(arrow.properties),
+    }
+
+
+def _road_arrow_lane_summary(
+    *,
+    movement_type: str,
+    matched_arrows: tuple[_MatchedArrow, ...],
+) -> dict[str, object]:
+    summary: dict[str, object] = {
+        "movement_type": movement_type,
+        "matched_arrow_count": len(matched_arrows),
+        "lane_count": 0,
+        "direction_mismatch_count": 0,
+        "incomplete_sequence_count": 0,
+        "unknown_code_count": 0,
+        "unusable_code_count": 0,
+        "matched_arrow_ids": tuple(item.arrow.arrow_id for item in matched_arrows),
+        "raw_arrow_sequences": tuple(
+            ",".join(item.arrow.lane_codes) for item in matched_arrows
+        ),
+    }
+    for matched_arrow in matched_arrows:
+        arrow = matched_arrow.arrow
+        if not arrow.direction_matched:
+            summary["direction_mismatch_count"] = int(summary["direction_mismatch_count"]) + 1
+        if not arrow.lane_sequence_complete:
+            summary["incomplete_sequence_count"] = int(summary["incomplete_sequence_count"]) + 1
+        for code in arrow.lane_codes:
+            summary["lane_count"] = int(summary["lane_count"]) + 1
+            try:
+                parsed = parse_arrow_code(code)
+            except ValueError:
+                summary["unknown_code_count"] = int(summary["unknown_code_count"]) + 1
+                continue
+            if not parsed.usable_for_prohibition:
+                summary["unusable_code_count"] = int(summary["unusable_code_count"]) + 1
+    return summary
 
 
 def evaluate_complete_arrow_exclusion(
@@ -298,6 +623,44 @@ def _match_arrows_to_approach_roads(
             candidates.extend(_road_id_arrow_candidates(road_id=road_id, arrows=arrows))
         if candidates:
             matched[road_id] = min(candidates, key=_arrow_sort_key)
+    return matched
+
+
+def _match_all_arrows_to_approach_roads(
+    *,
+    movement: T09ArmMovement,
+    approach_road_ids: tuple[str, ...],
+    arrows: tuple[ArrowInput, ...],
+    roads_by_id: dict[str, SWSDRoadInput],
+    road_geometries: dict[str, BaseGeometry],
+    arms_by_id: dict[str, T09SwsdArm],
+) -> dict[str, tuple[_MatchedArrow, ...]]:
+    from_arm = arms_by_id.get(movement.from_arm_id)
+    matched: dict[str, tuple[_MatchedArrow, ...]] = {}
+    for road_id in approach_road_ids:
+        road = roads_by_id.get(road_id)
+        road_geometry = road_geometries.get(road_id)
+        candidates: tuple[_MatchedArrow, ...] = tuple()
+        if from_arm is not None and road is not None and road_geometry is not None:
+            candidates = _geometry_arrow_candidates(
+                road_id=road_id,
+                arrows=arrows,
+                road=road,
+                road_geometry=road_geometry,
+                from_arm=from_arm,
+            )
+            direct_candidates = tuple(
+                item for item in candidates if item.arrow.road_id == road_id
+            )
+            if direct_candidates:
+                candidates = direct_candidates
+        if not candidates:
+            candidates = _road_id_arrow_candidates(road_id=road_id, arrows=arrows)
+        if candidates:
+            unique_candidates: dict[str, _MatchedArrow] = {}
+            for candidate in sorted(candidates, key=_arrow_sort_key):
+                unique_candidates.setdefault(candidate.arrow.arrow_id, candidate)
+            matched[road_id] = tuple(unique_candidates.values())
     return matched
 
 

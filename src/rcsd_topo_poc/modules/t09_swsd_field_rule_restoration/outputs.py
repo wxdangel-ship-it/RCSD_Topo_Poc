@@ -46,13 +46,21 @@ ARM_FIELDS = [
     "member_node_ids",
     "internal_road_ids",
     "seed_road_ids",
+    "connector_road_ids",
     "segment_ids",
+    "t01_segment_ids",
+    "segment_membership_status",
     "inbound_road_ids",
     "outbound_road_ids",
+    "bidirectional_road_ids",
     "approach_road_ids",
     "exit_road_ids",
     "trunk_road_ids",
+    "parallel_branch_road_ids",
     "advance_left_road_ids",
+    "advance_right_road_ids",
+    "auxiliary_right_turn_road_ids",
+    "advance_right_turn_relation_ids",
     "angle_deg",
     "terminal_node_id",
     "terminal_kind",
@@ -83,6 +91,13 @@ MOVEMENT_FIELDS = [
     "evidence_item_ids",
     "risk_flags",
     "carrier_road_pairs",
+    "strategy_version",
+    "decision_status",
+    "decision_source",
+    "decision_scope",
+    "evidence_priority",
+    "verification_status",
+    "override_chain",
 ]
 
 EVIDENCE_FIELDS = [
@@ -98,6 +113,16 @@ EVIDENCE_FIELDS = [
     "supports_prohibition",
     "risk_flags",
     "provenance",
+    "decision_status",
+    "decision_scope",
+    "evidence_priority",
+    "verification_status",
+    "from_road_ids",
+    "to_road_ids",
+    "condition_type",
+    "condition_payload",
+    "condition_identity",
+    "condition_semantics_status",
 ]
 
 RULE_FIELDS = [
@@ -112,6 +137,26 @@ RULE_FIELDS = [
     "inference_level",
     "confidence",
     "risk_flags",
+    "rule_id",
+    "movement_id",
+    "strategy_version",
+    "decision_status",
+    "decision_source",
+    "decision_scope",
+    "evidence_priority",
+    "verification_status",
+    "override_chain",
+    "from_road_ids",
+    "to_road_ids",
+    "road_pairs",
+    "source_restriction_ids",
+    "condition_type",
+    "condition_payload",
+    "condition_identity",
+    "condition_semantics_status",
+    "scope_promotion_status",
+    "scope_promotion_reason",
+    "scope_promotion_audit",
 ]
 
 
@@ -256,7 +301,8 @@ def _rule_features(
     return [
         {
             "properties": _rule_row(rule),
-            "geometry": _geometry_for_movement(
+            "geometry": _geometry_for_rule(
+                rule,
                 movement_by_key.get((rule.from_arm_id, rule.to_arm_id, rule.movement_type)),
                 arms_by_id,
                 road_geometries,
@@ -264,6 +310,29 @@ def _rule_features(
         }
         for rule in rules
     ]
+
+
+def _geometry_for_rule(
+    rule: T09RestoredFieldRule,
+    movement: T09ArmMovement | None,
+    arms_by_id: dict[str, T09SwsdArm],
+    road_geometries: dict[str, BaseGeometry],
+) -> BaseGeometry:
+    if rule.road_pairs:
+        return _geometry_for_pair(rule.road_pairs[0], road_geometries)
+    if rule.from_road_ids and movement is not None:
+        pair = next(
+            (
+                item
+                for item in movement.carrier_road_pairs
+                if item.from_road_id in set(rule.from_road_ids)
+                and (not rule.to_road_ids or item.to_road_id in set(rule.to_road_ids))
+            ),
+            None,
+        )
+        if pair is not None:
+            return _geometry_for_pair(pair, road_geometries)
+    return _geometry_for_movement(movement, arms_by_id, road_geometries)
 
 
 def _geometry_for_arm(
@@ -371,11 +440,10 @@ def _line_coords(geometry: BaseGeometry | None) -> list[tuple[float, float]]:
 
 
 def _fallback_geometry(road_geometries: dict[str, BaseGeometry]) -> BaseGeometry:
-    for geometry in road_geometries.values():
-        coords = _line_coords(geometry)
-        if len(coords) >= 2:
-            return LineString(coords)
-    return LineString([(0.0, 0.0), (1.0, 0.0)])
+    raise ValueError(
+        "T09 output geometry could not be resolved from the audited Road/Segment carrier; "
+        "refusing to create a synthetic or unrelated fallback geometry"
+    )
 
 
 def _point_distance(a: tuple[float, float], b: tuple[float, float]) -> float:

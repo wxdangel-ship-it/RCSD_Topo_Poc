@@ -2,7 +2,7 @@
 
 ## 范围
 
-- 审计日期：2026-06-12
+- 主审计日期：2026-06-12；T09 增量审计：2026-07-10
 - 阈值：单文件超过 `100 KB`
 - 口径：按 `code-boundaries-and-entrypoints.md`，审计纳入版本管理的 `src/`、`scripts/`、`tests/`、`tools/` 下源码 / 脚本文件。
 - 本表只记录结构债事实，不代表本轮进入对应模块正文治理。
@@ -34,6 +34,7 @@
 | `src/rcsd_topo_poc/modules/t04_divmerge_virtual_polygon/_event_interpretation_unit_preparation.py` | `41565` bytes | Round 2 新拆出的 unit preparation / pair-local materialization 模块 | 后续仅承接 preparation 与 scope materialization，不承接 candidate selection |
 | `tests/modules/p01_arm_build/test_p01_arm_build.py` | `96794` bytes | P01 主功能集成测试已逼近 100 KB 硬阈值（差 ~3.2 KB）；本轮 (`p01-four-case-closure-and-field-semantics`) 未追加该文件 | 后续任何 P01 新增测试**禁止**追加到本文件；按场景新建独立测试文件，参考 `tests/modules/p01_arm_build/test_p01_kind_audit.py` |
 | `tests/modules/t06_segment_fusion_precheck/test_step3_segment_replacement.py` | `96035` bytes | T06 Step3 主测试文件补充 group replacement 成员级 Road 归属回归后已逼近 100 KB 硬阈值 | 后续 Step3 新增测试禁止继续追加到本文件；按 group replacement / topology supplement / advance-right 场景拆分独立测试文件 |
+| `src/rcsd_topo_poc/modules/t09_swsd_field_rule_restoration/frcsd_restriction.py` | `97021` bytes | T09 Step3 主投影文件已逼近 100 KB；本轮已将 JSON CRS 解析下沉到 `_json_crs.py`，但 relation/carrier、stable/candidate 与 summary 编排仍集中 | 后续任何功能新增必须先拆分 relation/carrier、stable-candidate 或 summary 职责，禁止继续追加直至越过硬阈值 |
 | `src/rcsd_topo_poc/modules/p01_arm_build/topology.py` | `78424` bytes | 本轮新增 `kind_distribution` audit 字段计算后体量 +371 bytes（从 `78053` 增至 `78424`），仍低于硬阈值；spec `p01-four-case-closure-and-field-semantics` C-2=D | 后续 P01 trace / through 主路径若继续扩展，优先拆分 trace helper / arm aggregation / context build 职责 |
 | `src/rcsd_topo_poc/modules/p01_arm_build/final_road_next_road.py` | `72780` bytes | P01-Final 主实现接近 75 KB，承载 `SourceArmPassRule` / ArmSourceProfile / generation decision / source map 多类职责 | 后续若继续扩展 final generation 规则，优先拆出 rule abstraction / projection / source mapping helper |
 | `src/rcsd_topo_poc/modules/p01_arm_build/final_arm_validation.py` | `53011` bytes | FinalArm relaxed reverse / supplemental trace validation 实现 | 后续若继续扩展 validation 分支，优先拆 validation builder 与 evidence helper |

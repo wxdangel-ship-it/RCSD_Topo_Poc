@@ -7,11 +7,11 @@ from pathlib import Path
 from rcsd_topo_poc.modules.t00_utility_toolbox.common import (
     sort_patch_key,
     write_json,
-    write_vector,
 )
 from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import write_csv
 
 from .case_models import T04CaseResult, T04ReviewIndexRow
+from .case_output_io import write_case_event_vector, write_case_polygon_vector
 from ._step4_arbiter import (
     arbitrate_step4_unit,
     shadow_actual_fields_for_unit,
@@ -371,18 +371,16 @@ def write_case_outputs(
     write_json(case_dir / "step5_audit.json", _with_provenance(step5_result.to_audit_doc(), case_provenance))
     write_json(case_dir / "step6_status.json", _with_provenance(step6_result.to_status_doc(), case_provenance))
     write_json(case_dir / "step6_audit.json", _with_provenance(step6_result.to_audit_doc(), case_provenance))
-    write_vector(
+    write_case_event_vector(
         case_dir / "step4_event_evidence.gpkg",
         _geometry_features_for_case(case_result),
-        crs_text="EPSG:3857",
     )
-    write_vector(
+    write_case_polygon_vector(
         case_dir / "step5_domains.gpkg",
         step5_result.to_vector_features(),
-        crs_text="EPSG:3857",
     )
     if step6_result.final_case_polygon is not None and not step6_result.final_case_polygon.is_empty:
-        write_vector(
+        write_case_polygon_vector(
             case_dir / "final_case_polygon.gpkg",
             [
                 {
@@ -395,7 +393,6 @@ def write_case_outputs(
                     "geometry": step6_result.final_case_polygon,
                 }
             ],
-            crs_text="EPSG:3857",
         )
     audit_by_unit = build_case_review_audit(
         case_result,

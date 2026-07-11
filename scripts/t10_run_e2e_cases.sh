@@ -12,11 +12,13 @@ Environment variables:
   STOP_AFTER               Optional stage: t01/t07/t03/t04/t05/t06_step12/t06_step3/t09_step12/t09_step3
   CONTINUE_ON_ERROR        1 or 0. Default: 1
   EXIT_ZERO                1 or 0. Default: 0
-  T10_T03_WORKERS          Default: 1
+  T10_T03_WORKERS          Default: detected CPU count, capped at 16
   T10_T04_WORKERS          Default: 1
   T10_T05_READONLY_WORKERS Default: 1
   T10_FEEDBACK_ITERATIONS  Default: 0. When >0, rerun T10 with prior pass endpoint feedback.
   T10_PAIR_ANCHOR_ENDPOINT_CLUSTERS Optional CSV to feed pair-anchor endpoint clusters into T05.
+  T10_SCRATCH_ROOT         Optional persistent WSL/Linux scratch root; RUN_ID is required.
+  T10_KEEP_SCRATCH         1 keeps a successful scratch run; default 0 removes it after publish.
 USAGE
 }
 
@@ -80,6 +82,35 @@ CONTINUE_ON_ERROR="${CONTINUE_ON_ERROR:-1}"
 EXIT_ZERO="${EXIT_ZERO:-0}"
 T10_FEEDBACK_ITERATIONS="${T10_FEEDBACK_ITERATIONS:-0}"
 T10_PAIR_ANCHOR_ENDPOINT_CLUSTERS="${T10_PAIR_ANCHOR_ENDPOINT_CLUSTERS:-}"
+T10_SCRATCH_ROOT="${T10_SCRATCH_ROOT:-}"
+T10_KEEP_SCRATCH="${T10_KEEP_SCRATCH:-0}"
+
+if [[ "$T10_KEEP_SCRATCH" != "0" && "$T10_KEEP_SCRATCH" != "1" ]]; then
+  echo "[BLOCK] T10_KEEP_SCRATCH must be 0 or 1: $T10_KEEP_SCRATCH" >&2
+  exit 2
+fi
+if [[ -n "$T10_SCRATCH_ROOT" && -z "$RUN_ID" ]]; then
+  echo "[BLOCK] T10_SCRATCH_ROOT requires an explicit RUN_ID." >&2
+  exit 2
+fi
+if [[ -n "$T10_SCRATCH_ROOT" && "$T10_FEEDBACK_ITERATIONS" != "0" ]]; then
+  echo "[BLOCK] T10_SCRATCH_ROOT does not support feedback iterations." >&2
+  exit 2
+fi
+
+EXEC_OUT_ROOT="$OUT_ROOT"
+if [[ -n "$T10_SCRATCH_ROOT" ]]; then
+  EXEC_OUT_ROOT="$T10_SCRATCH_ROOT"
+  if [[ -e "$EXEC_OUT_ROOT/$RUN_ID" ]]; then
+    echo "[BLOCK] Scratch run root already exists: $EXEC_OUT_ROOT/$RUN_ID" >&2
+    exit 2
+  fi
+  if [[ -e "$OUT_ROOT/$RUN_ID" ]]; then
+    echo "[BLOCK] Final run root already exists: $OUT_ROOT/$RUN_ID" >&2
+    exit 2
+  fi
+  export STRATEGY_CONFIG="${STRATEGY_CONFIG:-$REPO_DIR/configs/t01_data_preprocess/step1_pair_s2.json}"
+fi
 
 if [[ "$CONTINUE_ON_ERROR" != "0" && "$CONTINUE_ON_ERROR" != "1" ]]; then
   echo "[BLOCK] CONTINUE_ON_ERROR must be 0 or 1: $CONTINUE_ON_ERROR" >&2
@@ -96,7 +127,7 @@ fi
 
 ARGS=(
   --package-dir "$PACKAGE_DIR"
-  --out-root "$OUT_ROOT"
+  --out-root "$EXEC_OUT_ROOT"
 )
 
 if [[ -n "$RUN_ID" ]]; then
@@ -128,11 +159,13 @@ echo "[RUN] REPO_DIR=$REPO_DIR"
 echo "[RUN] PYTHON_BIN=$PYTHON_BIN"
 echo "[RUN] PACKAGE_DIR=$PACKAGE_DIR"
 echo "[RUN] OUT_ROOT=$OUT_ROOT"
+echo "[RUN] EXEC_OUT_ROOT=$EXEC_OUT_ROOT"
 echo "[RUN] RUN_ID=${RUN_ID:-<auto>}"
 echo "[RUN] STOP_AFTER=${STOP_AFTER:-<full>}"
 echo "[RUN] CONTINUE_ON_ERROR=$CONTINUE_ON_ERROR EXIT_ZERO=$EXIT_ZERO"
 echo "[RUN] T10_FEEDBACK_ITERATIONS=$T10_FEEDBACK_ITERATIONS"
 echo "[RUN] T10_PAIR_ANCHOR_ENDPOINT_CLUSTERS=${T10_PAIR_ANCHOR_ENDPOINT_CLUSTERS:-<none>}"
+echo "[RUN] T10_SCRATCH_ROOT=${T10_SCRATCH_ROOT:-<disabled>}"
 if ((${#CASE_IDS[@]})); then
   echo "[RUN] CASE_IDS=${CASE_IDS[*]}"
 else
@@ -140,4 +173,25 @@ else
 fi
 
 cd "$REPO_DIR"
+export REPO_DIR
 PYTHONPATH="$REPO_DIR/src${PYTHONPATH:+:$PYTHONPATH}" "$PYTHON_BIN" -c 'from rcsd_topo_poc.modules.t10_e2e_orchestration.case_runner import main; raise SystemExit(main())' "${ARGS[@]}"
+
+if [[ -n "$T10_SCRATCH_ROOT" ]]; then
+  PYTHONPATH="$REPO_DIR/src${PYTHONPATH:+:$PYTHONPATH}" "$PYTHON_BIN" - "$EXEC_OUT_ROOT" "$OUT_ROOT" "$RUN_ID" "$T10_KEEP_SCRATCH" <<'PY'
+from __future__ import annotations
+
+import json
+import sys
+
+from rcsd_topo_poc.modules.t10_e2e_orchestration.scratch_publish import publish_t10_scratch_run
+
+
+result = publish_t10_scratch_run(
+    scratch_out_root=sys.argv[1],
+    final_out_root=sys.argv[2],
+    run_id=sys.argv[3],
+    keep_scratch=sys.argv[4] == "1",
+)
+print(json.dumps(result, ensure_ascii=False, indent=2))
+PY
+fi

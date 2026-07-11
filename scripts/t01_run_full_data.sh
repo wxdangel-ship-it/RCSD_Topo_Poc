@@ -7,6 +7,7 @@ Usage:
   scripts/t01_run_full_data.sh <roads_path> <nodes_path> [out_root]
 
 Optional environment variables:
+  REPO_DIR           Optional explicit repository root
   PYTHON_BIN          Optional override, but only repo .venv/bin/python is accepted
   FORMWAY_MODE        strict | audit_only | off. Default: strict
   STRATEGY_CONFIG     Override strategy config path
@@ -23,7 +24,7 @@ fi
 
 ROAD_PATH="$1"
 NODE_PATH="$2"
-ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+ROOT="${REPO_DIR:-$(git rev-parse --show-toplevel 2>/dev/null || true)}"
 
 if [ -z "$ROOT" ]; then
   echo "[BLOCK] Not inside a git repository."

@@ -5,9 +5,10 @@ import shutil
 from collections import Counter, defaultdict
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from shapely.geometry import LineString
+from shapely.geometry.base import BaseGeometry
 
 from rcsd_topo_poc.modules.t00_utility_toolbox.common import (
     sort_patch_key,
@@ -960,13 +961,17 @@ def write_virtual_intersection_polygons(
     run_root: Path,
     shared_nodes: tuple[LayerFeature, ...],
     streamed_results: dict[str, T03StreamedCaseResult],
+    final_polygon_geometries: Mapping[str, BaseGeometry | None] | None = None,
 ) -> Path:
     features: list[dict[str, Any]] = []
     for case_id in sorted(streamed_results.keys(), key=sort_patch_key):
         streamed_result = streamed_results[case_id]
-        polygon_path = Path(streamed_result.final_polygon_path)
-        polygon_features = read_vector_layer(polygon_path).features if polygon_path.is_file() else []
-        polygon_geometry = polygon_features[0].geometry if polygon_features else None
+        if final_polygon_geometries is not None and case_id in final_polygon_geometries:
+            polygon_geometry = final_polygon_geometries[case_id]
+        else:
+            polygon_path = Path(streamed_result.final_polygon_path)
+            polygon_features = read_vector_layer(polygon_path).features if polygon_path.is_file() else []
+            polygon_geometry = polygon_features[0].geometry if polygon_features else None
         feature = _build_virtual_intersection_polygon_feature(
             representative_feature=resolve_representative_feature(shared_nodes, case_id),
             streamed_result=streamed_result,

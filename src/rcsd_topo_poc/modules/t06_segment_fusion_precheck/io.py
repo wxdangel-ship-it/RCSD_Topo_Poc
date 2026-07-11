@@ -3,8 +3,10 @@ from __future__ import annotations
 import csv
 import json
 from collections.abc import Callable
+from copy import deepcopy
 from contextlib import contextmanager
 from datetime import datetime, timezone
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -44,8 +46,35 @@ def prepare_run_roots(out_root: str | Path, run_id: str | None, step_dir: str) -
 
 
 def read_features(path: str | Path, *, crs_override: str | None = None) -> list[dict[str, Any]]:
-    result = read_vector_layer(path, crs_override=crs_override)
-    return [{"properties": dict(item.properties), "geometry": item.geometry} for item in result.features]
+    resolved = Path(path).resolve()
+    try:
+        stat = resolved.stat()
+    except OSError:
+        result = read_vector_layer(path, crs_override=crs_override)
+        return [{"properties": dict(item.properties), "geometry": item.geometry} for item in result.features]
+    snapshot = _read_features_snapshot(
+        str(resolved),
+        crs_override,
+        stat.st_size,
+        stat.st_mtime_ns,
+        stat.st_ctime_ns,
+    )
+    return [
+        {"properties": deepcopy(properties), "geometry": geometry}
+        for properties, geometry in snapshot
+    ]
+
+
+@lru_cache(maxsize=24)
+def _read_features_snapshot(
+    path_text: str,
+    crs_override: str | None,
+    _size_bytes: int,
+    _mtime_ns: int,
+    _ctime_ns: int,
+) -> tuple[tuple[dict[str, Any], Any], ...]:
+    result = read_vector_layer(path_text, crs_override=crs_override)
+    return tuple((dict(item.properties), item.geometry) for item in result.features)
 
 
 def write_feature_triplet(

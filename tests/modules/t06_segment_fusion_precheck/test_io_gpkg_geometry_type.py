@@ -1,9 +1,42 @@
 from __future__ import annotations
 
-import fiona
-from shapely.geometry import LineString, MultiLineString, mapping
+from types import SimpleNamespace
 
-from rcsd_topo_poc.modules.t06_segment_fusion_precheck.io import write_feature_triplet
+import fiona
+from shapely.geometry import LineString, MultiLineString, Point, mapping
+
+from rcsd_topo_poc.modules.t06_segment_fusion_precheck import io as io_module
+from rcsd_topo_poc.modules.t06_segment_fusion_precheck.io import read_features, write_feature_triplet
+
+
+def test_read_features_reuses_unchanged_snapshot_without_sharing_properties(tmp_path, monkeypatch):
+    path = tmp_path / "input.gpkg"
+    path.write_bytes(b"first")
+    calls = 0
+
+    def fake_read_vector_layer(path_text, *, crs_override=None):
+        nonlocal calls
+        calls += 1
+        return SimpleNamespace(
+            features=[
+                SimpleNamespace(
+                    properties={"id": "r1", "nested": ["original"]},
+                    geometry=Point(1.0, 2.0),
+                )
+            ]
+        )
+
+    monkeypatch.setattr(io_module, "read_vector_layer", fake_read_vector_layer)
+    first = read_features(path)
+    first[0]["properties"]["nested"].append("mutated")
+    second = read_features(path)
+
+    assert calls == 1
+    assert second[0]["properties"] == {"id": "r1", "nested": ["original"]}
+
+    path.write_bytes(b"second-version")
+    read_features(path)
+    assert calls == 2
 
 
 def test_write_feature_triplet_uses_specific_linestring_geometry_type(tmp_path):

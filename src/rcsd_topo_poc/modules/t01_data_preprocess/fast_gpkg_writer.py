@@ -4,7 +4,9 @@ import json
 import math
 import re
 import sqlite3
+import tempfile
 from datetime import datetime, timezone
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -20,6 +22,7 @@ GPKG_FID_COLUMN = "fid"
 GPKG_GEOMETRY_COLUMN = "geom"
 GPKG_OGR_CONTENTS_TABLE = "gpkg_ogr_contents"
 GPKG_BATCH_SIZE = 1000
+GPKG_IN_MEMORY_PUBLISH_MAX_RECORDS = 64
 
 
 def write_gpkg_fast(
@@ -87,9 +90,42 @@ def _write_records(
     srs_id = _srs_record(crs)[0]
     geometry_types: set[str] = set()
     bounds_values: list[tuple[float, float, float, float]] = []
-    has_z = False
+    z_dimensions: set[bool] = set()
+    batch: list[list[Any]] = []
+    for record_index, record in enumerate(records, start=1):
+        geometry = _geometry_object(record.get("geometry"), record_index=record_index)
+        geometry_types.add(geometry.geom_type.upper())
+        bounds_values.append(tuple(float(value) for value in geometry.bounds))
+        z_dimensions.add(bool(getattr(geometry, "has_z", False)))
+        row_values = [
+            _sqlite_value(record["properties"].get(original_name))
+            for original_name in field_mapping
+        ]
+        row_values.append(_build_gpkg_geometry_blob(geometry, srs_id))
+        batch.append(row_values)
 
-    with sqlite3.connect(output_path) as conn:
+    bounds = _aggregate_bounds(bounds_values)
+    geometry_type_name = _geometry_type_name(geometry_types)
+    z_mode = _geometry_z_mode(geometry_type_name, z_dimensions)
+    publish_from_memory = len(records) <= GPKG_IN_MEMORY_PUBLISH_MAX_RECORDS
+    if publish_from_memory:
+        _publish_small_records_from_template(
+            output_path,
+            batch=batch,
+            crs=crs,
+            table_name=table_name,
+            field_mapping=field_mapping,
+            schema=schema,
+            bounds=bounds,
+            geometry_type_name=geometry_type_name,
+            z_mode=z_mode,
+        )
+        return {
+            "feature_count": len(records),
+            "size_bytes": output_path.stat().st_size if output_path.exists() else 0,
+        }
+
+    with sqlite3.connect(str(output_path)) as conn:
         _initialize_gpkg_metadata(conn)
         insert_sql = _create_feature_table(
             conn,
@@ -97,31 +133,17 @@ def _write_records(
             field_mapping=field_mapping,
             field_types=schema,
         )
-        batch: list[list[Any]] = []
-        for record_index, record in enumerate(records, start=1):
-            geometry = _geometry_object(record.get("geometry"), record_index=record_index)
-            geometry_types.add(geometry.geom_type.upper())
-            bounds_values.append(tuple(float(value) for value in geometry.bounds))
-            has_z = has_z or bool(getattr(geometry, "has_z", False))
-            row_values = [
-                _sqlite_value(record["properties"].get(original_name))
-                for original_name in field_mapping
-            ]
-            row_values.append(_build_gpkg_geometry_blob(geometry, srs_id))
-            batch.append(row_values)
-            if len(batch) >= GPKG_BATCH_SIZE:
-                conn.executemany(insert_sql, batch)
-                batch.clear()
         if batch:
-            conn.executemany(insert_sql, batch)
+            for offset in range(0, len(batch), GPKG_BATCH_SIZE):
+                conn.executemany(insert_sql, batch[offset : offset + GPKG_BATCH_SIZE])
 
         _insert_gpkg_metadata_rows(
             conn,
             table_name=table_name,
             crs=crs,
-            bounds=_aggregate_bounds(bounds_values),
-            geometry_type_name=_geometry_type_name(geometry_types),
-            has_z=has_z,
+            bounds=bounds,
+            geometry_type_name=geometry_type_name,
+            z_mode=z_mode,
             feature_count=len(records),
         )
         conn.commit()
@@ -130,6 +152,89 @@ def _write_records(
         "feature_count": len(records),
         "size_bytes": output_path.stat().st_size if output_path.exists() else 0,
     }
+
+
+def _publish_small_records_from_template(
+    output_path: Path,
+    *,
+    batch: list[list[Any]],
+    crs: CRS,
+    table_name: str,
+    field_mapping: dict[str, str],
+    schema: dict[str, str],
+    bounds: list[float] | None,
+    geometry_type_name: str,
+    z_mode: int,
+) -> None:
+    template_bytes = _small_gpkg_template_bytes(
+        crs.to_wkt(),
+        table_name,
+        tuple(field_mapping.items()),
+        tuple(schema.items()),
+        geometry_type_name,
+        z_mode,
+    )
+    output_path.write_bytes(template_bytes)
+    insert_sql = _feature_insert_sql(table_name=table_name, field_mapping=field_mapping)
+    with sqlite3.connect(str(output_path)) as conn:
+        conn.execute("PRAGMA synchronous = OFF")
+        if batch:
+            conn.executemany(insert_sql, batch)
+        now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+        conn.execute(
+            """
+            UPDATE gpkg_contents
+            SET last_change = ?, min_x = ?, min_y = ?, max_x = ?, max_y = ?
+            WHERE table_name = ?
+            """,
+            (
+                now_iso,
+                bounds[0] if bounds else None,
+                bounds[1] if bounds else None,
+                bounds[2] if bounds else None,
+                bounds[3] if bounds else None,
+                table_name,
+            ),
+        )
+        conn.commit()
+
+
+@lru_cache(maxsize=128)
+def _small_gpkg_template_bytes(
+    crs_wkt: str,
+    table_name: str,
+    field_mapping_items: tuple[tuple[str, str], ...],
+    schema_items: tuple[tuple[str, str], ...],
+    geometry_type_name: str,
+    z_mode: int,
+) -> bytes:
+    crs = CRS.from_wkt(crs_wkt)
+    field_mapping = dict(field_mapping_items)
+    schema = dict(schema_items)
+    with tempfile.TemporaryDirectory(prefix="rcsd_gpkg_template_") as temp_dir:
+        template_path = Path(temp_dir) / "template.gpkg"
+        conn = sqlite3.connect(str(template_path))
+        try:
+            _initialize_gpkg_metadata(conn)
+            _create_feature_table(
+                conn,
+                table_name=table_name,
+                field_mapping=field_mapping,
+                field_types=schema,
+            )
+            _insert_gpkg_metadata_rows(
+                conn,
+                table_name=table_name,
+                crs=crs,
+                bounds=None,
+                geometry_type_name=geometry_type_name,
+                z_mode=z_mode,
+                feature_count=0,
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        return template_path.read_bytes()
 
 
 def _remove_existing_gpkg(path: Path) -> None:
@@ -306,6 +411,10 @@ def _create_feature_table(
         column_defs.append(f"{_quote_identifier(output_name)} {field_types.get(original_name, 'TEXT')}")
     column_defs.append(f"{_quote_identifier(GPKG_GEOMETRY_COLUMN)} BLOB")
     conn.execute(f"CREATE TABLE {_quote_identifier(table_name)} ({', '.join(column_defs)})")
+    return _feature_insert_sql(table_name=table_name, field_mapping=field_mapping)
+
+
+def _feature_insert_sql(*, table_name: str, field_mapping: dict[str, str]) -> str:
     insert_columns = [field_mapping[original_name] for original_name in field_mapping] + [GPKG_GEOMETRY_COLUMN]
     placeholders = ", ".join("?" for _ in insert_columns)
     return (
@@ -321,7 +430,7 @@ def _insert_gpkg_metadata_rows(
     crs: CRS,
     bounds: list[float] | None,
     geometry_type_name: str,
-    has_z: bool,
+    z_mode: int,
     feature_count: int,
 ) -> None:
     srs_id, organization, organization_coordsys_id, definition, srs_name = _srs_record(crs)
@@ -358,7 +467,7 @@ def _insert_gpkg_metadata_rows(
             table_name, column_name, geometry_type_name, srs_id, z, m
         ) VALUES (?, ?, ?, ?, ?, 0)
         """,
-        (table_name, GPKG_GEOMETRY_COLUMN, geometry_type_name, srs_id, 1 if has_z else 0),
+        (table_name, GPKG_GEOMETRY_COLUMN, geometry_type_name, srs_id, z_mode),
     )
     _insert_gpkg_ogr_feature_count(conn, table_name=table_name, feature_count=feature_count)
 
@@ -424,6 +533,14 @@ def _geometry_type_name(geometry_types: set[str]) -> str:
     if len(geometry_types) == 1:
         return next(iter(geometry_types))
     return "GEOMETRY"
+
+
+def _geometry_z_mode(geometry_type_name: str, z_dimensions: set[bool]) -> int:
+    if True not in z_dimensions:
+        return 0
+    if geometry_type_name == "GEOMETRY" or False in z_dimensions:
+        return 2
+    return 1
 
 
 def _aggregate_bounds(bounds_values: list[tuple[float, float, float, float]]) -> list[float] | None:

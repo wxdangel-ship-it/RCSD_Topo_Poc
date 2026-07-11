@@ -275,6 +275,8 @@ def run_t03_internal_full_input(
     progress_lock = Lock()
     stream_write_lock = Lock()
     terminal_write_lock = Lock()
+    final_polygon_lock = Lock()
+    fresh_final_polygon_geometries: dict[str, Any] = {}
     progress_state: dict[str, Any] = {
         "phase": "bootstrap",
         "status": "running",
@@ -977,14 +979,6 @@ def run_t03_internal_full_input(
             if continuation_requested:
                 _reset_case_execution_artifacts(case_id)
             _mark_case_running(case_id)
-            _write_internal_case_progress_runtime(
-                case_progress_root=case_progress_root,
-                case_id=case_id,
-                state="running",
-                current_stage="direct_case_execution",
-                reason="direct_case_started",
-                detail="executing step3 through step7 directly from shared full-input layers",
-            )
             try:
                 result = _run_single_case_direct(
                     case_id=case_id,
@@ -1045,6 +1039,10 @@ def run_t03_internal_full_input(
             for stage_name, elapsed_seconds in result.get("stage_timers", {}).items():
                 _record_stage_timer(str(stage_name), float(elapsed_seconds))
             case_result = result["finalization_case_result"]
+            with final_polygon_lock:
+                fresh_final_polygon_geometries[case_id] = (
+                    case_result.step6_result.output_geometries.polygon_final_geometry
+                )
             terminal_record = _build_terminal_case_record(
                 case_id=case_id,
                 representative_feature=result["representative_feature"],
@@ -1175,6 +1173,7 @@ def run_t03_internal_full_input(
             run_root=run_root,
             shared_nodes=shared_nodes,
             streamed_results=closeout_case_results,
+            final_polygon_geometries=fresh_final_polygon_geometries,
         )
         _record_stage_timer("surface_candidate_write", perf_counter() - surface_write_started_perf)
         nodes_update_started_perf = perf_counter()

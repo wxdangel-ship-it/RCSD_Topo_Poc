@@ -1000,341 +1000,23 @@ def _build_text_bundle(
 
 
 def _resolve_slice_size_m(*, profile_id: str, size_m: float | None, radius_m: float | None) -> tuple[str, float, float]:
-    selected_profile_id = str(profile_id or T06_INPUT_SLICE_DEFAULT_PROFILE_ID).strip().upper()
-    if radius_m is not None:
-        if radius_m <= 0:
-            raise T06TextBundleError("invalid_radius_m", "radius_m must be > 0.")
-        selected_radius_m = float(radius_m)
-        return selected_profile_id, selected_radius_m * 2.0, selected_radius_m
-    if size_m is not None:
-        if size_m <= 0:
-            raise T06TextBundleError("invalid_size_m", "size_m must be > 0.")
-        selected_size_m = float(size_m)
-        return selected_profile_id, selected_size_m, selected_size_m / 2.0
-    if selected_profile_id not in T06_INPUT_SLICE_PROFILE_RADII_M:
-        raise T06TextBundleError("invalid_profile_id", f"Unsupported T06 input slice profile_id: {profile_id}")
-    selected_radius_m = T06_INPUT_SLICE_PROFILE_RADII_M[selected_profile_id]
-    return selected_profile_id, selected_radius_m * 2.0, selected_radius_m
+    from .text_bundle_input import _resolve_slice_size_m as _impl
+    return _impl(profile_id=profile_id, size_m=size_m, radius_m=radius_m)
 
 
-def _select_t06_input_slice(
-    *,
-    swsd_segment_path: Path,
-    swsd_roads_path: Path,
-    swsd_nodes_path: Path,
-    intersection_match_path: Path,
-    rcsdroad_path: Path,
-    rcsdnode_path: Path,
-    center_x: float,
-    center_y: float,
-    profile_id: str,
-    size_m: float | None,
-    radius_m: float | None,
-) -> tuple[dict[str, bytes], dict[str, Any]]:
-    selected_profile_id, selected_size_m, selected_radius_m = _resolve_slice_size_m(
-        profile_id=profile_id,
-        size_m=size_m,
-        radius_m=radius_m,
-    )
-    window = box(
-        float(center_x) - selected_radius_m,
-        float(center_y) - selected_radius_m,
-        float(center_x) + selected_radius_m,
-        float(center_y) + selected_radius_m,
-    )
-
-    swsd_segments = read_features(swsd_segment_path)
-    selected_segments = [feature for feature in swsd_segments if _intersects_window(feature, window)]
-    selected_segment_ids = [
-        segment_id
-        for segment_id in (_feature_id(feature.get("properties") or {}) for feature in selected_segments)
-        if segment_id is not None
-    ]
-
-    required_swsd_road_ids: list[str] = []
-    required_swsd_semantic_node_ids: list[str] = []
-    for feature in selected_segments:
-        properties = feature.get("properties") or {}
-        required_swsd_road_ids.extend(_safe_parse_id_list(properties.get("roads")))
-        required_swsd_semantic_node_ids.extend(_safe_parse_id_list(properties.get("pair_nodes")))
-        required_swsd_semantic_node_ids.extend(_safe_parse_id_list(properties.get("junc_nodes")))
-    required_swsd_road_ids = unique_preserve_order(required_swsd_road_ids)
-    required_swsd_semantic_node_ids = unique_preserve_order(required_swsd_semantic_node_ids)
-    required_road_id_set = set(required_swsd_road_ids)
-    required_node_id_set = set(required_swsd_semantic_node_ids)
-
-    swsd_roads = read_features(swsd_roads_path)
-    selected_swsd_roads = [
-        feature
-        for feature in swsd_roads
-        if _feature_id(feature.get("properties") or {}) in required_road_id_set or _intersects_window(feature, window)
-    ]
-    required_swsd_road_endpoint_node_ids = unique_preserve_order(
-        node_id for feature in selected_swsd_roads for node_id in _road_endpoint_ids(feature.get("properties") or {})
-    )
-    required_node_id_set.update(required_swsd_road_endpoint_node_ids)
-
-    swsd_nodes = read_features(swsd_nodes_path)
-    selected_swsd_nodes = [
-        feature
-        for feature in swsd_nodes
-        if _node_has_identity_in(feature.get("properties") or {}, required_node_id_set)
-        or _intersects_window(feature, window)
-    ]
-
-    relation_features = read_features(intersection_match_path, crs_override=T06_INPUT_SLICE_CRS_TEXT)
-    selected_relations = []
-    mapped_rcsd_semantic_node_ids: list[str] = []
-    for feature in relation_features:
-        properties = feature.get("properties") or {}
-        target_id = _safe_normalize_id(properties.get("target_id"))
-        include = target_id in required_node_id_set or _intersects_window(feature, window)
-        if not include:
-            continue
-        selected_relations.append(feature)
-        if target_id in required_node_id_set and _is_status_zero(properties.get("status")):
-            base_id = parse_positive_int(properties.get("base_id"))
-            if base_id is not None:
-                mapped_rcsd_semantic_node_ids.append(str(base_id))
-    mapped_rcsd_semantic_node_ids = unique_preserve_order(mapped_rcsd_semantic_node_ids)
-    mapped_rcsd_node_id_set = set(mapped_rcsd_semantic_node_ids)
-
-    rcsd_nodes = read_features(rcsdnode_path)
-    selected_rcsd_nodes = [
-        feature
-        for feature in rcsd_nodes
-        if _node_has_identity_in(feature.get("properties") or {}, mapped_rcsd_node_id_set)
-        or _intersects_window(feature, window)
-    ]
-    selected_rcsd_node_ids = {
-        node_id
-        for node_id in (_feature_id(feature.get("properties") or {}) for feature in selected_rcsd_nodes)
-        if node_id is not None
-    }
-    selected_rcsd_node_ids.update(mapped_rcsd_node_id_set)
-
-    rcsd_roads = read_features(rcsdroad_path)
-    selected_rcsd_roads = []
-    for feature in rcsd_roads:
-        properties = feature.get("properties") or {}
-        snodeid = _safe_normalize_id(properties.get("snodeid"))
-        enodeid = _safe_normalize_id(properties.get("enodeid"))
-        touches_selected_node = snodeid in selected_rcsd_node_ids or enodeid in selected_rcsd_node_ids
-        if touches_selected_node or _intersects_window(feature, window):
-            selected_rcsd_roads.append(feature)
-    selected_rcsd_road_endpoint_node_ids = unique_preserve_order(
-        node_id for feature in selected_rcsd_roads for node_id in _road_endpoint_ids(feature.get("properties") or {})
-    )
-    selected_rcsd_node_dependency_id_set = set(selected_rcsd_node_ids).union(selected_rcsd_road_endpoint_node_ids)
-    selected_rcsd_nodes = [
-        feature
-        for feature in rcsd_nodes
-        if _node_has_identity_in(feature.get("properties") or {}, selected_rcsd_node_dependency_id_set)
-        or _intersects_window(feature, window)
-    ]
-    dependency_audit = _dependency_audit(
-        selected_segments=selected_segments,
-        selected_swsd_roads=selected_swsd_roads,
-        selected_swsd_nodes=selected_swsd_nodes,
-        selected_relations=selected_relations,
-        selected_rcsd_roads=selected_rcsd_roads,
-        selected_rcsd_nodes=selected_rcsd_nodes,
-        required_swsd_road_ids=required_swsd_road_ids,
-        required_swsd_semantic_node_ids=required_swsd_semantic_node_ids,
-        required_swsd_road_endpoint_node_ids=required_swsd_road_endpoint_node_ids,
-        mapped_rcsd_semantic_node_ids=mapped_rcsd_semantic_node_ids,
-        selected_rcsd_road_endpoint_node_ids=selected_rcsd_road_endpoint_node_ids,
-    )
-
-    files = {
-        "slice/swsd/segment.geojson": _feature_collection_bytes("segment", selected_segments),
-        "slice/swsd/roads.geojson": _feature_collection_bytes("roads", selected_swsd_roads),
-        "slice/swsd/nodes.geojson": _feature_collection_bytes("nodes", selected_swsd_nodes),
-        "slice/t05_phase2/intersection_match_all.geojson": _feature_collection_bytes(
-            "intersection_match_all",
-            selected_relations,
-        ),
-        "slice/t05_phase2/rcsdroad_out.geojson": _feature_collection_bytes("rcsdroad_out", selected_rcsd_roads),
-        "slice/t05_phase2/rcsdnode_out.geojson": _feature_collection_bytes("rcsdnode_out", selected_rcsd_nodes),
-    }
-    summary = {
-        "selection_mode": "centered_square_window",
-        "crs_normalized_to": T06_INPUT_SLICE_CRS_TEXT,
-        "profile_id": selected_profile_id,
-        "size_m": selected_size_m,
-        "radius_m": selected_radius_m,
-        "center_3857": {"x": float(center_x), "y": float(center_y)},
-        "bounds_3857": {
-            "minx": float(window.bounds[0]),
-            "miny": float(window.bounds[1]),
-            "maxx": float(window.bounds[2]),
-            "maxy": float(window.bounds[3]),
-        },
-        "source_paths": {
-            "swsd_segment_path": str(swsd_segment_path),
-            "swsd_roads_path": str(swsd_roads_path),
-            "swsd_nodes_path": str(swsd_nodes_path),
-            "intersection_match_path": str(intersection_match_path),
-            "rcsdroad_path": str(rcsdroad_path),
-            "rcsdnode_path": str(rcsdnode_path),
-        },
-        "selected_swsd_segment_count": len(selected_segments),
-        "selected_swsd_road_count": len(selected_swsd_roads),
-        "selected_swsd_node_count": len(selected_swsd_nodes),
-        "selected_relation_count": len(selected_relations),
-        "selected_rcsdroad_count": len(selected_rcsd_roads),
-        "selected_rcsdnode_count": len(selected_rcsd_nodes),
-        "selected_swsd_segment_ids": selected_segment_ids,
-        "required_swsd_road_ids": required_swsd_road_ids,
-        "required_swsd_semantic_node_ids": required_swsd_semantic_node_ids,
-        "required_swsd_road_endpoint_node_ids": required_swsd_road_endpoint_node_ids,
-        "mapped_rcsd_semantic_node_ids": mapped_rcsd_semantic_node_ids,
-        "selected_rcsd_road_endpoint_node_ids": selected_rcsd_road_endpoint_node_ids,
-        "dependency_audit": dependency_audit,
-    }
-    files[f"slice/{T06_INPUT_SLICE_SUMMARY_NAME}"] = json.dumps(
-        summary,
-        ensure_ascii=False,
-        indent=2,
-        sort_keys=True,
-        allow_nan=False,
-    ).encode("utf-8")
-    return files, summary
+def _select_t06_input_slice(**kwargs):
+    from .text_bundle_input import _select_t06_input_slice as _impl
+    return _impl(**kwargs)
 
 
-def _build_input_slice_text_bundle(
-    *,
-    files: dict[str, bytes],
-    input_manifest: dict[str, Any],
-    slice_summary: dict[str, Any],
-    include_input_files: bool,
-    max_text_size_bytes: int,
-) -> tuple[str, int, dict[str, Any]]:
-    if include_input_files:
-        for key, archive_name in _INPUT_ARCHIVE_NAMES.items():
-            _add_file(files, archive_name, Path(input_manifest["input_paths"][key]))
-    files[f"audit/{T06_INPUT_MANIFEST_NAME}"] = json.dumps(
-        input_manifest,
-        ensure_ascii=False,
-        indent=2,
-        sort_keys=True,
-        allow_nan=False,
-    ).encode("utf-8")
-    files[f"audit/{T06_REPLAY_COMMAND_NAME}"] = _build_replay_command(input_manifest).encode("utf-8")
-    files[f"audit/{T06_LOCAL_REPLAY_PRECHECK_NAME}"] = _build_decoded_precheck_replay_script(input_manifest).encode(
-        "utf-8"
-    )
-    files[f"audit/{T06_LOCAL_REPLAY_STEP3_NAME}"] = _build_decoded_step3_replay_script().encode("utf-8")
-    files[f"audit/{T06_LOCAL_CASE_MANIFEST_NAME}"] = json.dumps(
-        _build_local_case_manifest(input_manifest, slice_summary),
-        ensure_ascii=False,
-        indent=2,
-        sort_keys=True,
-        allow_nan=False,
-    ).encode("utf-8")
-    files[T06_LOCAL_CASE_README_NAME] = _build_local_case_readme(slice_summary).encode("utf-8")
-
-    manifest = {
-        "bundle_version": T06_TEXT_BUNDLE_VERSION,
-        "bundle_type": T06_TEXT_BUNDLE_TYPE,
-        "source_run_root": None,
-        "input_manifest": input_manifest,
-        "input_slice_summary": slice_summary,
-        "file_list": sorted(set(files).union({T06_INTERNAL_MANIFEST_NAME, T06_INTERNAL_SIZE_REPORT_NAME})),
-        "checksum": {name: hashlib.sha256(content).hexdigest() for name, content in sorted(files.items())},
-        "encoder_info": {
-            "archive_format": "zip",
-            "compression": "deflate",
-            "text_encoding": "base85",
-            "line_width": T06_TEXT_BUNDLE_LINE_WIDTH,
-            "max_text_size_bytes": max_text_size_bytes,
-            "selection": "t06-input-centered-spatial-slice",
-            "include_input_files": include_input_files,
-        },
-        "created_at": _now_text(),
-    }
-
-    size_report: dict[str, Any] = {}
-    bundle_text = ""
-    bundle_size_bytes = 0
-    for _ in range(4):
-        files[T06_INTERNAL_MANIFEST_NAME] = json.dumps(
-            manifest,
-            ensure_ascii=False,
-            indent=2,
-            sort_keys=True,
-            allow_nan=False,
-        ).encode("utf-8")
-        files[T06_INTERNAL_SIZE_REPORT_NAME] = json.dumps(
-            size_report,
-            ensure_ascii=False,
-            indent=2,
-            sort_keys=True,
-            allow_nan=False,
-        ).encode("utf-8")
-        payload_bytes, per_file_compressed = _zip_bytes(files)
-        meta = {
-            "bundle_version": T06_TEXT_BUNDLE_VERSION,
-            "bundle_type": T06_TEXT_BUNDLE_TYPE,
-            "archive_format": "zip",
-            "encoding": "base85",
-            "payload_sha256": hashlib.sha256(payload_bytes).hexdigest(),
-            "created_at": _now_text(),
-        }
-        bundle_text, bundle_size_bytes = _build_bundle_text(meta=meta, payload_bytes=payload_bytes)
-        next_report = _build_size_report(
-            bundle_size_bytes=bundle_size_bytes,
-            payload_size_bytes=len(payload_bytes),
-            per_file_raw_size_bytes={name: len(content) for name, content in files.items()},
-            per_file_compressed_size_bytes=per_file_compressed,
-            skipped_missing_files=[],
-            include_output_vectors=False,
-            include_input_files=include_input_files,
-            max_text_size_bytes=max_text_size_bytes,
-        )
-        if next_report == size_report:
-            break
-        size_report = next_report
-    return bundle_text, bundle_size_bytes, size_report
+def _build_input_slice_text_bundle(**kwargs):
+    from .text_bundle_input import _build_input_slice_text_bundle as _impl
+    return _impl(**kwargs)
 
 
-def _write_bundle_outputs(
-    *,
-    out_txt_path: Path,
-    bundle_text: str,
-    size_report: dict[str, Any],
-    max_text_size_bytes: int,
-) -> tuple[tuple[Path, ...], int]:
-    if max_text_size_bytes <= 0:
-        raise T06TextBundleError("invalid_max_text_size", "max_text_size_bytes must be > 0.")
-    _remove_existing_bundle_outputs(out_txt_path)
-    bundle_size_bytes = len(bundle_text.encode("utf-8"))
-    size_report["within_limit"] = bundle_size_bytes <= max_text_size_bytes
-    size_report["limit_bytes"] = max_text_size_bytes
-    if bundle_size_bytes <= max_text_size_bytes:
-        actual_size_bytes = _write_bundle_text(out_txt_path, bundle_text)
-        size_report["split_bundle"] = {"enabled": False, "part_count": 1, "part_files": [str(out_txt_path)]}
-        return (out_txt_path,), actual_size_bytes
-
-    meta, payload_bytes = _parse_text_bundle(bundle_text)
-    parts = _split_payload_bundle_texts(
-        out_txt=out_txt_path,
-        meta=meta,
-        payload_bytes=payload_bytes,
-        max_text_size_bytes=max_text_size_bytes,
-    )
-    actual_part_sizes: dict[str, int] = {}
-    for path, text, _size in parts:
-        actual_part_sizes[path.name] = _write_bundle_text(path, text)
-    split_report = {
-        "enabled": True,
-        "part_count": len(parts),
-        "part_files": [str(path) for path, _text, _size in parts],
-        "part_size_bytes": actual_part_sizes,
-        "max_part_size_bytes": max(actual_part_sizes.values()),
-    }
-    size_report["split_bundle"] = split_report
-    return tuple(path for path, _text, _size in parts), int(split_report["max_part_size_bytes"])
+def _write_bundle_outputs(**kwargs):
+    from .text_bundle_input import _write_bundle_outputs as _impl
+    return _impl(**kwargs)
 
 
 def run_t06_export_text_bundle(
@@ -1656,159 +1338,30 @@ def run_t06_decode_text_bundle(
 
 
 def _build_export_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="t06-export-text-bundle-dev")
-    parser.add_argument("--swsd-segment", default=DEFAULT_SWSD_SEGMENT)
-    parser.add_argument("--swsd-roads", default=DEFAULT_SWSD_ROADS)
-    parser.add_argument("--swsd-nodes", default=DEFAULT_SWSD_NODES)
-    parser.add_argument("--t05-phase2-root", default=DEFAULT_T05_PHASE2_ROOT)
-    parser.add_argument("--intersection-match", default=None)
-    parser.add_argument("--rcsdroad", default=None)
-    parser.add_argument("--rcsdnode", default=None)
-    parser.add_argument("--out-root", default=DEFAULT_OUT_ROOT)
-    parser.add_argument("--run-id", default=DEFAULT_RUN_ID)
-    parser.add_argument("--out-txt")
-    parser.add_argument("--max-main-axis-angle-diff-deg", type=float, default=60.0)
-    parser.add_argument("--min-coarse-length-ratio", type=float, default=0.4)
-    parser.add_argument("--max-coarse-length-ratio", type=float, default=2.5)
-    parser.add_argument("--buffer-distance-m", type=float, default=50.0)
-    parser.add_argument("--min-buffer-road-overlap-ratio", type=float, default=0.2)
-    parser.add_argument("--min-buffer-road-overlap-length-m", type=float, default=1.0)
-    parser.add_argument("--advance-right-formway-bit", type=int, default=128)
-    parser.add_argument("--include-output-vectors", action="store_true")
-    parser.add_argument("--include-input-files", action="store_true")
-    parser.add_argument("--extra-path", action="append", default=[])
-    parser.add_argument("--max-text-size-bytes", type=int, default=T06_TEXT_BUNDLE_LIMIT_BYTES)
-    return parser
+    from .text_bundle_cli import _build_export_arg_parser as _impl
+    return _impl()
 
 
 def _build_decode_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="t06-decode-text-bundle-dev")
-    parser.add_argument("--bundle-txt", required=True)
-    parser.add_argument("--out-dir")
-    return parser
+    from .text_bundle_cli import _build_decode_arg_parser as _impl
+    return _impl()
 
 
 def _build_input_export_arg_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="t06-export-input-text-bundle-dev")
-    parser.add_argument("--swsd-segment", default=DEFAULT_SWSD_SEGMENT)
-    parser.add_argument("--swsd-roads", default=DEFAULT_SWSD_ROADS)
-    parser.add_argument("--swsd-nodes", default=DEFAULT_SWSD_NODES)
-    parser.add_argument("--t05-phase2-root", default=DEFAULT_T05_PHASE2_ROOT)
-    parser.add_argument("--intersection-match", default=None)
-    parser.add_argument("--rcsdroad", default=None)
-    parser.add_argument("--rcsdnode", default=None)
-    parser.add_argument("--out-root", default=DEFAULT_OUT_ROOT)
-    parser.add_argument("--run-id", default=DEFAULT_RUN_ID)
-    parser.add_argument("--out-txt")
-    parser.add_argument("--center-x", required=True, type=float)
-    parser.add_argument("--center-y", required=True, type=float)
-    parser.add_argument("--profile-id", default=T06_INPUT_SLICE_DEFAULT_PROFILE_ID)
-    parser.add_argument("--size-m", type=float)
-    parser.add_argument("--radius-m", type=float)
-    parser.add_argument("--max-main-axis-angle-diff-deg", type=float, default=60.0)
-    parser.add_argument("--min-coarse-length-ratio", type=float, default=0.4)
-    parser.add_argument("--max-coarse-length-ratio", type=float, default=2.5)
-    parser.add_argument("--buffer-distance-m", type=float, default=50.0)
-    parser.add_argument("--min-buffer-road-overlap-ratio", type=float, default=0.2)
-    parser.add_argument("--min-buffer-road-overlap-length-m", type=float, default=1.0)
-    parser.add_argument("--advance-right-formway-bit", type=int, default=128)
-    parser.add_argument("--include-input-files", action="store_true")
-    parser.add_argument("--max-text-size-bytes", type=int, default=T06_TEXT_BUNDLE_LIMIT_BYTES)
-    return parser
+    from .text_bundle_cli import _build_input_export_arg_parser as _impl
+    return _impl()
 
 
 def run_t06_export_text_bundle_from_args(argv: list[str] | None = None) -> int:
-    args = _build_export_arg_parser().parse_args(argv)
-    artifacts = run_t06_export_text_bundle(
-        swsd_segment_path=args.swsd_segment,
-        swsd_roads_path=args.swsd_roads,
-        swsd_nodes_path=args.swsd_nodes,
-        t05_phase2_root=args.t05_phase2_root,
-        intersection_match_path=args.intersection_match,
-        rcsdroad_path=args.rcsdroad,
-        rcsdnode_path=args.rcsdnode,
-        out_root=args.out_root,
-        run_id=args.run_id,
-        out_txt=args.out_txt,
-        max_main_axis_angle_diff_deg=args.max_main_axis_angle_diff_deg,
-        min_coarse_length_ratio=args.min_coarse_length_ratio,
-        max_coarse_length_ratio=args.max_coarse_length_ratio,
-        buffer_distance_m=args.buffer_distance_m,
-        min_buffer_road_overlap_ratio=args.min_buffer_road_overlap_ratio,
-        min_buffer_road_overlap_length_m=args.min_buffer_road_overlap_length_m,
-        advance_right_formway_bit=args.advance_right_formway_bit,
-        include_output_vectors=args.include_output_vectors,
-        include_input_files=args.include_input_files,
-        extra_relative_paths=tuple(args.extra_path or ()),
-        max_text_size_bytes=args.max_text_size_bytes,
-    )
-    if not artifacts.success:
-        print(f"T06 text bundle export failed: {artifacts.failure_detail}", file=sys.stderr)
-        if artifacts.size_report_path is not None:
-            print(f"size_report={artifacts.size_report_path}", file=sys.stderr)
-        return 1
-    print(f"T06 text bundle written to: {artifacts.bundle_txt_path}")
-    print(f"bundle_size_bytes={artifacts.bundle_size_bytes}")
-    print(f"included_file_count={artifacts.included_file_count}")
-    if artifacts.part_txt_paths:
-        print(f"bundle_part_count={len(artifacts.part_txt_paths)}")
-        print(f"max_part_size_bytes={artifacts.max_part_size_bytes}")
-        for path in artifacts.part_txt_paths:
-            print(f"bundle_part={path}")
-    if artifacts.size_report_path is not None:
-        print(f"size_report={artifacts.size_report_path}")
-    return 0
+    from .text_bundle_cli import run_t06_export_text_bundle_from_args as _impl
+    return _impl(argv)
 
 
 def run_t06_decode_text_bundle_from_args(argv: list[str] | None = None) -> int:
-    args = _build_decode_arg_parser().parse_args(argv)
-    artifacts = run_t06_decode_text_bundle(bundle_txt=args.bundle_txt, out_dir=args.out_dir)
-    print(f"T06 text bundle decoded to: {artifacts.out_dir}")
-    print(f"manifest={artifacts.manifest_path}")
-    return 0
+    from .text_bundle_cli import run_t06_decode_text_bundle_from_args as _impl
+    return _impl(argv)
 
 
 def run_t06_export_input_text_bundle_from_args(argv: list[str] | None = None) -> int:
-    args = _build_input_export_arg_parser().parse_args(argv)
-    artifacts = run_t06_export_input_text_bundle(
-        swsd_segment_path=args.swsd_segment,
-        swsd_roads_path=args.swsd_roads,
-        swsd_nodes_path=args.swsd_nodes,
-        t05_phase2_root=args.t05_phase2_root,
-        intersection_match_path=args.intersection_match,
-        rcsdroad_path=args.rcsdroad,
-        rcsdnode_path=args.rcsdnode,
-        out_root=args.out_root,
-        run_id=args.run_id,
-        out_txt=args.out_txt,
-        center_x=args.center_x,
-        center_y=args.center_y,
-        profile_id=args.profile_id,
-        size_m=args.size_m,
-        radius_m=args.radius_m,
-        max_main_axis_angle_diff_deg=args.max_main_axis_angle_diff_deg,
-        min_coarse_length_ratio=args.min_coarse_length_ratio,
-        max_coarse_length_ratio=args.max_coarse_length_ratio,
-        buffer_distance_m=args.buffer_distance_m,
-        min_buffer_road_overlap_ratio=args.min_buffer_road_overlap_ratio,
-        min_buffer_road_overlap_length_m=args.min_buffer_road_overlap_length_m,
-        advance_right_formway_bit=args.advance_right_formway_bit,
-        include_input_files=args.include_input_files,
-        max_text_size_bytes=args.max_text_size_bytes,
-    )
-    if not artifacts.success:
-        print(f"T06 input text bundle export failed: {artifacts.failure_detail}", file=sys.stderr)
-        if artifacts.size_report_path is not None:
-            print(f"size_report={artifacts.size_report_path}", file=sys.stderr)
-        return 1
-    print(f"T06 input text bundle written to: {artifacts.bundle_txt_path}")
-    print(f"bundle_size_bytes={artifacts.bundle_size_bytes}")
-    print(f"included_file_count={artifacts.included_file_count}")
-    if artifacts.part_txt_paths:
-        print(f"bundle_part_count={len(artifacts.part_txt_paths)}")
-        print(f"max_part_size_bytes={artifacts.max_part_size_bytes}")
-        for path in artifacts.part_txt_paths:
-            print(f"bundle_part={path}")
-    if artifacts.size_report_path is not None:
-        print(f"size_report={artifacts.size_report_path}")
-    return 0
+    from .text_bundle_cli import run_t06_export_input_text_bundle_from_args as _impl
+    return _impl(argv)

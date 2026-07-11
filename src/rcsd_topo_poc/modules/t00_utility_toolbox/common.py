@@ -509,8 +509,15 @@ def _build_fiona_schema(records: list[dict[str, Any]]) -> dict[str, Any]:
 
 def write_json(path: Path, payload: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as fp:
-        json.dump(_json_compatible(payload), fp, ensure_ascii=False, indent=2, allow_nan=False)
+    path.write_text(
+        json.dumps(
+            _json_compatible(payload),
+            ensure_ascii=False,
+            indent=2,
+            allow_nan=False,
+        ),
+        encoding="utf-8",
+    )
 
 
 def write_geojson(path: Path, features: Iterable[dict[str, Any]], *, crs_text: str | None = None) -> None:

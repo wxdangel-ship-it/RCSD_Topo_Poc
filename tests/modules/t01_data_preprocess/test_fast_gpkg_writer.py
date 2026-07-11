@@ -6,6 +6,10 @@ from pathlib import Path
 import fiona
 from shapely.geometry import LineString
 
+from rcsd_topo_poc.modules.t01_data_preprocess.fast_gpkg_writer import (
+    GPKG_IN_MEMORY_PUBLISH_MAX_RECORDS,
+    _small_gpkg_template_bytes,
+)
 from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import write_vector
 
 
@@ -91,3 +95,36 @@ def test_write_vector_fast_gpkg_handles_empty_layers(tmp_path: Path) -> None:
             (table_name,),
         ).fetchone()[0]
     assert feature_count == 0
+
+
+def test_small_gpkg_writer_reuses_schema_template(tmp_path: Path) -> None:
+    _small_gpkg_template_bytes.cache_clear()
+    features = [{"properties": {"id": "1"}, "geometry": LineString([(0.0, 0.0), (1.0, 1.0)])}]
+
+    write_vector(tmp_path / "first.gpkg", features, layer_name="shared_layer")
+    write_vector(tmp_path / "second.gpkg", features, layer_name="shared_layer")
+
+    cache_info = _small_gpkg_template_bytes.cache_info()
+    assert cache_info.misses == 1
+    assert cache_info.hits >= 1
+    for path in (tmp_path / "first.gpkg", tmp_path / "second.gpkg"):
+        with fiona.open(path) as source:
+            assert source.name == "shared_layer"
+            assert len(source) == 1
+
+
+def test_fast_gpkg_large_record_set_keeps_disk_backed_path(tmp_path: Path) -> None:
+    output_path = tmp_path / "large_debug.gpkg"
+    features = [
+        {
+            "properties": {"id": index},
+            "geometry": LineString([(float(index), 0.0), (float(index), 1.0)]),
+        }
+        for index in range(GPKG_IN_MEMORY_PUBLISH_MAX_RECORDS + 1)
+    ]
+
+    write_vector(output_path, features)
+
+    with fiona.open(output_path) as source:
+        assert len(source) == len(features)
+        assert source.crs.to_epsg() == 3857

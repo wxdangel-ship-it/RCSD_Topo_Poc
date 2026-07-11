@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import subprocess
 from datetime import datetime, timezone
+from functools import lru_cache
 from pathlib import Path
 from typing import Iterable, Mapping
 
@@ -23,6 +24,7 @@ def utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+@lru_cache(maxsize=8)
 def current_git_sha(*, repo_root: Path | None = None) -> str:
     root = repo_root or Path(__file__).resolve().parents[4]
     try:

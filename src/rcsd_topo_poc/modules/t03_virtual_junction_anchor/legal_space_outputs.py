@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import shutil
+from functools import partial
 from pathlib import Path
 
 from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import write_csv, write_vector
 from rcsd_topo_poc.modules.t00_utility_toolbox.common import write_json
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.case_models import ReviewIndexRow, Step1Context, Step3CaseResult
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.legal_space_render import render_step3_review_png
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.parallel_output import run_output_jobs
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step3_engine import build_step3_status_doc
 
 
@@ -47,24 +49,32 @@ def write_case_outputs(
 ) -> ReviewIndexRow:
     case_dir = run_root / "cases" / context.case_spec.case_id
     case_dir.mkdir(parents=True, exist_ok=True)
-    write_vector(
-        case_dir / "step3_allowed_space.gpkg",
-        _geometry_feature(case_result.allowed_space_geometry, case_id=context.case_spec.case_id, layer="allowed_space"),
+    run_output_jobs(
+        (
+            partial(
+                write_vector,
+                case_dir / "step3_allowed_space.gpkg",
+                _geometry_feature(case_result.allowed_space_geometry, case_id=context.case_spec.case_id, layer="allowed_space"),
+            ),
+            partial(
+                write_vector,
+                case_dir / "step3_negative_mask_adjacent_junction.gpkg",
+                _geometry_feature(case_result.negative_masks.adjacent_junction_geometry, case_id=context.case_spec.case_id, layer="adjacent_junction"),
+            ),
+            partial(
+                write_vector,
+                case_dir / "step3_negative_mask_foreign_objects.gpkg",
+                _geometry_feature(case_result.negative_masks.foreign_objects_geometry, case_id=context.case_spec.case_id, layer="foreign_objects"),
+            ),
+            partial(
+                write_vector,
+                case_dir / "step3_negative_mask_foreign_mst.gpkg",
+                _geometry_feature(case_result.negative_masks.foreign_mst_geometry, case_id=context.case_spec.case_id, layer="foreign_mst"),
+            ),
+            partial(write_json, case_dir / "step3_status.json", build_step3_status_doc(case_result)),
+            partial(write_json, case_dir / "step3_audit.json", case_result.audit_doc),
+        )
     )
-    write_vector(
-        case_dir / "step3_negative_mask_adjacent_junction.gpkg",
-        _geometry_feature(case_result.negative_masks.adjacent_junction_geometry, case_id=context.case_spec.case_id, layer="adjacent_junction"),
-    )
-    write_vector(
-        case_dir / "step3_negative_mask_foreign_objects.gpkg",
-        _geometry_feature(case_result.negative_masks.foreign_objects_geometry, case_id=context.case_spec.case_id, layer="foreign_objects"),
-    )
-    write_vector(
-        case_dir / "step3_negative_mask_foreign_mst.gpkg",
-        _geometry_feature(case_result.negative_masks.foreign_mst_geometry, case_id=context.case_spec.case_id, layer="foreign_mst"),
-    )
-    write_json(case_dir / "step3_status.json", build_step3_status_doc(case_result))
-    write_json(case_dir / "step3_audit.json", case_result.audit_doc)
     image_name = ""
     image_path = ""
     if render_review_png:

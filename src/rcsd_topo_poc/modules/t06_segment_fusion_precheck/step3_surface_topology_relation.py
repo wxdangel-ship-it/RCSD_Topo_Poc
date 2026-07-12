@@ -10,7 +10,7 @@ import geopandas as gpd
 from shapely.geometry import LineString, MultiLineString, MultiPoint, Point
 from shapely.ops import linemerge, substring
 
-from .io import read_features, write_feature_triplet, write_json
+from .io import clear_read_features_cache, read_features, write_feature_triplet, write_json
 from .parsing import normalize_id, unique_preserve_order
 from .schemas import (
     STEP2_FAILURE_BUSINESS_AUDIT_STEM,
@@ -347,51 +347,7 @@ def _rebuild_topology_connectivity_audit(
         swsd_source_value=swsd_source_value,
         rcsd_source_value=rcsd_source_value,
     )
-    rows = build_topology_connectivity_audit_rows(
-        swsd_segments=swsd_segments,
-        swsd_roads=swsd_roads,
-        frcsd_roads=frcsd_roads,
-        frcsd_nodes=frcsd_nodes,
-        segment_relation_rows=relation_rows,
-        advance_right_audit_rows=advance_rows,
-        source_field_name=source_field_name,
-        swsd_source_value=swsd_source_value,
-        rcsd_source_value=rcsd_source_value,
-        coverage_cache=coverage_cache,
-    )
-    current_transition_node_ids = {
-        _safe_id((row.get("properties") or {}).get("swsd_node_id"))
-        for row in rows
-        if (row.get("properties") or {}).get("counts_in_final_frcsd_topology_fail")
-        and str((row.get("properties") or {}).get("final_topology_category") or "") == "segment_transition"
-        and _safe_id((row.get("properties") or {}).get("swsd_node_id"))
-    }
-    authoritative_stats = apply_authoritative_transition_closure(
-        step_root=step_root,
-        relation_rows=relation_rows,
-        frcsd_nodes=frcsd_nodes,
-        source_field_name=source_field_name,
-        swsd_source_value=swsd_source_value,
-        rcsd_source_value=rcsd_source_value,
-        current_transition_node_ids=current_transition_node_ids,
-    )
-    if (
-        retained_sync_stats.get("retained_swsd_carrier_mainnode_row_count", 0) > 0
-        or authoritative_stats.get("applied_node_count", 0) > 0
-    ):
-        write_feature_triplet(
-            step_root=step_root,
-            stem=STEP3_SWSD_FRCSD_SEGMENT_RELATION_STEM,
-            features=relation_rows,
-            fieldnames=STEP3_SWSD_FRCSD_SEGMENT_RELATION_FIELDS,
-        )
-        write_feature_triplet(
-            step_root=step_root,
-            stem=STEP3_FRCSD_NODE_STEM,
-            features=frcsd_nodes,
-            fieldnames=_fieldnames_from_gpkg(node_path),
-        )
-    if authoritative_stats.get("applied_node_count", 0) > 0:
+    try:
         rows = build_topology_connectivity_audit_rows(
             swsd_segments=swsd_segments,
             swsd_roads=swsd_roads,
@@ -404,6 +360,55 @@ def _rebuild_topology_connectivity_audit(
             rcsd_source_value=rcsd_source_value,
             coverage_cache=coverage_cache,
         )
+        current_transition_node_ids = {
+            _safe_id((row.get("properties") or {}).get("swsd_node_id"))
+            for row in rows
+            if (row.get("properties") or {}).get("counts_in_final_frcsd_topology_fail")
+            and str((row.get("properties") or {}).get("final_topology_category") or "") == "segment_transition"
+            and _safe_id((row.get("properties") or {}).get("swsd_node_id"))
+        }
+        authoritative_stats = apply_authoritative_transition_closure(
+            step_root=step_root,
+            relation_rows=relation_rows,
+            frcsd_nodes=frcsd_nodes,
+            source_field_name=source_field_name,
+            swsd_source_value=swsd_source_value,
+            rcsd_source_value=rcsd_source_value,
+            current_transition_node_ids=current_transition_node_ids,
+        )
+        if (
+            retained_sync_stats.get("retained_swsd_carrier_mainnode_row_count", 0) > 0
+            or authoritative_stats.get("applied_node_count", 0) > 0
+        ):
+            write_feature_triplet(
+                step_root=step_root,
+                stem=STEP3_SWSD_FRCSD_SEGMENT_RELATION_STEM,
+                features=relation_rows,
+                fieldnames=STEP3_SWSD_FRCSD_SEGMENT_RELATION_FIELDS,
+            )
+            write_feature_triplet(
+                step_root=step_root,
+                stem=STEP3_FRCSD_NODE_STEM,
+                features=frcsd_nodes,
+                fieldnames=_fieldnames_from_gpkg(node_path),
+            )
+        if authoritative_stats.get("applied_node_count", 0) > 0:
+            rows = build_topology_connectivity_audit_rows(
+                swsd_segments=swsd_segments,
+                swsd_roads=swsd_roads,
+                frcsd_roads=frcsd_roads,
+                frcsd_nodes=frcsd_nodes,
+                segment_relation_rows=relation_rows,
+                advance_right_audit_rows=advance_rows,
+                source_field_name=source_field_name,
+                swsd_source_value=swsd_source_value,
+                rcsd_source_value=rcsd_source_value,
+                coverage_cache=coverage_cache,
+            )
+    finally:
+        if coverage_cache is not None:
+            coverage_cache.clear()
+        clear_read_features_cache()
     if write_outputs:
         _write_topology_connectivity_audit_rows(
             step_root,

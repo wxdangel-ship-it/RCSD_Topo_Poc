@@ -12,6 +12,7 @@ from rcsd_topo_poc.modules.t06_segment_fusion_precheck.io import read_features, 
 def test_read_features_reuses_unchanged_snapshot_without_sharing_properties(tmp_path, monkeypatch):
     path = tmp_path / "input.gpkg"
     path.write_bytes(b"first")
+    io_module.clear_read_features_cache()
     calls = 0
 
     def fake_read_vector_layer(path_text, *, crs_override=None):
@@ -37,6 +38,10 @@ def test_read_features_reuses_unchanged_snapshot_without_sharing_properties(tmp_
     path.write_bytes(b"second-version")
     read_features(path)
     assert calls == 2
+    assert io_module._read_features_cache_size() == 1
+
+    io_module.clear_read_features_cache()
+    assert io_module._read_features_cache_size() == 0
 
 
 def test_write_feature_triplet_uses_specific_linestring_geometry_type(tmp_path):

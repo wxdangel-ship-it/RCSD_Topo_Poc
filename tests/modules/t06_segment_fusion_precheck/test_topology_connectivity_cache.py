@@ -3,6 +3,7 @@ from shapely.ops import unary_union
 
 from rcsd_topo_poc.modules.t06_segment_fusion_precheck import step3_topology_connectivity_audit as audit
 from rcsd_topo_poc.modules.t06_segment_fusion_precheck import step3_topology_connectivity_support as support
+from rcsd_topo_poc.modules.t06_segment_fusion_precheck import step3_surface_topology_relation as surface_relation
 
 
 def test_buffered_road_union_reuses_explicit_shared_cache_only() -> None:
@@ -100,3 +101,38 @@ def test_relation_coverage_prewarm_skips_union_when_all_buffers_are_cached(monke
 
     assert calls == 1
     assert len(coverage_cache) == 3
+
+
+def test_surface_topology_rebuild_releases_large_caches_before_output(tmp_path, monkeypatch) -> None:
+    coverage_cache = {("old",): object()}
+    clear_calls = 0
+
+    monkeypatch.setattr(surface_relation, "read_features", lambda _path: [])
+    monkeypatch.setattr(surface_relation, "sync_retained_swsd_carrier_mainnodes", lambda *_args, **_kwargs: {})
+
+    def _build_rows(*_args, **kwargs):
+        kwargs["coverage_cache"][("new",)] = object()
+        return []
+
+    def _clear_read_cache():
+        nonlocal clear_calls
+        clear_calls += 1
+
+    monkeypatch.setattr(surface_relation, "build_topology_connectivity_audit_rows", _build_rows)
+    monkeypatch.setattr(surface_relation, "clear_read_features_cache", _clear_read_cache)
+
+    rows, stats = surface_relation._rebuild_topology_connectivity_audit(
+        step_root=tmp_path,
+        swsd_segment_path=tmp_path / "segments.gpkg",
+        swsd_roads_path=tmp_path / "roads.gpkg",
+        source_field_name="source",
+        swsd_source_value=2,
+        rcsd_source_value=1,
+        coverage_cache=coverage_cache,
+        write_outputs=False,
+    )
+
+    assert rows == []
+    assert stats == {}
+    assert coverage_cache == {}
+    assert clear_calls == 1

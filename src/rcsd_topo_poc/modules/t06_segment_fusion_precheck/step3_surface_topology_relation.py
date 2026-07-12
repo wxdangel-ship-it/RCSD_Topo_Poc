@@ -10,7 +10,7 @@ import geopandas as gpd
 from shapely.geometry import LineString, MultiLineString, MultiPoint, Point
 from shapely.ops import linemerge, substring
 
-from .io import read_features, write_feature_triplet, write_json
+from .io import clear_read_features_cache, read_features, write_feature_triplet, write_json
 from .parsing import normalize_id, unique_preserve_order
 from .schemas import (
     STEP2_FAILURE_BUSINESS_AUDIT_STEM,
@@ -359,18 +359,23 @@ def _rebuild_topology_connectivity_audit(
             features=frcsd_nodes,
             fieldnames=_fieldnames_from_gpkg(node_path),
         )
-    rows = build_topology_connectivity_audit_rows(
-        swsd_segments=swsd_segments,
-        swsd_roads=swsd_roads,
-        frcsd_roads=frcsd_roads,
-        frcsd_nodes=frcsd_nodes,
-        segment_relation_rows=relation_rows,
-        advance_right_audit_rows=advance_rows,
-        source_field_name=source_field_name,
-        swsd_source_value=swsd_source_value,
-        rcsd_source_value=rcsd_source_value,
-        coverage_cache=coverage_cache,
-    )
+    try:
+        rows = build_topology_connectivity_audit_rows(
+            swsd_segments=swsd_segments,
+            swsd_roads=swsd_roads,
+            frcsd_roads=frcsd_roads,
+            frcsd_nodes=frcsd_nodes,
+            segment_relation_rows=relation_rows,
+            advance_right_audit_rows=advance_rows,
+            source_field_name=source_field_name,
+            swsd_source_value=swsd_source_value,
+            rcsd_source_value=rcsd_source_value,
+            coverage_cache=coverage_cache,
+        )
+    finally:
+        if coverage_cache is not None:
+            coverage_cache.clear()
+        clear_read_features_cache()
     if write_outputs:
         _write_topology_connectivity_audit_rows(step_root, rows, retained_sync_stats)
     return rows, retained_sync_stats

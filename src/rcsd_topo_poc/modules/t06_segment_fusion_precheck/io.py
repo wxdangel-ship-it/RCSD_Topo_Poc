@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import csv
 import json
+from collections import OrderedDict
 from collections.abc import Callable
 from copy import deepcopy
 from contextlib import contextmanager
 from datetime import datetime, timezone
-from functools import lru_cache
 from pathlib import Path
+from threading import RLock
 from typing import Any, Iterable
 
 from shapely.geometry import LineString, MultiLineString, MultiPolygon, Polygon, mapping, shape
@@ -20,6 +21,12 @@ from .schemas import PROCESS_CRS_TEXT
 
 
 _SUPPRESS_FEATURE_JSON_DEPTH = 0
+_READ_FEATURES_CACHE_MAX_PATHS = 24
+_READ_FEATURES_SNAPSHOT_CACHE: OrderedDict[
+    tuple[str, str | None],
+    tuple[tuple[int, int, int], tuple[tuple[dict[str, Any], Any], ...]],
+] = OrderedDict()
+_READ_FEATURES_SNAPSHOT_CACHE_LOCK = RLock()
 
 
 @contextmanager
@@ -65,7 +72,16 @@ def read_features(path: str | Path, *, crs_override: str | None = None) -> list[
     ]
 
 
-@lru_cache(maxsize=24)
+def clear_read_features_cache() -> None:
+    with _READ_FEATURES_SNAPSHOT_CACHE_LOCK:
+        _READ_FEATURES_SNAPSHOT_CACHE.clear()
+
+
+def _read_features_cache_size() -> int:
+    with _READ_FEATURES_SNAPSHOT_CACHE_LOCK:
+        return len(_READ_FEATURES_SNAPSHOT_CACHE)
+
+
 def _read_features_snapshot(
     path_text: str,
     crs_override: str | None,
@@ -73,8 +89,21 @@ def _read_features_snapshot(
     _mtime_ns: int,
     _ctime_ns: int,
 ) -> tuple[tuple[dict[str, Any], Any], ...]:
+    key = path_text, crs_override
+    version = _size_bytes, _mtime_ns, _ctime_ns
+    with _READ_FEATURES_SNAPSHOT_CACHE_LOCK:
+        cached = _READ_FEATURES_SNAPSHOT_CACHE.get(key)
+        if cached is not None and cached[0] == version:
+            _READ_FEATURES_SNAPSHOT_CACHE.move_to_end(key)
+            return cached[1]
     result = read_vector_layer(path_text, crs_override=crs_override)
-    return tuple((dict(item.properties), item.geometry) for item in result.features)
+    snapshot = tuple((dict(item.properties), item.geometry) for item in result.features)
+    with _READ_FEATURES_SNAPSHOT_CACHE_LOCK:
+        _READ_FEATURES_SNAPSHOT_CACHE[key] = version, snapshot
+        _READ_FEATURES_SNAPSHOT_CACHE.move_to_end(key)
+        while len(_READ_FEATURES_SNAPSHOT_CACHE) > _READ_FEATURES_CACHE_MAX_PATHS:
+            _READ_FEATURES_SNAPSHOT_CACHE.popitem(last=False)
+    return snapshot
 
 
 def write_feature_triplet(

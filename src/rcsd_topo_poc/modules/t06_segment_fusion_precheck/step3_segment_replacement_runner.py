@@ -23,6 +23,14 @@ from .parallel_output import FeatureTripletJob, publish_feature_triplets
 from .parsing import ParseError, normalize_id, parse_id_list, parse_positive_int, unique_preserve_order
 
 from .road_attributes import is_near_advance_right_turn_duplicate as _is_adv_dup
+from .rcsd_road_ownership import (
+    build_and_write_rcsd_road_ownership,
+    sync_segment_relation_ownership_fields,
+)
+from .segment_construction_audit import (
+    apply_side_road_only_replacement_gate,
+    build_and_write_segment_construction_audit,
+)
 
 from .schemas import (
     STEP2_GROUP_REPLACEMENT_AUDIT_STEM,
@@ -412,11 +420,22 @@ def run_t06_step3_segment_replacement(
     )
     if retained_swsd_excluded_stats["deactivated_segment_count"]:
         passed_units = [unit for unit in passed_units if unit.status == "passed"]
+    side_road_only_gate_stats = apply_side_road_only_replacement_gate(
+        units=passed_units,
+        segment_by_id=segment_by_id,
+        swsd_road_by_id=swsd_road_by_id,
+        swsd_nodes=swsd_nodes,
+        added_road_to_segments=added_road_to_segments,
+    )
+    if side_road_only_gate_stats["blocked_non_side_segment_count"]:
+        passed_units = [unit for unit in passed_units if unit.status == "passed"]
+    passed_unit_ids = {unit.segment_id for unit in passed_units}
     if (
         topology_supplement_materialized_stats["materialized_road_count"]
         or topology_supplement_materialized_stats.get("reused_existing_rcsd_advance_count")
         or topology_supplement_materialized_stats.get("formal_body_retained_restored_count")
         or retained_swsd_excluded_stats["deactivated_segment_count"]
+        or side_road_only_gate_stats["blocked_non_side_segment_count"]
     ):
         removed_road_to_segments, removed_node_to_segments, preserved_removed_node_count = _compute_removed_swsd_maps(
             passed_units,
@@ -427,12 +446,17 @@ def run_t06_step3_segment_replacement(
         special_internal_stats = _apply_sji(
             special_groups, passed_unit_ids, swsd_roads, swsd_nodes, removed_road_to_segments, removed_node_to_segments, added_road_to_segments
         )
+    retained_swsd_roads = [road for road in swsd_roads if _feature_id(road) not in removed_road_to_segments]
+    added_road_ids_before_connectivity_fallback = set(added_road_to_segments)
     second_degree_bridge_stats = apply_unreplaced_second_degree_bridge_fallback(
         passed_units,
         rcsd_roads=rcsd_roads,
         canonicalizer=canonicalizer,
         added_road_to_segments=added_road_to_segments,
         replacement_plan_rows=replacement_plan_rows,
+    )
+    connectivity_supplement_road_ids = (
+        set(added_road_to_segments) - added_road_ids_before_connectivity_fallback
     )
     _flatten_node_mainnode_chains(rcsd_nodes, source_field_name=source_field_name)
     generated_endpoint_node_stats = ensure_added_rcsd_road_endpoint_nodes(
@@ -567,6 +591,16 @@ def run_t06_step3_segment_replacement(
         swsd_source_value=swsd_source_value,
         rcsd_source_value=rcsd_source_value,
     )
+    final_attachment_mainnode_sync_stats = _sync_attachment_swsd_mainnodes(
+        frcsd_nodes,
+        attachment_audit_rows=right_attach_audit_rows,
+        source_field_name=source_field_name,
+        swsd_source_value=swsd_source_value,
+        rcsd_source_value=rcsd_source_value,
+    )
+    attachment_mainnode_sync_stats["synced_node_count"] += final_attachment_mainnode_sync_stats[
+        "synced_node_count"
+    ]
     gcf_stats = retain_group_coverage_fallback(
         units=units,
         swsd_segments=swsd_segments,
@@ -606,6 +640,40 @@ def run_t06_step3_segment_replacement(
         source_field_name=source_field_name,
         swsd_source_value=swsd_source_value,
         rcsd_source_value=rcsd_source_value,
+    )
+    ownership_outputs = build_and_write_rcsd_road_ownership(
+        step_root=step_root,
+        rcsd_roads=rcsd_roads,
+        frcsd_roads=frcsd_roads,
+        swsd_segments=swsd_segments,
+        added_road_to_segments=added_road_to_segments,
+        connectivity_supplement_road_ids=connectivity_supplement_road_ids,
+        canonicalizer=canonicalizer,
+        source_field_name=source_field_name,
+        rcsd_source_value=rcsd_source_value,
+    )
+    sync_segment_relation_ownership_fields(
+        segment_relation_rows,
+        ownership_rows=ownership_outputs.ownership_rows,
+        connectivity_group_rows=ownership_outputs.connectivity_group_rows,
+    )
+    construction_audit_outputs = build_and_write_segment_construction_audit(
+        step_root=step_root,
+        swsd_segments=swsd_segments,
+        swsd_roads=swsd_roads,
+        swsd_nodes=swsd_nodes,
+        step1_rejected_rows=(
+            read_features(run_root / "step1_identify_fusion_units" / "t06_swsd_segment_rejected.gpkg")
+            if (run_root / "step1_identify_fusion_units" / "t06_swsd_segment_rejected.gpkg").is_file()
+            else []
+        ),
+        step2_replaceable_rows=replaceable,
+        step2_rejected_rows=(
+            read_features(run_root / "step2_extract_rcsd_segments" / "t06_rcsd_segment_rejected.gpkg")
+            if (run_root / "step2_extract_rcsd_segments" / "t06_rcsd_segment_rejected.gpkg").is_file()
+            else []
+        ),
+        segment_relation_rows=segment_relation_rows,
     )
 
     published_paths = publish_feature_triplets(
@@ -714,6 +782,12 @@ def run_t06_step3_segment_replacement(
             "topology_supplement_materialized_rcsd_road_count": topology_supplement_materialized_stats["materialized_road_count"],
             "topology_supplement_materialized_missing_attachment_node_count": topology_supplement_materialized_stats["missing_attachment_node_count"],
             "topology_supplement_formal_body_retained_restored_count": topology_supplement_materialized_stats.get("formal_body_retained_restored_count", 0),
+            "side_road_only_gate_candidate_mixed_segment_count": side_road_only_gate_stats["candidate_mixed_segment_count"],
+            "side_road_only_gate_allowed_segment_count": side_road_only_gate_stats["allowed_side_road_only_segment_count"],
+            "side_road_only_gate_blocked_segment_count": side_road_only_gate_stats["blocked_non_side_segment_count"],
+            "side_road_only_gate_blocked_segment_ids": side_road_only_gate_stats["blocked_segment_ids"],
+            "external_retained_swsd_carrier_segment_count": side_road_only_gate_stats["external_carrier_segment_count"],
+            "external_retained_swsd_carrier_road_count": side_road_only_gate_stats["external_carrier_road_count"],
             "removed_swsd_node_preserved_by_retained_road_count": preserved_removed_node_count,
             "removed_swsd_road_count": len(removed_road_to_segments),
             "removed_swsd_node_count": len(removed_node_to_segments),
@@ -787,6 +861,8 @@ def run_t06_step3_segment_replacement(
             **special_internal_stats,
             **semantic_junction_topology_stats,
             **topology_connectivity_summary,
+            **ownership_outputs.summary,
+            **construction_audit_outputs.summary,
             "outputs": {
                 **{f"frcsd_road_{key}": str(value) for key, value in road_paths.items()},
                 **{f"frcsd_node_{key}": str(value) for key, value in node_paths.items()},
@@ -806,6 +882,18 @@ def run_t06_step3_segment_replacement(
                     for key, value in adv_closure_paths.items()
                 },
                 **{f"topology_connectivity_audit_{key}": str(value) for key, value in topology_connectivity_paths.items()},
+                **{
+                    f"rcsd_road_ownership_{key}": str(value)
+                    for key, value in ownership_outputs.ownership_paths.items()
+                },
+                **{
+                    f"multi_segment_connectivity_group_{key}": str(value)
+                    for key, value in ownership_outputs.connectivity_group_paths.items()
+                },
+                **{
+                    f"segment_construction_audit_{key}": str(value)
+                    for key, value in construction_audit_outputs.paths.items()
+                },
             },
             "gis_topology_checks": {
                 "crs_normalized_to": "EPSG:3857",
@@ -828,6 +916,9 @@ def run_t06_step3_segment_replacement(
         swsd_frcsd_segment_relation_gpkg_path=segment_relation_paths["gpkg"],
         junction_rebuild_audit_gpkg_path=junction_paths["gpkg"],
         summary_path=summary_path,
+        rcsd_road_ownership_gpkg_path=ownership_outputs.ownership_paths["gpkg"],
+        multi_segment_connectivity_group_gpkg_path=ownership_outputs.connectivity_group_paths["gpkg"],
+        segment_construction_audit_gpkg_path=construction_audit_outputs.paths["gpkg"],
     )
 
 __all__ = ["run_t06_step3_segment_replacement"]

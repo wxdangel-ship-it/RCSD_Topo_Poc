@@ -1007,10 +1007,10 @@ def _write_unsegmented_roads_outputs(
     non_formway_bit7_or_bit8_reason_counts: dict[str, int] = {}
     for road in roads:
         props = road_properties_map[road.road_id]
+        if get_road_segmentid(props):
+            continue
         if _is_formway_128(props):
             excluded_formway_128_count += 1
-            continue
-        if get_road_segmentid(props):
             continue
         formway_has_bit7_or_bit8 = _has_formway_bit7_or_bit8(props)
         audit_reason = _unsegmented_audit_reason(

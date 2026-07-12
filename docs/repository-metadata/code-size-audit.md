@@ -2,12 +2,12 @@
 
 ## 范围
 
-- 主审计日期：2026-06-12；T09 增量审计：2026-07-10；T10 性能与 60KB 治理增量审计：2026-07-11
+- 主审计日期：2026-06-12；T09 增量审计：2026-07-10；T10 性能与 60KB 治理增量审计：2026-07-11；T01/T06 ownership 增量审计：2026-07-12
 - 阈值：单文件超过 `100 KB`
 - 口径：按 `code-boundaries-and-entrypoints.md`，审计纳入版本管理的 `src/`、`scripts/`、`tests/`、`tools/` 下源码 / 脚本文件。
 - 本表只记录结构债事实，不代表本轮进入对应模块正文治理。
 - 用户于 2026-07-11 明确确认 T02 已废弃并授权本轮不拆分；T02 超线文件继续登记为结构债，但从本轮 60KB 收敛验收中排除，且本轮未触碰 T02 源码或测试。
-- 2026-07-11 最终工作树扫描覆盖 `780` 个受治理源码/脚本/测试文件；除下列 `11` 个 Retired T02 文件外，`>= 61440 bytes` 文件数为 `0`。
+- 2026-07-12 T01/T06 ownership 工作树最终扫描覆盖 `791` 个受治理源码/脚本/测试文件；除下列 Retired T02 文件外，`>= 61440 bytes` 文件为 `step2_trunk_utils.py`（Windows CRLF 下 `62004` bytes）与 `step3_surface_aware_plan_release.py`（`74093` bytes），均低于 100KB 硬阈值。Final topology gate 已拆至 `step3_final_topology_gate.py`（`9687` bytes），hard-gate 级联 transition 收口已拆至 `step3_authoritative_transition_closure.py`（`14812` bytes）；主编排文件仍低于 100KB。
 
 ## 结果
 
@@ -29,6 +29,7 @@
 | `src/rcsd_topo_poc/modules/t04_divmerge_virtual_polygon/polygon_assembly.py` | `49351` bytes | T-01 已拆出 raster/path helper，主 assembly 文件降至 50 KB 以下 | 后续继续保持主流程不回填低层 raster/path helper |
 | `src/rcsd_topo_poc/modules/t04_divmerge_virtual_polygon/_runtime_step4_geometry_base.py` | `48003` bytes | 原 `_runtime_step4_geometry_reference.py` 已改名为 geometry base，低于阈值 | 后续避免重新引入 `reference` 命名误导 |
 | `src/rcsd_topo_poc/modules/t04_divmerge_virtual_polygon/outputs.py` | `48524` bytes | T04 输出层新增 arbiter ledger / decision trace / review index 字段后接近 50 KB | 后续新增输出字段前优先拆 review-index writer / audit writer helper |
+| `src/rcsd_topo_poc/modules/t06_segment_fusion_precheck/step3_surface_aware_plan_release.py` | `74093` bytes | Final topology decision、fail-key 与 plan rollback helper 已拆至独立模块；主文件仍低于 100KB 硬阈值但超过 60KB 治理线 | 后续继续拆分 postplan baseline/rollback orchestration 与 audit payload helper，禁止回填低层 topology helper |
 | `src/rcsd_topo_poc/modules/t04_divmerge_virtual_polygon/_event_interpretation_unit_preparation.py` | `41565` bytes | Round 2 新拆出的 unit preparation / pair-local materialization 模块 | 后续仅承接 preparation 与 scope materialization，不承接 candidate selection |
 | `src/rcsd_topo_poc/modules/p01_arm_build/final_arm_validation.py` | `53011` bytes | FinalArm relaxed reverse / supplemental trace validation 实现 | 后续若继续扩展 validation 分支，优先拆 validation builder 与 evidence helper |
 | `src/rcsd_topo_poc/modules/p01_arm_build/review.py` | `52972` bytes | P01 retained audit PNG / review GPKG 图层 helper | 后续 review 输出扩展先评估 layer builder / png renderer 拆分 |
@@ -115,8 +116,9 @@
 | `src/rcsd_topo_poc/modules/t06_segment_fusion_precheck/step3_replacement_primitives.py` | `8814` bytes | 新拆出的 ID、端点、序列化与长度 primitive | 保持无业务流程编排 |
 | `src/rcsd_topo_poc/modules/t06_segment_fusion_precheck/step3_replacement_models.py` | `2102` bytes | 新拆出的 Step3 dataclass 模型 | 保持仅定义稳定内部模型 |
 | `src/rcsd_topo_poc/modules/t06_segment_fusion_precheck/parallel_output.py` | `1366` bytes | Step3 独立 feature-triplet 发布器；实测 Fiona/GPKG 并发存在磁盘争用，正式编排默认确定性串行，每个工件仍走原 `write_feature_triplet` | 保留显式并发能力仅供受控测试，不改变 schema、字段或几何语义 |
-| `src/rcsd_topo_poc/modules/t06_segment_fusion_precheck/step3_topology_connectivity_audit.py` | `93342 -> 23342` bytes | 保留 topology connectivity 正式入口、基础完整性行与汇总；兼容原私有 helper 导入面 | 保持正式入口与汇总职责，不回填分层 row builder 或 coverage primitive |
-| `src/rcsd_topo_poc/modules/t06_segment_fusion_precheck/step3_topology_connectivity_rows.py` | `44642` bytes | 新拆出的 Segment internal / road / junction / retained endpoint / patch attachment 审计行构建 | 达到 50KB 前按 Segment 与 patch 职责再次评估拆分 |
+| `src/rcsd_topo_poc/modules/t06_segment_fusion_precheck/step3_topology_connectivity_audit.py` | `93342 -> 24749` bytes | 保留 topology connectivity 正式入口、基础完整性行、final topology 标注与汇总；兼容原私有 helper 导入面 | 保持正式入口与汇总职责，不回填分层 row builder 或 coverage primitive |
+| `src/rcsd_topo_poc/modules/t06_segment_fusion_precheck/step3_topology_connectivity_rows.py` | `45730` bytes | 新拆出的 Segment internal / road / junction / retained endpoint / patch attachment 审计行构建，并透传 final topology 字段 | 达到 50KB 前按 Segment 与 patch 职责再次评估拆分 |
+| `src/rcsd_topo_poc/modules/t06_segment_fusion_precheck/step3_final_topology_metric.py` | `6687` bytes | final F-RCSD topology 两类正式 fail 的分类、稳定对象 key 与唯一对象计数 helper | 保持纯分类/汇总职责，不承接审计行构建或回退编排 |
 | `src/rcsd_topo_poc/modules/t06_segment_fusion_precheck/step3_topology_connectivity_attachment.py` | `13337` bytes | 新拆出的 attachment、retained identity、node-map 与 relation scope 支撑 | 保持 attachment 与映射职责 |
 | `src/rcsd_topo_poc/modules/t06_segment_fusion_precheck/step3_topology_connectivity_support.py` | `22403` bytes | 新拆出的 road/node index、coverage cache 与几何/ID primitive | 保持索引、缓存与低层 primitive 职责，不承接审计行编排 |
 | `src/rcsd_topo_poc/modules/t06_segment_fusion_precheck/step3_surface_topology_audit.py` | `88779 -> 12239` bytes | 保留 surface-topology postprocess 正式入口与统计回填；兼容原私有 helper 导入面 | 保持 postprocess 编排职责，不回填候选选择、relation 写回或 IO helper |
@@ -135,7 +137,7 @@
 | `tests/modules/t06_segment_fusion_precheck/test_runner_outputs.py` | `93889 -> 44848` bytes | 保留 combined runner 与 Step1/Step2 基础输出、pair gate 回归 | retry / adaptive buffer 场景进入独立测试文件 |
 | `tests/modules/t06_segment_fusion_precheck/test_runner_outputs_retry.py` | `47816` bytes | 新拆出的 Step2 retry、adaptive buffer、diagnostic 与 partial roundabout 场景回归 | 保持 retry/output 专项测试职责 |
 | `tests/modules/t06_segment_fusion_precheck/test_step3_topology_connectivity_audit.py` | `62155 -> 30469` bytes | 保留 topology connectivity 基础 path、coverage、retained endpoint 与 final road integrity 回归 | 扩展 junction/attachment 场景进入独立测试文件 |
-| `tests/modules/t06_segment_fusion_precheck/test_step3_topology_connectivity_audit_extended.py` | `32699` bytes | 新拆出的 segment-road mapping、junction、patch attachment 与 surface release 回归 | 保持扩展 topology 场景职责 |
+| `tests/modules/t06_segment_fusion_precheck/test_step3_topology_connectivity_audit_extended.py` | `33829` bytes | 新拆出的 segment-road mapping、junction、patch attachment、提右 final topology 与 surface release 回归 | 保持扩展 topology 场景职责 |
 | `src/rcsd_topo_poc/modules/t06_segment_fusion_precheck/rcsd_unreplaced_attribution.py` | `67670 -> 55763` bytes | 保留 RCSD unreplaced attribution 正式入口、匹配、分类与可 monkeypatch metric callable | 后续 summary 聚合不回填主文件 |
 | `src/rcsd_topo_poc/modules/t06_segment_fusion_precheck/rcsd_unreplaced_attribution_summary.py` | `13411` bytes | 新拆出的 attribution summary、rate、Step3 summary patch 与字段清单 | 保持汇总与发布 schema 职责 |
 | `src/rcsd_topo_poc/modules/t06_segment_fusion_precheck/text_bundle.py` | `80397 -> 56901` bytes | 保留 T06 text-bundle 正式 API、编码/解码与兼容 CLI callable；调用方式不变 | 已低于 60KB；input slice 与 argparse 实现不回填主文件 |
@@ -148,13 +150,13 @@
 | `src/rcsd_topo_poc/modules/t06_segment_fusion_precheck/buffer_segment_results.py` | `17699` bytes | 新拆出的 connectivity/coverage 状态、结果物化与 ID/geometry primitive | 保持状态判定和结果组装职责 |
 | `tests/modules/t06_segment_fusion_precheck/test_buffer_segment_extraction.py` | `69630 -> 34833` bytes | 保留 buffer extraction 基础、coverage、directed path 与 seed pruning 回归 | corridor supplement 扩展场景进入独立测试文件 |
 | `tests/modules/t06_segment_fusion_precheck/test_buffer_segment_extraction_corridors.py` | `34199` bytes | 新拆出的 internal edge、parallel corridor、semantic bridge 与 optional terminal 回归 | 保持 corridor supplement 专项测试职责 |
-| `src/rcsd_topo_poc/modules/t06_segment_fusion_precheck/replacement_plan.py` | `99579 -> 12997` bytes | 保留 replacement plan / problem registry 两个正式 builder 与兼容私有导入面 | 保持顶层计划编排职责，不回填 row/gate/support 实现 |
-| `src/rcsd_topo_poc/modules/t06_segment_fusion_precheck/replacement_plan_rows.py` | `24802` bytes | 新拆出的 standard、path-corridor group 与 visual repair plan row 构建 | 保持计划行物化职责 |
+| `src/rcsd_topo_poc/modules/t06_segment_fusion_precheck/replacement_plan.py` | `99579 -> 13360` bytes | 保留 replacement plan / problem registry 两个正式 builder 与兼容私有导入面 | 保持顶层计划编排职责，不回填 row/gate/support 实现 |
+| `src/rcsd_topo_poc/modules/t06_segment_fusion_precheck/replacement_plan_rows.py` | `25617` bytes | 新拆出的 standard、path-corridor group 与 visual repair plan row 构建 | 保持计划行物化职责 |
 | `src/rcsd_topo_poc/modules/t06_segment_fusion_precheck/replacement_plan_visual_gate.py` | `23024` bytes | 新拆出的 visual road-conflict、prune、connectivity 与 coverage gate | 保持 visual consistency gate 职责 |
-| `src/rcsd_topo_poc/modules/t06_segment_fusion_precheck/replacement_plan_junction_gate.py` | `25546` bytes | 新拆出的 special group、junction alignment 与 group member gate | 保持 junction/group gate 职责 |
-| `src/rcsd_topo_poc/modules/t06_segment_fusion_precheck/replacement_plan_support.py` | `25571` bytes | 新拆出的 risk、pair-anchor、visual release、problem registry 与解析支撑 | 保持公共策略/解析支撑职责 |
-| `tests/modules/t06_segment_fusion_precheck/test_replacement_plan.py` | `101577 -> 54587` bytes | 保留 standard/group/visual gate 与基础 plan 回归 | surface-aware 与 junction alignment 场景进入独立测试文件 |
-| `tests/modules/t06_segment_fusion_precheck/test_replacement_plan_surface_release.py` | `46315` bytes | 新拆出的 surface-aware release、rollback、pair attachment 与 junction alignment 回归 | 保持后处理/对齐专项测试职责 |
+| `src/rcsd_topo_poc/modules/t06_segment_fusion_precheck/replacement_plan_junction_gate.py` | `32417` bytes | special group、junction alignment、group member gate 与受限后置锚定 gate | 保持 junction/group gate 职责；后置 gate 不下沉到计划行物化层 |
+| `src/rcsd_topo_poc/modules/t06_segment_fusion_precheck/replacement_plan_support.py` | `26319` bytes | risk、pair-anchor、visual release、problem registry 与解析支撑 | 保持公共策略/解析支撑职责 |
+| `tests/modules/t06_segment_fusion_precheck/test_replacement_plan.py` | `101577 -> 56115` bytes | 保留 standard/group/visual gate 与基础 plan 回归 | surface-aware 与 junction alignment 场景进入独立测试文件 |
+| `tests/modules/t06_segment_fusion_precheck/test_replacement_plan_surface_release.py` | `57377` bytes | surface-aware release、后置锚定、正式 final topology rollback、pair attachment 与 junction alignment 回归 | 已接近 60KB；新增大场景前按 postplan/visual release 拆分 |
 | `src/rcsd_topo_poc/modules/t06_segment_fusion_precheck/step2_extract_rcsd_segments.py` | `101536 -> 5832` bytes | 已降为 Step2 正式入口兼容 facade，保留原函数签名与导入面 | 禁止回填主循环、outcome 或发布实现 |
 | `src/rcsd_topo_poc/modules/t06_segment_fusion_precheck/step2_extract_rcsd_segments_runner.py` | `56860` bytes | 新拆出的 Step2 输入准备、逐 fusion-unit 主循环、retry 与 gate 编排；显式快照外层 `locals()`，兼容 WSL Python 3.10 与 Windows Python 3.13 | 已低于 60KB；后续主循环增长优先提取新的 outcome 分支 |
 | `src/rcsd_topo_poc/modules/t06_segment_fusion_precheck/step2_extract_support.py` | `23984` bytes | 新拆出的 unit 解析、方向/连通、junction attach audit 与 reject row helper | 保持解析、诊断和基础 row 支撑职责 |
@@ -230,6 +232,8 @@
 | `tests/modules/t10_e2e_orchestration/artifact_equivalence.py` | `17013` bytes | T10 性能治理新增的结构化业务等价 helper；比较 CSV/JSON/GPKG 内容，忽略运行元数据和拆分后的物理源码位置，并仅在比较阶段按 `1e-7 m` 规范化浮点噪声；`rcsd_road_ids/frcsd_road_ids` 按明确的无序成员集合比较 | 不作为正式入口；路径序列等其他列表仍顺序敏感，生产几何精度不变，超过网格或业务字段变化仍必须失败 |
 | `tests/modules/t10_e2e_orchestration/test_artifact_equivalence.py` | `8530` bytes | 等价 helper 的运行元数据、业务字段、无序 relation road ID 集合、GPKG、浮点噪声和 tree manifest 回归 | 保持覆盖比较器边界，禁止放宽其他正式业务字段 |
 | `src/rcsd_topo_poc/modules/t10_e2e_orchestration/scratch_publish.py` | `14231` bytes | T10 既有 wrapper 的临时 Linux 文件系统执行结果发布 helper；负责受校验的 tar 发布、路径回写、清单核验与 scratch 清理 | 不新增正式入口；保持发布前后文件数/字节数一致并限制清理根边界 |
+| `src/rcsd_topo_poc/modules/t06_segment_fusion_precheck/step3_final_topology_gate.py` | `9687` bytes | Final topology 正式失败决策、失败节点证据与 hard-gate plan 回退 helper | 保持决策与 plan 标记职责，不承接 F-RCSD 几何或 relation 编排 |
+| `src/rcsd_topo_poc/modules/t06_segment_fusion_precheck/step3_authoritative_transition_closure.py` | `14812` bytes | hard-gate 直接回退后 mixed-source 级联 transition 的 T05 权威 mainnode 收口与审计 | 保持严格候选、12m 门禁和审计职责，不扩展为通用 surface fallback |
 
 说明：
 

@@ -8,6 +8,8 @@
 - buffer 连通分量不能直接作为 RCSDSegment，必须收缩为 pair nodes + required junction nodes 之间的可解释 corridor。
 - `replaceable` 必须通过方向、叶子端点、required junction 相对拓扑、有效 buffer 穿行、视觉连续性和特殊组局部替换门控；RCSD 不要求完全留在 SWSD 50m buffer 内，只有 pair-to-pair 连续通路完全不经过 SWSD Segment buffer 时才硬拒绝。反向 buffer / coverage 差异写入 replacement plan 风险并追加 `manual_review_required`。
 - 准确 T05 relation 下 retained-junction 20m 距离 gate 不能作为 hard reject，只能作为 Step2 replacement plan 风险标记并由 Step3 topology audit 验证。
+- 最终 F-RCSD topology 发布门只使用 `final_frcsd_topology_fail_count`：SWSD Segment 通行关系在 final graph 中断裂或最终对象形成独立/单侧挂接时 hard fail；relation failed、coverage 和仅映射证据缺失不得混入正式最终错误数。
+- hard-gate 直接回退后必须先用当前内存中的 F-RCSD 重建 topology，再判断是否存在 mixed-source 级联 fail；满足有效 T05 唯一 root、remaining replaced relation 唯一同 root、无 Patch/T04 冲突和 12m 距离门禁时，应先做 retained endpoint mainnode 收口，再决定第二轮 Segment 回退。不得用落盘旧 audit、相邻几何或直接失败节点扩大收口范围。
 - Step3 只能执行 `t06_segment_replacement_plan.*` 中 `plan_status=ready` 的 action。
 
 ## 2. GIS 与拓扑要求

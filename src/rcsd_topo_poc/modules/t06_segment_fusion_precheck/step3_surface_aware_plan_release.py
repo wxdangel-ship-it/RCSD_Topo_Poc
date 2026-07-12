@@ -1,10 +1,24 @@
 from __future__ import annotations
 
+from concurrent.futures import ProcessPoolExecutor
 import json
+from multiprocessing import get_context
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any
 
 from .io import default_run_id, read_features, suppress_feature_json_outputs, write_json
+from .rcsd_road_ownership import refresh_rcsd_road_ownership_after_surface
+from .segment_construction_audit import refresh_segment_construction_audit_after_surface
+from .step3_final_topology_gate import (
+    block_final_topology_gate_rows,
+    fail_keys_after_plan_rollback as _fail_keys_after_postplan_rollback,
+    final_topology_gate_decision,
+    postplan_anchor_added_fail_keys as _postplan_anchor_added_fail_keys,
+    rollback_items_for_plan_rows as _rollback_items_for_plan_rows,
+    rollback_plan_ids_for_failed_segments as _rollback_plan_ids_for_failed_segments,
+    topology_fail_keys,
+)
 from .parsing import parse_id_list, unique_preserve_order
 from .schemas import (
     STEP2_REPLACEMENT_PLAN_STEM,
@@ -26,6 +40,8 @@ from .step3_surface_topology_audit import run_surface_topology_postprocess
 RETAINED_JUNCTION_GATE_REASON = "junction_alignment_to_retained_swsd_exceeds_topology_gate"
 SURFACE_RELEASE_RISK = "junction_alignment_surface_audit_release"
 SURFACE_RELEASE_ROLLBACK_REASON = "junction_alignment_surface_release_failed_topology_gate"
+POSTPLAN_ANCHOR_GATE_RISK = "postplan_anchor_gate_deferred_to_step3_topology"
+POSTPLAN_ANCHOR_ROLLBACK_REASON = "postplan_anchor_gate_failed_topology_gate"
 SURFACE_RELEASE_PLAN_STEM = "t06_step3_surface_aware_replacement_plan"
 SURFACE_RELEASE_AUDIT = "t06_step3_surface_aware_plan_release_audit.json"
 VISUAL_CONFLICT_REASON = "visual_consistency_road_conflict_with_primary_replacement_plan"
@@ -369,13 +385,51 @@ def _run_preplanned_release_step3(
         incident_segments_by_node=incident_segments_by_node,
     )
     candidate_rows, visual_released = _visual_conflict_release_plan_rows(_copy_plan_rows(release_rows))
-    if not released and not visual_released:
-        return None
-
+    postplan_released = _postplan_anchor_release_items(candidate_rows)
     candidate_plan = _write_plan_json(step_root, candidate_rows, "candidate")
     external_baseline_root = _external_baseline_step3_root(step2_replaceable_path, step_root)
     external_baseline_fail_keys = _topology_fail_keys(external_baseline_root) if external_baseline_root else set()
-    rollback_reference_fail_keys = external_baseline_fail_keys
+    internal_baseline_fail_keys: set[tuple[str, str, str, str, str]] = set()
+    internal_baseline_run_count = 0
+    baseline_plan_ids = {
+        str(item.get("plan_id") or "")
+        for item in postplan_released
+        if not item.get("independent_surface_release")
+    }
+    baseline_plan_ids.discard("")
+    if not external_baseline_root and baseline_plan_ids:
+        baseline_rows = _block_postplan_anchor_rows_for_baseline(_copy_plan_rows(candidate_rows), baseline_plan_ids)
+        Path(out_root).mkdir(parents=True, exist_ok=True)
+        with TemporaryDirectory(prefix=f".{resolved_run_id}_postplan_baseline_", dir=Path(out_root)) as temp_root:
+            baseline_step_root = Path(temp_root) / resolved_run_id / STEP3_DIR
+            baseline_plan = _write_plan_json(baseline_step_root, baseline_rows, "postplan_baseline")
+            payload = {
+                "step3_kwargs": {
+                    "step2_replaceable_path": step2_replaceable_path,
+                    "step2_special_junction_group_audit_path": step2_special_junction_group_audit_path,
+                    "step2_group_replacement_audit_path": step2_group_replacement_audit_path,
+                    "step2_replacement_plan_path": baseline_plan,
+                    "swsd_segment_path": swsd_segment_path,
+                    "swsd_roads_path": swsd_roads_path,
+                    "swsd_nodes_path": swsd_nodes_path,
+                    "rcsdroad_path": rcsdroad_path,
+                    "rcsdnode_path": rcsdnode_path,
+                    "out_root": temp_root,
+                    "run_id": resolved_run_id,
+                    "junction_surface_path": surface_inputs.get("t05_surface_path"),
+                    "progress": progress,
+                },
+                "surface_kwargs": {
+                    "swsd_segment_path": swsd_segment_path,
+                    "swsd_roads_path": swsd_roads_path,
+                    "surface_inputs": surface_inputs,
+                    "surface_topology_closure": surface_topology_closure,
+                },
+            }
+            with ProcessPoolExecutor(max_workers=1, mp_context=get_context("spawn")) as executor:
+                internal_baseline_fail_keys = executor.submit(_run_isolated_baseline, payload).result()
+            internal_baseline_run_count = 1
+    rollback_reference_fail_keys = external_baseline_fail_keys or internal_baseline_fail_keys
     artifacts = _run_step3(
         step2_replaceable_path=step2_replaceable_path,
         step2_special_junction_group_audit_path=step2_special_junction_group_audit_path,
@@ -392,7 +446,7 @@ def _run_preplanned_release_step3(
         progress=progress,
         write_feature_json_outputs=False,
     )
-    full_step3_run_count = 1
+    full_step3_run_count = 1 + internal_baseline_run_count
     surface_summary = _run_surface(
         artifacts,
         swsd_segment_path=swsd_segment_path,
@@ -404,6 +458,14 @@ def _run_preplanned_release_step3(
     )
     final_fail_keys = _topology_fail_keys(artifacts.step_root)
     added_fail_keys = final_fail_keys - rollback_reference_fail_keys
+    postplan_added_fail_keys = _postplan_anchor_added_fail_keys(added_fail_keys)
+    postplan_rollback_plan_ids: set[str] = set()
+    if postplan_released:
+        postplan_rollback_plan_ids = _rollback_plan_ids_for_failed_segments(
+            postplan_added_fail_keys,
+            postplan_released,
+            incident_segments_by_node,
+        )
     rollback_plan_ids: set[str] = set()
     if released:
         rollback_plan_ids = _rollback_plan_ids(
@@ -423,7 +485,18 @@ def _run_preplanned_release_step3(
             rollback_plan_ids,
             incident_segments_by_node,
         )
-        visual_added_fail_keys = surface_safe_fail_keys - rollback_reference_fail_keys
+        surface_safe_fail_keys = _fail_keys_after_postplan_rollback(
+            surface_safe_fail_keys,
+            postplan_released,
+            postplan_rollback_plan_ids,
+            incident_segments_by_node,
+        )
+        # The internal baseline only isolates the new post-plan anchor gate.
+        # Existing visual-conflict releases retain their historical rollback
+        # reference; otherwise the baseline would silently make unrelated
+        # visual plans appear pre-approved.
+        visual_reference_fail_keys = external_baseline_fail_keys if external_baseline_root else set()
+        visual_added_fail_keys = surface_safe_fail_keys - visual_reference_fail_keys
         visual_non_replaced_plan_ids = _visual_conflict_non_replaced_plan_ids(artifacts.step_root, visual_released)
         visual_rollback_plan_ids = _visual_conflict_rollback_plan_ids(
             visual_added_fail_keys,
@@ -445,9 +518,11 @@ def _run_preplanned_release_step3(
         visual_rollback_plan_ids.update(visual_non_replaced_plan_ids)
 
     topology_safe_plan: Path | None = None
-    recommended_rollback_plan_ids = rollback_plan_ids | visual_rollback_plan_ids
+    residual_postplan_rollback_plan_ids: set[str] = set()
+    recommended_rollback_plan_ids = postplan_rollback_plan_ids | rollback_plan_ids | visual_rollback_plan_ids
     if recommended_rollback_plan_ids:
         safe_rows = _copy_plan_rows(candidate_rows)
+        safe_rows = _rollback_postplan_anchor_release_rows(safe_rows, postplan_rollback_plan_ids)
         safe_rows = _rollback_release_rows(safe_rows, rollback_plan_ids)
         safe_rows = _rollback_visual_conflict_release_rows(safe_rows, visual_rollback_plan_ids)
         topology_safe_plan = _write_plan_json(artifacts.step_root, safe_rows, "topology_safe")
@@ -478,7 +553,113 @@ def _run_preplanned_release_step3(
             topology_coverage_cache=topology_coverage_cache,
         )
         final_fail_keys = _topology_fail_keys(artifacts.step_root)
+        residual_added_fail_keys = final_fail_keys - rollback_reference_fail_keys
+        residual_postplan_added_fail_keys = _postplan_anchor_added_fail_keys(residual_added_fail_keys)
+        if residual_postplan_added_fail_keys and postplan_released:
+            residual_postplan_rollback_plan_ids = baseline_plan_ids - postplan_rollback_plan_ids
+            if residual_postplan_rollback_plan_ids:
+                conservative_rows = _copy_plan_rows(safe_rows)
+                conservative_rows = _rollback_postplan_anchor_release_rows(
+                    conservative_rows,
+                    residual_postplan_rollback_plan_ids,
+                )
+                conservative_plan = _write_plan_json(artifacts.step_root, conservative_rows, "topology_safe_residual")
+                artifacts = _run_step3(
+                    step2_replaceable_path=step2_replaceable_path,
+                    step2_special_junction_group_audit_path=step2_special_junction_group_audit_path,
+                    step2_group_replacement_audit_path=step2_group_replacement_audit_path,
+                    step2_replacement_plan_path=conservative_plan,
+                    swsd_segment_path=swsd_segment_path,
+                    swsd_roads_path=swsd_roads_path,
+                    swsd_nodes_path=swsd_nodes_path,
+                    rcsdroad_path=rcsdroad_path,
+                    rcsdnode_path=rcsdnode_path,
+                    out_root=out_root,
+                    run_id=resolved_run_id,
+                    junction_surface_path=surface_inputs.get("t05_surface_path"),
+                    progress=progress,
+                    write_feature_json_outputs=False,
+                )
+                full_step3_run_count += 1
+                surface_summary = _run_surface(
+                    artifacts,
+                    swsd_segment_path=swsd_segment_path,
+                    swsd_roads_path=swsd_roads_path,
+                    surface_inputs=surface_inputs,
+                    surface_topology_closure=surface_topology_closure,
+                    write_feature_json_outputs=False,
+                    topology_coverage_cache=topology_coverage_cache,
+                )
+                final_fail_keys = _topology_fail_keys(artifacts.step_root)
+                retire_intermediate_step3_plan(topology_safe_plan, conservative_plan)
+                topology_safe_plan = conservative_plan
+                postplan_rollback_plan_ids.update(residual_postplan_rollback_plan_ids)
 
+    hard_gate_iterations: list[dict[str, Any]] = []
+    hard_gate_rollback_plan_ids: set[str] = set()
+    current_plan_rows = read_replacement_plan_rows(topology_safe_plan or candidate_plan)
+    for iteration in range(1, 3):
+        decision = final_topology_gate_decision(artifacts.step_root, current_plan_rows)
+        new_rollback_plan_ids = set(decision["rollback_plan_ids"]) - hard_gate_rollback_plan_ids
+        hard_gate_iterations.append(
+            {
+                "iteration": iteration,
+                **decision,
+                "new_rollback_plan_ids": sorted(new_rollback_plan_ids),
+            }
+        )
+        if not new_rollback_plan_ids:
+            break
+        hard_gate_rollback_plan_ids.update(new_rollback_plan_ids)
+        failure_node_ids_by_plan_id: dict[str, set[str]] = {}
+        for failure in decision["repairable_failures"]:
+            node_id = str(failure.get("swsd_node_id") or "")
+            if not node_id:
+                continue
+            for plan_id in failure.get("mapped_plan_ids") or []:
+                failure_node_ids_by_plan_id.setdefault(str(plan_id), set()).add(node_id)
+        hard_gate_rows = block_final_topology_gate_rows(
+            current_plan_rows,
+            new_rollback_plan_ids,
+            failure_node_ids_by_plan_id=failure_node_ids_by_plan_id,
+        )
+        hard_gate_plan = _write_plan_json(
+            artifacts.step_root,
+            hard_gate_rows,
+            f"final_topology_hard_gate_{iteration}",
+        )
+        artifacts = _run_step3(
+            step2_replaceable_path=step2_replaceable_path,
+            step2_special_junction_group_audit_path=step2_special_junction_group_audit_path,
+            step2_group_replacement_audit_path=step2_group_replacement_audit_path,
+            step2_replacement_plan_path=hard_gate_plan,
+            swsd_segment_path=swsd_segment_path,
+            swsd_roads_path=swsd_roads_path,
+            swsd_nodes_path=swsd_nodes_path,
+            rcsdroad_path=rcsdroad_path,
+            rcsdnode_path=rcsdnode_path,
+            out_root=out_root,
+            run_id=resolved_run_id,
+            junction_surface_path=surface_inputs.get("t05_surface_path"),
+            progress=progress,
+            write_feature_json_outputs=False,
+        )
+        full_step3_run_count += 1
+        surface_summary = _run_surface(
+            artifacts,
+            swsd_segment_path=swsd_segment_path,
+            swsd_roads_path=swsd_roads_path,
+            surface_inputs=surface_inputs,
+            surface_topology_closure=surface_topology_closure,
+            write_feature_json_outputs=False,
+            topology_coverage_cache=topology_coverage_cache,
+        )
+        final_fail_keys = _topology_fail_keys(artifacts.step_root)
+        retire_intermediate_step3_plan(topology_safe_plan, hard_gate_plan)
+        topology_safe_plan = hard_gate_plan
+        current_plan_rows = hard_gate_rows
+
+    final_hard_gate_decision = final_topology_gate_decision(artifacts.step_root, current_plan_rows)
     candidate_plan_retired = retire_intermediate_step3_plan(candidate_plan, topology_safe_plan or candidate_plan)
     visual_release_audit = None
     if visual_released:
@@ -493,20 +674,25 @@ def _run_preplanned_release_step3(
             "rolled_back_plan_ids": sorted(visual_rollback_plan_ids),
         }
     fallback_applied = topology_safe_plan is not None
+    final_postplan_added_fail_keys = _postplan_anchor_added_fail_keys(
+        final_fail_keys - rollback_reference_fail_keys
+    )
     audit = {
-        "status": "preplanned_with_single_fallback" if fallback_applied else "preplanned_without_fallback",
+        "status": "preplanned_with_topology_fallback" if fallback_applied else "preplanned_without_fallback",
         "preplanned_release": True,
         "full_step3_run_count": full_step3_run_count,
         "extra_step3_run_count": max(0, full_step3_run_count - 1),
         "full_output_step3_run_count": full_step3_run_count,
         "validation_step3_run_count": 0,
         "candidate_step3_run_count": 1,
-        "fallback_step3_run_count": 1 if fallback_applied else 0,
-        "max_fallback_step3_run_count": 1,
-        "baseline_fail_count": None,
+        "fallback_step3_run_count": max(0, full_step3_run_count - 1 - internal_baseline_run_count),
+        "max_fallback_step3_run_count": 4,
+        "baseline_fail_count": len(rollback_reference_fail_keys) if rollback_reference_fail_keys else None,
+        "internal_baseline_step3_run_count": internal_baseline_run_count,
         "candidate_added_fail_count": len(added_fail_keys),
         "final_fail_count": len(final_fail_keys),
         "final_added_fail_count": len(final_fail_keys - rollback_reference_fail_keys),
+        "final_added_fail_keys": [list(item) for item in sorted(final_fail_keys - rollback_reference_fail_keys)],
         "candidate_plan_path": str(candidate_plan) if not candidate_plan_retired else None,
         "candidate_plan_retired": candidate_plan_retired,
         "final_plan_path": str(topology_safe_plan or candidate_plan),
@@ -524,6 +710,35 @@ def _run_preplanned_release_step3(
         "released": released,
         "rolled_back_plan_ids": sorted(rollback_plan_ids) if fallback_applied else [],
         "rollback_recommended_plan_ids": sorted(rollback_plan_ids),
+        "postplan_anchor_gate": {
+            "released_count": len(postplan_released),
+            "baseline_blocked_count": len(baseline_plan_ids),
+            "candidate_added_fail_count": len(postplan_added_fail_keys),
+            "non_postplan_added_fail_count": len(added_fail_keys - postplan_added_fail_keys),
+            "non_postplan_added_fail_keys": [
+                list(item) for item in sorted(added_fail_keys - postplan_added_fail_keys)
+            ],
+            "final_added_fail_count": len(final_postplan_added_fail_keys),
+            "final_added_fail_keys": [list(item) for item in sorted(final_postplan_added_fail_keys)],
+            "rolled_back_count": len(postplan_rollback_plan_ids),
+            "residual_rolled_back_count": len(residual_postplan_rollback_plan_ids),
+            "released": postplan_released,
+            "rolled_back_plan_ids": sorted(postplan_rollback_plan_ids),
+            "residual_rolled_back_plan_ids": sorted(residual_postplan_rollback_plan_ids),
+        },
+        "final_topology_hard_gate": {
+            "iteration_count": len(hard_gate_iterations),
+            "rerun_count": sum(1 for item in hard_gate_iterations if item["new_rollback_plan_ids"]),
+            "rolled_back_count": len(hard_gate_rollback_plan_ids),
+            "rolled_back_plan_ids": sorted(hard_gate_rollback_plan_ids),
+            "iterations": hard_gate_iterations,
+            "final_decision": final_hard_gate_decision,
+            "status": (
+                "passed"
+                if final_hard_gate_decision["repairable_failure_count"] == 0
+                else "failed_unresolved_formal_topology"
+            ),
+        },
     }
     if visual_release_audit is not None:
         audit["visual_conflict_release"] = visual_release_audit
@@ -541,6 +756,21 @@ def _run_step3(
         return run_t06_step3_segment_replacement(**kwargs)
     with suppress_feature_json_outputs():
         return run_t06_step3_segment_replacement(**kwargs)
+
+
+def _run_isolated_baseline(payload: dict[str, Any]) -> set[tuple[str, str, str, str, str]]:
+    artifacts = _run_step3(**payload["step3_kwargs"], write_feature_json_outputs=False)
+    _run_surface(
+        artifacts,
+        **payload["surface_kwargs"],
+        write_feature_json_outputs=False,
+        topology_coverage_cache={},
+    )
+    return _topology_fail_keys(artifacts.step_root)
+
+
+def _topology_fail_keys(step_root: Path) -> set[tuple[str, str, str, str, str]]:
+    return topology_fail_keys(step_root, read_rows=read_features)
 
 
 def _run_surface(
@@ -575,6 +805,16 @@ def _run_surface(
                 topology_coverage_cache=topology_coverage_cache,
             )
     semantic_stats = refresh_semantic_junction_topology_audit(step_root=artifacts.step_root, summary_path=artifacts.summary_path)
+    refresh_rcsd_road_ownership_after_surface(
+        step_root=artifacts.step_root,
+        summary_path=artifacts.summary_path,
+        swsd_segment_path=swsd_segment_path,
+    )
+    refresh_segment_construction_audit_after_surface(
+        step_root=artifacts.step_root,
+        summary_path=artifacts.summary_path,
+        swsd_segment_path=swsd_segment_path,
+    )
     if summary is not None:
         summary["semantic_junction_topology_refresh"] = semantic_stats
     return summary
@@ -907,6 +1147,68 @@ def _rollback_release_rows(rows: list[dict[str, Any]], rollback_plan_ids: set[st
     return rows
 
 
+def _postplan_anchor_release_items(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for row in rows:
+        props = row.get("properties") or {}
+        risk_flags = set(_ids(props.get("risk_flags")))
+        plan_id = str(props.get("replacement_plan_id") or "")
+        if (
+            not plan_id
+            or props.get("plan_status") != "ready"
+            or props.get("execution_action") != "replace"
+            or POSTPLAN_ANCHOR_GATE_RISK not in risk_flags
+        ):
+            continue
+        items.append(
+            {
+                "plan_id": plan_id,
+                "segment_id": str(props.get("swsd_segment_id") or ""),
+                "group_segment_ids": _ids(props.get("group_segment_ids")),
+                "original_reason": str(props.get("postplan_anchor_gate_original_reason") or ""),
+                "evidence": str(props.get("postplan_anchor_gate_evidence") or ""),
+                "independent_surface_release": SURFACE_RELEASE_RISK in risk_flags,
+            }
+        )
+    return items
+
+
+def _block_postplan_anchor_rows_for_baseline(
+    rows: list[dict[str, Any]],
+    plan_ids: set[str],
+) -> list[dict[str, Any]]:
+    for row in rows:
+        props = row.get("properties") or {}
+        if str(props.get("replacement_plan_id") or "") not in plan_ids:
+            continue
+        props["plan_status"] = "blocked"
+        props["execution_action"] = "hold"
+        props["source_reason"] = props.get("postplan_anchor_gate_original_reason") or POSTPLAN_ANCHOR_GATE_RISK
+        props["upstream_owner"] = "T06_step2_topology_connectivity_gate"
+    return rows
+
+
+def _rollback_postplan_anchor_release_rows(
+    rows: list[dict[str, Any]],
+    rollback_plan_ids: set[str],
+) -> list[dict[str, Any]]:
+    for row in rows:
+        props = row.get("properties") or {}
+        if str(props.get("replacement_plan_id") or "") not in rollback_plan_ids:
+            continue
+        props["plan_status"] = "blocked"
+        props["execution_action"] = "hold"
+        props["source_reason"] = POSTPLAN_ANCHOR_ROLLBACK_REASON
+        props["upstream_owner"] = "T06_step3_topology_connectivity_audit"
+        props["risk_flags"] = unique_preserve_order(
+            [*_ids(props.get("risk_flags")), POSTPLAN_ANCHOR_ROLLBACK_REASON]
+        )
+        notes = str(props.get("notes") or "")
+        suffix = f"blocked by {POSTPLAN_ANCHOR_ROLLBACK_REASON}"
+        props["notes"] = f"{notes}; {suffix}" if notes else suffix
+    return rows
+
+
 def _visual_conflict_release_plan_rows(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     released: list[dict[str, Any]] = []
     result = _copy_plan_rows(rows)
@@ -1099,51 +1401,6 @@ def _fail_keys_after_release_rollback(
     return retained
 
 
-def _rollback_items_for_plan_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    items: list[dict[str, Any]] = []
-    for row in rows:
-        props = row.get("properties") or {}
-        plan_id = str(props.get("replacement_plan_id") or "")
-        if not plan_id:
-            continue
-        items.append(
-            {
-                "plan_id": plan_id,
-                "segment_id": str(props.get("swsd_segment_id") or ""),
-                "group_segment_ids": _ids(props.get("group_segment_ids")),
-            }
-        )
-    return items
-
-
-def _rollback_plan_ids_for_failed_segments(
-    added_fail_keys: set[tuple[str, str, str, str, str]],
-    released: list[dict[str, Any]],
-    incident: dict[str, list[str]],
-) -> set[str]:
-    if not added_fail_keys:
-        return set()
-    failed_segments: set[str] = set()
-    for _layer, segment_id, node_id, _road_id, _reason in added_fail_keys:
-        segment_ids = _ids(segment_id)
-        if segment_ids:
-            failed_segments.update(segment_ids)
-        elif segment_id:
-            failed_segments.add(segment_id)
-        if node_id and not (segment_ids or segment_id):
-            failed_segments.update(incident.get(node_id, []))
-    result: set[str] = set()
-    for item in released:
-        plan_id = str(item.get("plan_id") or "")
-        if not plan_id:
-            continue
-        segment_ids = {str(item.get("segment_id") or ""), *_ids(item.get("group_segment_ids"))}
-        segment_ids.discard("")
-        if segment_ids.intersection(failed_segments):
-            result.add(plan_id)
-    return result
-
-
 def _surface_status_by_node(step_root: Path) -> dict[str, tuple[str, str, Any]]:
     path = step_root / "t06_step3_surface_topology_audit.gpkg"
     if not path.is_file():
@@ -1175,31 +1432,6 @@ def _semantic_ids_by_node(rows: list[dict[str, Any]]) -> dict[str, set[str]]:
             continue
         node_id = exact_ids[0]
         result[node_id] = set(_feature_ids(row))
-    return result
-
-
-def _topology_fail_keys(step_root: Path) -> set[tuple[str, str, str, str, str]]:
-    path = step_root / f"{STEP3_TOPOLOGY_CONNECTIVITY_AUDIT_STEM}.gpkg"
-    if not path.is_file():
-        return set()
-    result: set[tuple[str, str, str, str, str]] = set()
-    for row in read_features(path):
-        props = row.get("properties") or {}
-        if props.get("audit_status") != "fail":
-            continue
-        segment_ids = _ids(props.get("swsd_segment_ids"))
-        segment_id = str(props.get("swsd_segment_id") or "")
-        if not segment_id and segment_ids:
-            segment_id = json.dumps(segment_ids, ensure_ascii=False)
-        result.add(
-            (
-                str(props.get("audit_layer") or ""),
-                segment_id,
-                str(props.get("swsd_node_id") or ""),
-                str(props.get("frcsd_road_id") or ""),
-                str(props.get("audit_reason") or ""),
-            )
-        )
     return result
 
 

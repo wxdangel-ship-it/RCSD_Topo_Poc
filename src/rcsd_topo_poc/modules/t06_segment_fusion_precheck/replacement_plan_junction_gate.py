@@ -27,6 +27,13 @@ MAX_REPLACED_JUNCTION_MAPPING_DIVERGENCE_M = 5.0
 MAX_JUNCTION_LOCAL_CONFLICT_ROAD_M = 30.0
 RETAINED_JUNCTION_GATE_REASON = "junction_alignment_to_retained_swsd_exceeds_topology_gate"
 T05_RELATION_JUNCTION_RELEASE_RISK = "junction_alignment_t05_relation_release"
+PAIR_ANCHOR_NOT_AUTHORITATIVE_REASON = "pair_anchor_mismatch_replacement_plan_anchor_not_authoritative"
+JUNCTION_DIVERGENCE_REASON = "junction_alignment_between_replacement_plans_diverged"
+POSTPLAN_ANCHOR_GATE_REASON = "postplan_anchor_gate_deferred_to_step3_topology"
+POSTPLAN_PAIR_REPAIR_RECOMMENDATIONS = {
+    "high_confidence_pair_anchor_candidate",
+    "side_preserving_missing_pair_anchor_completion",
+}
 VISUAL_CONFLICT_SWSD_BUFFER_M = 5.0
 VISUAL_CONFLICT_CORRIDOR_BUFFER_M = 15.0
 MIN_VISUAL_CONFLICT_PRUNE_OUTSIDE_RATIO = 0.5
@@ -470,6 +477,135 @@ def _apply_group_member_plan_gate(rows: list[dict[str, Any]]) -> None:
         notes = str(props.get("notes") or "")
         suffix = f"blocked_group_member_segments={blocked_members}"
         props["notes"] = f"{notes}; {suffix}" if notes else suffix
+
+
+def _apply_postplan_anchor_gate(rows: list[dict[str, Any]]) -> None:
+    """Downgrade a closed set of post-plan anchor blockers to Step3 audit risks."""
+    ready_road_ids: set[str] = set()
+    candidates: list[dict[str, Any]] = []
+    allowed_reasons = {
+        RETAINED_JUNCTION_GATE_REASON,
+        PAIR_ANCHOR_NOT_AUTHORITATIVE_REASON,
+        JUNCTION_DIVERGENCE_REASON,
+    }
+    for row in rows:
+        props = row.get("properties") or {}
+        if _is_replace_ready_plan(props) and props.get("execution_scope") in {"standard_segment", "path_corridor_group"}:
+            ready_road_ids.update(_parse_list(props.get("rcsd_road_ids")))
+
+    for row in rows:
+        props = row.get("properties") or {}
+        reason = str(props.get("source_reason") or "")
+        if (
+            props.get("plan_status") != "blocked"
+            or props.get("execution_action") != "hold"
+            or props.get("execution_scope") != "standard_segment"
+            or props.get("source_artifact") != "t06_rcsd_segment_replaceable"
+            or reason not in allowed_reasons
+            or not _postplan_anchor_gate_complete(props)
+        ):
+            continue
+        road_ids = set(_parse_list(props.get("rcsd_road_ids")))
+        if road_ids & ready_road_ids:
+            continue
+        if reason == PAIR_ANCHOR_NOT_AUTHORITATIVE_REASON:
+            recommendation = str(props.get("pair_anchor_repair_recommendation") or "")
+            if recommendation not in POSTPLAN_PAIR_REPAIR_RECOMMENDATIONS:
+                continue
+            if _truthy(props.get("pair_anchor_repair_manual_review_required")):
+                continue
+        candidates.append(props)
+
+    divergence_peers: dict[int, list[str]] = defaultdict(list)
+    for index, left_props in enumerate(candidates):
+        if left_props.get("source_reason") != JUNCTION_DIVERGENCE_REASON:
+            continue
+        left_roads = set(_parse_list(left_props.get("rcsd_road_ids")))
+        for right_props in candidates[index + 1 :]:
+            if right_props.get("source_reason") != JUNCTION_DIVERGENCE_REASON:
+                continue
+            if not left_roads.intersection(_parse_list(right_props.get("rcsd_road_ids"))):
+                continue
+            left_id = _safe_id(left_props.get("swsd_segment_id"))
+            right_id = _safe_id(right_props.get("swsd_segment_id"))
+            if right_id:
+                divergence_peers[id(left_props)].append(right_id)
+            if left_id:
+                divergence_peers[id(right_props)].append(left_id)
+
+    for props in candidates:
+        original_reason = str(props.get("source_reason") or "")
+        peer_segment_ids = unique_preserve_order(divergence_peers.get(id(props), []))
+        if original_reason == JUNCTION_DIVERGENCE_REASON:
+            if not peer_segment_ids:
+                continue
+            evidence = "blocked_junction_divergence_shared_rcsd_road"
+        elif original_reason == PAIR_ANCHOR_NOT_AUTHORITATIVE_REASON:
+            evidence = "failure_business_audit_high_confidence_pair_anchor_repair"
+        else:
+            evidence = "retained_junction_complete_anchor_no_ready_road_conflict"
+        _release_postplan_anchor_gate(
+            props,
+            original_reason=original_reason,
+            evidence=evidence,
+            peer_segment_ids=peer_segment_ids,
+        )
+
+
+def _postplan_anchor_gate_complete(props: dict[str, Any]) -> bool:
+    swsd_pair_nodes = _parse_list(props.get("swsd_pair_nodes"))
+    rcsd_pair_nodes = _parse_list(props.get("rcsd_pair_nodes"))
+    if len(swsd_pair_nodes) != 2 or len(rcsd_pair_nodes) != 2 or len(set(rcsd_pair_nodes)) != 2:
+        return False
+    if not _parse_list(props.get("rcsd_road_ids")):
+        return False
+
+    exempt_nodes = set(_parse_list(props.get("junc_kind2_exempt_nodes")))
+    exempt_nodes.update(_parse_list(props.get("detached_junc_nodes")))
+    exempt_nodes.update(_parse_list(props.get("dropped_junc_nodes")))
+    optional_junc_nodes = _parse_list(props.get("optional_junc_nodes"))
+    swsd_junc_nodes = optional_junc_nodes or _parse_list(props.get("swsd_junc_nodes"))
+    required_junc_nodes = [node_id for node_id in swsd_junc_nodes if node_id not in exempt_nodes]
+    # Anchor completeness is a relation fact.  The optional list only records
+    # which mapped junctions participated in the buffer graph and may be a
+    # strict subset even when every formal SWSD junction has an RCSD anchor.
+    rcsd_junc_nodes = _parse_list(props.get("rcsd_junc_nodes"))
+    return len(rcsd_junc_nodes) >= len(required_junc_nodes)
+
+
+def _release_postplan_anchor_gate(
+    props: dict[str, Any],
+    *,
+    original_reason: str,
+    evidence: str,
+    peer_segment_ids: list[str],
+) -> None:
+    props["plan_status"] = "ready"
+    props["execution_action"] = "replace"
+    props["source_reason"] = POSTPLAN_ANCHOR_GATE_REASON
+    props["upstream_owner"] = "T06_step3_topology_connectivity_audit"
+    props["postplan_anchor_gate_original_reason"] = original_reason
+    props["postplan_anchor_gate_evidence"] = evidence
+    props["postplan_anchor_gate_peer_segment_ids"] = peer_segment_ids
+    props["risk_flags"] = unique_preserve_order(
+        [
+            *_parse_list(props.get("risk_flags")),
+            original_reason,
+            POSTPLAN_ANCHOR_GATE_REASON,
+            evidence,
+        ]
+    )
+    notes = str(props.get("notes") or "")
+    blocked_suffix = f"blocked by {original_reason}"
+    notes = "; ".join(part.strip() for part in notes.split(";") if part.strip() and part.strip() != blocked_suffix)
+    release_note = f"postplan anchor gate released: evidence={evidence}; original_reason={original_reason}"
+    props["notes"] = f"{notes}; {release_note}" if notes else release_note
+
+
+def _truthy(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"1", "true", "yes", "y"}
 
 
 def _blocked_standard_member_absorbable_by_path_group(

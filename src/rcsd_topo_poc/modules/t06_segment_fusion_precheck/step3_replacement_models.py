@@ -23,6 +23,7 @@ class ReplacementUnit:
     geometry: Any
     status: str = "passed"
     reason: str = "replaceable"
+    external_retained_swsd_carrier_ids: list[str] = field(default_factory=list)
     removed_swsd_node_ids: list[str] = field(default_factory=list)
     added_rcsd_node_ids: list[str] = field(default_factory=list)
     group_replacement_plan_ids: list[str] = field(default_factory=list)

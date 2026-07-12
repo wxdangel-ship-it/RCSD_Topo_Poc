@@ -47,7 +47,7 @@ def test_geometry_component_adds_chain_closed_by_existing_road_and_unit_node() -
 
     assert stats["geometry_component_added_group_count"] == 1
     assert stats["geometry_component_added_road_count"] == 1
-    assert unit.rcsd_road_ids == ["left", "missing"]
+    assert unit.rcsd_road_ids == ["left"]
     assert added["missing"] == ["seg"]
     assert GEOMETRY_COMPONENT_RISK in unit.risk_flags
 
@@ -146,7 +146,8 @@ def test_geometry_component_accepts_geojson_mapping_unit_geometry() -> None:
     )
 
     assert stats["geometry_component_added_road_count"] == 1
-    assert unit.rcsd_road_ids == ["left", "missing"]
+    assert unit.rcsd_road_ids == ["left"]
+    assert added["missing"] == ["seg"]
 
 
 def test_geometry_component_excludes_blocked_plan_roads() -> None:

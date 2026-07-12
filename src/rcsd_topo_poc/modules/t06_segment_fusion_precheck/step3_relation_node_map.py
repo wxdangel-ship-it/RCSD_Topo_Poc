@@ -86,6 +86,9 @@ def backfill_relation_node_maps_from_attachment_audit(
                     entry["mapping_status"] = "identity_topology_supplement"
                 else:
                     continue
+            elif mapping_status.startswith("identity") and swsd_node_id in attachment_node_ids:
+                entry["frcsd_node_ids"] = attachment_node_ids[swsd_node_id]
+                entry["mapping_status"] = "attachment_mapped_explicit"
             elif relation_status == "retained_swsd" and mapping_status.startswith("identity"):
                 continue
             elif topology_supplement and mapping_status in {"mapped", "peer_mapped", "attachment_mapped"}:

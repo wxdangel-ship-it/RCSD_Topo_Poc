@@ -307,7 +307,7 @@ def test_path_corridor_group_source_not_replaced_when_junction_mapping_missing(t
     assert relations["s_peer"]["relation_status"] == "replaced"
 
 
-def test_path_corridor_group_coverage_failure_keeps_group_for_manual_review(tmp_path: Path) -> None:
+def test_path_corridor_group_coverage_failure_does_not_replace_peer_segment(tmp_path: Path) -> None:
     segment, swsd_roads, swsd_nodes, rcsd_roads, rcsd_nodes, replaceable = _write_common_inputs(tmp_path, covered=False)
     _write_group_plan(tmp_path, ["rr1"])
 
@@ -324,12 +324,11 @@ def test_path_corridor_group_coverage_failure_keeps_group_for_manual_review(tmp_
 
     units = {item["swsd_segment_id"]: item for item in _props(artifacts.replacement_units_gpkg_path)}
     assert units["s_src"]["unit_status"] == "passed"
-    assert units["s_peer"]["unit_status"] == "passed"
+    assert units["s_peer"]["unit_status"] == "failed"
     assert units["s_src"]["unit_reason"] == "group_path_corridor_replacement"
-    assert units["s_peer"]["unit_reason"] == "group_path_corridor_replacement"
+    assert units["s_peer"]["unit_reason"] == "retained_swsd_not_attached_side_road_only"
 
     relations = {item["swsd_segment_id"]: item for item in _props(artifacts.swsd_frcsd_segment_relation_gpkg_path)}
     assert relations["s_src"]["relation_status"] == "replaced"
-    assert relations["s_peer"]["relation_status"] == "replaced"
-    assert relations["s_peer"]["relation_reason"] == "group_path_corridor_replacement"
-    assert "group_path_corridor_replacement" in relations["s_peer"]["risk_flags"]
+    assert relations["s_peer"]["relation_status"] == "failed"
+    assert relations["s_peer"]["relation_reason"] == "retained_swsd_not_attached_side_road_only"

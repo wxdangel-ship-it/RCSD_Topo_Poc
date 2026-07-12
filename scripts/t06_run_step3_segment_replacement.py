@@ -154,6 +154,15 @@ def main() -> int:
                     "frcsd_road_count": summary.get("frcsd_road_count"),
                     "frcsd_node_count": summary.get("frcsd_node_count"),
                     "topology_connectivity_fail_count": summary.get("topology_connectivity_fail_count"),
+                    "topology_audit_fail_row_count": summary.get("topology_audit_fail_row_count"),
+                    "final_frcsd_topology_fail_row_count": summary.get("final_frcsd_topology_fail_row_count"),
+                    "final_frcsd_topology_fail_count": summary.get("final_frcsd_topology_fail_count"),
+                    "final_frcsd_segment_transition_fail_count": summary.get(
+                        "final_frcsd_segment_transition_fail_count"
+                    ),
+                    "final_frcsd_independent_attachment_fail_count": summary.get(
+                        "final_frcsd_independent_attachment_fail_count"
+                    ),
                     "surface_topology": surface_topology,
                     "rcsd_unreplaced_attribution": {
                         "gpkg": str(attribution_artifacts.attribution_gpkg_path),

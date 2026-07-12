@@ -751,7 +751,6 @@ def _finalize_bundle(
             for feature in refreshed_nodes_doc.get("features", [])
         ),
     )
-    shutil.copy2(refreshed_roads_path, final_roads_path)
     step6_artifacts = run_step6_segment_aggregation_from_records(
         nodes=list(step5_artifacts.step6_nodes),
         roads=list(step5_artifacts.step6_roads),
@@ -764,6 +763,18 @@ def _finalize_bundle(
         out_root=resolved_out_root,
         run_id=run_id,
         debug=debug,
+    )
+    write_vector(
+        final_roads_path,
+        (
+            {
+                "properties": dict(
+                    step5_artifacts.step6_road_properties_map.get(road.road_id, road.properties)
+                ),
+                "geometry": road.geometry,
+            }
+            for road in step5_artifacts.step6_roads
+        ),
     )
     all_stage_segment_roads_path = _write_all_stage_segment_roads_dir(
         out_root=resolved_out_root,
@@ -836,7 +847,6 @@ def _finalize_oneway_continue_outputs(
             for feature in refreshed_nodes_doc.get("features", [])
         ),
     )
-    shutil.copy2(refreshed_roads_path, final_roads_path)
     step6_artifacts = run_step6_segment_aggregation_from_records(
         nodes=list(step5_artifacts.step6_nodes),
         roads=list(step5_artifacts.step6_roads),
@@ -849,6 +859,18 @@ def _finalize_oneway_continue_outputs(
         out_root=resolved_out_root,
         run_id=run_id,
         debug=debug,
+    )
+    write_vector(
+        final_roads_path,
+        (
+            {
+                "properties": dict(
+                    step5_artifacts.step6_road_properties_map.get(road.road_id, road.properties)
+                ),
+                "geometry": road.geometry,
+            }
+            for road in step5_artifacts.step6_roads
+        ),
     )
     if oneway_root is not None:
         for filename in (

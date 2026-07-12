@@ -192,10 +192,13 @@ def test_oneway_completion_builds_three_phase_segments_and_excludes_formway_128_
     assert road_props["r02b"]["sgrade"] == "0-2单"
     assert road_props["r02a"]["segmentid"] == road_props["r02b"]["segmentid"]
 
-    assert road_props["r128"]["segmentid"] is None
+    assert str(road_props["r128"]["segmentid"]).startswith("advance_right_")
+    assert road_props["r128"]["segment_type"] == "advance_right"
     assert artifacts.summary["built_segment_count"] == 3
+    assert artifacts.summary["advance_right_segment_count"] == 1
+    assert artifacts.summary["advance_right_road_count"] == 1
     assert artifacts.summary["unsegmented_road_count"] == 0
-    assert artifacts.summary["unsegmented_excluded_formway_128_count"] == 1
+    assert artifacts.summary["unsegmented_excluded_formway_128_count"] == 0
     assert _read_csv_rows(artifacts.unsegmented_csv_path) == []
 
 
@@ -433,17 +436,17 @@ def test_oneway_completion_excludes_right_turn_only_roads(tmp_path: Path) -> Non
     )
 
     road_props = _road_props_by_id(artifacts.refreshed_roads_path)
-    assert road_props["rt_only"]["segmentid"] is None
+    assert str(road_props["rt_only"]["segmentid"]).startswith("advance_right_")
+    assert road_props["rt_only"]["segment_type"] == "advance_right"
     assert road_props["rt_only"]["sgrade"] is None
     assert road_props["main"]["sgrade"] == "0-2单"
     assert road_props["main"]["segment_build_source"] == "oneway_single_road_fallback"
 
     unsegmented_rows = _read_csv_rows(artifacts.unsegmented_csv_path)
-    assert [row["road_id"] for row in unsegmented_rows] == ["rt_only"]
-    row_by_id = {row["road_id"]: row for row in unsegmented_rows}
-    assert row_by_id["rt_only"]["formway_has_bit7_or_bit8"] == "true"
-    assert row_by_id["rt_only"]["audit_reason"] == "formway_bit7_or_bit8"
-    assert artifacts.summary["unsegmented_formway_bit7_or_bit8_count"] == 1
+    assert unsegmented_rows == []
+    assert artifacts.summary["advance_right_segment_count"] == 1
+    assert artifacts.summary["advance_right_road_count"] == 1
+    assert artifacts.summary["unsegmented_formway_bit7_or_bit8_count"] == 0
     assert artifacts.summary["unsegmented_non_formway_bit7_or_bit8_count"] == 0
     assert artifacts.summary["unsegmented_non_formway_bit7_or_bit8_reason_counts"] == {}
 
@@ -1120,8 +1123,12 @@ def test_oneway_completion_excludes_dead_end_leaf_formway_128_and_right_turn_onl
     )
 
     road_props = _road_props_by_id(artifacts.refreshed_roads_path)
-    assert road_props["dead_formway_128"]["segmentid"] is None
-    assert road_props["dead_right_turn"]["segmentid"] is None
+    assert str(road_props["dead_formway_128"]["segmentid"]).startswith("advance_right_")
+    assert road_props["dead_formway_128"]["segmentid"] == road_props["dead_right_turn"]["segmentid"]
+    assert road_props["dead_formway_128"]["segment_type"] == "advance_right"
+    assert road_props["dead_right_turn"]["segment_type"] == "advance_right"
     assert artifacts.summary["dead_end_segment_count"] == 0
-    assert artifacts.summary["unsegmented_road_count"] == 1
-    assert artifacts.summary["unsegmented_excluded_formway_128_count"] == 1
+    assert artifacts.summary["advance_right_segment_count"] == 1
+    assert artifacts.summary["advance_right_road_count"] == 2
+    assert artifacts.summary["unsegmented_road_count"] == 0
+    assert artifacts.summary["unsegmented_excluded_formway_128_count"] == 0

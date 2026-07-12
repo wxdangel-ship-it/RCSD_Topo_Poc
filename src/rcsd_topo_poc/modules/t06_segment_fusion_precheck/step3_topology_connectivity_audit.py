@@ -16,6 +16,10 @@ from .graph_builders import NodeCanonicalizer
 from .parsing import ParseError, directionality_from_sgrade, normalize_id, parse_id_list, unique_preserve_order
 from .road_attributes import is_advance_right_turn_road
 from .schemas import feature
+from .step3_final_topology_metric import (
+    annotate_final_frcsd_topology_rows,
+    summarize_final_frcsd_topology,
+)
 from .step3_topology_supplement import TOPOLOGY_SUPPLEMENT_SPLIT_REASON
 
 
@@ -55,6 +59,11 @@ STEP3_TOPOLOGY_CONNECTIVITY_AUDIT_FIELDS = [
     "projected_gap_m",
     "action",
     "action_reason",
+    "final_topology_category",
+    "final_topology_object_key",
+    "counts_in_final_frcsd_topology_fail",
+    "topology_road_lineage_id",
+    "topology_endpoint_index",
 ]
 TOPOLOGY_CONNECTIVITY_AUDIT_LAYERS = [
     "final_road_node_integrity",
@@ -266,7 +275,9 @@ def build_topology_connectivity_audit_rows(
             swsd_source_value=swsd_source_value,
         )
     )
-    return [row for row in rows if (row.get("properties") or {}).get("audit_status")]
+    result = [row for row in rows if (row.get("properties") or {}).get("audit_status")]
+    annotate_final_frcsd_topology_rows(result)
+    return result
 
 
 def _advance_right_endpoint_connectivity_rows(
@@ -285,10 +296,25 @@ def _advance_right_endpoint_connectivity_rows(
         if not is_advance_right_turn_road(props):
             continue
         road_id = _feature_id(road)
+        road_lineage_id = str(
+            props.get("t06_split_original_road_id")
+            or props.get("source_road_id")
+            or road_id
+        )
         endpoint_ids = _road_endpoint_node_id_pair(road)
         endpoint_points = _road_endpoint_points(road)
         if len(endpoint_ids) < 2:
             continue
+        try:
+            accepted_native_boundary_node_ids = set(
+                parse_id_list(props.get("t06_accepted_native_boundary_node_ids"), allow_empty=True)
+            )
+        except ParseError:
+            accepted_native_boundary_node_ids = set()
+        legacy_road_level_acceptance = (
+            "t06_accepted_native_boundary_node_ids" not in props
+            and bool(props.get("t06_accepted_native_boundary_leaf"))
+        )
         segment_ids = selected_segment_ids_by_road.get(road_id, [])
         for index, node_id in enumerate(endpoint_ids[:2]):
             canonical_id = _canonicalize_node(canonicalizer, node_id)
@@ -297,9 +323,13 @@ def _advance_right_endpoint_connectivity_rows(
             reason = "advance_right_endpoint_connected_to_frcsd_network"
             owner = ""
             if degree <= 1:
-                status = "fail"
-                reason = "advance_right_leaf_endpoint_unattached"
-                owner = "T06_step3_advance_right_closure"
+                if node_id in accepted_native_boundary_node_ids or legacy_road_level_acceptance:
+                    status = "warn"
+                    reason = "advance_right_leaf_endpoint_accepted_native_rcsd_boundary"
+                else:
+                    status = "fail"
+                    reason = "advance_right_leaf_endpoint_unattached"
+                    owner = "T06_step3_advance_right_closure"
             rows.append(
                 feature(
                     {
@@ -337,6 +367,8 @@ def _advance_right_endpoint_connectivity_rows(
                         "projected_gap_m": None,
                         "action": "verify_final_advance_right_endpoint_connectivity",
                         "action_reason": f"endpoint_index_{index}",
+                        "topology_road_lineage_id": road_lineage_id,
+                        "topology_endpoint_index": index,
                     },
                     endpoint_points[index] if index < len(endpoint_points) else None,
                 )
@@ -566,6 +598,7 @@ def _final_road_node_integrity_rows(
 
 
 def summarize_topology_connectivity_audit(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    annotate_final_frcsd_topology_rows(rows)
     counts: dict[str, Any] = {
         "topology_connectivity_audit_row_count": len(rows),
         "topology_connectivity_fail_count": 0,
@@ -588,4 +621,6 @@ def summarize_topology_connectivity_audit(rows: list[dict[str, Any]]) -> dict[st
             counts["topology_connectivity_warn_count"] += 1
         elif status == "pass":
             counts["topology_connectivity_pass_count"] += 1
+    counts["topology_audit_fail_row_count"] = counts["topology_connectivity_fail_count"]
+    counts.update(summarize_final_frcsd_topology(rows))
     return counts

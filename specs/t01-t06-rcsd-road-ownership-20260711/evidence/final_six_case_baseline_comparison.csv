@@ -1,0 +1,8 @@
+case_id,baseline_segment_replaced,current_segment_replaced,segment_delta,baseline_final_frcsd_topology_fail,current_final_frcsd_topology_fail,current_segment_transition_fail,current_independent_attachment_fail,hard_gate_rollback_plan_count,hard_gate_rerun_count,baseline_rcsd_road_used_count,current_rcsd_road_used_count,rcsd_road_used_count_delta,baseline_rcsd_road_used_length_m,current_rcsd_road_used_length_m,rcsd_road_used_length_delta_m,baseline_connectivity_rcsd_road_used_count,current_connectivity_rcsd_road_used_count,baseline_connectivity_group_count,current_connectivity_group_count,baseline_advance_right_segment_used_count,current_advance_right_segment_used_count,baseline_advance_right_rcsd_road_used_count,current_advance_right_rcsd_road_used_count,ownership_duplicate_count,ownership_missing_count,unresolved_exception_rcsd_road_count
+1885118,937,929,-8,15,0,0,0,9,1,5082,5047,-35,507988.307,505593.774,-2394.533,98,244,89,142,153,159,295,311,0,0,0
+605415675,250,250,0,12,1,0,1,0,0,1396,1407,11,131324.305,131816.264,491.959,45,102,40,68,61,65,123,133,0,0,0
+609214532,661,653,-8,16,0,0,0,8,1,3560,3564,4,349567.321,348313.250,-1254.071,92,196,69,101,108,121,185,206,0,0,0
+706247,297,297,0,2,0,0,0,0,0,1182,1184,2,97841.572,97922.198,80.626,27,42,30,31,25,26,48,49,0,0,0
+74155468,87,85,-2,1,0,0,0,2,1,317,306,-11,26184.253,25595.797,-588.456,3,4,3,3,1,1,2,2,0,0,0
+991176,133,133,0,0,0,0,0,0,0,448,450,2,38669.664,38894.059,224.395,11,19,12,13,10,11,19,20,0,0,0
+TOTAL,2365,2347,-18,46,1,0,1,19,3,11985,11958,-27,1151575.422,1148135.342,-3440.080,276,607,243,358,358,383,672,721,0,0,0

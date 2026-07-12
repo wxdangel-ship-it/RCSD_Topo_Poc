@@ -94,6 +94,10 @@ def test_step3_script_consumes_step2_outputs_and_writes_summary(tmp_path: Path) 
     payload = json.loads(result.stdout[result.stdout.index("{") :])
     assert payload["step3"]["input_replaceable_count"] == 1
     assert payload["step3"]["replacement_unit_success_count"] == 1
+    assert payload["step3"]["topology_audit_fail_row_count"] == 0
+    assert payload["step3"]["final_frcsd_topology_fail_count"] == 0
+    assert payload["step3"]["final_frcsd_segment_transition_fail_count"] == 0
+    assert payload["step3"]["final_frcsd_independent_attachment_fail_count"] == 0
     assert Path(payload["step3"]["frcsd_road"]).is_file()
     assert Path(payload["step3"]["frcsd_node"]).is_file()
     assert Path(payload["step3"]["rcsd_unreplaced_attribution"]["gpkg"]).is_file()

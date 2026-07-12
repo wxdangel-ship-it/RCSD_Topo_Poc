@@ -167,6 +167,11 @@ def _retain_post_advance_right_swsd_carriers(
 def _incident_segment_ids_by_node(swsd_roads: list[dict[str, Any]]) -> dict[str, list[str]]:
     result: dict[str, list[str]] = defaultdict(list)
     for road in swsd_roads:
+        # T01 publishes advance-right roads as their own non-anchored Segment.
+        # That Segment is not an ordinary replaced/retained side and must not
+        # make every advance-right carrier look mixed by itself.
+        if _is_advance_right_swsd_road(road):
+            continue
         props = dict(road.get("properties") or {})
         segment_ids = _parse_list(props.get("segmentid") or props.get("segment_id") or props.get("swsd_segment_id"))
         for node_id in _road_endpoint_node_ids(road):

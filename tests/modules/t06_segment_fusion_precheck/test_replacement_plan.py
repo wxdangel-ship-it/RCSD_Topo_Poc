@@ -189,10 +189,10 @@ def test_replacement_plan_excludes_blocked_path_corridor_segments() -> None:
     )
 
     props = [row["properties"] for row in rows if row["properties"]["execution_scope"] == "path_corridor_group"][0]
-    assert props["plan_status"] == "ready"
-    assert props["execution_action"] == "replace"
+    assert props["plan_status"] == "blocked"
+    assert props["execution_action"] == "hold"
     assert props["execution_scope"] == "path_corridor_group"
-    assert props["source_reason"] == "passed"
+    assert props["source_reason"] == "path_corridor_group_not_segment_replacement_scope"
     assert props["group_segment_ids"] == ["s2"]
     assert "path_corridor_source_segment_blocked" in props["risk_flags"]
     assert "excluded from group action" in props["notes"]
@@ -232,9 +232,9 @@ def test_replacement_plan_marks_path_corridor_group_when_source_not_formal_repla
     )
 
     props = [row["properties"] for row in rows if row["properties"]["execution_scope"] == "path_corridor_group"][0]
-    assert props["plan_status"] == "ready"
-    assert props["execution_action"] == "replace"
-    assert props["source_reason"] == "passed"
+    assert props["plan_status"] == "blocked"
+    assert props["execution_action"] == "hold"
+    assert props["source_reason"] == "path_corridor_group_not_segment_replacement_scope"
     assert props["group_segment_ids"] == ["s_rejected", "s_peer"]
     assert "path_corridor_source_segment_not_formal_replaceable" in props["risk_flags"]
     assert "did not pass formal single-segment RCSD extraction" in props["notes"]
@@ -283,9 +283,9 @@ def test_replacement_plan_marks_group_probe_buffer_risk_without_holding() -> Non
     )
 
     props = [row["properties"] for row in rows if row["properties"]["execution_scope"] == "path_corridor_group"][0]
-    assert props["plan_status"] == "ready"
-    assert props["execution_action"] == "replace"
-    assert props["source_reason"] == "passed"
+    assert props["plan_status"] == "blocked"
+    assert props["execution_action"] == "hold"
+    assert props["source_reason"] == "path_corridor_group_not_segment_replacement_scope"
     assert props["group_segment_ids"] == ["s_wide", "s_peer"]
     assert props["risk_flags"] == [
         "group_path_corridor_replacement",
@@ -331,7 +331,7 @@ def test_replacement_plan_holds_source_blocked_group_when_no_members_remain() ->
     props = [row["properties"] for row in rows if row["properties"]["execution_scope"] == "path_corridor_group"][0]
     assert props["plan_status"] == "blocked"
     assert props["execution_action"] == "hold"
-    assert props["source_reason"] == "path_corridor_source_segment_blocked"
+    assert props["source_reason"] == "path_corridor_group_not_segment_replacement_scope"
     assert props["group_segment_ids"] == []
     assert "no eligible path-corridor group members remain" in props["notes"]
 
@@ -385,8 +385,8 @@ def test_replacement_plan_does_not_block_group_for_member_adaptive_buffer_risk()
     group = by_id["group_path_corridor:s_group"]
     assert standard["plan_status"] == "ready"
     assert standard["execution_action"] == "replace"
-    assert group["plan_status"] == "ready"
-    assert group["execution_action"] == "replace"
+    assert group["plan_status"] == "blocked"
+    assert group["execution_action"] == "hold"
     assert standard["risk_flags"] == ["adaptive_buffer_exceeds_topology_connectivity_audit_threshold"]
     assert group["risk_flags"] == ["group_path_corridor_replacement"]
 
@@ -467,12 +467,11 @@ def test_group_plan_absorbs_internal_member_visual_road_conflict() -> None:
     group = by_id["group_path_corridor:s_group"]
     assert member["plan_status"] == "blocked"
     assert member["source_reason"] == "visual_consistency_road_conflict_with_primary_replacement_plan"
-    assert group["plan_status"] == "ready"
-    assert group["execution_action"] == "replace"
-    assert group["source_reason"] == "passed"
-    assert "group_member_visual_conflict_absorbed_by_path_corridor_group" in group["risk_flags"]
-    assert "absorbed_group_member_visual_conflict_segments=['s_member']" in group["notes"]
-    assert group["notes"].count("absorbed_group_member_visual_conflict_segments=['s_member']") == 1
+    assert group["plan_status"] == "blocked"
+    assert group["execution_action"] == "hold"
+    assert group["source_reason"] == "path_corridor_group_not_segment_replacement_scope"
+    assert "group_member_visual_conflict_absorbed_by_path_corridor_group" not in group["risk_flags"]
+    assert "absorbed_group_member_visual_conflict_segments" not in group["notes"]
 
 
 def test_replacement_plan_adds_high_confidence_single_visual_repair() -> None:
@@ -899,9 +898,9 @@ def test_visual_consistency_member_does_not_conflict_with_own_path_group_plan() 
     by_segment = {row["properties"]["swsd_segment_id"]: row["properties"] for row in rows}
     assert by_segment["s_member"]["plan_status"] == "ready"
     assert by_segment["s_member"]["execution_action"] == "replace"
-    assert by_segment["s_group"]["plan_status"] == "ready"
-    assert "visual_consistency_same_path_group_member_conflict_accepted" in by_segment["s_member"]["risk_flags"]
-    assert "accepted_same_path_group_member_rcsd_road_ids=['rr_member']" in by_segment["s_member"]["notes"]
+    assert by_segment["s_group"]["plan_status"] == "blocked"
+    assert "visual_consistency_same_path_group_member_conflict_accepted" not in by_segment["s_member"]["risk_flags"]
+    assert "accepted_same_path_group_member_rcsd_road_ids" not in by_segment["s_member"]["notes"]
     assert "visual_consistency_road_conflict_with_primary_replacement_plan" not in by_segment["s_member"]["risk_flags"]
 
 
@@ -1246,11 +1245,13 @@ def test_replacement_plan_marks_mapping_far_from_retained_incident_segment() -> 
     )
 
     props = rows[0]["properties"]
-    assert props["plan_status"] == "blocked"
-    assert props["execution_action"] == "hold"
-    assert props["source_reason"] == "junction_alignment_to_retained_swsd_exceeds_topology_gate"
-    assert props["risk_flags"] == ["junction_alignment_to_retained_swsd_exceeds_topology_gate"]
-    assert "blocked by junction_alignment_to_retained_swsd_exceeds_topology_gate" in props["notes"]
+    assert props["plan_status"] == "ready"
+    assert props["execution_action"] == "replace"
+    assert props["source_reason"] == "postplan_anchor_gate_deferred_to_step3_topology"
+    assert props["postplan_anchor_gate_original_reason"] == "junction_alignment_to_retained_swsd_exceeds_topology_gate"
+    assert props["postplan_anchor_gate_evidence"] == "retained_junction_complete_anchor_no_ready_road_conflict"
+    assert "postplan_anchor_gate_deferred_to_step3_topology" in props["risk_flags"]
+    assert "blocked by junction_alignment_to_retained_swsd_exceeds_topology_gate" not in props["notes"]
 
 
 def _feature(properties: dict, geometry: LineString | None = None) -> dict:

@@ -46,7 +46,7 @@ def test_second_degree_bridge_adds_linear_unreplaced_group_between_replaced_road
 
     assert stats["second_degree_bridge_added_group_count"] == 1
     assert stats["second_degree_bridge_added_road_count"] == 2
-    assert unit.rcsd_road_ids == ["left", "right", "bridge1", "bridge2"]
+    assert unit.rcsd_road_ids == ["left", "right"]
     assert added["bridge1"] == ["seg"]
     assert added["bridge2"] == ["seg"]
     assert SECOND_DEGREE_BRIDGE_RISK in unit.risk_flags
@@ -105,8 +105,8 @@ def test_second_degree_bridge_adds_cross_segment_terminal_attachments() -> None:
     assert stats["second_degree_bridge_added_group_count"] == 1
     assert stats["second_degree_bridge_added_road_count"] == 1
     assert stats["second_degree_bridge_added_segment_count"] == 2
-    assert left_unit.rcsd_road_ids == ["left", "bridge"]
-    assert right_unit.rcsd_road_ids == ["right", "bridge"]
+    assert left_unit.rcsd_road_ids == ["left"]
+    assert right_unit.rcsd_road_ids == ["right"]
     assert added["bridge"] == ["left_seg", "right_seg"]
     assert SECOND_DEGREE_BRIDGE_RISK in left_unit.risk_flags
     assert SECOND_DEGREE_BRIDGE_RISK in right_unit.risk_flags
@@ -156,8 +156,8 @@ def test_second_degree_bridge_adds_direct_bridge_inside_non_linear_component() -
     assert stats["second_degree_bridge_added_group_count"] == 1
     assert stats["second_degree_bridge_added_road_count"] == 1
     assert stats["second_degree_bridge_blocked_non_linear_component_count"] == 0
-    assert left_unit.rcsd_road_ids == ["left", "direct_bridge"]
-    assert right_unit.rcsd_road_ids == ["right", "direct_bridge"]
+    assert left_unit.rcsd_road_ids == ["left"]
+    assert right_unit.rcsd_road_ids == ["right"]
     assert added["direct_bridge"] == ["left_seg", "right_seg"]
     assert "branch1" not in added
 
@@ -188,8 +188,8 @@ def test_second_degree_bridge_prefers_single_segment_boundary_over_shared_carrie
 
     assert stats["second_degree_bridge_added_group_count"] == 1
     assert stats["second_degree_bridge_added_road_count"] == 1
-    assert left_unit.rcsd_road_ids == ["left", "shared_left", "bridge"]
-    assert right_unit.rcsd_road_ids == ["right", "shared_right", "bridge"]
+    assert left_unit.rcsd_road_ids == ["left", "shared_left"]
+    assert right_unit.rcsd_road_ids == ["right", "shared_right"]
     assert side_unit.rcsd_road_ids == ["shared_left", "shared_right"]
     assert added["bridge"] == ["left_seg", "right_seg"]
 

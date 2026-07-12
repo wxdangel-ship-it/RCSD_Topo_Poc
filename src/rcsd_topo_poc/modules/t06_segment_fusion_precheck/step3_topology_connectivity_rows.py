@@ -55,6 +55,11 @@ STEP3_TOPOLOGY_CONNECTIVITY_AUDIT_FIELDS = [
     "projected_gap_m",
     "action",
     "action_reason",
+    "final_topology_category",
+    "final_topology_object_key",
+    "counts_in_final_frcsd_topology_fail",
+    "topology_road_lineage_id",
+    "topology_endpoint_index",
 ]
 TOPOLOGY_CONNECTIVITY_AUDIT_LAYERS = [
     "final_road_node_integrity",

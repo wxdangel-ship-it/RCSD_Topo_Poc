@@ -144,3 +144,52 @@ def test_mixed_advance_right_carrier_is_retained_near_rcsd_advance() -> None:
     assert unit.swsd_road_ids == []
     assert unit.retained_detached_swsd_road_ids == ["sw_adv"]
     assert sw_advance["properties"]["t06_mixed_advance_right_carrier"] == 1
+
+
+def test_dedicated_advance_segment_does_not_make_both_replaced_sides_mixed() -> None:
+    sw_left = {
+        "properties": {"id": "sw_left", "snodeid": "1", "enodeid": "2", "segmentid": "s_left"},
+        "geometry": LineString([(0, 0), (10, 0)]),
+    }
+    sw_right = {
+        "properties": {"id": "sw_right", "snodeid": "3", "enodeid": "4", "segmentid": "s_right"},
+        "geometry": LineString([(20, 0), (30, 0)]),
+    }
+    sw_advance = {
+        "properties": {
+            "id": "sw_adv",
+            "snodeid": "2",
+            "enodeid": "3",
+            "formway": 128,
+            "segmentid": "advance_right_sw_adv",
+            "segment_type": "advance_right",
+        },
+        "geometry": LineString([(10, 0), (20, 0)]),
+    }
+    rcsd_advance = {
+        "properties": {"id": "rc_adv", "snodeid": "10", "enodeid": "20", "formway": 128},
+        "geometry": LineString([(10, 0.5), (20, 0.5)]),
+    }
+    left_unit = SimpleNamespace(
+        status="passed",
+        segment_id="s_left",
+        swsd_road_ids=["sw_adv"],
+        retained_detached_swsd_road_ids=[],
+    )
+    right_unit = SimpleNamespace(
+        status="passed",
+        segment_id="s_right",
+        swsd_road_ids=[],
+        retained_detached_swsd_road_ids=[],
+    )
+
+    stats = _retain_post_advance_right_swsd_carriers(
+        [left_unit, right_unit],
+        swsd_roads=[sw_left, sw_right, sw_advance],
+        rcsd_roads=[rcsd_advance],
+    )
+
+    assert stats["retained_road_count"] == 0
+    assert left_unit.swsd_road_ids == ["sw_adv"]
+    assert left_unit.retained_detached_swsd_road_ids == []
+    assert "t06_mixed_advance_right_carrier" not in sw_advance["properties"]

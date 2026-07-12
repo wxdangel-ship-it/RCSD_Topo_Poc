@@ -9,6 +9,13 @@ from typing import Any, Optional, Union
 
 from shapely.geometry import LineString, MultiLineString
 
+from rcsd_topo_poc.modules.t01_data_preprocess.advance_right_segments import (
+    ADVANCE_RIGHT_SEGMENT_TYPE,
+    NORMAL_SEGMENT_TYPE,
+    AdvanceRightAssignmentSummary,
+    assign_advance_right_segments,
+    is_advance_right_properties,
+)
 from rcsd_topo_poc.modules.t01_data_preprocess.s2_baseline_refresh import (
     MainnodeGroup,
     NodeFeatureRecord,
@@ -65,7 +72,8 @@ class Step6Artifacts:
 @dataclass(frozen=True)
 class SegmentRecord:
     segment_id: st
-    pair_nodes: tuple[str, str]
+    segment_type: str
+    pair_nodes: tuple[str, ...]
     road_ids: tuple[str, ...]
     multiline: MultiLineString
     sgrade_old: Optional[str]
@@ -311,12 +319,70 @@ def _collect_segment_records(
 
     for segment_id in sorted(roads_by_segment_id, key=_segment_sort_key):
         segment_roads = roads_by_segment_id[segment_id]
-        pair_nodes = _parse_segment_pair_nodes(segment_id)
         road_ids = tuple(sorted({road.road_id for road in segment_roads}, key=_sort_key))
         segment_road_properties = [
             road.properties if road_properties_map is None else road_properties_map.get(road.road_id, road.properties)
             for road in segment_roads
         ]
+        segment_type_values = {
+            _normalize_text(properties.get("segment_type")) or NORMAL_SEGMENT_TYPE
+            for properties in segment_road_properties
+        }
+        if len(segment_type_values) != 1:
+            raise ValueError(
+                f"Step6 segment '{segment_id}' contains mixed segment_type values: "
+                + ",".join(sorted(segment_type_values))
+            )
+        segment_type = next(iter(segment_type_values))
+        if segment_type == ADVANCE_RIGHT_SEGMENT_TYPE:
+            if not all(is_advance_right_properties(properties) for properties in segment_road_properties):
+                raise ValueError(
+                    f"Step6 advance-right segment '{segment_id}' contains a road without formway bit 128."
+                )
+            flattened_lines = [
+                line
+                for road in segment_roads
+                for line in _flatten_lines(road.geometry)
+            ]
+            sgrade_values = tuple(
+                sorted(
+                    {
+                        value
+                        for value in (
+                            _normalize_text(get_road_sgrade(properties))
+                            for properties in segment_road_properties
+                        )
+                        if value is not None
+                    },
+                    key=_sort_key,
+                )
+            )
+            segment_records.append(
+                SegmentRecord(
+                    segment_id=segment_id,
+                    segment_type=ADVANCE_RIGHT_SEGMENT_TYPE,
+                    pair_nodes=(),
+                    road_ids=road_ids,
+                    multiline=MultiLineString(flattened_lines),
+                    sgrade_old=_join_optional_values(sgrade_values),
+                    sgrade_new=_resolve_highest_s_grade(sgrade_values),
+                    junc_nodes=(),
+                    inner_group_ids=(),
+                    adjusted=False,
+                    adjust_reason=None,
+                    sgrade_conflict_values=(),
+                    dead_end_leaf=False,
+                    error_type=None,
+                    error_desc=None,
+                    grade_kind_conflict_waived=False,
+                    grade_kind_conflict_waived_nodes=(),
+                )
+            )
+            continue
+        if segment_type != NORMAL_SEGMENT_TYPE:
+            raise ValueError(f"Step6 segment '{segment_id}' has unsupported segment_type '{segment_type}'.")
+
+        pair_nodes = _parse_segment_pair_nodes(segment_id)
         dead_end_leaf = any(
             _normalize_text(properties.get("segment_build_source")) == DEAD_END_BUILD_SOURCE
             for properties in segment_road_properties
@@ -372,6 +438,7 @@ def _collect_segment_records(
             skipped_segment_records.append(
                 SegmentRecord(
                     segment_id=segment_id,
+                    segment_type=NORMAL_SEGMENT_TYPE,
                     pair_nodes=pair_nodes,
                     road_ids=road_ids,
                     multiline=multiline,
@@ -474,6 +541,7 @@ def _collect_segment_records(
         segment_records.append(
             SegmentRecord(
                 segment_id=segment_id,
+                segment_type=NORMAL_SEGMENT_TYPE,
                 pair_nodes=pair_nodes,
                 road_ids=road_ids,
                 multiline=multiline,
@@ -499,6 +567,7 @@ def _segment_feature(record: SegmentRecord) -> dict[str, Any]:
     return {
         "properties": {
             "id": record.segment_id,
+            "segment_type": record.segment_type,
             "sgrade": record.sgrade_new,
             "pair_nodes": _join_ids(record.pair_nodes),
             "junc_nodes": _join_ids(record.junc_nodes),
@@ -512,6 +581,7 @@ def _segment_error_feature(record: SegmentRecord) -> dict[str, Any]:
     return {
         "properties": {
             "id": record.segment_id,
+            "segment_type": record.segment_type,
             "sgrade": record.sgrade_new,
             "pair_nodes": _join_ids(record.pair_nodes),
             "junc_nodes": _join_ids(record.junc_nodes),
@@ -541,6 +611,7 @@ def _write_step6_outputs(
     input_node_path: Union[str, Path],
     input_road_path: Union[str, Path],
     debug: bool,
+    advance_right_assignment_summary: AdvanceRightAssignmentSummary,
 ) -> Step6Artifacts:
     resolved_out_root = out_root
     resolved_run_id = run_id
@@ -585,6 +656,16 @@ def _write_step6_outputs(
         "input_node_path": str(Path(input_node_path)),
         "input_road_path": str(Path(input_road_path)),
         "segment_count": len(segment_records),
+        "normal_segment_count": sum(
+            1 for record in segment_records if record.segment_type == NORMAL_SEGMENT_TYPE
+        ),
+        "advance_right_segment_count": sum(
+            1 for record in segment_records if record.segment_type == ADVANCE_RIGHT_SEGMENT_TYPE
+        ),
+        "advance_right_road_count": advance_right_assignment_summary.road_count,
+        "advance_right_skipped_preassigned_road_count": (
+            advance_right_assignment_summary.skipped_preassigned_road_count
+        ),
         "skipped_segment_count": len(skipped_segment_records),
         "missing_endpoint_segment_count": len(skipped_segment_records),
         "missing_endpoint_road_count": sum(len(record.missing_endpoint_road_ids) for record in skipped_segment_records),
@@ -618,6 +699,7 @@ def _write_step6_outputs(
     build_rows = [
         {
             "segmentid": record.segment_id,
+            "segment_type": record.segment_type,
             "road_count": len(record.road_ids),
             "pair_nodes": _join_ids(record.pair_nodes),
             "junc_nodes": _join_ids(record.junc_nodes),
@@ -639,6 +721,7 @@ def _write_step6_outputs(
         build_rows,
         [
             "segmentid",
+            "segment_type",
             "road_count",
             "pair_nodes",
             "junc_nodes",
@@ -694,18 +777,28 @@ def run_step6_segment_aggregation_from_records(
     resolved_out_root, resolved_run_id = _resolve_out_root(out_root=out_root, run_id=run_id)
     resolved_out_root.mkdir(parents=True, exist_ok=True)
 
+    effective_road_properties_map = (
+        {road.road_id: road.properties for road in roads}
+        if road_properties_map is None
+        else road_properties_map
+    )
+    advance_right_assignment_summary = assign_advance_right_segments(
+        roads=roads,
+        road_properties_map=effective_road_properties_map,
+    )
+
     _require_working_layers(
         nodes=nodes,
         roads=roads,
         stage_label="Step6",
         node_properties_map=node_properties_map,
-        road_properties_map=road_properties_map,
+        road_properties_map=effective_road_properties_map,
     )
     segment_records, skipped_segment_records, inner_nodes_by_segment = _collect_segment_records(
         nodes=nodes,
         roads=roads,
         node_properties_map=node_properties_map,
-        road_properties_map=road_properties_map,
+        road_properties_map=effective_road_properties_map,
         mainnode_groups=mainnode_groups,
         group_to_allowed_road_ids=group_to_allowed_road_ids,
     )
@@ -718,6 +811,7 @@ def run_step6_segment_aggregation_from_records(
         input_node_path=node_path,
         input_road_path=road_path,
         debug=debug,
+        advance_right_assignment_summary=advance_right_assignment_summary,
     )
 
 

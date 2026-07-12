@@ -223,7 +223,18 @@ def apply_junction_advance_right_contract(
                 continue
             context_units = _context_units(c_ids, units_by_c)
             selected_rcsd_road_ids = _selected_rcsd_road_ids(context_units, added_road_to_segments, rcsd_road_by_id)
-            max_gap_m = 1.0 if road_segment_ids and node_id in direct_node_contexts else RETAINED_SWSD_ATTACHMENT_MAX_GAP_M
+            has_dedicated_advance_right_segment = (
+                str(props.get("segment_type") or "") == "advance_right"
+                or bool(road_segment_ids)
+                and all(segment_id.startswith("advance_right_") for segment_id in road_segment_ids)
+            )
+            max_gap_m = (
+                1.0
+                if road_segment_ids
+                and node_id in direct_node_contexts
+                and not has_dedicated_advance_right_segment
+                else RETAINED_SWSD_ATTACHMENT_MAX_GAP_M
+            )
             match = _nearest_selected_rcsd_projection(
                 point,
                 selected_rcsd_road_ids=selected_rcsd_road_ids,

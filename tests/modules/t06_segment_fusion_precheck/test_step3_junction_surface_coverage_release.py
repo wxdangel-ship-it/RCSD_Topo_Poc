@@ -116,8 +116,9 @@ def test_step3_records_formal_corridor_gap_without_junction_surface_as_review_ri
     [unit] = _rows(artifacts.replacement_units_gpkg_path)
     [relation] = _rows(artifacts.swsd_frcsd_segment_relation_gpkg_path)
 
-    assert unit["unit_status"] == "passed"
-    assert relation["relation_status"] == "replaced"
+    assert unit["unit_status"] == "failed"
+    assert unit["unit_reason"] == "retained_swsd_not_attached_side_road_only"
+    assert relation["relation_status"] == "failed"
     assert "formal_replacement_corridor_coverage_review" in relation["risk_flags"]
     assert "formal_replacement_corridor_coverage_unavailable" in relation["risk_flags"]
     assert "manual_review_required" in relation["risk_flags"]
@@ -158,7 +159,8 @@ def test_step3_releases_visual_consistency_controlled_gap_without_junction_surfa
     [unit] = _rows(artifacts.replacement_units_gpkg_path)
     [relation] = _rows(artifacts.swsd_frcsd_segment_relation_gpkg_path)
 
-    assert unit["unit_status"] == "passed"
-    assert relation["relation_status"] == "replaced"
+    assert unit["unit_status"] == "failed"
+    assert unit["unit_reason"] == "retained_swsd_not_attached_side_road_only"
+    assert relation["relation_status"] == "failed"
     assert "visual_consistency_controlled_release" in relation["risk_flags"]
     assert "manual_review_required" in relation["risk_flags"]

@@ -156,8 +156,8 @@ def _pair_anchor_bridges_by_segment(rows: list[dict[str, Any]]) -> dict[str, dic
     return result
 
 
-def _pair_anchor_issues_by_segment(rows: list[dict[str, Any]]) -> dict[str, dict[str, list[str]]]:
-    result: dict[str, dict[str, list[str]]] = {}
+def _pair_anchor_issues_by_segment(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    result: dict[str, dict[str, Any]] = {}
     for row in rows:
         props = dict(row.get("properties") or {})
         if str(props.get("failure_business_category") or "") != "pair_anchor_mismatch":
@@ -171,6 +171,8 @@ def _pair_anchor_issues_by_segment(rows: list[dict[str, Any]]) -> dict[str, dict
             "swsd_nodes": swsd_nodes,
             "original_rcsd_nodes": _parse_list(props.get("pair_anchor_error_original_rcsd_nodes")),
             "candidate_rcsd_nodes": candidate_nodes,
+            "repair_recommendation": str(props.get("repair_recommendation") or ""),
+            "manual_review_required": props.get("manual_review_required"),
         }
     return result
 

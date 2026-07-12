@@ -19,3 +19,5 @@ T06 Step2 和 Step3 已形成较多诊断与后处理模块，包括 replacement
 ## 4. 端到端修复后的治理缺口
 
 近期 Case 修复提高替换成功率的方式是“分流问题并保留审计”，不是放松替换门槛。后续需要把 Step3 topology audit、surface topology audit、T10 visual check summary 和 problem registry 沉淀为稳定质量看板，支撑上游 T01/T03/T04/T05/T07 的迭代分工。
+
+`topology_connectivity_fail_count` 历史上混合最终错误、relation/coverage 证据与未替换诊断，只能保留为兼容 fail 行数。正式看板必须使用 `final_frcsd_topology_fail_count` 及两类子指标，并校验 summary 与 GPKG/CSV 按稳定对象 key 回算一致。

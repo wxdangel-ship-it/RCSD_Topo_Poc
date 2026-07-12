@@ -470,6 +470,11 @@ STEP2_REPLACEMENT_PLAN_FIELDS = [
     "pair_anchor_error_swsd_nodes",
     "pair_anchor_error_original_rcsd_nodes",
     "pair_anchor_error_candidate_rcsd_nodes",
+    "pair_anchor_repair_recommendation",
+    "pair_anchor_repair_manual_review_required",
+    "postplan_anchor_gate_original_reason",
+    "postplan_anchor_gate_evidence",
+    "postplan_anchor_gate_peer_segment_ids",
     "rcsd_road_ids",
     "retained_node_ids",
     "pair_anchor_bridge_road_ids",
@@ -524,6 +529,7 @@ STEP3_REPLACEMENT_UNIT_FIELDS = [
     "junc_kind2_exempt_nodes",
     "detached_junc_nodes",
     "retained_detached_swsd_road_ids",
+    "external_retained_swsd_carrier_ids",
     "swsd_road_ids",
     "removed_swsd_road_ids",
     "removed_swsd_node_ids",
@@ -549,7 +555,11 @@ STEP3_SWSD_FRCSD_SEGMENT_RELATION_FIELDS = [
     "swsd_road_ids",
     "removed_swsd_road_ids",
     "retained_detached_swsd_road_ids",
+    "external_retained_swsd_carrier_ids",
     "frcsd_road_ids",
+    "owned_frcsd_road_ids",
+    "connectivity_group_ids",
+    "related_connectivity_road_ids",
     "frcsd_road_source_values",
     "rcsd_pair_nodes",
     "rcsd_junc_nodes",
@@ -649,6 +659,9 @@ class T06Step3Artifacts:
     swsd_frcsd_segment_relation_gpkg_path: Path
     junction_rebuild_audit_gpkg_path: Path
     summary_path: Path
+    rcsd_road_ownership_gpkg_path: Path | None = None
+    multi_segment_connectivity_group_gpkg_path: Path | None = None
+    segment_construction_audit_gpkg_path: Path | None = None
 
 
 @dataclass(frozen=True)

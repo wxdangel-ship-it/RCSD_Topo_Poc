@@ -7,6 +7,7 @@ from rcsd_topo_poc.modules.t06_segment_fusion_precheck.step3_output_slimming imp
     COMPACT_SCHEMA_VERSION,
     DETAIL_METRICS_NAME,
     OUTPUT_MANIFEST_NAME,
+    _status,
     compact_step3_outputs,
 )
 
@@ -38,6 +39,10 @@ def test_compact_step3_outputs_keeps_core_summary_and_moves_details(tmp_path: Pa
                 "frcsd_road_count": 20,
                 "segment_relation_replaced_count": 8,
                 "topology_connectivity_fail_count": 2,
+                "topology_audit_fail_row_count": 2,
+                "final_frcsd_topology_fail_count": 1,
+                "final_frcsd_segment_transition_fail_count": 1,
+                "final_frcsd_independent_attachment_fail_count": 0,
                 "group_path_corridor_coverage_fallback_segments": ["s1", "s2"],
                 "outputs": {
                     "frcsd_road_gpkg": str(step_root / "t06_frcsd_road.gpkg"),
@@ -57,6 +62,9 @@ def test_compact_step3_outputs_keeps_core_summary_and_moves_details(tmp_path: Pa
     assert compact["summary_schema"] == COMPACT_SCHEMA_VERSION
     assert compact["replacement_unit_success_count"] == 11
     assert compact["topology_connectivity_fail_count"] == 2
+    assert compact["final_frcsd_topology_fail_count"] == 1
+    assert compact["topology"]["topology_audit_fail_row_count"] == 2
+    assert compact["topology"]["final_frcsd_topology_fail_count"] == 1
     assert "frcsd_road_json" not in compact["outputs"]
     assert compact["outputs"]["frcsd_road_gpkg"].endswith("t06_frcsd_road.gpkg")
     detail = json.loads((step_root / DETAIL_METRICS_NAME).read_text(encoding="utf-8"))
@@ -64,3 +72,20 @@ def test_compact_step3_outputs_keeps_core_summary_and_moves_details(tmp_path: Pa
     manifest = json.loads((step_root / OUTPUT_MANIFEST_NAME).read_text(encoding="utf-8"))
     assert manifest["file_count"] >= 5
     assert any(item["name"] == "t06_frcsd_road.json" for item in manifest["files"])
+
+
+def test_status_uses_formal_final_frcsd_topology_metric_when_available() -> None:
+    assert _status(
+        {
+            "replacement_unit_failure_count": 0,
+            "topology_connectivity_fail_count": 12,
+            "final_frcsd_topology_fail_count": 0,
+        }
+    ) == "completed"
+    assert _status(
+        {
+            "replacement_unit_failure_count": 0,
+            "topology_connectivity_fail_count": 12,
+            "final_frcsd_topology_fail_count": 1,
+        }
+    ) == "completed_with_topology_failures"

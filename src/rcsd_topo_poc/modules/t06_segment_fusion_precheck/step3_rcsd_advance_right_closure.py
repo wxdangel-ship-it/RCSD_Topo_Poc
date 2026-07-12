@@ -475,6 +475,41 @@ def apply_final_advance_right_endpoint_closure(
             native_degree = native_node_degree.get(_canonicalize(canonicalizer, node_id), degree)
             if degree > 1:
                 continue
+            advance_source = str(props.get(source_field_name) or "")
+            if (
+                advance_source == str(rcsd_source_value)
+                and _has_unselected_native_rcsd_neighbors(native_degree=native_degree, selected_degree=degree)
+            ):
+                road_props = road.setdefault("properties", {})
+                road_props["t06_accepted_native_boundary_leaf"] = 1
+                accepted_node_ids = road_props.get("t06_accepted_native_boundary_node_ids")
+                if not isinstance(accepted_node_ids, list):
+                    accepted_node_ids = []
+                road_props["t06_accepted_native_boundary_node_ids"] = unique_preserve_order(
+                    [*accepted_node_ids, node_id]
+                )
+                _mark_prior_endpoint_failures(
+                    audit_rows,
+                    road_id,
+                    node_id,
+                    status="accepted",
+                    action="audit_native_rcsd_boundary_endpoint",
+                    reason="final_rcsd_advance_right_leaf_endpoint_has_unselected_native_rcsd_neighbor",
+                )
+                audit_rows.append(
+                    _audit_row(
+                        road_id=road_id,
+                        node_id=node_id,
+                        endpoint_index=endpoint_index,
+                        status="accepted",
+                        action="audit_native_rcsd_boundary_endpoint",
+                        reason="final_rcsd_advance_right_leaf_endpoint_has_unselected_native_rcsd_neighbor",
+                        degree=degree,
+                        replacement_segment_ids=[],
+                        geometry=point,
+                    )
+                )
+                continue
             match = _nearest_final_projection(
                 point,
                 source_road_id=road_id,
@@ -510,7 +545,6 @@ def apply_final_advance_right_endpoint_closure(
             target_props = dict(target_road.get("properties") or {}) if target_road else {}
             target_source = str(target_props.get(source_field_name) or "")
             replacement_segment_ids = added_road_to_segments.get(target_road_id, [])
-            advance_source = str(props.get(source_field_name) or "")
             if (
                 advance_source
                 and advance_source != str(rcsd_source_value)
@@ -539,30 +573,6 @@ def apply_final_advance_right_endpoint_closure(
                         target_node_id=target_endpoint_node_id,
                         gap_m=round(float(point.distance(projected)), 3),
                         replacement_segment_ids=replacement_segment_ids,
-                        geometry=point,
-                    )
-                )
-                continue
-            if (
-                advance_source == str(rcsd_source_value)
-                and target_source
-                and target_source != str(rcsd_source_value)
-                and _has_unselected_native_rcsd_neighbors(native_degree=native_degree, selected_degree=degree)
-            ):
-                failed += 1
-                audit_rows.append(
-                    _audit_row(
-                        road_id=road_id,
-                        node_id=node_id,
-                        endpoint_index=endpoint_index,
-                        status="fail",
-                        action="audit_native_rcsd_boundary_endpoint",
-                        reason="final_rcsd_advance_right_leaf_endpoint_has_unselected_native_rcsd_neighbor",
-                        degree=degree,
-                        target_road_source=f"source_{target_source}",
-                        target_swsd_road_id=target_road_id,
-                        gap_m=round(float(point.distance(projected)), 3),
-                        replacement_segment_ids=[],
                         geometry=point,
                     )
                 )

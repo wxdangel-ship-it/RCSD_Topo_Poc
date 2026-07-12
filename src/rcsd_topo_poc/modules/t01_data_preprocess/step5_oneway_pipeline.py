@@ -9,6 +9,7 @@ from shapely.geometry.base import BaseGeometry
 from shapely.ops import unary_union
 
 from rcsd_topo_poc.modules.t01_data_preprocess import step5_oneway_segment_completion as _facade
+from rcsd_topo_poc.modules.t01_data_preprocess.advance_right_segments import assign_advance_right_segments
 
 
 def OnewayBuiltSegment(*args: Any, **kwargs: Any) -> Any:
@@ -1048,6 +1049,10 @@ def run_step5_oneway_segment_completion(
         physical_to_semantic=physical_to_semantic,
         used_segmentids=used_segmentids,
     )
+    advance_right_assignment_summary = assign_advance_right_segments(
+        roads=roads,
+        road_properties_map=road_properties_map,
+    )
 
     group_to_allowed_road_ids = _build_group_to_allowed_road_ids(
         roads=roads,
@@ -1157,6 +1162,11 @@ def run_step5_oneway_segment_completion(
         "side_attachment_merged_road_count": side_attachment_merge_summary["merged_road_count"],
         "shape_control_split_segment_count": shape_control_summary["split_segment_count"],
         "shape_control_split_road_count": shape_control_summary["split_road_count"],
+        "advance_right_segment_count": advance_right_assignment_summary.segment_count,
+        "advance_right_road_count": advance_right_assignment_summary.road_count,
+        "advance_right_skipped_preassigned_road_count": (
+            advance_right_assignment_summary.skipped_preassigned_road_count
+        ),
         "unsegmented_road_count": unsegmented_summary["unsegmented_road_count"],
         "unsegmented_excluded_formway_128_count": unsegmented_summary["excluded_formway_128_count"],
         "unsegmented_formway_bit7_or_bit8_count": unsegmented_summary[

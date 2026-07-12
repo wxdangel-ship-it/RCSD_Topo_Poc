@@ -96,7 +96,7 @@ def _standard_plan_rows(
     *,
     reverse_blockers: dict[tuple[str, str], dict[str, str]],
     pair_anchor_bridges: dict[str, dict[str, Any]],
-    pair_anchor_issues: dict[str, dict[str, list[str]]],
+    pair_anchor_issues: dict[str, dict[str, Any]],
     rcsd_road_by_id: dict[str, dict[str, Any]],
     rcsd_node_canonicalizer: NodeCanonicalizer,
     swsd_geometry_by_segment: dict[str, Any],
@@ -238,6 +238,8 @@ def _standard_plan_rows(
                     "pair_anchor_error_swsd_nodes": pair_anchor_issue.get("swsd_nodes", []),
                     "pair_anchor_error_original_rcsd_nodes": pair_anchor_issue.get("original_rcsd_nodes", []),
                     "pair_anchor_error_candidate_rcsd_nodes": pair_anchor_issue.get("candidate_rcsd_nodes", []),
+                    "pair_anchor_repair_recommendation": pair_anchor_issue.get("repair_recommendation", ""),
+                    "pair_anchor_repair_manual_review_required": pair_anchor_issue.get("manual_review_required", ""),
                     "rcsd_road_ids": rcsd_road_ids,
                     "retained_node_ids": retained_node_ids,
                     "pair_anchor_bridge_road_ids": pair_anchor_bridge_road_ids,
@@ -305,12 +307,12 @@ def _group_replacement_plan_rows(
                 *([GROUP_BUFFER_EXCEEDS_REASON] if buffer_distance_risk else []),
             ]
         )
-        hold_reasons = []
+        hold_reasons = ["path_corridor_group_not_segment_replacement_scope"]
         if source_blocked and not group_segment_ids:
             hold_reasons.append(GROUP_SOURCE_BLOCKED_REASON)
-        plan_status = "blocked" if hold_reasons else "ready"
-        action = "hold" if hold_reasons else "replace"
-        reason = hold_reasons[0] if hold_reasons else props.get("group_probe_reason")
+        plan_status = "blocked"
+        action = "hold"
+        reason = hold_reasons[0]
         notes = props.get("notes") or "path-corridor group replacement plan"
         if source_blocked:
             notes = f"{notes}; source segment is blocked in path-corridor audit and excluded from group action"
@@ -321,7 +323,11 @@ def _group_replacement_plan_rows(
                 f"{notes}; group probe buffer exceeds {MAX_FORMAL_REPLACEMENT_BUFFER_M:g}m "
                 "topology connectivity audit threshold; released as risk audit only"
             )
-        if hold_reasons:
+        notes = (
+            f"{notes}; path-corridor evidence is retained for ownership/connectivity audit only and "
+            "must not execute as Segment replacement"
+        )
+        if source_blocked and not group_segment_ids:
             notes = f"{notes}; no eligible path-corridor group members remain after hard-gate filtering"
         rows.append(
             feature(

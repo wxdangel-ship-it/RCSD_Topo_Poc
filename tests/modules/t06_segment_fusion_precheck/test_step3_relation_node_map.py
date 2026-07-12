@@ -50,7 +50,7 @@ def test_backfill_relation_node_map_replaces_missing_mapping_from_attachment_aud
     assert props["risk_flags"] == ["attachment_backfilled_node_map"]
 
 
-def test_backfill_relation_node_map_keeps_retained_identity_when_attachment_exists() -> None:
+def test_backfill_relation_node_map_prefers_explicit_attachment_over_retained_identity() -> None:
     relation_rows = [
         {
             "properties": {
@@ -84,14 +84,15 @@ def test_backfill_relation_node_map_keeps_retained_identity_when_attachment_exis
 
     entry = relation_rows[0]["properties"]["swsd_to_frcsd_node_map"][0]
     assert stats == {
-        "relation_node_map_backfilled_entry_count": 0,
-        "relation_node_map_backfilled_row_count": 0,
+        "relation_node_map_backfilled_entry_count": 1,
+        "relation_node_map_backfilled_row_count": 1,
     }
-    assert entry["frcsd_node_ids"] == ["n1"]
-    assert entry["mapping_status"] == "identity"
+    assert entry["frcsd_node_ids"] == ["r_existing"]
+    assert entry["mapping_status"] == "attachment_mapped_explicit"
+    assert relation_rows[0]["properties"]["risk_flags"] == ["attachment_backfilled_node_map"]
 
 
-def test_backfill_relation_node_map_keeps_mixed_relation_identity_carrier() -> None:
+def test_backfill_relation_node_map_prefers_explicit_split_over_mixed_identity() -> None:
     relation_rows = [
         {
             "properties": {
@@ -124,9 +125,10 @@ def test_backfill_relation_node_map_keeps_mixed_relation_identity_carrier() -> N
     )
 
     entry = relation_rows[0]["properties"]["swsd_to_frcsd_node_map"][0]
-    assert stats["relation_node_map_backfilled_entry_count"] == 0
-    assert entry["frcsd_node_ids"] == ["n1"]
-    assert entry["mapping_status"] == "identity_retained_swsd"
+    assert stats["relation_node_map_backfilled_entry_count"] == 1
+    assert stats["relation_node_map_backfilled_row_count"] == 1
+    assert entry["frcsd_node_ids"] == ["r1"]
+    assert entry["mapping_status"] == "attachment_mapped_explicit"
 
 
 def test_backfill_relation_node_map_replaces_peer_mapping_for_topology_supplement() -> None:

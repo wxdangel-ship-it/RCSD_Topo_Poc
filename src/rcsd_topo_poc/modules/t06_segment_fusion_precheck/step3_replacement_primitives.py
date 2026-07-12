@@ -224,6 +224,7 @@ def _replacement_unit_row(unit: ReplacementUnit) -> dict[str, Any]:
         "junc_kind2_exempt_nodes": unit.junc_kind2_exempt_nodes,
         "detached_junc_nodes": unit.detached_junc_nodes,
         "retained_detached_swsd_road_ids": unit.retained_detached_swsd_road_ids,
+        "external_retained_swsd_carrier_ids": unit.external_retained_swsd_carrier_ids,
         "swsd_road_ids": unit.original_swsd_road_ids,
         "removed_swsd_road_ids": unit.swsd_road_ids if unit.status == "passed" else [],
         "removed_swsd_node_ids": unit.removed_swsd_node_ids,

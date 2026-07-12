@@ -122,6 +122,7 @@ from .replacement_plan_junction_gate import (
     _resolve_junction_alignment_buffer_corridor_outliers,
     _is_buffer_corridor_alignment_outlier,
     _apply_group_member_plan_gate,
+    _apply_postplan_anchor_gate,
     _blocked_standard_member_absorbable_by_path_group,
     _mappings_connected_by_pair_anchor_bridge,
     _is_replace_ready_plan,
@@ -204,6 +205,7 @@ def build_replacement_plan_rows(
             relation_map=relation_map or {},
         )
         _apply_group_member_plan_gate(rows)
+    _apply_postplan_anchor_gate(rows)
     return rows
 def build_problem_registry_rows(
     *,

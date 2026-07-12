@@ -676,6 +676,9 @@ def _build_swsd_frcsd_segment_relation_rows(
                     "swsd_road_ids": swsd_road_ids,
                     "removed_swsd_road_ids": removed_swsd_road_ids,
                     "retained_detached_swsd_road_ids": retained_swsd_road_ids,
+                    "external_retained_swsd_carrier_ids": (
+                        unit.external_retained_swsd_carrier_ids if unit is not None else []
+                    ),
                     "frcsd_road_ids": frcsd_road_ids,
                     "frcsd_road_source_values": frcsd_road_source_values,
                     "rcsd_pair_nodes": rcsd_pair_nodes,

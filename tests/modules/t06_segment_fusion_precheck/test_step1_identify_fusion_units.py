@@ -16,7 +16,7 @@ def _write(path: Path, features: list[dict]) -> Path:
     return path
 
 
-def _seg(seg_id: str, pair_nodes, junc_nodes, sgrade: str = "主双"):
+def _seg(seg_id: str, pair_nodes, junc_nodes, sgrade: str = "主双", segment_type: str | None = None):
     return {
         "properties": {
             "id": seg_id,
@@ -24,9 +24,39 @@ def _seg(seg_id: str, pair_nodes, junc_nodes, sgrade: str = "主双"):
             "pair_nodes": pair_nodes,
             "junc_nodes": junc_nodes,
             "roads": ["r1"],
+            "segment_type": segment_type,
         },
         "geometry": LineString([(0, 0), (10, 0)]),
     }
+
+
+def test_step1_excludes_advance_right_segment_from_ordinary_anchoring(tmp_path: Path) -> None:
+    segment_path = _write(
+        tmp_path / "segment.gpkg",
+        [
+            _seg("ordinary", [1, 2], []),
+            _seg("advance", [], [], sgrade="", segment_type="advance_right"),
+        ],
+    )
+    nodes_path = _write(
+        tmp_path / "nodes.gpkg",
+        [_node(1, "yes", "yes"), _node(2, "yes", "yes")],
+    )
+
+    artifacts = run_t06_step1_identify_fusion_units(
+        swsd_segment_path=segment_path,
+        swsd_nodes_path=nodes_path,
+        out_root=tmp_path / "out",
+        run_id="advance_right",
+    )
+
+    summary = json.loads(artifacts.summary_path.read_text(encoding="utf-8"))
+    assert summary["input_segment_count"] == 2
+    assert summary["ordinary_segment_count"] == 1
+    assert summary["advance_right_segment_count"] == 1
+    assert summary["advance_right_segment_ids"] == ["advance"]
+    assert summary["final_fusion_unit_count"] == 1
+    assert summary["rejected_before_evd_count"] == 0
 
 
 def _node(

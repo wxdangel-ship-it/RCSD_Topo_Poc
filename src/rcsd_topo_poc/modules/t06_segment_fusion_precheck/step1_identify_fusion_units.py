@@ -52,6 +52,7 @@ def run_t06_step1_identify_fusion_units(
     manual_anchor_override_node_hits: set[str] = set()
     manual_evd_override_segments: set[str] = set()
     manual_evd_override_node_hits: set[str] = set()
+    advance_right_segment_ids: list[str] = []
 
     evd_candidates: list[dict[str, Any]] = []
     fusion_units: list[dict[str, Any]] = []
@@ -67,6 +68,9 @@ def run_t06_step1_identify_fusion_units(
             print(f"[T06 Step1] processed {index}/{len(segments)}", flush=True)
         props = dict(segment.get("properties") or {})
         segment_id = _segment_id(props, index)
+        if str(props.get("segment_type") or "").strip() == "advance_right":
+            advance_right_segment_ids.append(segment_id)
+            continue
         sgrade_key = _sgrade_key(props.get("sgrade"))
         if sgrade_key not in total_by_sgrade:
             sgrade_order.append(sgrade_key)
@@ -389,6 +393,9 @@ def run_t06_step1_identify_fusion_units(
                 else None,
             },
             "input_segment_count": len(segments),
+            "ordinary_segment_count": len(segments) - len(advance_right_segment_ids),
+            "advance_right_segment_count": len(advance_right_segment_ids),
+            "advance_right_segment_ids": advance_right_segment_ids,
             "evd_candidate_count": len(evd_candidates),
             "final_fusion_unit_count": len(fusion_units),
             "rejected_before_evd_count": sum(1 for item in rejected if item["properties"].get("reject_stage") == "before_evd"),

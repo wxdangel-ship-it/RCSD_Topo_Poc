@@ -48,6 +48,12 @@ CORE_OUTPUT_KEYS = {
     "surface_aware_plan_release_audit_json",
     "unreplaced_rcsd_attribution_gpkg",
     "unreplaced_rcsd_attribution_summary",
+    "rcsd_road_ownership_gpkg",
+    "rcsd_road_ownership_csv",
+    "multi_segment_connectivity_group_gpkg",
+    "multi_segment_connectivity_group_csv",
+    "segment_construction_audit_gpkg",
+    "segment_construction_audit_csv",
 }
 
 SUMMARY_OUTPUT_KEYS = {
@@ -61,6 +67,9 @@ SUMMARY_OUTPUT_KEYS = {
     "surface_aware_plan_release_audit_json",
     "unreplaced_rcsd_attribution_gpkg",
     "unreplaced_rcsd_attribution_summary",
+    "rcsd_road_ownership_gpkg",
+    "multi_segment_connectivity_group_gpkg",
+    "segment_construction_audit_gpkg",
 }
 
 COMPAT_TOP_LEVEL_KEYS = [
@@ -90,6 +99,11 @@ COMPAT_TOP_LEVEL_KEYS = [
     "topology_connectivity_fail_count",
     "topology_connectivity_warn_count",
     "topology_connectivity_pass_count",
+    "topology_audit_fail_row_count",
+    "final_frcsd_topology_fail_row_count",
+    "final_frcsd_topology_fail_count",
+    "final_frcsd_segment_transition_fail_count",
+    "final_frcsd_independent_attachment_fail_count",
     "surface_topology_fail_count",
     "surface_topology_pass_count",
     "surface_topology_status",
@@ -99,6 +113,22 @@ COMPAT_TOP_LEVEL_KEYS = [
     "rcsd_unreplaced_final_attribution_by_class",
     "rcsd_unreplaced_final_attribution_by_confidence",
     "rcsd_unreplaced_ppt_attribution_by_class",
+    "rcsd_road_total_count",
+    "rcsd_road_used_count",
+    "rcsd_road_used_length_m",
+    "connectivity_group_count",
+    "connectivity_group_used_count",
+    "connectivity_rcsd_road_used_count",
+    "reality_change_rcsd_road_count",
+    "unresolved_exception_rcsd_road_count",
+    "ownership_duplicate_count",
+    "ownership_missing_count",
+    "advance_right_segment_used_count",
+    "advance_right_rcsd_road_used_count",
+    "normal_segment_count",
+    "normal_segment_replaceable_count",
+    "normal_segment_replaced_count",
+    "advance_right_segment_count",
 ]
 
 
@@ -206,6 +236,27 @@ def _compact_summary(*, payload: dict[str, Any], detail_path: Path, manifest_pat
             "rcsd_unreplaced_final_attribution_by_confidence",
             "rcsd_unreplaced_ppt_attribution_by_class",
         ]),
+        "rcsd_road_ownership": _section(payload, [
+            "rcsd_road_total_count",
+            "rcsd_road_used_count",
+            "rcsd_road_used_length_m",
+            "connectivity_group_count",
+            "connectivity_group_used_count",
+            "connectivity_rcsd_road_used_count",
+            "reality_change_rcsd_road_count",
+            "unresolved_exception_rcsd_road_count",
+            "ownership_duplicate_count",
+            "ownership_missing_count",
+            "advance_right_segment_used_count",
+            "advance_right_rcsd_road_used_count",
+        ]),
+        "segment_construction": _section(payload, [
+            "normal_segment_count",
+            "normal_segment_replaceable_count",
+            "normal_segment_replaced_count",
+            "advance_right_segment_count",
+            "segment_construction_class_counts",
+        ]),
         "surface_aware_plan_release": _surface_release_section(payload),
         "outputs": _summary_outputs(payload),
         "detail_metrics_json": str(detail_path),
@@ -228,7 +279,10 @@ def _compact_summary(*, payload: dict[str, Any], detail_path: Path, manifest_pat
 def _status(payload: dict[str, Any]) -> str:
     if int(payload.get("replacement_unit_failure_count") or 0) > 0:
         return "completed_with_failed_units"
-    if int(payload.get("topology_connectivity_fail_count") or 0) > 0:
+    topology_fail_count = payload.get("final_frcsd_topology_fail_count")
+    if topology_fail_count is None:
+        topology_fail_count = payload.get("topology_connectivity_fail_count")
+    if int(topology_fail_count or 0) > 0:
         return "completed_with_topology_failures"
     return "completed"
 
@@ -261,11 +315,21 @@ def _advance_right_section(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _topology_section(payload: dict[str, Any]) -> dict[str, Any]:
-    return {
+    result = {
         key.removeprefix("topology_connectivity_"): value
         for key, value in payload.items()
         if key.startswith("topology_connectivity_")
     }
+    for key in (
+        "topology_audit_fail_row_count",
+        "final_frcsd_topology_fail_row_count",
+        "final_frcsd_topology_fail_count",
+        "final_frcsd_segment_transition_fail_count",
+        "final_frcsd_independent_attachment_fail_count",
+    ):
+        if key in payload:
+            result[key] = payload[key]
+    return result
 
 
 def _core_outputs(payload: dict[str, Any]) -> dict[str, str]:

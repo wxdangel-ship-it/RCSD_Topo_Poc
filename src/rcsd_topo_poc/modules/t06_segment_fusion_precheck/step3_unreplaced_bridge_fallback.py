@@ -376,8 +376,6 @@ def _add_geometry_component_to_unit(
     touched_segments: set[str],
 ) -> None:
     for road_id in road_ids:
-        if road_id not in unit.rcsd_road_ids:
-            unit.rcsd_road_ids.append(road_id)
         segment_list = added_road_to_segments.setdefault(road_id, [])
         if segment_id not in segment_list:
             segment_list.append(segment_id)
@@ -435,8 +433,6 @@ def _add_bridge_roads_to_segments(
     for segment_id in segment_ids:
         unit = unit_by_segment[segment_id]
         for road_id in road_ids:
-            if road_id not in unit.rcsd_road_ids:
-                unit.rcsd_road_ids.append(road_id)
             segment_list = added_road_to_segments.setdefault(road_id, [])
             if segment_id not in segment_list:
                 segment_list.append(segment_id)

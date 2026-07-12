@@ -463,8 +463,12 @@ def test_topology_audit_fails_final_advance_right_leaf_endpoint() -> None:
     ]
     assert [row["audit_status"] for row in advance_rows] == ["pass", "fail"]
     assert advance_rows[1]["audit_reason"] == "advance_right_leaf_endpoint_unattached"
+    assert advance_rows[1]["final_topology_category"] == "independent_attachment"
+    assert advance_rows[1]["counts_in_final_frcsd_topology_fail"] is True
     summary = summarize_topology_connectivity_audit(rows)
     assert summary["topology_connectivity_advance_right_endpoint_connectivity_fail_count"] == 1
+    assert summary["final_frcsd_topology_fail_count"] == 1
+    assert summary["final_frcsd_independent_attachment_fail_count"] == 1
 
 
 def test_topology_audit_passes_advance_right_cross_source_mainnode_attachment() -> None:

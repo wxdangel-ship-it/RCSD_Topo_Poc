@@ -70,6 +70,23 @@ T11 按文件名和常规 T10 layout 探测输入，不要求调用方传入 T05
 
 该脚本只包装 callable，不新增业务规则。
 
+六用例批量性能与回归模式复用同一正式入口：
+
+```bash
+.venv/bin/python scripts/t11_extract_relation_repair_candidates.py \
+  --t10-suite-root <T10_SUITE_ROOT> \
+  --out-root outputs/_work/t11_relation_candidates_batch \
+  --case-ids 1885118 605415675 609214532 706247 74155468 991176 \
+  --workers 2
+```
+
+- `--t10-case-root` 与 `--t10-suite-root` 二选一；原单用例调用保持兼容。
+- 未显式传入 `--case-ids` 时，批量模式固定按 `1885118、605415675、609214532、706247、74155468、991176` 顺序执行。
+- `--workers` 默认 `2`，允许范围为 `1..8`；并行只发生在相互隔离的 Case 之间，不改变单 Case 内候选、空间距离、排序或写出逻辑。
+- 每个 Case 写入 `<out-root>/<case_id>/run_<timestamp>/`，禁止不同 Case 共用同一 run root。
+- 批量模式不接受单个 `--existing-manual-csv`，避免把一个 Case 的人工结果应用到其他 Case；需消费人工结果时继续使用单用例模式。
+- 批量 stdout 为包含 `mode=batch`、`workers`、`case_count` 与有序 `cases[]` 的 JSON；每个 `cases[]` 元素保留单用例原有产物字段。
+
 人工 Excel 重跑入口：
 
 ```bash

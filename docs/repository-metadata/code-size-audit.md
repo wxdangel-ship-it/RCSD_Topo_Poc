@@ -217,8 +217,12 @@
 | `tests/modules/p01_arm_build/test_p01_arm_build.py` | `99062 -> 29410` bytes | 保留 final-arm validation、advance-turn 与基础 P01 runner 回归 | final projection/topology/bundle 场景进入独立测试文件 |
 | `tests/modules/p01_arm_build/p01_test_support.py` | `16861` bytes | 新拆出的 P01 dataset、validation、movement/source fixture helper | 仅供测试复用，不新增正式入口 |
 | `tests/modules/p01_arm_build/test_p01_final_and_bundle.py` | `50849` bytes | 新拆出的 F-RCSD final projection、topology gate、text-bundle 与 IO 回归 | 保持 final/bundle 专项测试职责 |
-| `src/rcsd_topo_poc/modules/t11_manual_relation_review/extract.py` | `85083 -> 54845` bytes | 保留 T11 candidate/anchor/relation-gap build、summary 与输出 helper；顶层抽取与输入发现已下沉 | 已低于 60KB；禁止回填 extract 主编排 |
-| `src/rcsd_topo_poc/modules/t11_manual_relation_review/extract_pipeline.py` | `35118` bytes | 新拆出的 T10 Case 输入发现、数据读取、基础索引与 T11 candidate 总编排 | 通过 facade 动态代理保持审计表构建和输出语义 |
+| `src/rcsd_topo_poc/modules/t11_manual_relation_review/extract.py` | `85083 -> 56222` worktree bytes | 保留 T11 candidate/anchor/relation-gap build、summary 与输出 helper；顶层抽取与输入发现已下沉 | 已低于 60KiB；禁止回填 extract 主编排 |
+| `src/rcsd_topo_poc/modules/t11_manual_relation_review/extract_pipeline.py` | `36031` worktree bytes | 新拆出的 T10 Case 输入发现、数据读取、基础索引与 T11 candidate 总编排 | 通过 facade 动态代理保持审计表构建和输出语义 |
+| `src/rcsd_topo_poc/modules/t11_manual_relation_review/segment_tables.py` | `29825` worktree bytes | T11 Segment relation 审计表构建；50m RCSD 上下文按节点缓存，并通过空间索引预筛后执行原精确距离判定 | 保持 CRS、`distance <= 50.0`、最近距离、候选排序和几何语义不变 |
+| `scripts/t11_extract_relation_repair_candidates.py` | `5445` worktree bytes | 既有 T11 正式入口；保留单用例模式并增加六用例批量受控并行编排 | 不是新增入口；`--workers` 限制 `1..8`，每 Case 输出根隔离 |
+| `tests/modules/t11_manual_relation_review/test_extract_cli.py` | `4350` worktree bytes | T11 单用例兼容、批量顺序/输出隔离、worker 边界和人工 CSV 防误用测试 | 仅测试正式入口参数化，不新增执行入口 |
+| `tests/modules/t11_manual_relation_review/test_segment_tables_performance.py` | `1159` worktree bytes | T11 50m spatial index 精确阈值、ID 顺序和无命中最近距离回归 | 只覆盖性能实现的业务等价边界 |
 | `src/rcsd_topo_poc/modules/t07_semantic_junction_anchor/runner.py` | `73529 -> 52064` bytes | 保留 T07 IO、Step1、Step2 helper 与既有 callable；Step2 anchor 主编排已下沉 | 已低于 60KB；禁止回填 Step2 主流程 |
 | `src/rcsd_topo_poc/modules/t07_semantic_junction_anchor/step2_pipeline.py` | `25418` bytes | 新拆出的 T07 Step2 anchor recognition、error/surface/relation evidence 与 artifacts 编排 | 通过 facade 动态代理保持 fail1/fail2 和 surface handoff 语义 |
 | `src/rcsd_topo_poc/modules/t07_semantic_junction_anchor/step3_intersection_match.py` | `62695 -> 34883` bytes | 保留 Step3 relation/cardinality/IO/canonical helper 与既有 callable；主匹配编排已下沉 | 已低于 60KB；禁止回填 Step3 主流程 |

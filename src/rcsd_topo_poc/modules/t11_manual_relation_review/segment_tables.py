@@ -118,6 +118,7 @@ def build_segment_relation_review_tables(
     attrs = _segment_attrs(segment_gdf, segment_lengths)
     non_right_turn_counts = _non_right_turn_incident_road_counts(swsd_roads)
     rcsd_feature_gdf = _rcsd_feature_gdf(rcsd_nodes, rcsd_roads, final_nodes.crs or segment_gdf.crs)
+    rcsd50_cache: dict[str, dict[str, Any]] = {}
 
     first_target_segment: dict[str, str] = {}
     all_evidence_rows: list[dict[str, Any]] = []
@@ -178,7 +179,11 @@ def build_segment_relation_review_tables(
                 relation_success_nodes.add(node_id)
             else:
                 relation_gap_nodes.add(node_id)
-            rcsd50_by_node[node_id] = _rcsd_50m_context(node, rcsd_feature_gdf)
+            rcsd50 = rcsd50_cache.get(node_id)
+            if rcsd50 is None:
+                rcsd50 = _rcsd_50m_context(node, rcsd_feature_gdf)
+                rcsd50_cache[node_id] = rcsd50
+            rcsd50_by_node[node_id] = rcsd50
 
         if relation_success_nodes == semantic_nodes:
             continue
@@ -430,10 +435,17 @@ def _rcsd_50m_context(node: dict[str, Any], rcsd_features: gpd.GeoDataFrame) -> 
     geom = node.get("geometry") if node else None
     if geom is None or rcsd_features.empty:
         return _empty_rcsd50("无RCSD")
-    distances = rcsd_features.geometry.distance(geom)
-    within = rcsd_features.loc[distances <= 50.0].copy()
+    candidate_positions = rcsd_features.sindex.query(geom.buffer(50.0))
+    candidates = rcsd_features.iloc[candidate_positions]
+    distances = candidates.geometry.distance(geom)
+    within = candidates.loc[distances <= 50.0].copy()
     if within.empty:
-        nearest = float(distances.min()) if len(distances) else None
+        _nearest_positions, nearest_distances = rcsd_features.sindex.nearest(
+            geom,
+            return_all=False,
+            return_distance=True,
+        )
+        nearest = float(nearest_distances[0]) if len(nearest_distances) else None
         return {
             "hint": "无RCSD",
             "feature_count": 0,

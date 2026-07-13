@@ -22,6 +22,8 @@ Segment package 的 `t10_case_evidence_manifest.json` 必须额外记录 `scope.
 
 每个 Case 每个阶段都必须记录 command、env override、输入、输出、stdout log、耗时和状态。失败阶段的部分输出不提升为正式 handoff；后续阶段应标记 blocked。
 
+T11 stage 必须记录当前 Case root、关键 T06 Step3 文件、实际 `run_root`、candidates CSV/GPKG、人工模板与 summary。T11 summary 中的 discovered inputs 是完整文件级输入审计；T11 失败时 T09 必须 blocked。
+
 ## 4. T06 证据
 
 `t10_t06_funnel.*` 读取 T06 Step1 / Step2 / Step3 summary 和输出，解释数量流转；其 Step1 分母必须来自 `final_swsd_nodes`，不能回退到 T07 Step2 nodes。`t10_t06_visual_check_summary.*` 默认索引 T01 Segment/Road、T07 Step2、T03/T04/T05 surface、T06 replacement plan / problem registry、F-RCSD、relation、topology connectivity audit 和 surface topology audit；只有显式运行 T07 Step3 时，才额外记录 Step3 补锚图层。
@@ -32,4 +34,4 @@ T10 upstream feedback 从 T06 problem registry、repair candidates、relation au
 
 ## 6. Full Pipeline 证据
 
-`t10_innernet_full_pipeline_manifest.json` 记录 `stage_order / stages / inputs / outputs / execution_context`。`t10_innernet_full_pipeline_summary.json` 是轻量完成判定文件，内网监控应优先读取其中 `status / passed / finished_at_utc / duration_seconds`。
+`t10_innernet_full_pipeline_manifest.json` 记录 `stage_order / stages / inputs / outputs / execution_context`，其中 `t11` 固定位于 `t06_step3` 与 `t09` 之间。`t10_innernet_full_pipeline_summary.json` 是轻量完成判定文件，内网监控应优先读取其中 `status / passed / finished_at_utc / duration_seconds / t11_candidates_csv / t11_summary_json`。

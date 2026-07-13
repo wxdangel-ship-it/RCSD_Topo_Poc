@@ -9,7 +9,7 @@ Usage:
 Environment variables:
   OUT_ROOT                 Default: outputs/_work/t10_e2e_case_runs
   RUN_ID                   Optional explicit run id
-  STOP_AFTER               Optional stage: t01/t07/t03/t04/t05/t06_step12/t06_step3/t09_step12/t09_step3
+  STOP_AFTER               Optional stage: t01/t07/t03/t04/t05/t06_step12/t06_step3/t11/t09_step12/t09_step3
   CONTINUE_ON_ERROR        1 or 0. Default: 1
   EXIT_ZERO                1 or 0. Default: 0
   T10_T03_WORKERS          Default: detected CPU count, capped at 16

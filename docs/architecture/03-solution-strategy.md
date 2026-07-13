@@ -16,7 +16,7 @@
 | T05 | 汇总 T07 / T03 / T04 关系，形成统一 SWSD-RCSD 语义路口关系和 RCSD junctionization 成果。 |
 | T06 | 以 T01 Segment 和 T05 语义关系为依据构建 RCSDSegment，并生成 F-RCSD 承载关系。 |
 | T09 | 基于 SWSD Laneinfo / restriction 与 F-RCSD 承载关系还原路口级通行规则。 |
-| T10 | 组织端到端编排与 Case 证据包；v1 Case runner 编排 T01 / T07 Step1/2 / T03 / T04 / T05 / T06 / T09，T08 独立前置运行；内网全量总控可把 T08 作为独立阶段串入全量链路。 |
+| T10 | 组织端到端编排与 Case 证据包；v1 Case runner 编排 T01 / T07 Step1/2 / T03 / T04 / T05 / T06 / T11 / T09，T11 为 audit-only，T08 独立前置运行；内网全量总控可把 T08 作为独立阶段串入。 |
 
 ## 业务分层策略
 
@@ -51,7 +51,7 @@ T06 的原始目标是基于 T01 Segment 与 T05 1:1 relation 执行 SWSD Segmen
 
 ### 通行恢复与验证层
 
-T09 基于 T06 的 F-RCSD carrier 恢复 restriction。T10 通过 Case replay、T06 funnel、visual check、feedback package 和 full pipeline summary 把真实数据问题组织成可追溯证据链。P01 作为 POC，在 Arm / RoadNextRoad 层探索更完整的通行能力建模，但不替代 T09。
+T09 基于 T06 的 F-RCSD carrier 恢复 restriction。T10 在 T06 后先运行 T11 形成 relation repair candidate audit，再进入 T09；T11 不改变 carrier。T10 通过 Case replay、T06 funnel、T11 candidate audit、visual check、feedback package 和 full pipeline summary 把真实数据问题组织成可追溯证据链。P01 作为 POC，在 Arm / RoadNextRoad 层探索更完整的通行能力建模，但不替代 T09。
 
 ## 生命周期影响
 

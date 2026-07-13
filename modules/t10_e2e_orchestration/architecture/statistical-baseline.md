@@ -16,6 +16,8 @@
 - 合计状态：`52/52 passed`，失败 Case 数为 `0`，`missing_artifacts=[]`。
 - T10 首次全量运行在前两个 Case 完成后中断，其余四个 Case 使用 `--case-id` 写入同一基线根；机器汇总确认六个 Case 的 Case 级输出均完整。
 
+> 兼容说明：该 `96b0ea5` 基线生成于 T10 将 T11 设为强制阶段之前。它继续作为 T01-T06/T09 业务结果与性能对比基线，但不单独证明新工作流已完成 `T06 -> T11 -> T09`；新完成性验收必须同时检查 passed 的 `t11` stage 与 T11 candidates/summary。
+
 本基线替代旧登记基线 `/mnt/e/Work/RCSD_Topo_Poc/outputs/baselines/t10_all_cases_ce1cc72_20260707_153701`。`ce1cc72` 及更早的 `3cd626d` 细分统计仅作为历史快照引用；日常测试输出不得覆盖当前基线目录。新的优化运行应写入独立 run root，再与本目录下的 CSV / JSON 及对应 package 运行汇总进行比较。
 
 ## 2. 基线产物

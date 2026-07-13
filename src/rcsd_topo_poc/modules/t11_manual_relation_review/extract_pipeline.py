@@ -707,89 +707,142 @@ def _discover_inputs(root: Path) -> dict[str, Path | None]:
             root,
             (
                 "t04/t04/nodes.gpkg",
+                "t04_internal_full_input/t04_full/nodes.gpkg",
                 "t07/t07/step2_anchor_recognition/nodes.gpkg",
                 "t01/nodes.gpkg",
+                "t01_full_data/nodes.gpkg",
             ),
             "nodes.gpkg",
         ),
-        "t01_segment": _first_existing(root, ("t01/segment.gpkg",), "segment.gpkg"),
-        "t01_roads": _first_existing(root, ("t01/roads.gpkg",), "roads.gpkg"),
-        "t01_segment_build_table": _first_existing(root, ("t01/segment_build_table.csv",), "segment_build_table.csv"),
-        "rcsdnode_out": _first_existing(root, ("t05/t05_phase2/rcsdnode_out.gpkg",), "rcsdnode_out.gpkg"),
-        "rcsdroad_out": _first_existing(root, ("t05/t05_phase2/rcsdroad_out.gpkg",), "rcsdroad_out.gpkg"),
+        "t01_segment": _first_existing(root, ("t01/segment.gpkg", "t01_full_data/segment.gpkg"), "segment.gpkg"),
+        "t01_roads": _first_existing(root, ("t01/roads.gpkg", "t01_full_data/roads.gpkg"), "roads.gpkg"),
+        "t01_segment_build_table": _first_existing(
+            root,
+            ("t01/segment_build_table.csv", "t01_full_data/segment_build_table.csv"),
+            "segment_build_table.csv",
+        ),
+        "rcsdnode_out": _first_existing(
+            root,
+            ("t05/t05_phase2/rcsdnode_out.gpkg", "t05_innernet_experiment/t05_phase2_innernet/rcsdnode_out.gpkg"),
+            "rcsdnode_out.gpkg",
+        ),
+        "rcsdroad_out": _first_existing(
+            root,
+            ("t05/t05_phase2/rcsdroad_out.gpkg", "t05_innernet_experiment/t05_phase2_innernet/rcsdroad_out.gpkg"),
+            "rcsdroad_out.gpkg",
+        ),
         "relation_graph_consumability_audit": _first_existing(
             root,
-            ("t05/t05_phase2/relation_graph_consumability_audit.csv",),
+            (
+                "t05/t05_phase2/relation_graph_consumability_audit.csv",
+                "t05_innernet_experiment/t05_phase2_innernet/relation_graph_consumability_audit.csv",
+            ),
             "relation_graph_consumability_audit.csv",
         ),
         "rcsd_junctionization_audit": _first_existing(
             root,
-            ("t05/t05_phase2/rcsd_junctionization_audit.csv",),
+            (
+                "t05/t05_phase2/rcsd_junctionization_audit.csv",
+                "t05_innernet_experiment/t05_phase2_innernet/rcsd_junctionization_audit.csv",
+            ),
             "rcsd_junctionization_audit.csv",
         ),
         "t03_relation_evidence": _first_existing(
             root,
-            ("t03/t03/t03_swsd_rcsd_relation_evidence.csv",),
+            (
+                "t03/t03/t03_swsd_rcsd_relation_evidence.csv",
+                "t03_internal_full_input/t03_full/t03_swsd_rcsd_relation_evidence.csv",
+            ),
             "t03_swsd_rcsd_relation_evidence.csv",
         ),
         "t03_anchor_audit": _first_existing(
             root,
-            ("t03/t03/nodes_anchor_update_audit.csv",),
+            ("t03/t03/nodes_anchor_update_audit.csv", "t03_internal_full_input/t03_full/nodes_anchor_update_audit.csv"),
             "nodes_anchor_update_audit.csv",
         ),
         "t04_relation_evidence": _first_existing(
             root,
-            ("t04/t04/t04_swsd_rcsd_relation_evidence.csv",),
+            (
+                "t04/t04/t04_swsd_rcsd_relation_evidence.csv",
+                "t04_internal_full_input/t04_full/t04_swsd_rcsd_relation_evidence.csv",
+            ),
             "t04_swsd_rcsd_relation_evidence.csv",
         ),
         "t04_anchor_audit": _first_existing(
             root,
-            ("t04/t04/nodes_anchor_update_audit.csv",),
+            ("t04/t04/nodes_anchor_update_audit.csv", "t04_internal_full_input/t04_full/nodes_anchor_update_audit.csv"),
             "nodes_anchor_update_audit.csv",
         ),
         "t04_relation_fallback_audit": _first_existing(
             root,
-            ("t04/t04/t04_relation_fallback_audit.csv",),
+            (
+                "t04/t04/t04_relation_fallback_audit.csv",
+                "t04_internal_full_input/t04_full/t04_relation_fallback_audit.csv",
+            ),
             "t04_relation_fallback_audit.csv",
         ),
         "t06_problem_registry": _first_existing(
             root,
-            ("t06_step12/t06/step2_extract_rcsd_segments/t06_segment_replacement_problem_registry.csv",),
+            (
+                "t06_step12/t06/step2_extract_rcsd_segments/t06_segment_replacement_problem_registry.csv",
+                "t06_segment_fusion_precheck/t06_innernet_precheck/step2_extract_rcsd_segments/t06_segment_replacement_problem_registry.csv",
+            ),
             "t06_segment_replacement_problem_registry.csv",
         ),
         "t06_rejected": _first_existing(
             root,
-            ("t06_step12/t06/step2_extract_rcsd_segments/t06_rcsd_segment_rejected.csv",),
+            (
+                "t06_step12/t06/step2_extract_rcsd_segments/t06_rcsd_segment_rejected.csv",
+                "t06_segment_fusion_precheck/t06_innernet_precheck/step2_extract_rcsd_segments/t06_rcsd_segment_rejected.csv",
+            ),
             "t06_rcsd_segment_rejected.csv",
         ),
         "t06_buffer_rejected": _first_existing(
             root,
-            ("t06_step12/t06/step2_extract_rcsd_segments/t06_rcsd_buffer_segment_rejected.csv",),
+            (
+                "t06_step12/t06/step2_extract_rcsd_segments/t06_rcsd_buffer_segment_rejected.csv",
+                "t06_segment_fusion_precheck/t06_innernet_precheck/step2_extract_rcsd_segments/t06_rcsd_buffer_segment_rejected.csv",
+            ),
             "t06_rcsd_buffer_segment_rejected.csv",
         ),
         "t06_replacement_plan": _first_existing(
             root,
-            ("t06_step12/t06/step2_extract_rcsd_segments/t06_segment_replacement_plan.csv",),
+            (
+                "t06_step12/t06/step2_extract_rcsd_segments/t06_segment_replacement_plan.csv",
+                "t06_segment_fusion_precheck/t06_innernet_precheck/step2_extract_rcsd_segments/t06_segment_replacement_plan.csv",
+            ),
             "t06_segment_replacement_plan.csv",
         ),
         "t06_repair_candidates": _first_existing(
             root,
-            ("t06_step12/t06/step2_extract_rcsd_segments/t06_rcsd_repair_candidates.csv",),
+            (
+                "t06_step12/t06/step2_extract_rcsd_segments/t06_rcsd_repair_candidates.csv",
+                "t06_segment_fusion_precheck/t06_innernet_precheck/step2_extract_rcsd_segments/t06_rcsd_repair_candidates.csv",
+            ),
             "t06_rcsd_repair_candidates.csv",
         ),
         "t06_final_fusion_units": _first_existing(
             root,
-            ("t06_step12/t06/step1_identify_fusion_units/t06_swsd_segment_final_fusion_units.csv",),
+            (
+                "t06_step12/t06/step1_identify_fusion_units/t06_swsd_segment_final_fusion_units.csv",
+                "t06_segment_fusion_precheck/t06_innernet_precheck/step1_identify_fusion_units/t06_swsd_segment_final_fusion_units.csv",
+            ),
             "t06_swsd_segment_final_fusion_units.csv",
         ),
         "t06_step1_rejected": _first_existing(
             root,
-            ("t06_step12/t06/step1_identify_fusion_units/t06_swsd_segment_rejected.csv",),
+            (
+                "t06_step12/t06/step1_identify_fusion_units/t06_swsd_segment_rejected.csv",
+                "t06_segment_fusion_precheck/t06_innernet_precheck/step1_identify_fusion_units/t06_swsd_segment_rejected.csv",
+            ),
             "t06_swsd_segment_rejected.csv",
         ),
         "t06_step3_segment_relation": _first_existing(
             root,
-            ("t06_step12/t06/step3_segment_replacement/t06_step3_swsd_frcsd_segment_relation.csv",),
+            (
+                "t06_step12/t06/step3_segment_replacement/t06_step3_swsd_frcsd_segment_relation.csv",
+                "t06_segment_fusion_precheck/t06_innernet_precheck/step3_segment_replacement/t06_step3_swsd_frcsd_segment_relation.csv",
+            ),
             "t06_step3_swsd_frcsd_segment_relation.csv",
         ),
     }

@@ -2,7 +2,7 @@
 
 ## 1. 模块定位
 
-T11 是人工 relation / anchor 修复候选抽取模块。它只读取既有 T10 端到端 Case 结果，从 T01 Segment、T05 relation 发布层和 T06 替换审计层中提炼需要人工判断的 SWSD 语义路口候选。
+T11 是人工 relation / anchor 修复候选抽取模块。它读取既有或正在执行的 T10 Case/full pipeline 结果，从 T01 Segment、T05 relation 发布层和 T06 替换审计层中提炼需要人工判断的 SWSD 语义路口候选。T10 正式工作流在 T06 Step3 后、T09 前调用 T11。
 
 T11 不修改 T05/T06/T09，不重跑 T06/T09，不把候选提升为 T06 白名单。候选输出只作为人工审计输入；后续人工结果应由 T05 消费并重新生成正式 relation。
 
@@ -20,6 +20,8 @@ T11 不修改 T05/T06/T09，不重跑 T06/T09，不把候选提升为 T06 白名
 ### 3.1 正式支持
 
 - 输入：已完成的 T10 Case root。
+- 输入：已完成 T06 Step3 的 T10 innernet full pipeline run root；T11 对该固定布局使用显式相对路径发现。
+- T10 Case runner 与 innernet full pipeline 将 T11 作为 audit-only 必经阶段，并记录 candidates/summary handoff；T09 不消费 T11 输出。
 - 读取 T05 Phase2 的 `relation_graph_consumability_audit.csv`、`rcsd_junctionization_audit.csv`、`intersection_match_all.geojson`、`rcsdroad_out.gpkg`、`rcsdnode_out.gpkg`。
 - 读取 T06 Step1/Step2 的 final fusion units、Step1 rejected、problem registry、rejected、buffer rejected、replacement plan 和 repair candidates。
 - 读取 T01/T04 节点与 Segment 几何，用于 target 上下文和影响长度统计。

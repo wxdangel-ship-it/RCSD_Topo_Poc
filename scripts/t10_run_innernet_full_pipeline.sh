@@ -12,7 +12,7 @@ Purpose:
     outputs/_work/t10_innernet_full_pipeline/<RUN_ID>/
 
 Main stages:
-  T08 -> T01 -> T07 Step1/2 -> T03 -> T04 -> T05 -> T06 Step1/2 -> T06 Step3 -> T09
+  T08 -> T01 -> T07 Step1/2 -> T03 -> T04 -> T05 -> T06 Step1/2 -> T06 Step3 -> T11 -> T09
 
 Common env:
   TESTDATA_ROOT        Default: /mnt/d/TestData/POC_Data
@@ -169,10 +169,11 @@ normalize_stage_id() {
     t07_step3) printf '%s\n' "t07_step3" ;;
     t06|t06_step12) printf '%s\n' "t06_step12" ;;
     t06_step3) printf '%s\n' "t06_step3" ;;
+    t11|t11_candidates) printf '%s\n' "t11" ;;
     t09) printf '%s\n' "t09" ;;
     *)
       echo "[BLOCK] Unknown T10 full-pipeline stage: $1" >&2
-      echo "[TIP] Supported stages: t08_preprocess,t01,t07_step12,t03,t04,t05,t07_step3,t06_step12,t06_step3,t09" >&2
+      echo "[TIP] Supported stages: t08_preprocess,t01,t07_step12,t03,t04,t05,t07_step3,t06_step12,t06_step3,t11,t09" >&2
       exit 2
       ;;
   esac
@@ -188,7 +189,8 @@ stage_index() {
     t05) printf '%s\n' 5 ;;
     t06_step12) printf '%s\n' 6 ;;
     t06_step3) printf '%s\n' 7 ;;
-    t09) printf '%s\n' 8 ;;
+    t11) printf '%s\n' 8 ;;
+    t09) printf '%s\n' 9 ;;
     *) printf '%s\n' 99 ;;
   esac
 }
@@ -227,10 +229,10 @@ init_resume_plan() {
     REQUESTED_STAGES_TEXT=""
     local ordered
     if [[ "$start_stage" == "t07_step3" ]]; then
-      ordered=(t07_step3 t06_step12 t06_step3 t09)
+      ordered=(t07_step3 t06_step12 t06_step3 t11 t09)
       start_index=0
     else
-      ordered=(t08_preprocess t01 t07_step12 t03 t04 t05 t06_step12 t06_step3 t09)
+      ordered=(t08_preprocess t01 t07_step12 t03 t04 t05 t06_step12 t06_step3 t11 t09)
       start_index="$(stage_index "$start_stage")"
     fi
     for index in "${!ordered[@]}"; do
@@ -309,6 +311,7 @@ payload = {
         "T05",
         "T06 Step1/2",
         "T06 Step3",
+        "T11",
         "T09",
     ],
     "inputs": {},
@@ -398,6 +401,9 @@ if section == "outputs" and value in (None, ""):
         "t06_frcsd_node": ("t06_step3", "frcsd_node"),
         "t06_segment_relation": ("t06_step3", "segment_relation"),
         "t06_surface_topology_audit": ("t06_step3", "surface_topology_audit"),
+        "t11_run_root": ("t11", "run_root"),
+        "t11_candidates_csv": ("t11", "candidates_csv"),
+        "t11_summary_json": ("t11", "summary_json"),
         "t09_frcsd_restriction": ("t09", "frcsd_restriction"),
     }
     stage_key = stage_output_keys.get(key)
@@ -460,7 +466,10 @@ if isinstance(existing, dict):
 stages[stage_id] = record
 order = payload.setdefault("stage_order", [])
 if stage_id not in order:
-    order.append(stage_id)
+    if stage_id == "t11" and "t09" in order:
+        order.insert(order.index("t09"), stage_id)
+    else:
+        order.append(stage_id)
 path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 PY
 }
@@ -500,6 +509,16 @@ def _existing_output(flat_key: str, stage_id: str, stage_key: str, fallback: str
     return value
 
 
+def _existing_t11_output(flat_key: str, stage_key: str, filename: str) -> str:
+    value = outputs.get(flat_key) or (stages.get("t11") or {}).get("outputs", {}).get(stage_key) or ""
+    if not value:
+        matches = sorted(run_root.glob(f"t11_manual_relation_review/run_*/{filename}"))
+        value = str(matches[-1]) if matches else ""
+    if value and Path(value).is_file():
+        outputs[flat_key] = value
+    return value
+
+
 t06_frcsd_road = _existing_output(
     "t06_frcsd_road",
     "t06_step3",
@@ -512,6 +531,16 @@ t06_frcsd_node = _existing_output(
     "frcsd_node",
     "t06_segment_fusion_precheck/t06_innernet_precheck/step3_segment_replacement/t06_frcsd_node.gpkg",
 )
+t11_candidates_csv = _existing_t11_output(
+    "t11_candidates_csv",
+    "candidates_csv",
+    "t11_relation_repair_candidates.csv",
+)
+t11_summary_json = _existing_t11_output(
+    "t11_summary_json",
+    "summary_json",
+    "t11_relation_repair_candidate_summary.json",
+)
 t09_frcsd_restriction = _existing_output(
     "t09_frcsd_restriction",
     "t09",
@@ -523,10 +552,14 @@ missing_final_outputs = [
     for key, value in {
         "t06_frcsd_road": t06_frcsd_road,
         "t06_frcsd_node": t06_frcsd_node,
+        "t11_candidates_csv": t11_candidates_csv,
+        "t11_summary_json": t11_summary_json,
         "t09_frcsd_restriction": t09_frcsd_restriction,
     }.items()
     if not value or not Path(value).is_file()
 ]
+if (stages.get("t11") or {}).get("status") != "passed":
+    missing_final_outputs.append("t11_stage")
 passed = status == "passed" and exit_code == 0 and not missing_final_outputs
 final_status = "passed" if passed else "failed"
 final_exit_code = exit_code if not (status == "passed" and missing_final_outputs) else 2
@@ -557,6 +590,8 @@ summary = {
     "missing_final_outputs": missing_final_outputs,
     "t06_frcsd_road": t06_frcsd_road,
     "t06_frcsd_node": t06_frcsd_node,
+    "t11_candidates_csv": t11_candidates_csv,
+    "t11_summary_json": t11_summary_json,
     "t09_frcsd_restriction": t09_frcsd_restriction,
     "manifest": str(manifest_path),
 }
@@ -1207,6 +1242,58 @@ if should_run_stage t06_step3; then
     "execution_context.run_root=$T06_STEP3_ROOT"
 fi
 
+T11_OUT_ROOT="$RUN_ROOT/t11_manual_relation_review"
+if should_run_stage t11; then
+  run_logged t11 \
+    "$PYTHON_BIN" scripts/t11_extract_relation_repair_candidates.py \
+      --t10-case-root "$RUN_ROOT" \
+      --out-root "$T11_OUT_ROOT" \
+      --case-id "$RUN_ID"
+fi
+T11_RUN_ROOT="$(manifest_get outputs t11_run_root "")"
+if should_run_stage t11; then
+  T11_RUN_ROOT="$("$PYTHON_BIN" - "$LOG_ROOT/t11.log" <<'PY'
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+text = Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace")
+start = text.find("{")
+if start < 0:
+    print("")
+else:
+    try:
+        print(json.loads(text[start:]).get("run_root") or "")
+    except json.JSONDecodeError:
+        print("")
+PY
+)"
+fi
+if [[ -z "$T11_RUN_ROOT" && -d "$T11_OUT_ROOT" ]]; then
+  T11_RUN_ROOT="$(find "$T11_OUT_ROOT" -mindepth 1 -maxdepth 1 -type d -name 'run_*' -print | sort | tail -n 1)"
+fi
+if [[ -z "$T11_RUN_ROOT" ]]; then
+  T11_RUN_ROOT="$T11_OUT_ROOT/run_missing"
+fi
+T11_CANDIDATES_CSV="$(manifest_get outputs t11_candidates_csv "$T11_RUN_ROOT/t11_relation_repair_candidates.csv")"
+T11_SUMMARY_JSON="$(manifest_get outputs t11_summary_json "$T11_RUN_ROOT/t11_relation_repair_candidate_summary.json")"
+require_file T11_CANDIDATES_CSV "$T11_CANDIDATES_CSV"
+require_file T11_SUMMARY_JSON "$T11_SUMMARY_JSON"
+if should_run_stage t11; then
+  manifest_set outputs t11_run_root "$T11_RUN_ROOT"
+  manifest_set outputs t11_candidates_csv "$T11_CANDIDATES_CSV"
+  manifest_set outputs t11_summary_json "$T11_SUMMARY_JSON"
+  manifest_stage_record t11 T11 passed "$LOG_ROOT/t11.log" \
+    "inputs.t10_run_root=$RUN_ROOT" \
+    "inputs.t06_step3_root=$T06_STEP3_ROOT" \
+    "outputs.run_root=$T11_RUN_ROOT" \
+    "outputs.candidates_csv=$T11_CANDIDATES_CSV" \
+    "outputs.summary_json=$T11_SUMMARY_JSON" \
+    "execution_context.run_root=$T11_RUN_ROOT"
+fi
+
 T09_OUT_ROOT="$RUN_ROOT/t09_swsd_field_rule_restoration"
 if should_run_stage t09; then
   run_logged t09 \
@@ -1315,4 +1402,5 @@ echo "[DONE] manifest=$MANIFEST_PATH"
 echo "[DONE] summary=$SUMMARY_PATH"
 echo "[DONE] final_frcsd_road=$T06_FRCSD_ROAD"
 echo "[DONE] final_frcsd_node=$T06_FRCSD_NODE"
+echo "[DONE] t11_candidates=$T11_CANDIDATES_CSV"
 echo "[DONE] final_restriction=$T09_RESTRICTION"

@@ -16,6 +16,7 @@ from typing import Any, Mapping, Sequence
 from .contracts import T10_MODULE_ID, T10_T08_POLICY, T10_V1_CHAIN
 from .segment_noop_handoffs import try_segment_no_candidate_handoff as _seg_noop
 from .upstream_feedback import write_t10_upstream_feedback
+from .case_runner_t11 import run_t11_stage as _run_t11
 
 
 T10_E2E_STAGE_ORDER = (
@@ -26,6 +27,7 @@ T10_E2E_STAGE_ORDER = (
     "t05",
     "t06_step12",
     "t06_step3",
+    "t11",
     "t09_step12",
     "t09_step3",
 )
@@ -39,6 +41,7 @@ T10_E2E_STAGE_MODULES = {
     "t07_step3": "t07_semantic_junction_anchor",
     "t06_step12": "t06_segment_fusion_precheck",
     "t06_step3": "t06_segment_fusion_precheck",
+    "t11": "t11_manual_relation_review",
     "t09_step12": "t09_swsd_field_rule_restoration",
     "t09_step3": "t09_swsd_field_rule_restoration",
 }

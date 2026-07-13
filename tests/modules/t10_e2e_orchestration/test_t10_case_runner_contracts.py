@@ -820,14 +820,20 @@ def test_t10_innernet_full_pipeline_finalize_existing_run_root(tmp_path: Path) -
     repo_root = Path(__file__).resolve().parents[3]
     run_root = tmp_path / "t10_existing_run"
     t06_step3 = run_root / "t06_segment_fusion_precheck" / "t06_innernet_precheck" / "step3_segment_replacement"
+    t11_run_root = run_root / "t11_manual_relation_review" / "run_test"
     t09_step3 = run_root / "t09_swsd_field_rule_restoration" / "t09_step3"
     t06_step3.mkdir(parents=True)
+    t11_run_root.mkdir(parents=True)
     t09_step3.mkdir(parents=True)
     frcsd_road = t06_step3 / "t06_frcsd_road.gpkg"
     frcsd_node = t06_step3 / "t06_frcsd_node.gpkg"
+    t11_candidates = t11_run_root / "t11_relation_repair_candidates.csv"
+    t11_summary = t11_run_root / "t11_relation_repair_candidate_summary.json"
     frcsd_restriction = t09_step3 / "frcsd_restriction.gpkg"
     frcsd_road.touch()
     frcsd_node.touch()
+    t11_candidates.touch()
+    t11_summary.touch()
     frcsd_restriction.touch()
     manifest = {
         "run_id": run_root.name,
@@ -838,7 +844,7 @@ def test_t10_innernet_full_pipeline_finalize_existing_run_root(tmp_path: Path) -
         "passed": False,
         "inputs": {},
         "outputs": {},
-        "stage_order": ["t06_step3", "t09"],
+        "stage_order": ["t06_step3", "t11", "t09"],
         "stages": {
             "t06_step3": {
                 "stage_id": "t06_step3",
@@ -847,6 +853,16 @@ def test_t10_innernet_full_pipeline_finalize_existing_run_root(tmp_path: Path) -
                 "outputs": {
                     "frcsd_road": str(frcsd_road),
                     "frcsd_node": str(frcsd_node),
+                },
+            },
+            "t11": {
+                "stage_id": "t11",
+                "module_id": "T11",
+                "status": "passed",
+                "outputs": {
+                    "run_root": str(t11_run_root),
+                    "candidates_csv": str(t11_candidates),
+                    "summary_json": str(t11_summary),
                 },
             },
             "t09": {
@@ -889,6 +905,8 @@ def test_t10_innernet_full_pipeline_finalize_existing_run_root(tmp_path: Path) -
     assert summary["missing_final_outputs"] == []
     assert summary["t06_frcsd_road"] == str(frcsd_road)
     assert summary["t06_frcsd_node"] == str(frcsd_node)
+    assert summary["t11_candidates_csv"] == str(t11_candidates)
+    assert summary["t11_summary_json"] == str(t11_summary)
     assert summary["t09_frcsd_restriction"] == str(frcsd_restriction)
     assert updated_manifest["status"] == "passed"
     assert updated_manifest["passed"] is True

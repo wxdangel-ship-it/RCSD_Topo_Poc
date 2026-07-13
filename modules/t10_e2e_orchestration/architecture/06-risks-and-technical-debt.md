@@ -9,7 +9,7 @@
 ## 2. 运行风险
 
 - 内网全量脚本依赖大量路径和阶段输出，resume / RUN_STAGES / FINALIZE_EXISTING 需要准确区分。
-- 旧 run 可能完成 T09 但缺顶层 T10 summary，需要 finalize-existing 补写完成态。
+- 旧 run 可能完成 T09 但缺 T11；按新完成口径必须先通过 `RUN_STAGES=t11` 补齐并登记 T11，再使用 finalize-existing 补写完成态。
 - Case package 切片如果缺道路端点节点，会导致本地 replay 拓扑不完整。
 
 ## 3. 结构债

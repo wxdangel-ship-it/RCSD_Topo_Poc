@@ -24,7 +24,7 @@ Case 包 v1 是 spatial-slice-first：
 
 ## 3. Suggest 策略
 
-`suggest` 先从 `prepared_swsd_nodes` 建立语义路口 inventory。可选 selector evidence 用于把 T08 质检错误、T05/T06/T09 失败审计等问题线索映射回 SWSD 语义路口。
+`suggest` 先从 `prepared_swsd_nodes` 建立语义路口 inventory。可选 selector evidence 用于把 T08 质检错误、T05/T06/T11/T09 失败审计等问题线索映射回 SWSD 语义路口。
 
 没有 selector evidence 时，`suggest` 只能输出 `inventory_only`；有 selector evidence 且命中 CaseID 或 member node 时，输出 `problem_candidate`。
 
@@ -34,17 +34,17 @@ T08 的预处理、质检与修复能力作为 T10 外部输入准备前提。T1
 
 ## 5. Case Runner 策略
 
-T10 Case runner 从 Case package 启动，优先使用 package 内局部切片，按 `T01 -> T07 Step1/2 -> T03 -> T04 -> T05 -> T06 -> T09` 调用既有脚本或模块 callable。
+T10 Case runner 从 Case package 启动，优先使用 package 内局部切片，按 `T01 -> T07 Step1/2 -> T03 -> T04 -> T05 -> T06 -> T11 -> T09` 调用既有脚本或模块 callable。
 
-runner 不修改 T01-T09 算法，也不把目录型结果隐式传给下游。每个阶段都记录显式文件输入、输出、命令、stdout log、耗时和状态。
+runner 不修改 T01-T09 / T11 算法，也不把目录型结果隐式传给下游。T11 CLI 使用 Case root 聚合输入时，T10 stage record 同时记录关键 T06 文件，T11 summary 记录全部实际发现路径。每个阶段都记录显式输入、输出、命令、stdout log、耗时和状态。
 
-节点状态 handoff 必须连续传递：`t07_nodes` 只表示 T07 Step2 既有路口面锚定结果；T03 运行后发布 `t03_nodes`，T04 必须消费它；T04 运行后发布 `t04_nodes / final_swsd_nodes`，T05 / T06 / T09 必须消费 `final_swsd_nodes`。Relation handoff 则由 T07/T03/T04 evidence 进入 T05，最终由 T05 `intersection_match_all` 统一发布。
+节点状态 handoff 必须连续传递：`t07_nodes` 只表示 T07 Step2 既有路口面锚定结果；T03 运行后发布 `t03_nodes`，T04 必须消费它；T04 运行后发布 `t04_nodes / final_swsd_nodes`，T05 / T06 / T11 / T09 必须消费该事实。Relation handoff 则由 T07/T03/T04 evidence 进入 T05，最终由 T05 `intersection_match_all` 统一发布。
 
 T07 Step3 保留为可选兼容 relation 补锚能力，只有在明确提供早期或外部 `intersection_match_all` 兼容 relation 输入时才应运行。它不能被 T10 解释成 T05 之后的默认重锚阶段，也不能替代 T07/T03/T04/T05 的正式 relation 主业务链。
 
 T03 / T04 当前仍基于输入切片自动发现候选 Case，T10 不在本层强行改写候选发现规则，只把发现结果和失败状态作为审计事实记录。
 
-T09 当前没有 repo 主 runner；T10 通过 T09 既有模块 callable 执行 Step1/2，并在 T06 Step3 成功后调用 Step3 F-RCSD restriction 投影。
+T06 Step3 成功后，T10 先调用既有 T11 入口生成 relation repair candidate audit；T11 不回写或替代 T06 handoff。随后 T10 通过 T09 既有模块 callable 执行 Step1/2 与 Step3 F-RCSD restriction 投影，T09 输入仍直接来自 T06。
 
 ## 6. T06 漏斗策略
 

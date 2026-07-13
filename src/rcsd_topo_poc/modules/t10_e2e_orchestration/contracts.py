@@ -14,6 +14,7 @@ T10_V1_CHAIN = (
     "t04_divmerge_virtual_polygon",
     "t05_junction_surface_fusion",
     "t06_segment_fusion_precheck",
+    "t11_manual_relation_review",
     "t09_swsd_field_rule_restoration",
 )
 
@@ -66,7 +67,7 @@ HANDOFF_REQUIREMENTS: tuple[ArtifactRequirement, ...] = (
     ArtifactRequirement("t03_relation_evidence", "t03_virtual_junction_anchor", "T03 relation evidence CSV/JSON."),
     ArtifactRequirement("t03_intersection_match", "t03_virtual_junction_anchor", "T03 intersection_match_t03.geojson."),
     ArtifactRequirement("t04_nodes", "t04_divmerge_virtual_polygon", "T04 downstream nodes.gpkg after divmerge anchors."),
-    ArtifactRequirement("final_swsd_nodes", "t04_divmerge_virtual_polygon", "Final SWSD nodes.gpkg consumed by T05/T06/T09."),
+    ArtifactRequirement("final_swsd_nodes", "t04_divmerge_virtual_polygon", "Final SWSD nodes.gpkg consumed by T05/T06/T11/T09."),
     ArtifactRequirement("t04_surface", "t04_divmerge_virtual_polygon", "T04 divmerge_virtual_anchor_surface.gpkg."),
     ArtifactRequirement("t04_relation_evidence", "t04_divmerge_virtual_polygon", "T04 relation evidence CSV/JSON."),
     ArtifactRequirement("t04_intersection_match", "t04_divmerge_virtual_polygon", "T04 intersection_match_t04.geojson."),
@@ -81,6 +82,8 @@ HANDOFF_REQUIREMENTS: tuple[ArtifactRequirement, ...] = (
         "t06_segment_fusion_precheck",
         "T06 Step3 SWSD-to-FRCSD segment relation index.",
     ),
+    ArtifactRequirement("t11_relation_repair_candidates", "t11_manual_relation_review", "T11 relation repair candidates CSV."),
+    ArtifactRequirement("t11_relation_repair_summary", "t11_manual_relation_review", "T11 candidate extraction summary JSON."),
     ArtifactRequirement("t09_restored_field_rules", "t09_swsd_field_rule_restoration", "T09 restored field rules output."),
 )
 
@@ -94,6 +97,7 @@ DIRECTORY_ONLY_HANDOFF_KEYS = frozenset(
         "t06_dir",
         "t07_dir",
         "t09_dir",
+        "t11_dir",
     }
 )
 
@@ -144,6 +148,22 @@ WORKFLOW_STEPS: tuple[WorkflowStepSpec, ...] = (
         "t06_segment_fusion_precheck",
         consumes=("t01_segment", "t01_roads", "final_swsd_nodes", "t05_intersection_match_all", "t05_rcsdroad_out", "t05_rcsdnode_out"),
         produces=("t06_frcsd_road", "t06_frcsd_node", "t06_swsd_frcsd_segment_relation"),
+    ),
+    WorkflowStepSpec(
+        "t11",
+        "t11_manual_relation_review",
+        consumes=(
+            "t01_segment",
+            "t01_roads",
+            "final_swsd_nodes",
+            "t05_rcsdroad_out",
+            "t05_rcsdnode_out",
+            "t06_frcsd_road",
+            "t06_frcsd_node",
+            "t06_swsd_frcsd_segment_relation",
+        ),
+        produces=("t11_relation_repair_candidates", "t11_relation_repair_summary"),
+        notes="T11 is audit-only. T09 remains a direct consumer of T06 business outputs.",
     ),
     WorkflowStepSpec(
         "t09",

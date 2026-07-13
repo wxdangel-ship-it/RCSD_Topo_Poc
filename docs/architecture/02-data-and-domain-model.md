@@ -8,13 +8,13 @@
 
 | 对象 | 项目级含义 | 主要消费者 |
 |---|---|---|
-| SWSD | 现场道路、节点、Laneinfo、restriction 等源侧语义数据 | T08、T01、T03、T04、T05、T06、T09 |
-| RCSD | 场景路网侧 Road / Node / RoadNextRoad 等承载数据 | T08、T03、T04、T05、T06、T09 |
-| F-RCSD | 经 T06 Segment 替换后形成的融合承载数据 | T09、P01 |
+| SWSD | 现场道路、节点、Laneinfo、restriction 等源侧语义数据 | T08、T01、T03、T04、T05、T06、T11、T09 |
+| RCSD | 场景路网侧 Road / Node / RoadNextRoad 等承载数据 | T08、T03、T04、T05、T06、T11、T09 |
+| F-RCSD | 经 T06 Segment 替换后形成的融合承载数据 | T11（审计）、T09、P01 |
 | Semantic Junction | SWSD 语义路口代表对象，承载路口级关联、锚定与通行建模语义 | T07、T03、T04、T05、T09 |
-| Segment | 以 SWSD Road / Node 组织出的可替换道路连续单元 | T01、T06、T09 |
+| Segment | 以 SWSD Road / Node 组织出的可替换道路连续单元 | T01、T06、T11、T09 |
 | Virtual Anchor | 在无现成 RCSD 路口面或需补充表达时构建的虚拟锚定成果 | T03、T04、T05 |
-| Relation Evidence | SWSD 与 RCSD 语义路口、Road、Segment 的关联证据 | T05、T06、T09 |
+| Relation Evidence | SWSD 与 RCSD 语义路口、Road、Segment 的关联证据 | T05、T06、T11、T09 |
 
 ## 主数据流
 

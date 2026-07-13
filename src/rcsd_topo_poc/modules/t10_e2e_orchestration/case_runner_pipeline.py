@@ -711,6 +711,8 @@ def _run_stage(
         return _run_t06_step12(case_id, stage_dir, repo_root, python_bin, handoffs)
     if stage_id == "t06_step3":
         return _run_t06_step3(case_id, stage_dir, repo_root, python_bin, handoffs)
+    if stage_id == "t11":
+        return _facade._run_t11(case_id, case_run_dir, stage_dir, repo_root, python_bin, handoffs)
     if stage_id == "t09_step12":
         return _run_t09_step12(case_id, stage_dir, repo_root, python_bin, external_inputs, handoffs)
     if stage_id == "t09_step3":

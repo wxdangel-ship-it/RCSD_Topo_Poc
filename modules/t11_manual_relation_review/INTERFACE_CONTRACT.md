@@ -70,6 +70,14 @@ T11 按文件名和常规 T10 layout 探测输入，不要求调用方传入 T05
 
 该脚本只包装 callable，不新增业务规则。
 
+T10 编排集成：
+
+- Case runner 在 `t06_step3` 后、`t09_step12` 前以单用例模式调用本入口，`--t10-case-root` 指向 `cases/<case_id>/`。
+- Innernet full pipeline 在 T06 Step3 后、T09 前以单用例模式调用本入口，`--t10-case-root` 指向当前 full pipeline `RUN_ROOT`。
+- full pipeline 固定布局通过显式相对路径发现；递归同名 fallback 只保留兼容作用。
+- T10 只把 T11 candidates/summary 登记为审计 handoff；T09 不消费这些文件。
+- T11 失败或必要 candidates/summary 缺失时，T10 当前 Case/full pipeline 不得标记 passed。
+
 六用例批量性能与回归模式复用同一正式入口：
 
 ```bash

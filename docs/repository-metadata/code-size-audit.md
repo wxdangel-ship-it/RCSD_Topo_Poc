@@ -2,12 +2,12 @@
 
 ## 范围
 
-- 主审计日期：2026-06-12；T09 增量审计：2026-07-10；T10 性能与 60KB 治理增量审计：2026-07-11；T01/T06 ownership 增量审计：2026-07-12
+- 主审计日期：2026-06-12；T09 增量审计：2026-07-10；T10 性能与 60KB 治理增量审计：2026-07-11；T01/T06 ownership 增量审计：2026-07-12；T10 增加 T11 工作流增量审计：2026-07-13
 - 阈值：单文件超过 `100 KB`
 - 口径：按 `code-boundaries-and-entrypoints.md`，审计纳入版本管理的 `src/`、`scripts/`、`tests/`、`tools/` 下源码 / 脚本文件。
 - 本表只记录结构债事实，不代表本轮进入对应模块正文治理。
 - 用户于 2026-07-11 明确确认 T02 已废弃并授权本轮不拆分；T02 超线文件继续登记为结构债，但从本轮 60KB 收敛验收中排除，且本轮未触碰 T02 源码或测试。
-- 2026-07-12 T01/T06 ownership 工作树最终扫描覆盖 `791` 个受治理源码/脚本/测试文件；除下列 Retired T02 文件外，`>= 61440 bytes` 文件为 `step2_trunk_utils.py`（Windows CRLF 下 `62004` bytes）与 `step3_surface_aware_plan_release.py`（`74093` bytes），均低于 100KB 硬阈值。Final topology gate 已拆至 `step3_final_topology_gate.py`（`9687` bytes），hard-gate 级联 transition 收口已拆至 `step3_authoritative_transition_closure.py`（`14812` bytes）；主编排文件仍低于 100KB。
+- 2026-07-13 T10 增加 T11 工作流后的 Windows worktree 扫描确认：除下列 Retired T02 文件外，`>= 61440 bytes` 文件仍仅为 `step2_trunk_utils.py`（`62004` bytes）与 `step3_surface_aware_plan_release.py`（`74453` bytes），均低于 100KB 硬阈值且本轮未触碰；本轮修改的 9 个源码/脚本/测试文件全部低于 60KiB，最大为 `case_runner_pipeline.py`（`58855` bytes）。Final topology gate 已拆至 `step3_final_topology_gate.py`（`9687` bytes），hard-gate 级联 transition 收口已拆至 `step3_authoritative_transition_closure.py`（`14812` bytes）；主编排文件仍低于 100KB。
 
 ## 结果
 
@@ -29,7 +29,7 @@
 | `src/rcsd_topo_poc/modules/t04_divmerge_virtual_polygon/polygon_assembly.py` | `49351` bytes | T-01 已拆出 raster/path helper，主 assembly 文件降至 50 KB 以下 | 后续继续保持主流程不回填低层 raster/path helper |
 | `src/rcsd_topo_poc/modules/t04_divmerge_virtual_polygon/_runtime_step4_geometry_base.py` | `48003` bytes | 原 `_runtime_step4_geometry_reference.py` 已改名为 geometry base，低于阈值 | 后续避免重新引入 `reference` 命名误导 |
 | `src/rcsd_topo_poc/modules/t04_divmerge_virtual_polygon/outputs.py` | `48524` bytes | T04 输出层新增 arbiter ledger / decision trace / review index 字段后接近 50 KB | 后续新增输出字段前优先拆 review-index writer / audit writer helper |
-| `src/rcsd_topo_poc/modules/t06_segment_fusion_precheck/step3_surface_aware_plan_release.py` | `74093` bytes | Final topology decision、fail-key 与 plan rollback helper 已拆至独立模块；主文件仍低于 100KB 硬阈值但超过 60KB 治理线 | 后续继续拆分 postplan baseline/rollback orchestration 与 audit payload helper，禁止回填低层 topology helper |
+| `src/rcsd_topo_poc/modules/t06_segment_fusion_precheck/step3_surface_aware_plan_release.py` | `74453` Windows worktree bytes | Final topology decision、fail-key 与 plan rollback helper 已拆至独立模块；主文件仍低于 100KB 硬阈值但超过 60KB 治理线 | 后续继续拆分 postplan baseline/rollback orchestration 与 audit payload helper，禁止回填低层 topology helper |
 | `src/rcsd_topo_poc/modules/t04_divmerge_virtual_polygon/_event_interpretation_unit_preparation.py` | `41565` bytes | Round 2 新拆出的 unit preparation / pair-local materialization 模块 | 后续仅承接 preparation 与 scope materialization，不承接 candidate selection |
 | `src/rcsd_topo_poc/modules/p01_arm_build/final_arm_validation.py` | `53011` bytes | FinalArm relaxed reverse / supplemental trace validation 实现 | 后续若继续扩展 validation 分支，优先拆 validation builder 与 evidence helper |
 | `src/rcsd_topo_poc/modules/p01_arm_build/review.py` | `52972` bytes | P01 retained audit PNG / review GPKG 图层 helper | 后续 review 输出扩展先评估 layer builder / png renderer 拆分 |
@@ -196,11 +196,16 @@
 | `tests/modules/t01_data_preprocess/test_step2_segment_tighten.py` | `58685` bytes | 新拆出的 compact release、component tighten、runtime/output 场景 | 已低于 60KB；新增 tighten 场景优先继续按主题分文件 |
 | `tests/modules/t01_data_preprocess/test_step2_segment_arbitration.py` | `38739` bytes | 新拆出的 exact solver、pair conflict 与 strong-anchor arbitration 场景 | 保持 arbitration 专项测试职责 |
 | `tests/modules/t01_data_preprocess/test_step2_segment_gates.py` | `34926` bytes | 新拆出的 T-junction、side-bypass、minimal-loop 与 trunk-choice gate 场景 | 保持 trunk/gate 专项测试职责 |
-| `src/rcsd_topo_poc/modules/t10_e2e_orchestration/case_runner.py` | `102194 -> 48004` bytes | 保留 T10 manifest/funnel/visual/feedback helper、业务常量与既有 API/CLI；case/stage 主编排已下沉 | 已低于 60KB；禁止回填 case runner 主流程 |
-| `src/rcsd_topo_poc/modules/t10_e2e_orchestration/case_runner_pipeline.py` | `57455` bytes | 新拆出的 package/feedback iteration、逐 case、逐 stage 与 T01-T09 command 编排 | 通过 facade 动态代理保持 `_run_one_case`、`_run_stage`、command 与 feedback monkeypatch 语义 |
+| `src/rcsd_topo_poc/modules/t10_e2e_orchestration/case_runner.py` | `102194 -> 48126` worktree bytes | 保留 T10 manifest/funnel/visual/feedback helper、业务常量与既有 API/CLI；登记 `t11` stage 并将 adapter 下沉 | 已低于 60KiB；禁止回填 case runner 主流程 |
+| `src/rcsd_topo_poc/modules/t10_e2e_orchestration/contracts.py` | `8965` worktree bytes | T10 workflow chain、T11 audit handoff requirements 与 step contract | T11 产物不作为 T09 业务输入 |
+| `src/rcsd_topo_poc/modules/t10_e2e_orchestration/case_runner_pipeline.py` | `58855` worktree bytes | package/feedback iteration、逐 case与逐 stage dispatcher；仅增加最小 `t11` 分派 | 低于 60KiB 但接近安全线；T11 具体编排不得回填 |
+| `src/rcsd_topo_poc/modules/t10_e2e_orchestration/case_runner_t11.py` | `3388` worktree bytes | T10 Case runner 的 T11 输入门禁、正式入口调用、run root 与必要输出审计 adapter | 内部模块，不新增正式入口；T11 保持 audit-only |
+| `scripts/t10_run_e2e_cases.sh` | `6113` worktree bytes | 既有 T10 Case runner wrapper，`STOP_AFTER` 文档增加 `t11` | 不新增入口，调用方式保持兼容 |
+| `scripts/t10_run_innernet_full_pipeline.sh` | `54803` worktree bytes | 既有内网全量总控，增加 T11 stage、resume、manifest、summary 与 finalize 完成门禁 | 保持低于 60KiB；T09 仍直接消费 T06 业务输出 |
 | `tests/modules/t10_e2e_orchestration/test_t10_contracts.py` | `92001 -> 42931` bytes | 保留 manifest、handoff、package、funnel 与 feedback 基础契约回归 | case-runner iteration/visual/finalize 场景进入独立测试文件 |
 | `tests/modules/t10_e2e_orchestration/t10_contract_test_support.py` | `9153` bytes | 新拆出的 T10 契约测试 manifest/vector/feedback fixture helper | 仅供测试复用，不新增正式入口 |
-| `tests/modules/t10_e2e_orchestration/test_t10_case_runner_contracts.py` | `38267` bytes | 新拆出的 runner blocking、feedback iteration、completion、visual summary 与 finalize 回归 | 保持 case-runner 专项测试职责 |
+| `tests/modules/t10_e2e_orchestration/test_t10_case_runner_contracts.py` | `39939` worktree bytes | runner blocking、feedback iteration、completion、visual summary 与含 T11 的 finalize 回归 | 保持 case-runner 专项测试职责 |
+| `tests/modules/t10_e2e_orchestration/test_t10_t11_workflow.py` | `6851` worktree bytes | T06→T11→T09 stage order、adapter、输入门禁、full input discovery 与 legacy finalize 回归 | 仅测试既有入口编排，不新增执行入口 |
 | `src/rcsd_topo_poc/modules/t09_swsd_field_rule_restoration/frcsd_restriction.py` | `99397 -> 39468` bytes | 保留 T09 Step3 schema、输入/summary/helper 与既有 callable 导出；carrier/feature/publish 编排已下沉 | 已低于 60KB；禁止回填 Step3 主编排 |
 | `src/rcsd_topo_poc/modules/t09_swsd_field_rule_restoration/frcsd_restriction_pipeline.py` | `54689` bytes | 新拆出的 Arm carrier、v1/v2 stable/candidate feature、condition 与 restriction row 编排 | 保持 scope-aware 投影和 stable/candidate 原子分层职责 |
 | `src/rcsd_topo_poc/modules/t09_swsd_field_rule_restoration/frcsd_restriction_runner.py` | `11295` bytes | 新拆出的 T09 F-RCSD restriction 顶层读取、写出、summary 与 artifact 组装 | 通过 facade 动态代理保持既有 callable 与 helper 语义 |
@@ -218,7 +223,7 @@
 | `tests/modules/p01_arm_build/p01_test_support.py` | `16861` bytes | 新拆出的 P01 dataset、validation、movement/source fixture helper | 仅供测试复用，不新增正式入口 |
 | `tests/modules/p01_arm_build/test_p01_final_and_bundle.py` | `50849` bytes | 新拆出的 F-RCSD final projection、topology gate、text-bundle 与 IO 回归 | 保持 final/bundle 专项测试职责 |
 | `src/rcsd_topo_poc/modules/t11_manual_relation_review/extract.py` | `85083 -> 56222` worktree bytes | 保留 T11 candidate/anchor/relation-gap build、summary 与输出 helper；顶层抽取与输入发现已下沉 | 已低于 60KiB；禁止回填 extract 主编排 |
-| `src/rcsd_topo_poc/modules/t11_manual_relation_review/extract_pipeline.py` | `36031` worktree bytes | 新拆出的 T10 Case 输入发现、数据读取、基础索引与 T11 candidate 总编排 | 通过 facade 动态代理保持审计表构建和输出语义 |
+| `src/rcsd_topo_poc/modules/t11_manual_relation_review/extract_pipeline.py` | `38454` worktree bytes | T10 Case/full pipeline 输入发现、数据读取、基础索引与 T11 candidate 总编排；full layout 使用显式相对路径 | 通过 facade 动态代理保持审计表构建和输出语义 |
 | `src/rcsd_topo_poc/modules/t11_manual_relation_review/segment_tables.py` | `29825` worktree bytes | T11 Segment relation 审计表构建；50m RCSD 上下文按节点缓存，并通过空间索引预筛后执行原精确距离判定 | 保持 CRS、`distance <= 50.0`、最近距离、候选排序和几何语义不变 |
 | `scripts/t11_extract_relation_repair_candidates.py` | `5445` worktree bytes | 既有 T11 正式入口；保留单用例模式并增加六用例批量受控并行编排 | 不是新增入口；`--workers` 限制 `1..8`，每 Case 输出根隔离 |
 | `tests/modules/t11_manual_relation_review/test_extract_cli.py` | `4350` worktree bytes | T11 单用例兼容、批量顺序/输出隔离、worker 边界和人工 CSV 防误用测试 | 仅测试正式入口参数化，不新增执行入口 |

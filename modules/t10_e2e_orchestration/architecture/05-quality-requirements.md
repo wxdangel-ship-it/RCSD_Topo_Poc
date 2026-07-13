@@ -2,7 +2,8 @@
 
 ## 1. 编排正确性
 
-- T10 v1 Case runner 固定为 `T01 -> T07 Step1/2 -> T03 -> T04 -> T05 -> T06 -> T09`。
+- T10 v1 Case runner 固定为 `T01 -> T07 Step1/2 -> T03 -> T04 -> T05 -> T06 -> T11 -> T09`。
+- T11 为 audit-only 必经阶段；T11 失败或必要产物缺失时，T09 不得运行。
 - T07 Step3 不得作为 T05 后默认必经阶段；只有显式提供兼容 relation 输入时，才允许作为独立兼容补锚阶段运行。
 - Case runner 不调用 T08。
 - Full pipeline 总控可把 T08 作为独立前置阶段串入。
@@ -20,11 +21,11 @@
 
 - manifest、summary、logs 和 handoff audit 必须能定位每个阶段输入输出。
 - T06 funnel、feedback 和 visual check 必须记录来源 run/case 路径。
-- resume / finalize-existing 必须区分补写完成态和重新执行阶段。
+- resume / finalize-existing 必须区分补写完成态和重新执行阶段；legacy run 缺 T11 时必须先补跑 T11，不能直接按新口径 finalize passed。
 
 ## 4. 回归要求
 
-测试应覆盖 Case package、Segment package、multi-case / multi-segment layout、text bundle 分片解包、Case runner 阶段状态、T06 funnel、visual check、feedback iteration regression guard、manifest stage order、resume 和 finalize-existing。
+测试应覆盖 Case package、Segment package、multi-case / multi-segment layout、text bundle 分片解包、Case runner 阶段状态、T06 funnel、T11 stage、visual check、feedback iteration regression guard、manifest stage order、resume 和 finalize-existing。
 
 ## 5. 性能要求
 

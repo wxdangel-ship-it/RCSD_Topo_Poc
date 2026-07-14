@@ -7,7 +7,7 @@ T08 是项目正式预处理模块，负责 SWSD / RCSD 输入数据的格式转
 ## 2. 业务目标
 
 - 将多格式空间数据转换为项目可消费的 GPKG / GeoJSON。
-- 补齐 SWSD Road / Node 的 `patch_id / kind / kind_2 / grade_2` 等下游基础字段。
+- 补齐 SWSD Road / Node 的 `patch_id / kind / kind_2 / grade_2` 等下游基础字段，并将原始 Node 别名 `closed_connect` 归一为规范字段 `closed_con`。
 - 把历史 T01/T02/T04 中的部分属性修复与预处理职责收敛到正式预处理模块。
 - 将 SWSD restriction 与 Laneinfo arrow 显性化，支撑 T09 通行规则恢复。
 - 清理 RCSDNode / RCSDRoad，保证下游 relation 与 Segment 替换输入可解释。
@@ -76,7 +76,7 @@ T08 是项目正式预处理模块，负责 SWSD / RCSD 输入数据的格式转
 |---|---|
 | Tool1 | 将 SHP / GeoJSON / GPKG 转成下游可消费格式，并保留 CRS 与 summary。 |
 | Tool2 | 为 Road 补 `patch_id / kind`，输出未命中 Road，并剔出 `17` 事件 Road。 |
-| Tool3 | 初始化 `kind_2 / grade_2`，按 `roadtype bit3` 聚合环岛 mainnode。 |
+| Tool3 | 初始化 `kind_2 / grade_2`，归一 `closed_connect -> closed_con`，按 `roadtype bit3` 聚合环岛 mainnode；引用缺失端点的 Road 仅从环岛拓扑计算跳过并审计，不删除输入 Road。 |
 | Tool4 | 根据入度 / 出度、提前右转 / 辅路豁免和 Tool6 人工确认结果修复路口类型。 |
 | Tool5 | 聚合复杂分歧 / 合流链路，并处理 RCSDIntersection 一对多错误路口。 |
 | Tool6 | 输出连续分合流和交叉 / T 型错误候选，供人工确认后被 Tool4 消费。 |

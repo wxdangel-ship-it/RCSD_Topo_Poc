@@ -18,6 +18,7 @@
   - `GeoJSON(.geojson/.json)` 与 `Shapefile(.shp)` 继续兼容
 - node 输入约束：
   - `closed_con in {2,3}`
+  - 原始输入字段 `closed_connect` 与 `closed_con` 等价，但 T01 强规则只读取规范字段 `closed_con`；正式链路由 T08 Tool3 先完成 copy-on-write 归一。两字段并存且值不一致时不得进入 T01。
 - road 输入约束：
   - 双向 `Step1-Step5C` 构段继续使用 `road_kind != 1`
   - `formway != 128`
@@ -89,6 +90,7 @@
   - `id`
   - `mainnodeid`
   - `closed_con`
+  - `closed_connect` 只作为已确认的上游输入别名保留，不作为第二套业务字段进入规则。
   - `grade`
   - `kind`
   - `grade_2`

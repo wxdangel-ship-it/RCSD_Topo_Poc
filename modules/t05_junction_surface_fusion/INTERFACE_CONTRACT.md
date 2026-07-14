@@ -11,6 +11,8 @@ Phase 1 不生产关系表，不输出 `intersection_match_all.geojson`，不打
 
 Phase 2 不重新融合路口面，不修改 Phase 1 的 `junction_anchor_surface.gpkg`，只基于 Phase 1 主图层、fusion audit、final nodes、原始 RCSDRoad/RCSDNode 与 T07/T03/T04 relation evidence 做 copy-on-write 拓扑预处理和最终关系发布。旧 T02 relation evidence 仅作为兼容输入保留。
 
+P02 局部实验必须把 Tool1 转换后的完整 RCSDRoad/RCSDNode 作为 Phase 2 基础输入，不得按缺失端点或人工关系裁剪 Road/Node。用户逐项确认的 P02 临时工作副本可执行 `modules/p02_wuhan_local_experiment/endpoint_overrides/p02_confirmed_endpoint_overrides.csv` 登记的 9 项端点覆盖，但必须保留 469 条 Road、ID 与几何并提供独立覆盖审计。T05 仍只消费显式 `SNodeId/ENodeId`；不得读取 `NodeLid/CrossLid`，不得在运行时用最近点、同坐标或局部样本推断其它端点关系。
+
 Phase 2 直接消费 T07/T03/T04 当前已有 relation evidence，不要求前序模块新增字段或回改逻辑。若发现前序 evidence 缺失、矛盾或无法支撑场景分流，必须停机回报，不得在 T05 中反推并固化新业务规则。
 
 ## 1. Scope

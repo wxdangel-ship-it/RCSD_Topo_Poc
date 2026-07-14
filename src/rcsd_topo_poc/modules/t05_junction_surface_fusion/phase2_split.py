@@ -125,11 +125,13 @@ def _new_node_feature(
     template: dict[str, Any],
 ) -> dict[str, Any]:
     props = {key: None for key in template.keys()}
-    props.update({"id": node_id, "mainnodeid": None, "target_id": target_id})
+    props[_field_name(props, "id")] = node_id
+    props[_field_name(props, "mainnodeid")] = None
+    props[_field_name(props, "target_id")] = target_id
     kind_value, kind_source = generated_node_kind(swsd_properties)
-    if "kind" in template or kind_value is not None:
-        props["kind"] = kind_value
-    props["kind_source"] = kind_source
+    if any(key.lower() == "kind" for key in template) or kind_value is not None:
+        props[_field_name(props, "kind")] = kind_value
+    props[_field_name(props, "kind_source")] = kind_source
     return {"properties": props, "geometry": geometry}
 
 

@@ -19,6 +19,7 @@
 
 - 当前保留 T00 / T02 历史支撑入口，以满足追溯和局部工具复用。
 - P01 作为 POC / 成果模块存在，不进入 T09 正式契约。
+- P02 作为武汉局部实验 POC / 成果模块存在；完整输入实验、人工关系和空兼容工件不得被误解释为全量 T07/T03/T04/T05 生产能力。
 - 旧 `TEXT_QC_BUNDLE` 相关 CLI 入口保留为兼容工具，但不再作为正式协作协议。
 - `docs/doc-governance/audits/` 保留历史审计材料，其中旧文件名和旧口径仅作追溯，不作为当前源事实。
 - T06 当前同时保留 problem registry、visual check、topology audit 和 surface topology audit 多类质量证据；短期接受证据类型较多，后续应沉淀成更稳定的批量质量看板。

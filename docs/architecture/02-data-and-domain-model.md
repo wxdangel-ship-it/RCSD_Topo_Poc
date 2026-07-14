@@ -10,7 +10,7 @@
 |---|---|---|
 | SWSD | 现场道路、节点、Laneinfo、restriction 等源侧语义数据 | T08、T01、T03、T04、T05、T06、T11、T09 |
 | RCSD | 场景路网侧 Road / Node / RoadNextRoad 等承载数据 | T08、T03、T04、T05、T06、T11、T09 |
-| F-RCSD | 经 T06 Segment 替换后形成的融合承载数据 | T11（审计）、T09、P01 |
+| F-RCSD | 经 T06 Segment 替换后形成的融合承载数据 | T11（审计）、T09、P01、P02（局部实验审计） |
 | Semantic Junction | SWSD 语义路口代表对象，承载路口级关联、锚定与通行建模语义 | T07、T03、T04、T05、T09 |
 | Segment | 以 SWSD Road / Node 组织出的可替换道路连续单元 | T01、T06、T11、T09 |
 | Virtual Anchor | 在无现成 RCSD 路口面或需补充表达时构建的虚拟锚定成果 | T03、T04、T05 |
@@ -36,6 +36,7 @@ SWSD / RCSD raw data
 | `kind` / `Road.kind` | 道路种别字段；单个 token 为 `XXXX`，前两位表示道路等级，后两位表示道路类型，多个 token 用 `|` 分隔。 |
 | `kind_2` | SWSD 语义路口类型字段，当前用于区分交叉、T 型、分歧、合流、复杂路口等业务类型。 |
 | `grade_2` | SWSD 语义路口等级字段，配合 `kind_2`、拓扑和道路等级进行候选识别与质量判断。 |
+| `closed_con` / `closed_connect` | 两者表达同一 SWSD Node 闭合连接语义。`closed_con` 是项目规范字段；`closed_connect` 是正式启用的原始输入别名，由 T08 copy-on-write 归一为 `closed_con`。两字段同时存在时必须值一致，不一致不得继续。当前适用范围为 SWSD Node 输入；不据此扩展 RCSD 字段语义。 |
 | `formway` / `Road.formway` | 道路形态语义字段，已用于道路形态判断、through incident degree 裁剪等跨模块判断。 |
 | `RCSDRoad.formway` | RCSD 道路形态字段；当前确认 `1024` bit 表示调头口，表达式为 `(formway & 1024) != 0`。 |
 | `direction` | 道路方向语义，参与 Segment、通行规则、调头 fallback 等判断；方向不可信时只能审计，不得直接固化强过滤。 |

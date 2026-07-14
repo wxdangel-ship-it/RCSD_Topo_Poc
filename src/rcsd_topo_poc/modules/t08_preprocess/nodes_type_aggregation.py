@@ -159,6 +159,8 @@ def run_t08_nodes_type_aggregation(
     node_id_field = resolve_field_name(nodes_result.features, ["id"], "nodes input")
     node_kind_field = resolve_field_name(nodes_result.features, ["kind"], "nodes input")
     node_grade_field = resolve_field_name(nodes_result.features, ["grade"], "nodes input")
+    node_closed_con_field = _optional_field(nodes_result.features, ["closed_con"])
+    node_closed_connect_field = _optional_field(nodes_result.features, ["closed_connect"])
     road_id_field = resolve_field_name(roads_result.features, ["id"], "roads input")
     road_snode_field = resolve_field_name(roads_result.features, ["snodeid"], "roads input")
     road_enode_field = resolve_field_name(roads_result.features, ["enodeid"], "roads input")
@@ -178,6 +180,12 @@ def run_t08_nodes_type_aggregation(
         {"properties": dict(feature.properties), "geometry": feature.geometry}
         for feature in roads_result.features
     ]
+    closed_con_audit = _normalize_closed_con_alias(
+        node_features=node_features,
+        node_id_field=node_id_field,
+        closed_con_field=node_closed_con_field,
+        closed_connect_field=node_closed_connect_field,
+    )
     _initialize_working_type_fields(
         node_features=node_features,
         kind_field=node_kind_field,
@@ -242,10 +250,10 @@ def run_t08_nodes_type_aggregation(
             ),
         )
 
-    output_fields = unique_field_names(
-        nodes_result.field_names,
-        extra=("kind_2", "grade_2", "mainnodeid", "subnodeid"),
-    )
+    output_extra_fields = ["kind_2", "grade_2", "mainnodeid", "subnodeid"]
+    if node_closed_con_field is not None or node_closed_connect_field is not None:
+        output_extra_fields.append("closed_con")
+    output_fields = unique_field_names(nodes_result.field_names, extra=tuple(output_extra_fields))
     stage_started = time.perf_counter()
     _emit_progress(progress_callback, f"[T08 Tool3] writing nodes output={output_path}")
     write_gpkg(output_path, node_features, crs_text=f"EPSG:{target_epsg}", empty_fields=output_fields)
@@ -274,6 +282,9 @@ def run_t08_nodes_type_aggregation(
             "node_id_field": node_id_field,
             "node_kind_field": node_kind_field,
             "node_grade_field": node_grade_field,
+            "closed_con_field": node_closed_con_field,
+            "closed_connect_field": node_closed_connect_field,
+            "closed_con_source": closed_con_audit["source"],
             "road_id_field": road_id_field,
             "road_snode_field": road_snode_field,
             "road_enode_field": road_enode_field,
@@ -285,8 +296,12 @@ def run_t08_nodes_type_aggregation(
             "roundabout_group_count": roundabout_summary["roundabout_group_count"],
             "roundabout_single_node_group_count": roundabout_summary["roundabout_single_node_group_count"],
             "roundabout_updated_node_count": roundabout_summary["roundabout_updated_node_count"],
+            "topology_missing_endpoint_road_count": roundabout_summary["topology_missing_endpoint_road_count"],
+            "topology_missing_endpoint_node_count": roundabout_summary["topology_missing_endpoint_node_count"],
             "complex_junction_count": complex_summary["complex_junction_count"],
             "complex_updated_node_count": complex_summary["updated_node_count"],
+            "closed_con_normalized_count": closed_con_audit["normalized_count"],
+            "closed_con_consistent_pair_count": closed_con_audit["consistent_pair_count"],
         },
         "output_bounds": aggregate_bounds(feature["geometry"] for feature in node_features),
         "performance": {
@@ -296,6 +311,7 @@ def run_t08_nodes_type_aggregation(
         },
         "roundabout": roundabout_summary,
         "complex_divmerge": complex_summary,
+        "closed_con_alias": closed_con_audit,
     }
     write_json(summary_path, summary)
     _emit_progress(
@@ -322,6 +338,57 @@ def _initialize_working_type_fields(
         props["grade_2"] = props.get(grade_field)
         if _should_emit_progress(index, progress_interval):
             _emit_progress(progress_callback, f"[T08 Tool3] initialized {index} node feature(s)")
+
+
+def _normalize_closed_con_alias(
+    *,
+    node_features: list[dict[str, Any]],
+    node_id_field: str,
+    closed_con_field: str | None,
+    closed_connect_field: str | None,
+) -> dict[str, Any]:
+    if closed_con_field is None and closed_connect_field is None:
+        return {"source": "absent", "normalized_count": 0, "consistent_pair_count": 0}
+
+    normalized_count = 0
+    consistent_pair_count = 0
+    for feature in node_features:
+        props = feature["properties"]
+        node_id = _normalize_id(props.get(node_id_field)) or "<missing>"
+        canonical_value = props.get(closed_con_field) if closed_con_field is not None else None
+        alias_value = props.get(closed_connect_field) if closed_connect_field is not None else None
+        canonical_normalized = _normalize_closed_con_value(canonical_value)
+        alias_normalized = _normalize_closed_con_value(alias_value)
+        if canonical_normalized is not None and alias_normalized is not None:
+            if canonical_normalized != alias_normalized:
+                raise ValueError(
+                    "closed_con/closed_connect conflict for node "
+                    f"'{node_id}': closed_con={canonical_value!r}, closed_connect={alias_value!r}"
+                )
+            consistent_pair_count += 1
+        if canonical_normalized is None and alias_normalized is not None:
+            props["closed_con"] = alias_value
+            normalized_count += 1
+
+    if closed_con_field is not None and closed_connect_field is not None:
+        source = "closed_con+closed_connect"
+    elif closed_con_field is not None:
+        source = "closed_con"
+    else:
+        source = "closed_connect"
+    return {
+        "source": source,
+        "normalized_count": normalized_count,
+        "consistent_pair_count": consistent_pair_count,
+    }
+
+
+def _normalize_closed_con_value(value: Any) -> int | str | None:
+    normalized = _normalize_scalar(value)
+    if normalized is None:
+        return None
+    parsed_int = _coerce_int(normalized)
+    return parsed_int if parsed_int is not None else str(normalized)
 
 
 def _apply_roundabout_aggregation(
@@ -410,6 +477,8 @@ def _build_roundabout_groups(
     missing_count = 0
     empty_count = 0
     invalid_count = 0
+    missing_endpoint_road_ids: list[str] = []
+    missing_endpoint_node_ids: set[str] = set()
     if roadtype_field is None:
         missing_count = len(road_features)
     for index, feature in enumerate(road_features, start=1):
@@ -418,7 +487,19 @@ def _build_roundabout_groups(
         snodeid = _required_id(props.get(road_snode_field), f"road '{road_id}' snodeid")
         enodeid = _required_id(props.get(road_enode_field), f"road '{road_id}' enodeid")
         if snodeid not in node_ids or enodeid not in node_ids:
-            raise ValueError(f"Road '{road_id}' references missing node '{snodeid if snodeid not in node_ids else enodeid}'.")
+            missing_ids = [node_id for node_id in (snodeid, enodeid) if node_id not in node_ids]
+            missing_endpoint_road_ids.append(road_id)
+            missing_endpoint_node_ids.update(missing_ids)
+            issue_rows.append(
+                {
+                    "road_id": road_id,
+                    "issue": "missing_endpoint_node",
+                    "roadtype_raw": props.get(roadtype_field) if roadtype_field is not None else None,
+                    "missing_endpoint_ids": missing_ids,
+                    "action": "ignored_for_roundabout_topology_only",
+                }
+            )
+            continue
         if roadtype_field is None:
             issue_rows.append({"road_id": road_id, "issue": "missing", "roadtype_raw": None})
             continue
@@ -492,6 +573,10 @@ def _build_roundabout_groups(
         "roadtype_missing_count": missing_count,
         "roadtype_empty_count": empty_count,
         "roadtype_invalid_count": invalid_count,
+        "topology_missing_endpoint_road_count": len(missing_endpoint_road_ids),
+        "topology_missing_endpoint_node_count": len(missing_endpoint_node_ids),
+        "topology_missing_endpoint_road_ids": sorted(missing_endpoint_road_ids, key=_sort_key),
+        "topology_missing_endpoint_node_ids": sorted(missing_endpoint_node_ids, key=_sort_key),
     }
 
 
@@ -984,6 +1069,10 @@ def _empty_roundabout_summary() -> dict[str, Any]:
         "roadtype_missing_count": 0,
         "roadtype_empty_count": 0,
         "roadtype_invalid_count": 0,
+        "topology_missing_endpoint_road_count": 0,
+        "topology_missing_endpoint_node_count": 0,
+        "topology_missing_endpoint_road_ids": [],
+        "topology_missing_endpoint_node_ids": [],
         "group_ids": [],
         "groups": [],
         "roadtype_issue_rows": [],

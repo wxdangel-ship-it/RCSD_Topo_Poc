@@ -51,13 +51,14 @@ T06 的原始目标是基于 T01 Segment 与 T05 1:1 relation 执行 SWSD Segmen
 
 ### 通行恢复与验证层
 
-T09 基于 T06 的 F-RCSD carrier 恢复 restriction。T10 在 T06 后先运行 T11 形成 relation repair candidate audit，再进入 T09；T11 不改变 carrier。T10 通过 Case replay、T06 funnel、T11 candidate audit、visual check、feedback package 和 full pipeline summary 把真实数据问题组织成可追溯证据链。P01 作为 POC，在 Arm / RoadNextRoad 层探索更完整的通行能力建模，但不替代 T09。
+T09 基于 T06 的 F-RCSD carrier 恢复 restriction。T10 在 T06 后先运行 T11 形成 relation repair candidate audit，再进入 T09；T11 不改变 carrier。T10 通过 Case replay、T06 funnel、T11 candidate audit、visual check、feedback package 和 full pipeline summary 把真实数据问题组织成可追溯证据链。P01 作为 POC，在 Arm / RoadNextRoad 层探索更完整的通行能力建模，但不替代 T09。P02 作为武汉局部实验 POC，在缺少道路面、导流带和 RCSDIntersection 时，以 T11 格式人工关系进入 T05，再由 T06 验证 Segment 替换；P02 不替代被编排模块。
 
 ## 生命周期影响
 
 - T00 保留为支撑工具集合，历史一次性预处理能力主要由 T08 吸收。
 - T02 已 Retired，历史能力分别由 T07、T03、T04、T08 承接，历史入口和脚本仅作为可追溯资产存在。
 - P01 是异构路口通行能力 POC / 成果模块，不替代 T09 正式契约。
+- P02 是武汉局部人工锚定实验 POC / 成果模块，不进入正式主链，也不伪造 T07/T03/T04 产物。
 
 ## 设计取舍
 

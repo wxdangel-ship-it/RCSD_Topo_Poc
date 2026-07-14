@@ -39,7 +39,7 @@ T10 v1 Case runner 编排 `T01 -> T07 Step1/2 -> T03 -> T04 -> T05 -> T06 -> T11
 ## 4. 当前模块生命周期
 
 - Active 正式业务模块：`t01_data_preprocess`、`t03_virtual_junction_anchor`、`t04_divmerge_virtual_polygon`、`t05_junction_surface_fusion`、`t06_segment_fusion_precheck`、`t07_semantic_junction_anchor`、`t08_preprocess`、`t09_swsd_field_rule_restoration`、`t10_e2e_orchestration`、`t11_manual_relation_review`
-- Active POC / 成果模块：`p01_arm_build`
+- Active POC / 成果模块：`p01_arm_build`、`p02_wuhan_local_experiment`
 - Retired 模块：`t02_junction_anchor`
 - Support Retained 模块：`t00_utility_toolbox`
 
@@ -58,6 +58,7 @@ T10 v1 Case runner 编排 `T01 -> T07 Step1/2 -> T03 -> T04 -> T05 -> T06 -> T11
 - 不在根目录文档展开模块内部算法、字段、参数、阈值和入口教程。
 - 不把 T10 feedback 直接变成 T06 Step3 替换白名单。
 - 不把 P01 POC 结果直接提升为 T09 正式契约。
+- 不把 P02 武汉局部实验结果直接提升为全量生产口径，也不让 P02 替代 T08/T01/T05/T06 正式职责。
 - 不继续扩展 Retired T02 的业务职责。
 
 ## 6. 近期改进重点

@@ -525,7 +525,7 @@ Segment 入口不得暴露 `RADIUS_M`；若调用环境中存在同名变量，S
 - `STOP_AFTER`：可选截断阶段。
 - `CONTINUE_ON_ERROR`：默认 `1`；仅控制当前 Case 失败后是否继续下一个 Case，不允许同一 Case 下游消费失败阶段的部分输出。
 - `EXIT_ZERO`：默认 `0`；置 `1` 时即使存在 blocked/failed Case 也返回 0，便于诊断批处理继续。
-- `T10_T03_WORKERS`、`T10_T04_WORKERS`、`T10_T05_READONLY_WORKERS`：默认均为 `1`，用于 Case 级局部 replay。
+- `T10_T03_WORKERS`：默认自动检测 CPU 数量并限制为最多 `16`；`T10_T04_WORKERS`、`T10_T05_READONLY_WORKERS` 默认均为 `1`，用于 Case 级局部 replay。需要生成可复现基线时，必须显式固定三项 worker 参数并写入基线审计信息。
 - `T10_FEEDBACK_ITERATIONS`：默认 `0`；大于 0 时执行 T06 upstream feedback 回灌迭代，并启用 baseline 到 final 的 replaced / replacement plan 不回退检查。
 - `T10_PAIR_ANCHOR_ENDPOINT_CLUSTERS`：可选 pair-anchor endpoint cluster CSV；仅在已按 T10 契约标记 `auto_consumable_by_t05=true` 且 T05 存在基础 relation / road-only split 时作为补充输入。
 

@@ -10,12 +10,12 @@
 
 ## 已验证
 
-- 完整回放目录：`outputs/_work/p02_wuhan_local_experiment/p02_wuhan_internal_case_validation_20260714_v2`。
-- 完整业务链路状态：除显式开发诊断参数跳过的 QGIS 子进程外，其余 16 个阶段全部通过；QGIS 随后对同一数据包使用 QGIS 3.40.14 独立执行并通过。
+- 最新正式单命令回放目录：`outputs/_work/p02_wuhan_local_experiment/p02_wuhan_e2e_required_20260714_2335`；使用 `qgis-mode=required` 和 QGIS 3.40.14，一次调用内 17 个阶段全部通过，run manifest 最终状态为 `passed`。
+- 与前次结果 `p02_wuhan_internal_case_validation_20260714_v2` 对比：49 项业务硬校验逐项完全一致，差异数 `0`；5 个核心 T06 CSV 的规范内容完全一致；8 个关键矢量成果要素键和全部属性完全一致，几何在 `1e-8m` 容差内差异数 `0`，最大 Hausdorff 差异 `1.3969838619232178e-09m`，属于 Windows/WSL 坐标浮点序列化尾差。
 - 当前结果硬校验：49 项全部通过。原始要素数 `143/163/655/469`；端点修正 `9` 项且修正后缺失端点为 `0`；人工关系 `16→12`、阻断 `0`；T01 Segment `109`；T05 RCSDRoad/RCSDNode `474/660`；T06 成功替换 `7`、F-RCSD Road/Node `206/243`、正式拓扑失败 `0`。
 - 唯一归属：已使用 RCSD Road `62` 条，其中单 Segment `58`、特殊路口内部不归属 `3`、多 Segment 连通不归属 `1`、多归属 `0`。
 - GIS：原始 CRS 为 `EPSG:4326`，处理结果为 `EPSG:3857`；抽查 11 个关键图层，无空或无效几何；未执行 silent fix。
-- QGIS：56 个图层全部加载、11 个分组齐全、工程写出和回读成功、嵌入 XML 可解析、缺失数据源 `0`、绝对 datasource `0`、预览渲染成功。
+- QGIS：正式单命令内完成工程生成；56 个图层全部加载、11 个分组齐全、工程写出和回读成功、嵌入 XML 可解析、缺失数据源 `0`、绝对 datasource `0`、预览渲染成功。
 - 自动化回归：P02/T08/T05 `94 passed`，T06 `418 passed`，T01 `242 passed`，P02 修改后复核 `9 passed`；合计 `763 passed`。
 - Python 编译检查和正式入口 `--help` 通过。
 

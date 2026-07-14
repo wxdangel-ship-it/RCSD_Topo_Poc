@@ -7,7 +7,10 @@ from collections.abc import Callable
 from copy import deepcopy
 from contextlib import contextmanager
 from datetime import datetime, timezone
+from hashlib import blake2b
 from pathlib import Path
+from shutil import copy2
+from tempfile import TemporaryDirectory
 from threading import RLock
 from typing import Any, Iterable
 
@@ -27,6 +30,9 @@ _READ_FEATURES_SNAPSHOT_CACHE: OrderedDict[
     tuple[tuple[int, int, int], tuple[tuple[dict[str, Any], Any], ...]],
 ] = OrderedDict()
 _READ_FEATURES_SNAPSHOT_CACHE_LOCK = RLock()
+_PRESERVE_READ_FEATURES_CACHE_DEPTH = 0
+_PRESERVED_READ_FEATURE_PATHS: list[set[str] | None] = []
+_FEATURE_OUTPUT_STAGING_ROOTS: list[Path] = []
 
 
 @contextmanager
@@ -37,6 +43,18 @@ def suppress_feature_json_outputs() -> Iterable[None]:
         yield
     finally:
         _SUPPRESS_FEATURE_JSON_DEPTH -= 1
+
+
+@contextmanager
+def stage_feature_outputs() -> Iterable[None]:
+    """Build feature artifacts locally, then publish them to final paths."""
+
+    with TemporaryDirectory(prefix="t06_feature_stage_") as temp_dir:
+        _FEATURE_OUTPUT_STAGING_ROOTS.append(Path(temp_dir))
+        try:
+            yield
+        finally:
+            _FEATURE_OUTPUT_STAGING_ROOTS.pop()
 
 
 def default_run_id() -> str:
@@ -53,6 +71,9 @@ def prepare_run_roots(out_root: str | Path, run_id: str | None, step_dir: str) -
 
 
 def read_features(path: str | Path, *, crs_override: str | None = None) -> list[dict[str, Any]]:
+    if _PRESERVE_READ_FEATURES_CACHE_DEPTH <= 0:
+        result = read_vector_layer(path, crs_override=crs_override)
+        return [{"properties": dict(item.properties), "geometry": item.geometry} for item in result.features]
     resolved = Path(path).resolve()
     try:
         stat = resolved.stat()
@@ -67,14 +88,63 @@ def read_features(path: str | Path, *, crs_override: str | None = None) -> list[
         stat.st_ctime_ns,
     )
     return [
-        {"properties": deepcopy(properties), "geometry": geometry}
+        {"properties": _copy_feature_properties(properties), "geometry": geometry}
         for properties, geometry in snapshot
     ]
 
 
-def clear_read_features_cache() -> None:
+def _copy_feature_properties(properties: dict[str, Any]) -> dict[str, Any]:
+    if all(
+        value is None or isinstance(value, (str, int, float, bool, bytes))
+        for value in properties.values()
+    ):
+        return dict(properties)
+    return deepcopy(properties)
+
+
+def clear_read_features_cache(*, force: bool = False) -> None:
+    if _PRESERVE_READ_FEATURES_CACHE_DEPTH > 0 and not force:
+        preserved_paths = _active_preserved_read_feature_paths()
+        if preserved_paths is not None:
+            with _READ_FEATURES_SNAPSHOT_CACHE_LOCK:
+                for key in list(_READ_FEATURES_SNAPSHOT_CACHE):
+                    if key[0] not in preserved_paths:
+                        _READ_FEATURES_SNAPSHOT_CACHE.pop(key, None)
+        return
     with _READ_FEATURES_SNAPSHOT_CACHE_LOCK:
         _READ_FEATURES_SNAPSHOT_CACHE.clear()
+
+
+def discard_read_features_cache(path: str | Path) -> None:
+    resolved = str(Path(path).resolve())
+    with _READ_FEATURES_SNAPSHOT_CACHE_LOCK:
+        for key in list(_READ_FEATURES_SNAPSHOT_CACHE):
+            if key[0] == resolved:
+                _READ_FEATURES_SNAPSHOT_CACHE.pop(key, None)
+
+
+def _active_preserved_read_feature_paths() -> set[str] | None:
+    if any(paths is None for paths in _PRESERVED_READ_FEATURE_PATHS):
+        return None
+    preserved: set[str] = set()
+    for paths in _PRESERVED_READ_FEATURE_PATHS:
+        preserved.update(paths or set())
+    return preserved
+
+
+@contextmanager
+def preserve_read_features_cache(paths: Iterable[str | Path] | None = None) -> Iterable[None]:
+    global _PRESERVE_READ_FEATURES_CACHE_DEPTH
+    preserved_paths = None if paths is None else {str(Path(path).resolve()) for path in paths}
+    _PRESERVE_READ_FEATURES_CACHE_DEPTH += 1
+    _PRESERVED_READ_FEATURE_PATHS.append(preserved_paths)
+    try:
+        yield
+    finally:
+        _PRESERVED_READ_FEATURE_PATHS.pop()
+        _PRESERVE_READ_FEATURES_CACHE_DEPTH -= 1
+        if _PRESERVE_READ_FEATURES_CACHE_DEPTH == 0:
+            clear_read_features_cache(force=True)
 
 
 def _read_features_cache_size() -> int:
@@ -121,11 +191,20 @@ def write_feature_triplet(
     paths = {"gpkg": gpkg_path, "csv": csv_path}
     gpkg_features, gpkg_geometry_type = _gpkg_features_and_geometry_type(features)
     _notify_output_progress(progress, "gpkg", "start", gpkg_path)
-    write_gpkg(gpkg_path, gpkg_features, empty_fields=fieldnames, geometry_type=gpkg_geometry_type)
+    gpkg_write_path = _staged_output_path(gpkg_path)
+    write_gpkg(gpkg_write_path, gpkg_features, empty_fields=fieldnames, geometry_type=gpkg_geometry_type)
+    if gpkg_write_path != gpkg_path:
+        gpkg_path.parent.mkdir(parents=True, exist_ok=True)
+        copy2(gpkg_write_path, gpkg_path)
     _notify_output_progress(progress, "gpkg", "end", gpkg_path)
-    _notify_output_progress(progress, "csv", "start", csv_path)
-    write_csv(csv_path, (feature.get("properties") or {} for feature in features), fieldnames)
-    _notify_output_progress(progress, "csv", "end", csv_path)
+    from .step3_validation_publish import is_decision_only_validation_step3_run
+
+    if is_decision_only_validation_step3_run():
+        _notify_output_progress(progress, "csv", "skipped", csv_path)
+    else:
+        _notify_output_progress(progress, "csv", "start", csv_path)
+        write_csv(csv_path, (feature.get("properties") or {} for feature in features), fieldnames)
+        _notify_output_progress(progress, "csv", "end", csv_path)
     effective_write_json_output = write_json_output and _SUPPRESS_FEATURE_JSON_DEPTH <= 0
     if effective_write_json_output:
         _notify_output_progress(progress, "json", "start", json_path)
@@ -141,6 +220,15 @@ def write_feature_triplet(
     else:
         _notify_output_progress(progress, "json", "skipped", json_path)
     return paths
+
+
+def _staged_output_path(target_path: Path) -> Path:
+    if not _FEATURE_OUTPUT_STAGING_ROOTS:
+        return target_path
+    digest = blake2b(str(target_path.resolve()).encode("utf-8"), digest_size=8).hexdigest()
+    staged_path = _FEATURE_OUTPUT_STAGING_ROOTS[-1] / f"{digest}_{target_path.name}"
+    staged_path.parent.mkdir(parents=True, exist_ok=True)
+    return staged_path
 
 
 def _infer_gpkg_geometry_type(features: list[dict[str, Any]]) -> str:
@@ -207,19 +295,27 @@ def _notify_output_progress(progress: Callable[[str, str, Path], None] | None, f
 
 def write_csv(path: str | Path, rows: Iterable[dict[str, Any]], fieldnames: list[str]) -> None:
     out_path = Path(path)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    with out_path.open("w", encoding="utf-8", newline="") as fp:
+    write_path = _staged_output_path(out_path)
+    write_path.parent.mkdir(parents=True, exist_ok=True)
+    with write_path.open("w", encoding="utf-8", newline="") as fp:
         writer = csv.DictWriter(fp, fieldnames=fieldnames)
         writer.writeheader()
         for row in rows:
             writer.writerow({field: _plain_value(row.get(field)) for field in fieldnames})
+    if write_path != out_path:
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        copy2(write_path, out_path)
 
 
 def write_json(path: str | Path, payload: Any) -> None:
     out_path = Path(path)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    with out_path.open("w", encoding="utf-8") as fp:
+    write_path = _staged_output_path(out_path)
+    write_path.parent.mkdir(parents=True, exist_ok=True)
+    with write_path.open("w", encoding="utf-8") as fp:
         json.dump(_plain_value(payload), fp, ensure_ascii=False, indent=2, allow_nan=False)
+    if write_path != out_path:
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        copy2(write_path, out_path)
 
 
 def _feature_json(feature: dict[str, Any]) -> dict[str, Any]:

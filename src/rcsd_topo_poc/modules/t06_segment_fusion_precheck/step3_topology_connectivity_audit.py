@@ -280,6 +280,157 @@ def build_topology_connectivity_audit_rows(
     return result
 
 
+def build_group_path_corridor_internal_audit_rows(
+    *,
+    swsd_segments: list[dict[str, Any]],
+    frcsd_roads: list[dict[str, Any]],
+    frcsd_nodes: list[dict[str, Any]],
+    segment_relation_rows: list[dict[str, Any]],
+    advance_right_audit_rows: list[dict[str, Any]],
+    source_field_name: str,
+    swsd_source_value: int,
+    rcsd_source_value: int,
+) -> list[dict[str, Any]]:
+    """Build only the rows consumed by the group-corridor fallback gate."""
+
+    relation_props = [
+        dict(row.get("properties") or {})
+        for row in segment_relation_rows
+        if _is_group_path_corridor_relation(dict(row.get("properties") or {}))
+    ]
+    if not relation_props:
+        return []
+    road_index = _RoadIndex(frcsd_roads, source_field_name=source_field_name)
+    canonicalizer = NodeCanonicalizer.from_node_features(frcsd_nodes)
+    final_graph = _DirectedRoadGraph(frcsd_roads, canonicalizer=canonicalizer)
+    final_road_index = _RoadLineSpatialIndex(frcsd_roads)
+    attachment_refs_by_node = _attachment_refs_by_swsd_node(
+        advance_right_audit_rows,
+        rcsd_source_value=rcsd_source_value,
+    )
+    coverage_cache: CoverageCache = {}
+    signature_cache: RoadSignatureCache = {}
+    _prewarm_relation_coverage_cache(
+        relation_props,
+        road_index=road_index,
+        coverage_cache=coverage_cache,
+        signature_cache=signature_cache,
+    )
+    return _segment_internal_rows(
+        swsd_segments=swsd_segments,
+        relation_props=relation_props,
+        road_index=road_index,
+        final_roads=frcsd_roads,
+        final_road_index=final_road_index,
+        final_graph=final_graph,
+        canonicalizer=canonicalizer,
+        rcsd_source_value=rcsd_source_value,
+        swsd_source_value=swsd_source_value,
+        attachment_refs_by_node=attachment_refs_by_node,
+        coverage_cache=coverage_cache,
+        road_signature_cache=signature_cache,
+    )
+
+
+def build_surface_junction_connectivity_audit_rows(
+    *,
+    swsd_segments: list[dict[str, Any]],
+    frcsd_nodes: list[dict[str, Any]],
+    segment_relation_rows: list[dict[str, Any]],
+    advance_right_audit_rows: list[dict[str, Any]],
+    source_field_name: str,
+    swsd_source_value: int,
+    rcsd_source_value: int,
+) -> list[dict[str, Any]]:
+    """Build the junction rows consumed by Surface closure before final audit."""
+
+    node_index = _NodeIndex(frcsd_nodes, source_field_name=source_field_name)
+    relation_by_segment = {
+        str(properties.get("swsd_segment_id") or ""): properties
+        for row in segment_relation_rows
+        for properties in [dict(row.get("properties") or {})]
+    }
+    attachment_refs_by_node = _attachment_refs_by_swsd_node(
+        advance_right_audit_rows,
+        rcsd_source_value=rcsd_source_value,
+    )
+    rows = _segment_junction_rows(
+        swsd_segments=swsd_segments,
+        relation_by_segment=relation_by_segment,
+        node_index=node_index,
+        rcsd_source_value=rcsd_source_value,
+        swsd_source_value=swsd_source_value,
+        attachment_refs_by_node=attachment_refs_by_node,
+    )
+    result = [row for row in rows if (row.get("properties") or {}).get("audit_status")]
+    annotate_final_frcsd_topology_rows(result)
+    return result
+
+
+def transition_failure_node_ids_for_candidates(
+    *,
+    candidate_node_ids: set[str],
+    swsd_segments: list[dict[str, Any]],
+    swsd_roads: list[dict[str, Any]],
+    frcsd_roads: list[dict[str, Any]],
+    frcsd_nodes: list[dict[str, Any]],
+    segment_relation_rows: list[dict[str, Any]],
+    advance_right_audit_rows: list[dict[str, Any]],
+    source_field_name: str,
+    swsd_source_value: int,
+    rcsd_source_value: int,
+    coverage_cache: CoverageCache | None = None,
+) -> set[str]:
+    """Evaluate formal transition failures only around hard-gate cascade nodes."""
+
+    candidates = {str(node_id) for node_id in candidate_node_ids if str(node_id)}
+    if not candidates:
+        return set()
+    filtered_relations: list[dict[str, Any]] = []
+    filtered_segment_ids: set[str] = set()
+    for row in segment_relation_rows:
+        props = dict(row.get("properties") or {})
+        relation_node_ids = {
+            *_as_id_list(props.get("swsd_pair_nodes")),
+            *_as_id_list(props.get("swsd_junc_nodes")),
+            *[
+                str(entry.get("swsd_node_id") or "")
+                for entry in _node_map_entries(props.get("swsd_to_frcsd_node_map"))
+            ],
+        }
+        if not relation_node_ids.intersection(candidates):
+            continue
+        filtered_relations.append(row)
+        segment_id = str(props.get("swsd_segment_id") or "")
+        if segment_id:
+            filtered_segment_ids.add(segment_id)
+    filtered_segments = [
+        segment
+        for segment in swsd_segments
+        if _feature_id(segment) in filtered_segment_ids
+    ]
+    rows = build_topology_connectivity_audit_rows(
+        swsd_segments=filtered_segments,
+        swsd_roads=swsd_roads,
+        frcsd_roads=frcsd_roads,
+        frcsd_nodes=frcsd_nodes,
+        segment_relation_rows=filtered_relations,
+        advance_right_audit_rows=advance_right_audit_rows,
+        source_field_name=source_field_name,
+        swsd_source_value=swsd_source_value,
+        rcsd_source_value=rcsd_source_value,
+        coverage_cache=coverage_cache,
+    )
+    return {
+        str((row.get("properties") or {}).get("swsd_node_id") or "")
+        for row in rows
+        if (row.get("properties") or {}).get("counts_in_final_frcsd_topology_fail")
+        and str((row.get("properties") or {}).get("final_topology_category") or "")
+        == "segment_transition"
+        and str((row.get("properties") or {}).get("swsd_node_id") or "") in candidates
+    }
+
+
 def _advance_right_endpoint_connectivity_rows(
     *,
     frcsd_roads: list[dict[str, Any]],

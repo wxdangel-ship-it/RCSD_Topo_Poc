@@ -20,6 +20,14 @@ from .io import prepare_run_roots, read_features, write_feature_triplet, write_j
 
 from .parallel_output import FeatureTripletJob, publish_feature_triplets
 
+from .step3_validation_publish import (
+    are_step3_auxiliary_audits_deferred,
+    expected_feature_triplet_paths,
+    is_validation_step3_run,
+    is_step3_initial_topology_audit_deferred,
+    select_step3_publish_jobs,
+)
+
 from .parsing import ParseError, normalize_id, parse_id_list, parse_positive_int, unique_preserve_order
 
 from .road_attributes import is_near_advance_right_turn_duplicate as _is_adv_dup
@@ -214,6 +222,10 @@ from .step3_replacement_relation_support import (
     _swsd_group_members,
     _sync_attachment_swsd_mainnodes,
     _sync_generated_rcsd_endpoint_node_geometries,
+)
+from .step3_surface_runtime import (
+    Step3SurfaceRuntimeState,
+    publish_step3_surface_runtime_state,
 )
 
 def run_t06_step3_segment_replacement(
@@ -641,101 +653,165 @@ def run_t06_step3_segment_replacement(
         swsd_source_value=swsd_source_value,
         rcsd_source_value=rcsd_source_value,
     )
-    ownership_outputs = build_and_write_rcsd_road_ownership(
-        step_root=step_root,
-        rcsd_roads=rcsd_roads,
-        frcsd_roads=frcsd_roads,
-        swsd_segments=swsd_segments,
-        added_road_to_segments=added_road_to_segments,
-        connectivity_supplement_road_ids=connectivity_supplement_road_ids,
-        canonicalizer=canonicalizer,
-        source_field_name=source_field_name,
-        rcsd_source_value=rcsd_source_value,
-    )
-    sync_segment_relation_ownership_fields(
-        segment_relation_rows,
-        ownership_rows=ownership_outputs.ownership_rows,
-        connectivity_group_rows=ownership_outputs.connectivity_group_rows,
-    )
-    construction_audit_outputs = build_and_write_segment_construction_audit(
-        step_root=step_root,
-        swsd_segments=swsd_segments,
-        swsd_roads=swsd_roads,
-        swsd_nodes=swsd_nodes,
-        step1_rejected_rows=(
-            read_features(run_root / "step1_identify_fusion_units" / "t06_swsd_segment_rejected.gpkg")
-            if (run_root / "step1_identify_fusion_units" / "t06_swsd_segment_rejected.gpkg").is_file()
-            else []
-        ),
-        step2_replaceable_rows=replaceable,
-        step2_rejected_rows=(
-            read_features(run_root / "step2_extract_rcsd_segments" / "t06_rcsd_segment_rejected.gpkg")
-            if (run_root / "step2_extract_rcsd_segments" / "t06_rcsd_segment_rejected.gpkg").is_file()
-            else []
-        ),
-        segment_relation_rows=segment_relation_rows,
-    )
+    validation_only = is_validation_step3_run()
+    defer_auxiliary_audits = validation_only or are_step3_auxiliary_audits_deferred()
+    ownership_summary: dict[str, Any] = {}
+    construction_audit_summary: dict[str, Any] = {}
+    ownership_paths: dict[str, Path] = {}
+    connectivity_group_paths: dict[str, Path] = {}
+    construction_audit_paths: dict[str, Path] = {}
+    if not defer_auxiliary_audits:
+        ownership_outputs = build_and_write_rcsd_road_ownership(
+            step_root=step_root,
+            rcsd_roads=rcsd_roads,
+            frcsd_roads=frcsd_roads,
+            swsd_segments=swsd_segments,
+            added_road_to_segments=added_road_to_segments,
+            connectivity_supplement_road_ids=connectivity_supplement_road_ids,
+            canonicalizer=canonicalizer,
+            source_field_name=source_field_name,
+            rcsd_source_value=rcsd_source_value,
+        )
+        sync_segment_relation_ownership_fields(
+            segment_relation_rows,
+            ownership_rows=ownership_outputs.ownership_rows,
+            connectivity_group_rows=ownership_outputs.connectivity_group_rows,
+        )
+        construction_audit_outputs = build_and_write_segment_construction_audit(
+            step_root=step_root,
+            swsd_segments=swsd_segments,
+            swsd_roads=swsd_roads,
+            swsd_nodes=swsd_nodes,
+            step1_rejected_rows=(
+                read_features(run_root / "step1_identify_fusion_units" / "t06_swsd_segment_rejected.gpkg")
+                if (run_root / "step1_identify_fusion_units" / "t06_swsd_segment_rejected.gpkg").is_file()
+                else []
+            ),
+            step2_replaceable_rows=replaceable,
+            step2_rejected_rows=(
+                read_features(run_root / "step2_extract_rcsd_segments" / "t06_rcsd_segment_rejected.gpkg")
+                if (run_root / "step2_extract_rcsd_segments" / "t06_rcsd_segment_rejected.gpkg").is_file()
+                else []
+            ),
+            segment_relation_rows=segment_relation_rows,
+        )
+        ownership_summary = ownership_outputs.summary
+        construction_audit_summary = construction_audit_outputs.summary
+        ownership_paths = ownership_outputs.ownership_paths
+        connectivity_group_paths = ownership_outputs.connectivity_group_paths
+        construction_audit_paths = construction_audit_outputs.paths
 
+    all_publish_jobs = {
+        "road": FeatureTripletJob(STEP3_FRCSD_ROAD_STEM, frcsd_roads, _fieldnames(frcsd_roads, ["id", source_field_name])),
+        "node": FeatureTripletJob(STEP3_FRCSD_NODE_STEM, frcsd_nodes, _fieldnames(frcsd_nodes, ["id", "mainnodeid", source_field_name, SEMANTIC_JUNCTION_GROUP_FIELD])),
+        "replacement_unit": FeatureTripletJob(STEP3_REPLACEMENT_UNITS_STEM, replacement_unit_rows, STEP3_REPLACEMENT_UNIT_FIELDS),
+        "segment_relation": FeatureTripletJob(STEP3_SWSD_FRCSD_SEGMENT_RELATION_STEM, segment_relation_rows, STEP3_SWSD_FRCSD_SEGMENT_RELATION_FIELDS),
+        "semantic_junction_group": FeatureTripletJob(STEP3_SEMANTIC_JUNCTION_GROUPS_STEM, semantic_junction_group_rows, STEP3_SEMANTIC_JUNCTION_GROUP_FIELDS),
+        "junction": FeatureTripletJob(STEP3_JUNCTION_REBUILD_AUDIT_STEM, junction_audit_rows, STEP3_JUNCTION_REBUILD_AUDIT_FIELDS),
+        "removed_road": FeatureTripletJob(STEP3_REMOVED_SWSD_ROADS_STEM, removed_road_rows, STEP3_CHANGE_AUDIT_FIELDS),
+        "removed_node": FeatureTripletJob(STEP3_REMOVED_SWSD_NODES_STEM, removed_node_rows, STEP3_CHANGE_AUDIT_FIELDS),
+        "added_road": FeatureTripletJob(STEP3_ADDED_RCSD_ROADS_STEM, added_road_rows, STEP3_CHANGE_AUDIT_FIELDS),
+        "added_node": FeatureTripletJob(STEP3_ADDED_RCSD_NODES_STEM, added_node_rows, STEP3_CHANGE_AUDIT_FIELDS),
+        "unreplaced_rcsd_road": FeatureTripletJob(STEP3_UNREPLACED_RCSD_ROADS_STEM, unreplaced_rcsd_road_rows, STEP3_UNREPLACED_RCSD_ROAD_FIELDS),
+        "collision": FeatureTripletJob(STEP3_ID_COLLISION_AUDIT_STEM, collision_rows, STEP3_ID_COLLISION_AUDIT_FIELDS),
+        "right_attach": FeatureTripletJob(RIGHT_ATTACH_AUDIT_STEM, right_attach_audit_rows, RIGHT_ATTACH_AUDIT_FIELDS),
+        "advance_right_closure": FeatureTripletJob(RCSD_ADVANCE_RIGHT_CLOSURE_AUDIT_STEM, adv_closure_stats["audit_rows"], RCSD_ADVANCE_RIGHT_CLOSURE_AUDIT_FIELDS),
+    }
     published_paths = publish_feature_triplets(
         step_root=step_root,
-        jobs={
-            "road": FeatureTripletJob(STEP3_FRCSD_ROAD_STEM, frcsd_roads, _fieldnames(frcsd_roads, ["id", source_field_name])),
-            "node": FeatureTripletJob(STEP3_FRCSD_NODE_STEM, frcsd_nodes, _fieldnames(frcsd_nodes, ["id", "mainnodeid", source_field_name, SEMANTIC_JUNCTION_GROUP_FIELD])),
-            "replacement_unit": FeatureTripletJob(STEP3_REPLACEMENT_UNITS_STEM, replacement_unit_rows, STEP3_REPLACEMENT_UNIT_FIELDS),
-            "segment_relation": FeatureTripletJob(STEP3_SWSD_FRCSD_SEGMENT_RELATION_STEM, segment_relation_rows, STEP3_SWSD_FRCSD_SEGMENT_RELATION_FIELDS),
-            "semantic_junction_group": FeatureTripletJob(STEP3_SEMANTIC_JUNCTION_GROUPS_STEM, semantic_junction_group_rows, STEP3_SEMANTIC_JUNCTION_GROUP_FIELDS),
-            "junction": FeatureTripletJob(STEP3_JUNCTION_REBUILD_AUDIT_STEM, junction_audit_rows, STEP3_JUNCTION_REBUILD_AUDIT_FIELDS),
-            "removed_road": FeatureTripletJob(STEP3_REMOVED_SWSD_ROADS_STEM, removed_road_rows, STEP3_CHANGE_AUDIT_FIELDS),
-            "removed_node": FeatureTripletJob(STEP3_REMOVED_SWSD_NODES_STEM, removed_node_rows, STEP3_CHANGE_AUDIT_FIELDS),
-            "added_road": FeatureTripletJob(STEP3_ADDED_RCSD_ROADS_STEM, added_road_rows, STEP3_CHANGE_AUDIT_FIELDS),
-            "added_node": FeatureTripletJob(STEP3_ADDED_RCSD_NODES_STEM, added_node_rows, STEP3_CHANGE_AUDIT_FIELDS),
-            "unreplaced_rcsd_road": FeatureTripletJob(STEP3_UNREPLACED_RCSD_ROADS_STEM, unreplaced_rcsd_road_rows, STEP3_UNREPLACED_RCSD_ROAD_FIELDS),
-            "collision": FeatureTripletJob(STEP3_ID_COLLISION_AUDIT_STEM, collision_rows, STEP3_ID_COLLISION_AUDIT_FIELDS),
-            "right_attach": FeatureTripletJob(RIGHT_ATTACH_AUDIT_STEM, right_attach_audit_rows, RIGHT_ATTACH_AUDIT_FIELDS),
-            "advance_right_closure": FeatureTripletJob(RCSD_ADVANCE_RIGHT_CLOSURE_AUDIT_STEM, adv_closure_stats["audit_rows"], RCSD_ADVANCE_RIGHT_CLOSURE_AUDIT_FIELDS),
-        },
+        jobs=select_step3_publish_jobs(all_publish_jobs),
     )
-    road_paths = published_paths["road"]
-    node_paths = published_paths["node"]
-    replacement_unit_paths = published_paths["replacement_unit"]
-    segment_relation_paths = published_paths["segment_relation"]
-    semantic_junction_group_paths = published_paths["semantic_junction_group"]
-    junction_paths = published_paths["junction"]
-    removed_road_paths = published_paths["removed_road"]
-    removed_node_paths = published_paths["removed_node"]
-    added_road_paths = published_paths["added_road"]
-    added_node_paths = published_paths["added_node"]
-    unreplaced_rcsd_road_paths = published_paths["unreplaced_rcsd_road"]
-    collision_paths = published_paths["collision"]
-    right_attach_paths = published_paths["right_attach"]
-    adv_closure_paths = published_paths["advance_right_closure"]
+    road_paths = published_paths.get(
+        "road",
+        expected_feature_triplet_paths(step_root, STEP3_FRCSD_ROAD_STEM),
+    )
+    node_paths = published_paths.get(
+        "node",
+        expected_feature_triplet_paths(step_root, STEP3_FRCSD_NODE_STEM),
+    )
+    replacement_unit_paths = published_paths.get(
+        "replacement_unit",
+        expected_feature_triplet_paths(step_root, STEP3_REPLACEMENT_UNITS_STEM),
+    )
+    segment_relation_paths = published_paths.get(
+        "segment_relation",
+        expected_feature_triplet_paths(step_root, STEP3_SWSD_FRCSD_SEGMENT_RELATION_STEM),
+    )
+    semantic_junction_group_paths = published_paths.get(
+        "semantic_junction_group",
+        expected_feature_triplet_paths(step_root, STEP3_SEMANTIC_JUNCTION_GROUPS_STEM),
+    )
+    junction_paths = published_paths.get(
+        "junction",
+        expected_feature_triplet_paths(step_root, STEP3_JUNCTION_REBUILD_AUDIT_STEM),
+    )
+    removed_road_paths = published_paths.get(
+        "removed_road",
+        expected_feature_triplet_paths(step_root, STEP3_REMOVED_SWSD_ROADS_STEM),
+    )
+    removed_node_paths = published_paths.get(
+        "removed_node",
+        expected_feature_triplet_paths(step_root, STEP3_REMOVED_SWSD_NODES_STEM),
+    )
+    added_road_paths = published_paths.get(
+        "added_road",
+        expected_feature_triplet_paths(step_root, STEP3_ADDED_RCSD_ROADS_STEM),
+    )
+    added_node_paths = published_paths.get(
+        "added_node",
+        expected_feature_triplet_paths(step_root, STEP3_ADDED_RCSD_NODES_STEM),
+    )
+    unreplaced_rcsd_road_paths = published_paths.get(
+        "unreplaced_rcsd_road",
+        expected_feature_triplet_paths(step_root, STEP3_UNREPLACED_RCSD_ROADS_STEM),
+    )
+    collision_paths = published_paths.get(
+        "collision",
+        expected_feature_triplet_paths(step_root, STEP3_ID_COLLISION_AUDIT_STEM),
+    )
+    right_attach_paths = published_paths.get(
+        "right_attach",
+        expected_feature_triplet_paths(step_root, RIGHT_ATTACH_AUDIT_STEM),
+    )
+    adv_closure_paths = published_paths.get(
+        "advance_right_closure",
+        expected_feature_triplet_paths(step_root, RCSD_ADVANCE_RIGHT_CLOSURE_AUDIT_STEM),
+    )
 
-    topology_connectivity_audit_rows = build_topology_connectivity_audit_rows(
-        swsd_segments=swsd_segments,
-        swsd_roads=swsd_roads,
-        frcsd_roads=frcsd_roads,
-        frcsd_nodes=frcsd_nodes,
-        segment_relation_rows=segment_relation_rows,
-        advance_right_audit_rows=right_attach_audit_rows,
-        source_field_name=source_field_name,
-        swsd_source_value=swsd_source_value,
-        rcsd_source_value=rcsd_source_value,
-    )
-    semantic_junction_topology_stats = downgrade_semantic_junction_topology_rows(
-        topology_connectivity_audit_rows,
-        semantic_junction_group_rows,
-    )
-    topology_connectivity_paths = publish_feature_triplets(
-        step_root=step_root,
-        jobs={
-            "topology_connectivity": FeatureTripletJob(
-                STEP3_TOPOLOGY_CONNECTIVITY_AUDIT_STEM,
-                topology_connectivity_audit_rows,
-                STEP3_TOPOLOGY_CONNECTIVITY_AUDIT_FIELDS,
-            ),
-        },
-    )["topology_connectivity"]
-    topology_connectivity_summary = summarize_topology_connectivity_audit(topology_connectivity_audit_rows)
+    if is_step3_initial_topology_audit_deferred():
+        semantic_junction_topology_stats = {}
+        topology_connectivity_paths = expected_feature_triplet_paths(
+            step_root,
+            STEP3_TOPOLOGY_CONNECTIVITY_AUDIT_STEM,
+        )
+        topology_connectivity_summary = {}
+    else:
+        topology_connectivity_audit_rows = build_topology_connectivity_audit_rows(
+            swsd_segments=swsd_segments,
+            swsd_roads=swsd_roads,
+            frcsd_roads=frcsd_roads,
+            frcsd_nodes=frcsd_nodes,
+            segment_relation_rows=segment_relation_rows,
+            advance_right_audit_rows=right_attach_audit_rows,
+            source_field_name=source_field_name,
+            swsd_source_value=swsd_source_value,
+            rcsd_source_value=rcsd_source_value,
+        )
+        semantic_junction_topology_stats = downgrade_semantic_junction_topology_rows(
+            topology_connectivity_audit_rows,
+            semantic_junction_group_rows,
+        )
+        topology_connectivity_paths = publish_feature_triplets(
+            step_root=step_root,
+            jobs={
+                "topology_connectivity": FeatureTripletJob(
+                    STEP3_TOPOLOGY_CONNECTIVITY_AUDIT_STEM,
+                    topology_connectivity_audit_rows,
+                    STEP3_TOPOLOGY_CONNECTIVITY_AUDIT_FIELDS,
+                ),
+            },
+        )["topology_connectivity"]
+        topology_connectivity_summary = summarize_topology_connectivity_audit(topology_connectivity_audit_rows)
 
     summary_path = step_root / STEP3_SUMMARY
     write_json(
@@ -861,8 +937,8 @@ def run_t06_step3_segment_replacement(
             **special_internal_stats,
             **semantic_junction_topology_stats,
             **topology_connectivity_summary,
-            **ownership_outputs.summary,
-            **construction_audit_outputs.summary,
+            **ownership_summary,
+            **construction_audit_summary,
             "outputs": {
                 **{f"frcsd_road_{key}": str(value) for key, value in road_paths.items()},
                 **{f"frcsd_node_{key}": str(value) for key, value in node_paths.items()},
@@ -884,15 +960,15 @@ def run_t06_step3_segment_replacement(
                 **{f"topology_connectivity_audit_{key}": str(value) for key, value in topology_connectivity_paths.items()},
                 **{
                     f"rcsd_road_ownership_{key}": str(value)
-                    for key, value in ownership_outputs.ownership_paths.items()
+                    for key, value in ownership_paths.items()
                 },
                 **{
                     f"multi_segment_connectivity_group_{key}": str(value)
-                    for key, value in ownership_outputs.connectivity_group_paths.items()
+                    for key, value in connectivity_group_paths.items()
                 },
                 **{
                     f"segment_construction_audit_{key}": str(value)
-                    for key, value in construction_audit_outputs.paths.items()
+                    for key, value in construction_audit_paths.items()
                 },
             },
             "gis_topology_checks": {
@@ -906,6 +982,23 @@ def run_t06_step3_segment_replacement(
         },
     )
 
+    if is_step3_initial_topology_audit_deferred():
+        publish_step3_surface_runtime_state(
+            Step3SurfaceRuntimeState(
+                step_root=step_root,
+                swsd_segments=swsd_segments,
+                swsd_roads=swsd_roads,
+                swsd_nodes=swsd_nodes,
+                step2_replaceable_rows=replaceable,
+                frcsd_roads=frcsd_roads,
+                frcsd_nodes=frcsd_nodes,
+                segment_relation_rows=segment_relation_rows,
+                semantic_junction_group_rows=semantic_junction_group_rows,
+                advance_right_audit_rows=right_attach_audit_rows,
+                connectivity_supplement_road_ids=connectivity_supplement_road_ids,
+            )
+        )
+
     return T06Step3Artifacts(
         run_id=resolved_run_id,
         run_root=run_root,
@@ -916,9 +1009,17 @@ def run_t06_step3_segment_replacement(
         swsd_frcsd_segment_relation_gpkg_path=segment_relation_paths["gpkg"],
         junction_rebuild_audit_gpkg_path=junction_paths["gpkg"],
         summary_path=summary_path,
-        rcsd_road_ownership_gpkg_path=ownership_outputs.ownership_paths["gpkg"],
-        multi_segment_connectivity_group_gpkg_path=ownership_outputs.connectivity_group_paths["gpkg"],
-        segment_construction_audit_gpkg_path=construction_audit_outputs.paths["gpkg"],
+        rcsd_road_ownership_gpkg_path=(
+            ownership_paths.get("gpkg") or step_root / "t06_rcsd_road_ownership.gpkg"
+        ),
+        multi_segment_connectivity_group_gpkg_path=(
+            connectivity_group_paths.get("gpkg")
+            or step_root / "t06_multi_segment_connectivity_group.gpkg"
+        ),
+        segment_construction_audit_gpkg_path=(
+            construction_audit_paths.get("gpkg")
+            or step_root / "t06_segment_construction_audit.gpkg"
+        ),
     )
 
 __all__ = ["run_t06_step3_segment_replacement"]

@@ -273,6 +273,11 @@ def refresh_segment_construction_audit_after_surface(
     step_root: str | Path,
     summary_path: str | Path,
     swsd_segment_path: str | Path,
+    swsd_segments: list[dict[str, Any]] | None = None,
+    swsd_roads: list[dict[str, Any]] | None = None,
+    swsd_nodes: list[dict[str, Any]] | None = None,
+    step2_replaceable_rows: list[dict[str, Any]] | None = None,
+    relation_rows: list[dict[str, Any]] | None = None,
 ) -> SegmentConstructionAuditOutputs | None:
     resolved_step_root = Path(step_root)
     resolved_summary_path = Path(summary_path)
@@ -295,13 +300,17 @@ def refresh_segment_construction_audit_after_surface(
         return None
     outputs = build_and_write_segment_construction_audit(
         step_root=resolved_step_root,
-        swsd_segments=read_features(swsd_segment_path),
-        swsd_roads=read_features(paths["swsd_roads"]),
-        swsd_nodes=read_features(paths["swsd_nodes"]),
+        swsd_segments=swsd_segments if swsd_segments is not None else read_features(swsd_segment_path),
+        swsd_roads=swsd_roads if swsd_roads is not None else read_features(paths["swsd_roads"]),
+        swsd_nodes=swsd_nodes if swsd_nodes is not None else read_features(paths["swsd_nodes"]),
         step1_rejected_rows=read_features(paths["step1_rejected"]),
-        step2_replaceable_rows=read_features(paths["step2_replaceable"]),
+        step2_replaceable_rows=(
+            step2_replaceable_rows
+            if step2_replaceable_rows is not None
+            else read_features(paths["step2_replaceable"])
+        ),
         step2_rejected_rows=read_features(paths["step2_rejected"]),
-        segment_relation_rows=read_features(paths["relation"]),
+        segment_relation_rows=relation_rows if relation_rows is not None else read_features(paths["relation"]),
     )
     summary_payload.update(outputs.summary)
     summary_outputs = dict(summary_payload.get("outputs") or {})

@@ -645,6 +645,9 @@ def test_surface_aware_visual_release_reuses_candidate_when_no_rollback(monkeypa
 
     monkeypatch.setattr(release_module, "_run_step3", fake_run_step3)
     monkeypatch.setattr(release_module, "_run_surface", lambda *args, **kwargs: {})
+    monkeypatch.setattr(release_module, "promote_validation_step3_outputs", lambda artifacts, _root: artifacts)
+    monkeypatch.setattr(release_module, "refresh_rcsd_road_ownership_after_surface", lambda **_kwargs: None)
+    monkeypatch.setattr(release_module, "refresh_segment_construction_audit_after_surface", lambda **_kwargs: None)
     monkeypatch.setattr(release_module, "_topology_fail_keys", lambda *args, **kwargs: set())
     monkeypatch.setattr(release_module, "_external_baseline_step3_root", lambda *args, **kwargs: None)
     monkeypatch.setattr(release_module, "_preflight_replacement_plan_rows", lambda *args, **kwargs: [_feature({"replacement_plan_id": "standard:s1"})])
@@ -729,6 +732,9 @@ def test_surface_aware_visual_release_skips_surface_safe_intermediate_rerun(monk
 
     monkeypatch.setattr(release_module, "_run_step3", fake_run_step3)
     monkeypatch.setattr(release_module, "_run_surface", lambda *args, **kwargs: {})
+    monkeypatch.setattr(release_module, "promote_validation_step3_outputs", lambda artifacts, _root: artifacts)
+    monkeypatch.setattr(release_module, "refresh_rcsd_road_ownership_after_surface", lambda **_kwargs: None)
+    monkeypatch.setattr(release_module, "refresh_segment_construction_audit_after_surface", lambda **_kwargs: None)
     monkeypatch.setattr(release_module, "_topology_fail_keys", fake_topology_fail_keys)
     monkeypatch.setattr(release_module, "_external_baseline_step3_root", lambda *args, **kwargs: None)
     monkeypatch.setattr(release_module, "_preflight_replacement_plan_rows", lambda *args, **kwargs: [_feature({"replacement_plan_id": "standard:s1"})])

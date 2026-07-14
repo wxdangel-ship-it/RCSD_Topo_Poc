@@ -5,7 +5,7 @@ from typing import Any
 from .parsing import ParseError, normalize_id, parse_id_list, unique_preserve_order
 from .schemas import feature
 from .step3_relation_node_map import sync_retained_swsd_carrier_mainnodes
-from .step3_topology_connectivity_audit import build_topology_connectivity_audit_rows
+from .step3_topology_connectivity_audit import build_group_path_corridor_internal_audit_rows
 
 
 GROUP_COVERAGE_FALLBACK_RISK = "group_path_corridor_local_coverage_retained_swsd"
@@ -43,9 +43,8 @@ def retain_group_coverage_fallback(
         segment_relation_rows,
         swsd_source_value=swsd_source_value,
     )
-    audit_rows = build_topology_connectivity_audit_rows(
+    audit_rows = build_group_path_corridor_internal_audit_rows(
         swsd_segments=swsd_segments,
-        swsd_roads=swsd_roads,
         frcsd_roads=frcsd_roads,
         frcsd_nodes=frcsd_nodes,
         segment_relation_rows=fallback_audit_relation_rows,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from .io import stage_feature_outputs
 from .schemas import T06PrecheckArtifacts
 from .step1_identify_fusion_units import run_t06_step1_identify_fusion_units
 from .step2_extract_rcsd_segments import run_t06_step2_extract_rcsd_segments
@@ -27,32 +28,33 @@ def run_t06_segment_fusion_precheck(
     progress: bool = False,
     write_json_outputs: bool = True,
 ) -> T06PrecheckArtifacts:
-    step1 = run_t06_step1_identify_fusion_units(
-        swsd_segment_path=swsd_segment_path,
-        swsd_nodes_path=swsd_nodes_path,
-        intersection_match_path=intersection_match_path,
-        out_root=out_root,
-        run_id=run_id,
-        progress=progress,
-    )
-    step2 = run_t06_step2_extract_rcsd_segments(
-        swsd_fusion_units_path=step1.final_fusion_units_gpkg_path or step1.fusion_units_gpkg_path,
-        swsd_segment_path=swsd_segment_path,
-        swsd_roads_path=swsd_roads_path,
-        swsd_nodes_path=swsd_nodes_path,
-        intersection_match_path=intersection_match_path,
-        rcsdroad_path=rcsdroad_path,
-        rcsdnode_path=rcsdnode_path,
-        out_root=out_root,
-        run_id=step1.run_id,
-        max_main_axis_angle_diff_deg=max_main_axis_angle_diff_deg,
-        min_coarse_length_ratio=min_coarse_length_ratio,
-        max_coarse_length_ratio=max_coarse_length_ratio,
-        buffer_distance_m=buffer_distance_m,
-        min_buffer_road_overlap_ratio=min_buffer_road_overlap_ratio,
-        min_buffer_road_overlap_length_m=min_buffer_road_overlap_length_m,
-        advance_right_formway_bit=advance_right_formway_bit,
-        progress=progress,
-        write_json_outputs=write_json_outputs,
-    )
+    with stage_feature_outputs():
+        step1 = run_t06_step1_identify_fusion_units(
+            swsd_segment_path=swsd_segment_path,
+            swsd_nodes_path=swsd_nodes_path,
+            intersection_match_path=intersection_match_path,
+            out_root=out_root,
+            run_id=run_id,
+            progress=progress,
+        )
+        step2 = run_t06_step2_extract_rcsd_segments(
+            swsd_fusion_units_path=step1.final_fusion_units_gpkg_path or step1.fusion_units_gpkg_path,
+            swsd_segment_path=swsd_segment_path,
+            swsd_roads_path=swsd_roads_path,
+            swsd_nodes_path=swsd_nodes_path,
+            intersection_match_path=intersection_match_path,
+            rcsdroad_path=rcsdroad_path,
+            rcsdnode_path=rcsdnode_path,
+            out_root=out_root,
+            run_id=step1.run_id,
+            max_main_axis_angle_diff_deg=max_main_axis_angle_diff_deg,
+            min_coarse_length_ratio=min_coarse_length_ratio,
+            max_coarse_length_ratio=max_coarse_length_ratio,
+            buffer_distance_m=buffer_distance_m,
+            min_buffer_road_overlap_ratio=min_buffer_road_overlap_ratio,
+            min_buffer_road_overlap_length_m=min_buffer_road_overlap_length_m,
+            advance_right_formway_bit=advance_right_formway_bit,
+            progress=progress,
+            write_json_outputs=write_json_outputs,
+        )
     return T06PrecheckArtifacts(run_id=step1.run_id, run_root=step1.run_root, step1=step1, step2=step2)

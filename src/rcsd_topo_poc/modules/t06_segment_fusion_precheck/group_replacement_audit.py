@@ -14,8 +14,8 @@ from .buffer_segment_extraction import (
     _build_undirected_graph,
     _edge_geometry,
     _nodes_from_edges,
-    _weighted_adjacency,
 )
+from .buffer_segment_graph import _coerce_int, _edge_weight, _path_reference_buffer
 from .graph_builders import Edge, NodeCanonicalizer
 from .parsing import ParseError, directionality_from_sgrade, normalize_id, parse_id_list, unique_preserve_order
 from .relation_mapping import RelationCheck, RelationRecord
@@ -104,6 +104,7 @@ def build_group_replacement_audit_rows(
     relation_base_ids = set(base_to_targets)
     graph_edges = _build_undirected_graph(rcsd_roads, node_canonicalizer=rcsd_node_canonicalizer).edges
     edge_by_id = {edge.edge_id: edge for edge in graph_edges}
+    directed_graph_adjacency = _directed_edge_adjacency(graph_edges)
     rcsd_road_by_id = _index_features(rcsd_roads)
     rcsd_road_index = _RoadGeometryIndex.build(rcsd_road_by_id)
     group_probe_extractor = (
@@ -139,7 +140,7 @@ def build_group_replacement_audit_rows(
         )
         allowed_base_ids.update(rcsd_pair_nodes)
         path_infos = _path_infos(
-            graph_edges=graph_edges,
+            graph_adjacency=directed_graph_adjacency,
             edge_by_id=edge_by_id,
             required_nodes=rcsd_pair_nodes,
             segment_geometry=segment.get("geometry") if segment is not None else None,
@@ -296,7 +297,7 @@ def _is_group_audit_candidate(props: dict[str, Any]) -> bool:
 
 def _path_infos(
     *,
-    graph_edges: list[Edge],
+    graph_adjacency: dict[str, list[tuple[str, Edge]]],
     edge_by_id: dict[str, Edge],
     required_nodes: list[str],
     segment_geometry: BaseGeometry | None,
@@ -305,18 +306,34 @@ def _path_infos(
         return []
     source, target = required_nodes
     result: list[dict[str, Any]] = []
-    adjacency = _weighted_adjacency(
-        graph_edges,
-        directed=True,
-        reference_geometry=segment_geometry,
-        required_nodes=set(required_nodes),
-    )
+    required_node_set = set(required_nodes)
+    reference_geometry_empty = segment_geometry is None or segment_geometry.is_empty
+    reference_buffer_geometry = _path_reference_buffer(segment_geometry)
+    reference_buffer_bounds = reference_buffer_geometry.bounds if reference_buffer_geometry is not None else None
+    weight_by_edge_id: dict[str, float] = {}
+
+    def edge_weight(edge: Edge) -> float:
+        cached = weight_by_edge_id.get(edge.edge_id)
+        if cached is not None:
+            return cached
+        weight = _edge_weight(
+            edge,
+            reference_geometry=segment_geometry,
+            reference_geometry_empty=reference_geometry_empty,
+            reference_buffer_geometry=reference_buffer_geometry,
+            reference_buffer_bounds=reference_buffer_bounds,
+            required_nodes=required_node_set,
+        )
+        weight_by_edge_id[edge.edge_id] = weight
+        return weight
+
     for label, start, end in (("forward", source, target), ("reverse", target, source)):
         edge_ids = _shortest_path_from_adjacency(
-            adjacency,
+            graph_adjacency,
             start,
             end,
             required_nodes,
+            edge_weight=edge_weight,
         )
         if not edge_ids:
             continue
@@ -332,14 +349,27 @@ def _path_infos(
     return result
 
 
+def _directed_edge_adjacency(edges: list[Edge]) -> dict[str, list[tuple[str, Edge]]]:
+    adjacency: dict[str, list[tuple[str, Edge]]] = {}
+    for edge in edges:
+        direction = _coerce_int(edge.properties.get("direction")) if edge.properties else None
+        if direction in {0, 1, 2}:
+            adjacency.setdefault(edge.source, []).append((edge.target, edge))
+        if direction in {0, 1, 3}:
+            adjacency.setdefault(edge.target, []).append((edge.source, edge))
+    return adjacency
+
+
 def _shortest_path_from_adjacency(
-    adjacency: dict[str, list[tuple[str, float, str]]],
+    adjacency: dict[str, list[tuple[str, Edge]]],
     source: str,
     target: str,
     required_nodes: list[str],
+    *,
+    edge_weight,
 ) -> list[str] | None:
     graph_nodes = set(adjacency)
-    graph_nodes.update(neighbor for neighbors in adjacency.values() for neighbor, _weight, _edge_id in neighbors)
+    graph_nodes.update(neighbor for neighbors in adjacency.values() for neighbor, _edge in neighbors)
     terminals: list[str] = []
     seen_terminals: set[str] = set()
     for node in required_nodes:
@@ -368,7 +398,9 @@ def _shortest_path_from_adjacency(
         if node == target and mask == all_mask:
             goal = state
             break
-        for neighbor, weight, edge_id in adjacency.get(node, []):
+        for neighbor, edge in adjacency.get(node, []):
+            weight = edge_weight(edge)
+            edge_id = edge.edge_id
             next_mask = mask | _node_mask(neighbor, terminal_index)
             next_state = (neighbor, next_mask)
             next_distance = distance + weight

@@ -171,13 +171,14 @@ def refresh_semantic_junction_topology_audit(
     *,
     step_root: str | Path,
     summary_path: str | Path | None = None,
+    semantic_group_rows: list[dict[str, Any]] | None = None,
 ) -> dict[str, int]:
     root = Path(step_root)
     group_path = root / f"{STEP3_SEMANTIC_JUNCTION_GROUPS_STEM}.gpkg"
     topology_path = root / f"{STEP3_TOPOLOGY_CONNECTIVITY_AUDIT_STEM}.gpkg"
-    if not group_path.is_file() or not topology_path.is_file():
+    if (semantic_group_rows is None and not group_path.is_file()) or not topology_path.is_file():
         return {"semantic_junction_topology_fail_downgraded_count": 0}
-    semantic_group_rows = read_features(group_path)
+    semantic_group_rows = semantic_group_rows if semantic_group_rows is not None else read_features(group_path)
     topology_rows = read_features(topology_path)
     downgrade_stats = downgrade_semantic_junction_topology_rows(topology_rows, semantic_group_rows)
     summary_stats = {

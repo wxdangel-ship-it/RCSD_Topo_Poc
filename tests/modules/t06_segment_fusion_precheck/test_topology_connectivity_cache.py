@@ -136,3 +136,42 @@ def test_surface_topology_rebuild_releases_large_caches_before_output(tmp_path, 
     assert stats == {}
     assert coverage_cache == {}
     assert clear_calls == 1
+
+
+def test_surface_topology_junction_only_skips_full_audit_builder(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(surface_relation, "read_features", lambda _path: [])
+    monkeypatch.setattr(surface_relation, "sync_retained_swsd_carrier_mainnodes", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(
+        surface_relation,
+        "transition_failure_node_ids_for_candidates",
+        lambda **_kwargs: set(),
+    )
+    monkeypatch.setattr(
+        surface_relation,
+        "apply_authoritative_transition_closure",
+        lambda **_kwargs: {"applied_node_count": 0},
+    )
+    monkeypatch.setattr(
+        surface_relation,
+        "build_topology_connectivity_audit_rows",
+        lambda **_kwargs: (_ for _ in ()).throw(AssertionError("full builder must not run")),
+    )
+    monkeypatch.setattr(
+        surface_relation,
+        "build_surface_junction_connectivity_audit_rows",
+        lambda **_kwargs: [{"properties": {"audit_layer": "segment_junction_connectivity"}}],
+    )
+
+    rows, _ = surface_relation._rebuild_topology_connectivity_audit(
+        step_root=tmp_path,
+        swsd_segment_path=tmp_path / "segments.gpkg",
+        swsd_roads_path=tmp_path / "roads.gpkg",
+        source_field_name="source",
+        swsd_source_value=2,
+        rcsd_source_value=1,
+        coverage_cache={},
+        write_outputs=False,
+        junction_only=True,
+    )
+
+    assert rows == [{"properties": {"audit_layer": "segment_junction_connectivity"}}]

@@ -544,6 +544,41 @@ def reconcile_final_road_segment_assignments(
     }
 
 
+def _ownership_source_roads_after_surface(
+    original_rcsd_roads: list[dict[str, Any]],
+    frcsd_roads: list[dict[str, Any]],
+    *,
+    source_field_name: str,
+    rcsd_source_value: int,
+) -> list[dict[str, Any]]:
+    """Keep original ownership scope and add final-only generated RCSD Roads."""
+
+    merged = list(original_rcsd_roads)
+    original_ids = {_feature_id(road) for road in original_rcsd_roads if _feature_id(road)}
+    merged_ids = set(original_ids)
+    for road in frcsd_roads:
+        props = road.get("properties") or {}
+        if str(props.get(source_field_name)) != str(rcsd_source_value):
+            continue
+        final_road_id = _feature_id(road)
+        if not final_road_id or final_road_id in merged_ids:
+            continue
+        provenance_ids = unique_preserve_order(
+            value
+            for field_name in (
+                "source_road_id",
+                "t06_split_original_road_id",
+                "t06_mixed_advance_right_rcsd_road_ids",
+            )
+            for value in _parse_ids(props.get(field_name))
+        )
+        if original_ids.intersection(provenance_ids):
+            continue
+        merged.append(road)
+        merged_ids.add(final_road_id)
+    return merged
+
+
 def refresh_rcsd_road_ownership_after_surface(
     *,
     step_root: str | Path,
@@ -628,9 +663,15 @@ def refresh_rcsd_road_ownership_after_surface(
     rcsd_nodes = read_features(rcsdnode_path)
     frcsd_roads = frcsd_roads if frcsd_roads is not None else read_features(frcsd_road_path)
     swsd_segments = swsd_segments if swsd_segments is not None else read_features(swsd_segment_path)
+    ownership_source_roads = _ownership_source_roads_after_surface(
+        read_features(rcsdroad_path),
+        frcsd_roads,
+        source_field_name=source_field_name,
+        rcsd_source_value=rcsd_source_value,
+    )
     outputs = build_and_write_rcsd_road_ownership(
         step_root=resolved_step_root,
-        rcsd_roads=read_features(rcsdroad_path),
+        rcsd_roads=ownership_source_roads,
         frcsd_roads=frcsd_roads,
         swsd_segments=swsd_segments,
         added_road_to_segments=added_road_to_segments,

@@ -4,6 +4,7 @@ from shapely.geometry import LineString
 
 from rcsd_topo_poc.modules.t06_segment_fusion_precheck.graph_builders import NodeCanonicalizer
 from rcsd_topo_poc.modules.t06_segment_fusion_precheck.rcsd_road_ownership import (
+    _ownership_source_roads_after_surface,
     _second_degree_connectivity_road_ids,
     build_and_write_rcsd_road_ownership,
     reconcile_final_road_segment_assignments,
@@ -225,3 +226,74 @@ def test_final_assignment_rejects_unresolved_multi_segment_provenance() -> None:
         assert "multi-Segment" in str(exc)
     else:
         raise AssertionError("unresolved multi-Segment final Road must fail")
+
+
+def test_surface_refresh_uniquely_assigns_final_only_topology_supplement(tmp_path) -> None:
+    original = _road("original", "1", "2", [(0, 0), (10, 0)])
+    split_final = _road("original__split_1", "1", "2", [(0, 0), (10, 0)], source=1)
+    split_final["properties"]["t06_split_original_road_id"] = "original"
+    supplement = _road(
+        "sw_adv__t06toposupp_1",
+        "10",
+        "20",
+        [(0, 20), (10, 20)],
+        formway=128,
+        source=1,
+    )
+    supplement["properties"].update(
+        {
+            "source_road_id": "sw_adv",
+            "t06_split_reason": "topology_supplement_from_swsd",
+            "t06_swsd_segment_ids": ["left_segment", "right_segment"],
+        }
+    )
+    frcsd_roads = [split_final, supplement]
+
+    ownership_source_roads = _ownership_source_roads_after_surface(
+        [original],
+        frcsd_roads,
+        source_field_name="source",
+        rcsd_source_value=1,
+    )
+    assert [road["properties"]["id"] for road in ownership_source_roads] == [
+        "original",
+        "sw_adv__t06toposupp_1",
+    ]
+
+    added = {
+        "original": ["normal_segment"],
+        "original__split_1": ["normal_segment"],
+        "sw_adv__t06toposupp_1": ["left_segment", "right_segment"],
+    }
+    outputs = build_and_write_rcsd_road_ownership(
+        step_root=tmp_path,
+        rcsd_roads=ownership_source_roads,
+        frcsd_roads=frcsd_roads,
+        swsd_segments=[
+            _segment("normal_segment", [(0, 0), (10, 0)]),
+            _segment("advance_segment", [(0, 20), (10, 20)], segment_type="advance_right"),
+        ],
+        added_road_to_segments=added,
+        connectivity_supplement_road_ids=set(),
+        canonicalizer=NodeCanonicalizer({}, frozenset()),
+        source_field_name="source",
+        rcsd_source_value=1,
+    )
+    ownership_by_id = {
+        row["properties"]["rcsd_road_id"]: row["properties"]
+        for row in outputs.ownership_rows
+    }
+    supplement_ownership = ownership_by_id["sw_adv__t06toposupp_1"]
+    assert supplement_ownership["owner_type"] == "single_segment"
+    assert supplement_ownership["owner_segment_id"] == "advance_segment"
+
+    stats = reconcile_final_road_segment_assignments(
+        frcsd_roads=frcsd_roads,
+        added_road_to_segments=added,
+        ownership_rows=outputs.ownership_rows,
+        source_field_name="source",
+        rcsd_source_value=1,
+    )
+    assert supplement["properties"]["t06_swsd_segment_ids"] == ["advance_segment"]
+    assert added["sw_adv__t06toposupp_1"] == ["advance_segment"]
+    assert stats["final_rcsd_road_multi_segment_assignment_count"] == 0

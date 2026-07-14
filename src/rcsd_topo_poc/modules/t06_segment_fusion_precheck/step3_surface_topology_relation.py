@@ -21,12 +21,18 @@ from .schemas import (
     STEP3_SWSD_FRCSD_SEGMENT_RELATION_STEM,
 )
 from .step3_relation_node_map import sync_retained_swsd_carrier_mainnodes
-from .step3_authoritative_transition_closure import apply_authoritative_transition_closure
+from .step3_surface_runtime import Step3SurfaceRuntimeState
+from .step3_authoritative_transition_closure import (
+    _hard_gate_cascade_node_ids,
+    apply_authoritative_transition_closure,
+)
 from .step3_topology_connectivity_audit import (
     STEP3_TOPOLOGY_CONNECTIVITY_AUDIT_FIELDS,
     STEP3_TOPOLOGY_CONNECTIVITY_AUDIT_STEM,
+    build_surface_junction_connectivity_audit_rows,
     build_topology_connectivity_audit_rows,
     summarize_topology_connectivity_audit,
+    transition_failure_node_ids_for_candidates,
 )
 
 
@@ -102,13 +108,14 @@ def _apply_step2_plan_relation_node_map_updates(
     step_root: Path,
     step2_junc_mappings: dict[tuple[str, str], list[str]],
     step2_dropped_junc_nodes: dict[str, list[str]],
+    relation_rows: list[dict[str, Any]] | None = None,
 ) -> int:
     if not step2_junc_mappings and not step2_dropped_junc_nodes:
         return 0
     relation_path = step_root / f"{STEP3_SWSD_FRCSD_SEGMENT_RELATION_STEM}.gpkg"
-    if not relation_path.is_file():
+    if relation_rows is None and not relation_path.is_file():
         return 0
-    rows = read_features(relation_path)
+    rows = relation_rows if relation_rows is not None else read_features(relation_path)
     updated = 0
     for row in rows:
         props = row.setdefault("properties", {})
@@ -197,11 +204,12 @@ def _apply_relation_node_map_updates(
     *,
     step_root: Path,
     updates: list[dict[str, Any]],
+    relation_rows: list[dict[str, Any]] | None = None,
 ) -> int:
     relation_path = step_root / f"{STEP3_SWSD_FRCSD_SEGMENT_RELATION_STEM}.gpkg"
-    if not relation_path.is_file():
+    if relation_rows is None and not relation_path.is_file():
         return 0
-    relation_rows = read_features(relation_path)
+    relation_rows = relation_rows if relation_rows is not None else read_features(relation_path)
     updated = 0
     for row in relation_rows:
         props = row.setdefault("properties", {})
@@ -329,16 +337,26 @@ def _rebuild_topology_connectivity_audit(
     rcsd_source_value: int,
     coverage_cache: dict[Any, Any] | None = None,
     write_outputs: bool = True,
+    runtime_state: Step3SurfaceRuntimeState | None = None,
+    junction_only: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    swsd_segments = read_features(swsd_segment_path)
-    swsd_roads = read_features(swsd_roads_path)
+    swsd_segments = runtime_state.swsd_segments if runtime_state is not None else read_features(swsd_segment_path)
+    swsd_roads = runtime_state.swsd_roads if runtime_state is not None else read_features(swsd_roads_path)
     road_path = step_root / "t06_frcsd_road.gpkg"
     node_path = step_root / "t06_frcsd_node.gpkg"
     relation_path = step_root / "t06_step3_swsd_frcsd_segment_relation.gpkg"
-    frcsd_roads = read_features(road_path)
-    frcsd_nodes = read_features(node_path)
-    relation_rows = read_features(relation_path)
-    advance_rows = read_features(step_root / "t06_step3_advance_right_attachment_audit.gpkg")
+    frcsd_roads = runtime_state.frcsd_roads if runtime_state is not None else read_features(road_path)
+    frcsd_nodes = runtime_state.frcsd_nodes if runtime_state is not None else read_features(node_path)
+    relation_rows = (
+        runtime_state.segment_relation_rows
+        if runtime_state is not None
+        else read_features(relation_path)
+    )
+    advance_rows = (
+        runtime_state.advance_right_audit_rows
+        if runtime_state is not None
+        else read_features(step_root / "t06_step3_advance_right_attachment_audit.gpkg")
+    )
     retained_sync_stats = sync_retained_swsd_carrier_mainnodes(
         relation_rows,
         frcsd_roads,
@@ -348,7 +366,9 @@ def _rebuild_topology_connectivity_audit(
         rcsd_source_value=rcsd_source_value,
     )
     try:
-        rows = build_topology_connectivity_audit_rows(
+        cascade_node_ids = _hard_gate_cascade_node_ids(step_root)
+        current_transition_node_ids = transition_failure_node_ids_for_candidates(
+            candidate_node_ids=cascade_node_ids,
             swsd_segments=swsd_segments,
             swsd_roads=swsd_roads,
             frcsd_roads=frcsd_roads,
@@ -360,13 +380,6 @@ def _rebuild_topology_connectivity_audit(
             rcsd_source_value=rcsd_source_value,
             coverage_cache=coverage_cache,
         )
-        current_transition_node_ids = {
-            _safe_id((row.get("properties") or {}).get("swsd_node_id"))
-            for row in rows
-            if (row.get("properties") or {}).get("counts_in_final_frcsd_topology_fail")
-            and str((row.get("properties") or {}).get("final_topology_category") or "") == "segment_transition"
-            and _safe_id((row.get("properties") or {}).get("swsd_node_id"))
-        }
         authoritative_stats = apply_authoritative_transition_closure(
             step_root=step_root,
             relation_rows=relation_rows,
@@ -376,6 +389,10 @@ def _rebuild_topology_connectivity_audit(
             rcsd_source_value=rcsd_source_value,
             current_transition_node_ids=current_transition_node_ids,
         )
+        if runtime_state is not None and authoritative_stats.get("audit_rows"):
+            runtime_state.authoritative_transition_closure_rows = list(
+                authoritative_stats["audit_rows"]
+            )
         if (
             retained_sync_stats.get("retained_swsd_carrier_mainnode_row_count", 0) > 0
             or authoritative_stats.get("applied_node_count", 0) > 0
@@ -390,9 +407,23 @@ def _rebuild_topology_connectivity_audit(
                 step_root=step_root,
                 stem=STEP3_FRCSD_NODE_STEM,
                 features=frcsd_nodes,
-                fieldnames=_fieldnames_from_gpkg(node_path),
+                fieldnames=(
+                    _runtime_fieldnames(frcsd_nodes)
+                    if runtime_state is not None and not node_path.is_file()
+                    else _fieldnames_from_gpkg(node_path)
+                ),
             )
-        if authoritative_stats.get("applied_node_count", 0) > 0:
+        if junction_only:
+            rows = build_surface_junction_connectivity_audit_rows(
+                swsd_segments=swsd_segments,
+                frcsd_nodes=frcsd_nodes,
+                segment_relation_rows=relation_rows,
+                advance_right_audit_rows=advance_rows,
+                source_field_name=source_field_name,
+                swsd_source_value=swsd_source_value,
+                rcsd_source_value=rcsd_source_value,
+            )
+        else:
             rows = build_topology_connectivity_audit_rows(
                 swsd_segments=swsd_segments,
                 swsd_roads=swsd_roads,
@@ -423,6 +454,15 @@ def _rebuild_topology_connectivity_audit(
             },
         )
     return rows, retained_sync_stats
+
+
+def _runtime_fieldnames(features: list[dict[str, Any]]) -> list[str]:
+    fieldnames: list[str] = []
+    for feature_row in features:
+        for field_name in (feature_row.get("properties") or {}):
+            if field_name not in fieldnames:
+                fieldnames.append(str(field_name))
+    return fieldnames
 
 
 def _write_topology_connectivity_audit_rows(

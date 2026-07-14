@@ -12,7 +12,7 @@ from typing import Any
 from shapely.strtree import STRtree
 
 from .graph_builders import NodeCanonicalizer
-from .io import read_features, write_feature_triplet, write_json
+from .io import discard_read_features_cache, read_features, write_feature_triplet, write_json
 from .parsing import ParseError, normalize_id, parse_id_list, unique_preserve_order
 from .schemas import feature
 
@@ -158,6 +158,21 @@ def build_and_write_rcsd_road_ownership(
         connectivity_supplement_road_ids=connectivity_supplement_road_ids,
         final_road_ids_by_original=final_road_ids_by_original,
     )
+    published_connectivity_road_ids = _second_degree_connectivity_road_ids(group_rows)
+    if published_connectivity_road_ids != connectivity_supplement_road_ids:
+        attached_segments_by_node = _attached_segments_by_node(
+            edges,
+            added_road_to_segments,
+            excluded_road_ids=published_connectivity_road_ids,
+        )
+        group_rows, group_id_by_road = _connectivity_groups(
+            road_by_id=road_by_id,
+            edges=edges,
+            added_road_to_segments=added_road_to_segments,
+            attached_segments_by_node=attached_segments_by_node,
+            connectivity_supplement_road_ids=published_connectivity_road_ids,
+            final_road_ids_by_original=final_road_ids_by_original,
+        )
     group_by_id = {
         str(row["properties"]["connectivity_group_id"]): row["properties"]
         for row in group_rows
@@ -392,6 +407,10 @@ def refresh_rcsd_road_ownership_after_surface(
     swsd_segment_path: str | Path,
     source_field_name: str = "source",
     rcsd_source_value: int = 1,
+    frcsd_roads: list[dict[str, Any]] | None = None,
+    swsd_segments: list[dict[str, Any]] | None = None,
+    relation_rows: list[dict[str, Any]] | None = None,
+    connectivity_supplement_road_ids: set[str] | None = None,
 ) -> OwnershipOutputs | None:
     resolved_step_root = Path(step_root)
     resolved_summary_path = Path(summary_path)
@@ -409,32 +428,35 @@ def refresh_rcsd_road_ownership_after_surface(
     if not all(path.is_file() for path in required):
         return None
 
+    discard_read_features_cache(rcsdroad_path)
+    discard_read_features_cache(rcsdnode_path)
+
     added_road_to_segments: dict[str, list[str]] = {}
     with added_road_path.open("r", encoding="utf-8-sig", newline="") as handle:
         for props in csv.DictReader(handle):
             road_id = str(props.get("entity_id") or "").strip()
             if road_id:
                 added_road_to_segments[road_id] = _parse_ids(props.get("swsd_segment_ids"))
-    connectivity_supplement_road_ids: set[str] = set()
-    if connectivity_path.is_file():
+    resolved_connectivity_supplement_road_ids = set(connectivity_supplement_road_ids or set())
+    if connectivity_supplement_road_ids is None and connectivity_path.is_file():
         for row in read_features(connectivity_path):
             props = row.get("properties") or {}
             if str(props.get("connectivity_kind") or "") == "second_degree_bridge":
-                connectivity_supplement_road_ids.update(_parse_ids(props.get("rcsd_road_ids")))
+                resolved_connectivity_supplement_road_ids.update(_parse_ids(props.get("rcsd_road_ids")))
 
     rcsd_nodes = read_features(rcsdnode_path)
     outputs = build_and_write_rcsd_road_ownership(
         step_root=resolved_step_root,
         rcsd_roads=read_features(rcsdroad_path),
-        frcsd_roads=read_features(frcsd_road_path),
-        swsd_segments=read_features(swsd_segment_path),
+        frcsd_roads=frcsd_roads if frcsd_roads is not None else read_features(frcsd_road_path),
+        swsd_segments=swsd_segments if swsd_segments is not None else read_features(swsd_segment_path),
         added_road_to_segments=added_road_to_segments,
-        connectivity_supplement_road_ids=connectivity_supplement_road_ids,
+        connectivity_supplement_road_ids=resolved_connectivity_supplement_road_ids,
         canonicalizer=NodeCanonicalizer.from_node_features(rcsd_nodes),
         source_field_name=source_field_name,
         rcsd_source_value=rcsd_source_value,
     )
-    relation_rows = read_features(relation_path)
+    relation_rows = relation_rows if relation_rows is not None else read_features(relation_path)
     sync_segment_relation_ownership_fields(
         relation_rows,
         ownership_rows=outputs.ownership_rows,
@@ -615,6 +637,16 @@ def _connectivity_groups(
         for road_id in road_ids:
             group_id_by_road[road_id] = group_id
     return rows, group_id_by_road
+
+
+def _second_degree_connectivity_road_ids(rows: list[dict[str, Any]]) -> set[str]:
+    result: set[str] = set()
+    for row in rows:
+        props = row.get("properties") or {}
+        if str(props.get("connectivity_kind") or "") != "second_degree_bridge":
+            continue
+        result.update(_parse_ids(props.get("rcsd_road_ids")))
+    return result
 
 
 def _ownership_summary(

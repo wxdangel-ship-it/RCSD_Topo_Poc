@@ -4,6 +4,7 @@ from shapely.geometry import LineString
 
 from rcsd_topo_poc.modules.t06_segment_fusion_precheck.graph_builders import NodeCanonicalizer
 from rcsd_topo_poc.modules.t06_segment_fusion_precheck.rcsd_road_ownership import (
+    _second_degree_connectivity_road_ids,
     build_and_write_rcsd_road_ownership,
     sync_segment_relation_ownership_fields,
 )
@@ -41,6 +42,26 @@ def _segment(segment_id: str, coords: list[tuple[float, float]], *, segment_type
         },
         LineString(coords),
     )
+
+
+def test_second_degree_connectivity_road_ids_use_published_group_closure() -> None:
+    rows = [
+        feature(
+            {
+                "connectivity_kind": "second_degree_bridge",
+                "rcsd_road_ids": ["bridge", "direct_context"],
+            },
+            None,
+        ),
+        feature(
+            {
+                "connectivity_kind": "other_reviewed",
+                "rcsd_road_ids": ["review_only"],
+            },
+            None,
+        ),
+    ]
+    assert _second_degree_connectivity_road_ids(rows) == {"bridge", "direct_context"}
 
 
 def test_ownership_is_unique_and_connectivity_does_not_count_as_segment_replacement(tmp_path) -> None:

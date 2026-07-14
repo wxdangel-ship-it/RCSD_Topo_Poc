@@ -140,6 +140,7 @@ from .step3_surface_topology_selection import (
 from .step3_surface_topology_rows import (
     _build_surface_audit_rows,
 )
+from .step3_surface_runtime import Step3SurfaceRuntimeState
 
 def run_surface_topology_postprocess(
     *,
@@ -156,21 +157,30 @@ def run_surface_topology_postprocess(
     rcsd_source_value: int = 1,
     apply_closure: bool = True,
     topology_coverage_cache: dict[Any, Any] | None = None,
+    runtime_state: Step3SurfaceRuntimeState | None = None,
 ) -> dict[str, Any]:
     resolved_step_root = Path(step_root)
     node_path = resolved_step_root / f"{STEP3_FRCSD_NODE_STEM}.gpkg"
     topology_path = resolved_step_root / f"{STEP3_TOPOLOGY_CONNECTIVITY_AUDIT_STEM}.gpkg"
-    if not node_path.is_file() or not topology_path.is_file():
+    if runtime_state is None and not node_path.is_file():
         return {"surface_topology_status": "skipped", "surface_topology_reason": "missing_step3_outputs"}
 
-    node_features = read_features(node_path)
-    node_fields = _fieldnames_from_gpkg(node_path)
+    node_features = runtime_state.frcsd_nodes if runtime_state is not None else read_features(node_path)
+    node_fields = (
+        _runtime_fieldnames(node_features)
+        if runtime_state is not None and not node_path.is_file()
+        else _fieldnames_from_gpkg(node_path)
+    )
     node_by_id = {_feature_id(feature): feature for feature in node_features}
     road_path = resolved_step_root / f"{STEP3_FRCSD_ROAD_STEM}.gpkg"
-    road_features = read_features(road_path)
-    road_fields = _fieldnames_from_gpkg(road_path)
+    road_features = runtime_state.frcsd_roads if runtime_state is not None else read_features(road_path)
+    road_fields = (
+        _runtime_fieldnames(road_features)
+        if runtime_state is not None and not road_path.is_file()
+        else _fieldnames_from_gpkg(road_path)
+    )
     road_by_id = _road_features_by_id_from_features(road_features)
-    swsd_roads = read_features(swsd_roads_path)
+    swsd_roads = runtime_state.swsd_roads if runtime_state is not None else read_features(swsd_roads_path)
     node_patch_ids = _swsd_patch_ids_by_node(swsd_roads)
     surfaces = _load_surfaces(
         t07_surface_path=t07_surface_path,
@@ -192,8 +202,9 @@ def run_surface_topology_postprocess(
         step_root=resolved_step_root,
         step2_junc_mappings=step2_junc_mappings,
         step2_dropped_junc_nodes=step2_dropped_junc_nodes,
+        relation_rows=runtime_state.segment_relation_rows if runtime_state is not None else None,
     )
-    if relation_update_count:
+    if relation_update_count or not topology_path.is_file():
         topology_audit_rows, retained_sync_stats = _rebuild_topology_connectivity_audit(
             step_root=resolved_step_root,
             swsd_segment_path=swsd_segment_path,
@@ -203,14 +214,23 @@ def run_surface_topology_postprocess(
             rcsd_source_value=rcsd_source_value,
             coverage_cache=topology_coverage_cache,
             write_outputs=False,
+            runtime_state=runtime_state,
+            junction_only=True,
         )
         _add_retained_sync_stats(retained_sync_totals, retained_sync_stats)
     materialized_updates: list[str] = []
     surface_paths: dict[str, Path] = {}
     for _iteration in range(3):
-        relation_by_segment = _relation_props_by_segment(
-            resolved_step_root / f"{STEP3_SWSD_FRCSD_SEGMENT_RELATION_STEM}.gpkg"
-        )
+        if runtime_state is not None:
+            relation_by_segment = {
+                _safe_id((row.get("properties") or {}).get("swsd_segment_id")): dict(row.get("properties") or {})
+                for row in runtime_state.segment_relation_rows
+                if _safe_id((row.get("properties") or {}).get("swsd_segment_id"))
+            }
+        else:
+            relation_by_segment = _relation_props_by_segment(
+                resolved_step_root / f"{STEP3_SWSD_FRCSD_SEGMENT_RELATION_STEM}.gpkg"
+            )
         topology_audit = topology_audit_rows if topology_audit_rows is not None else gpd.read_file(topology_path)
         road_by_id = _road_features_by_id_from_features(road_features)
         pass_rows, pass_closure_updates, pass_relation_updates, pass_materialized_updates = _build_surface_audit_rows(
@@ -250,6 +270,7 @@ def run_surface_topology_postprocess(
             pass_relation_update_count = _apply_relation_node_map_updates(
                 step_root=resolved_step_root,
                 updates=pass_relation_updates,
+                relation_rows=runtime_state.segment_relation_rows if runtime_state is not None else None,
             )
         if not pass_closure_updates and not pass_relation_update_count and not pass_materialized_updates:
             break
@@ -278,6 +299,7 @@ def run_surface_topology_postprocess(
             rcsd_source_value=rcsd_source_value,
             coverage_cache=topology_coverage_cache,
             write_outputs=False,
+            runtime_state=runtime_state,
         )
         _add_retained_sync_stats(retained_sync_totals, retained_sync_stats)
         if not pass_materialized_updates:
@@ -306,6 +328,15 @@ def run_surface_topology_postprocess(
     write_json(summary_path, summary)
     _merge_step3_summary(resolved_step_root, summary, summary_path)
     return summary
+
+
+def _runtime_fieldnames(features: list[dict[str, Any]]) -> list[str]:
+    fieldnames: list[str] = []
+    for feature_row in features:
+        for field_name in (feature_row.get("properties") or {}):
+            if field_name not in fieldnames:
+                fieldnames.append(str(field_name))
+    return fieldnames
 
 
 def _add_retained_sync_stats(target: dict[str, int], stats: dict[str, Any]) -> None:

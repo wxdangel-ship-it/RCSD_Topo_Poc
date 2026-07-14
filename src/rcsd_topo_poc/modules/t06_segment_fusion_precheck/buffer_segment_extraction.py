@@ -147,6 +147,7 @@ class BufferSegmentExtractor:
         self.node_index = SpatialFeatureIndex(rcsd_node_features)
         self.node_canonicalizer = NodeCanonicalizer.from_node_features(rcsd_node_features)
         self._candidate_cache: dict[tuple[int, float, float, float, int], _CandidateContext] = {}
+        self._canonical_relation_base_cache: dict[frozenset[str], frozenset[str]] = {}
 
     def extract(
         self,
@@ -174,7 +175,7 @@ class BufferSegmentExtractor:
         required_nodes = pair_nodes
         optional_nodes = _canonical_ids([*junc_nodes, *optional_allowed_rcsd_nodes], self.node_canonicalizer)
         protected_optional_nodes: set[str] = set(junc_nodes)
-        relation_base_ids = set(_canonical_ids(list(all_relation_base_ids), self.node_canonicalizer))
+        relation_base_ids = self._canonical_relation_base_ids(all_relation_base_ids)
         unexpected_base_ids = (
             set(_canonical_ids(list(unexpected_relation_base_ids or set()), self.node_canonicalizer))
             - set(required_nodes)
@@ -462,3 +463,14 @@ class BufferSegmentExtractor:
         )
         self._candidate_cache[key] = context
         return context
+
+    def _canonical_relation_base_ids(self, values: set[str]) -> frozenset[str]:
+        key = frozenset(values)
+        cached = self._canonical_relation_base_cache.get(key)
+        if cached is not None:
+            return cached
+        canonical = frozenset(_canonical_ids(list(key), self.node_canonicalizer))
+        if len(self._canonical_relation_base_cache) >= 32:
+            self._canonical_relation_base_cache.pop(next(iter(self._canonical_relation_base_cache)))
+        self._canonical_relation_base_cache[key] = canonical
+        return canonical

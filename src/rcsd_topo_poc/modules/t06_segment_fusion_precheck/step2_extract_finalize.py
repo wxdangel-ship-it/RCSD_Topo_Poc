@@ -299,6 +299,7 @@ def _finalize_step2_run(**context):
         replacement_plan_rows=replacement_plan_rows,
     )
     diag.stage("write_outputs")
+
     def _write_step2(stem: str, rows: list[dict[str, Any]], fields: list[str]) -> dict[str, Path]:
         return write_feature_triplet(
             step_root=step_root,

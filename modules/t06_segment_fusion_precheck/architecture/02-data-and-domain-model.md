@@ -26,6 +26,8 @@ T06 消费 T01 `segment.gpkg / roads.gpkg / nodes.gpkg` 与 T05 `intersection_ma
 - `status=0 / base_id>0` 的 T05 relation 才能用于 RCSD 映射。
 - `formway & 128 != 0` 表示提前右转；T06 需要识别、审计和在特定 corridor 条件下保留。
 - `execution_scope` 表达 replacement plan 的执行范围，至少包括 `standard_segment / special_junction_group_internal / path_corridor_group`。
+- RCSD Road 的最终 Segment 所有权是 `0..1`：普通 Road 最多归属一个 Segment；特殊路口内部 Road 与 multi-Segment connectivity Road 只表达关联上下文，owner 为空。
+- `path_corridor_group` 表达多个 Segment 的原子执行边界，不表达 Road 的多 Segment 所有权。
 - `source=1` 表示 RCSD 数据，`source=2` 表示 SWSD 数据；Step3 不重写原始 id，依赖 source 区分冲突。
 - `relation_status=replaced+retained_swsd` 表示正式 RCSD 替换之外还保留局部 SWSD carrier。
 

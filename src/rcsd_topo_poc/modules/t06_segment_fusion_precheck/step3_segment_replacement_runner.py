@@ -25,6 +25,7 @@ from .parsing import ParseError, normalize_id, parse_id_list, parse_positive_int
 from .road_attributes import is_near_advance_right_turn_duplicate as _is_adv_dup
 from .rcsd_road_ownership import (
     build_and_write_rcsd_road_ownership,
+    reconcile_final_road_segment_assignments,
     sync_segment_relation_ownership_fields,
 )
 from .segment_construction_audit import (
@@ -302,6 +303,11 @@ def run_t06_step3_segment_replacement(
             explicit_path=step2_special_junction_group_audit_path,
         )
         special_groups = _read_passed_special_junction_groups(special_group_audit_path)
+    special_junction_ids_by_road: dict[str, list[str]] = defaultdict(list)
+    for group in special_groups:
+        for road_id in group.rcsd_junction_road_ids:
+            if group.special_junction_id not in special_junction_ids_by_road[road_id]:
+                special_junction_ids_by_road[road_id].append(group.special_junction_id)
     special_added_road_to_segments = _special_group_entity_segments(
         groups=special_groups,
         entity_attr="rcsd_junction_road_ids",
@@ -626,7 +632,6 @@ def run_t06_step3_segment_replacement(
             added_rcsd_road_ids=set(added_road_to_segments),
             added_rcsd_node_ids=set(added_node_to_segments),
         )
-    added_road_rows = _change_rows(added_road_to_segments, "road", rcsd_source_value, "retained_rcsd_segment_road")
     added_node_rows = _change_rows(added_node_to_segments, "node", rcsd_source_value, "retained_rcsd_segment_node")
     unreplaced_rcsd_road_rows = _unreplaced_rcsd_road_rows(
         rcsd_roads=rcsd_roads,
@@ -648,6 +653,7 @@ def run_t06_step3_segment_replacement(
         swsd_segments=swsd_segments,
         added_road_to_segments=added_road_to_segments,
         connectivity_supplement_road_ids=connectivity_supplement_road_ids,
+        special_junction_ids_by_road=special_junction_ids_by_road,
         canonicalizer=canonicalizer,
         source_field_name=source_field_name,
         rcsd_source_value=rcsd_source_value,
@@ -656,6 +662,19 @@ def run_t06_step3_segment_replacement(
         segment_relation_rows,
         ownership_rows=ownership_outputs.ownership_rows,
         connectivity_group_rows=ownership_outputs.connectivity_group_rows,
+    )
+    final_assignment_stats = reconcile_final_road_segment_assignments(
+        frcsd_roads=frcsd_roads,
+        added_road_to_segments=added_road_to_segments,
+        ownership_rows=ownership_outputs.ownership_rows,
+        source_field_name=source_field_name,
+        rcsd_source_value=rcsd_source_value,
+    )
+    added_road_rows = _change_rows(
+        added_road_to_segments,
+        "road",
+        rcsd_source_value,
+        "retained_rcsd_segment_road",
     )
     construction_audit_outputs = build_and_write_segment_construction_audit(
         step_root=step_root,
@@ -862,6 +881,7 @@ def run_t06_step3_segment_replacement(
             **semantic_junction_topology_stats,
             **topology_connectivity_summary,
             **ownership_outputs.summary,
+            **final_assignment_stats,
             **construction_audit_outputs.summary,
             "outputs": {
                 **{f"frcsd_road_{key}": str(value) for key, value in road_paths.items()},

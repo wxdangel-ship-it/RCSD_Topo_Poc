@@ -14,7 +14,13 @@ from shapely.strtree import STRtree
 from .graph_builders import NodeCanonicalizer
 from .io import read_features, write_feature_triplet, write_json
 from .parsing import ParseError, normalize_id, parse_id_list, unique_preserve_order
-from .schemas import feature
+from .schemas import (
+    STEP3_CHANGE_AUDIT_FIELDS,
+    STEP3_FRCSD_ROAD_STEM,
+    STEP3_SWSD_FRCSD_SEGMENT_RELATION_FIELDS,
+    STEP3_SWSD_FRCSD_SEGMENT_RELATION_STEM,
+    feature,
+)
 
 
 RCSD_ROAD_OWNERSHIP_STEM = "t06_rcsd_road_ownership"
@@ -30,6 +36,7 @@ RCSD_ROAD_OWNERSHIP_FIELDS = [
     "owner_segment_id",
     "owner_segment_type",
     "connectivity_group_id",
+    "special_junction_ids",
     "related_segment_ids",
     "candidate_segment_ids",
     "ownership_status",
@@ -133,10 +140,12 @@ def build_and_write_rcsd_road_ownership(
     swsd_segments: list[dict[str, Any]],
     added_road_to_segments: dict[str, list[str]],
     connectivity_supplement_road_ids: set[str],
+    special_junction_ids_by_road: dict[str, list[str]] | None = None,
     canonicalizer: NodeCanonicalizer,
     source_field_name: str,
     rcsd_source_value: int,
 ) -> OwnershipOutputs:
+    special_junction_ids_by_road = special_junction_ids_by_road or {}
     road_by_id = {_feature_id(road): road for road in rcsd_roads if _feature_id(road)}
     final_road_ids_by_original = _final_road_ids_by_original(
         frcsd_roads,
@@ -189,6 +198,35 @@ def build_and_write_rcsd_road_ownership(
         candidate_segment_ids = unique_preserve_order(
             [*mapped_segments, *endpoint_segments, *geometry_candidate_ids]
         )
+
+        special_junction_ids = unique_preserve_order(
+            str(value)
+            for value in special_junction_ids_by_road.get(road_id, [])
+            if str(value)
+        )
+        if special_junction_ids:
+            owner_key = f"special_junction:{'|'.join(special_junction_ids)}"
+            ownership_rows.append(
+                _ownership_feature(
+                    road=road,
+                    road_id=road_id,
+                    owner_type="special_junction_internal",
+                    owner_key=owner_key,
+                    owner_segment_id="",
+                    owner_segment_type="",
+                    special_junction_ids=special_junction_ids,
+                    related_segment_ids=mapped_segments,
+                    candidate_segment_ids=candidate_segment_ids,
+                    confidence="exact",
+                    evidence_types=["special_junction_group_internal_plan"],
+                    reason="RCSD Road is internal to a formally passed special junction group and has no Segment owner",
+                    used=used,
+                    action="include_context" if used else "hold",
+                    final_road_ids=final_road_ids,
+                    count_in_segment_metric=False,
+                )
+            )
+            continue
 
         if advance_candidates:
             owner_segment_id = advance_candidates[0][0]
@@ -361,13 +399,26 @@ def sync_segment_relation_ownership_fields(
     connectivity_group_rows: list[dict[str, Any]],
 ) -> None:
     owned_by_segment: dict[str, list[str]] = defaultdict(list)
+    special_internal_by_segment: dict[str, list[str]] = defaultdict(list)
+    ownership_by_final_road_id: dict[str, dict[str, Any]] = {}
     for row in ownership_rows:
         props = row.get("properties") or {}
-        if props.get("owner_type") != "single_segment" or props.get("replacement_status") != "used":
+        if props.get("replacement_status") != "used":
             continue
-        segment_id = str(props.get("owner_segment_id") or "")
-        if segment_id:
-            owned_by_segment[segment_id].append(str(props.get("rcsd_road_id")))
+        final_road_ids = _parse_ids(props.get("final_road_ids")) or [str(props.get("rcsd_road_id") or "")]
+        final_road_ids = [value for value in final_road_ids if value]
+        for final_road_id in final_road_ids:
+            existing = ownership_by_final_road_id.get(final_road_id)
+            if existing is not None and existing is not props:
+                raise ValueError(f"duplicate ownership decision for final RCSD Road {final_road_id}")
+            ownership_by_final_road_id[final_road_id] = props
+        if props.get("owner_type") == "single_segment":
+            segment_id = str(props.get("owner_segment_id") or "")
+            if segment_id:
+                owned_by_segment[segment_id].extend(final_road_ids)
+        elif props.get("owner_type") == "special_junction_internal":
+            for segment_id in _parse_ids(props.get("related_segment_ids")):
+                special_internal_by_segment[segment_id].extend(final_road_ids)
     groups_by_segment: dict[str, list[str]] = defaultdict(list)
     roads_by_segment: dict[str, list[str]] = defaultdict(list)
     for row in connectivity_group_rows:
@@ -380,9 +431,102 @@ def sync_segment_relation_ownership_fields(
     for row in segment_relation_rows:
         props = row.get("properties") or {}
         segment_id = str(props.get("swsd_segment_id") or "")
+        retained_frcsd_road_ids: list[str] = []
+        pruned_frcsd_road_ids: list[str] = []
+        for final_road_id in _parse_ids(props.get("frcsd_road_ids")):
+            ownership = ownership_by_final_road_id.get(final_road_id)
+            if ownership is None:
+                retained_frcsd_road_ids.append(final_road_id)
+                continue
+            if (
+                ownership.get("owner_type") == "single_segment"
+                and str(ownership.get("owner_segment_id") or "") == segment_id
+            ):
+                retained_frcsd_road_ids.append(final_road_id)
+            else:
+                pruned_frcsd_road_ids.append(final_road_id)
+        props["frcsd_road_ids"] = unique_preserve_order(retained_frcsd_road_ids)
         props["owned_frcsd_road_ids"] = unique_preserve_order(owned_by_segment.get(segment_id, []))
+        props["related_special_junction_internal_road_ids"] = unique_preserve_order(
+            special_internal_by_segment.get(segment_id, [])
+        )
         props["connectivity_group_ids"] = unique_preserve_order(groups_by_segment.get(segment_id, []))
         props["related_connectivity_road_ids"] = unique_preserve_order(roads_by_segment.get(segment_id, []))
+        props["pruned_non_owner_frcsd_road_ids"] = unique_preserve_order(pruned_frcsd_road_ids)
+        if pruned_frcsd_road_ids:
+            props["risk_flags"] = unique_preserve_order(
+                [*_parse_ids(props.get("risk_flags")), "non_owner_frcsd_road_reference_pruned"]
+            )
+
+
+def reconcile_final_road_segment_assignments(
+    *,
+    frcsd_roads: list[dict[str, Any]],
+    added_road_to_segments: dict[str, list[str]],
+    ownership_rows: list[dict[str, Any]],
+    source_field_name: str,
+    rcsd_source_value: int,
+) -> dict[str, Any]:
+    assignment_by_final_road_id: dict[str, list[str]] = {}
+    assignment_by_original_road_id: dict[str, list[str]] = {}
+    for row in ownership_rows:
+        props = row.get("properties") or {}
+        if props.get("replacement_status") != "used":
+            continue
+        owner_type = str(props.get("owner_type") or "")
+        owner_segment_id = str(props.get("owner_segment_id") or "")
+        if owner_type == "single_segment":
+            if not owner_segment_id:
+                raise ValueError(f"single_segment ownership missing owner_segment_id for {props.get('rcsd_road_id')}")
+            assignment = [owner_segment_id]
+        else:
+            assignment = []
+        original_road_id = str(props.get("rcsd_road_id") or "")
+        if original_road_id:
+            assignment_by_original_road_id[original_road_id] = assignment
+        for final_road_id in _parse_ids(props.get("final_road_ids")):
+            existing = assignment_by_final_road_id.get(final_road_id)
+            if existing is not None and existing != assignment:
+                raise ValueError(f"conflicting ownership assignments for final RCSD Road {final_road_id}")
+            assignment_by_final_road_id[final_road_id] = assignment
+
+    for original_road_id, assignment in assignment_by_original_road_id.items():
+        if original_road_id in added_road_to_segments:
+            added_road_to_segments[original_road_id] = list(assignment)
+    for final_road_id, assignment in assignment_by_final_road_id.items():
+        if final_road_id in added_road_to_segments:
+            added_road_to_segments[final_road_id] = list(assignment)
+
+    single_count = 0
+    unassigned_count = 0
+    multi_road_ids: list[str] = []
+    for road in frcsd_roads:
+        props = road.get("properties") or {}
+        if str(props.get(source_field_name)) != str(rcsd_source_value):
+            continue
+        final_road_id = _feature_id(road)
+        if final_road_id in assignment_by_final_road_id:
+            props["t06_swsd_segment_ids"] = list(assignment_by_final_road_id[final_road_id])
+        segment_ids = _parse_ids(props.get("t06_swsd_segment_ids"))
+        if len(segment_ids) > 1:
+            multi_road_ids.append(final_road_id)
+        elif len(segment_ids) == 1:
+            single_count += 1
+        else:
+            props["t06_swsd_segment_ids"] = []
+            unassigned_count += 1
+
+    if multi_road_ids:
+        raise ValueError(
+            "final RCSD Road multi-Segment assignment is forbidden: "
+            + ",".join(sorted(multi_road_ids))
+        )
+    return {
+        "final_rcsd_road_single_segment_assignment_count": single_count,
+        "final_rcsd_road_unassigned_count": unassigned_count,
+        "final_rcsd_road_multi_segment_assignment_count": 0,
+        "final_rcsd_road_multi_segment_assignment_ids": [],
+    }
 
 
 def refresh_rcsd_road_ownership_after_surface(
@@ -401,7 +545,7 @@ def refresh_rcsd_road_ownership_after_surface(
     input_paths = summary_payload.get("input_paths") or {}
     rcsdroad_path = Path(str(input_paths.get("rcsdroad_path") or ""))
     rcsdnode_path = Path(str(input_paths.get("rcsdnode_path") or ""))
-    frcsd_road_path = resolved_step_root / "t06_frcsd_road.gpkg"
+    frcsd_road_path = resolved_step_root / f"{STEP3_FRCSD_ROAD_STEM}.gpkg"
     added_road_path = resolved_step_root / "t06_step3_added_rcsd_roads.csv"
     relation_path = resolved_step_root / "t06_step3_swsd_frcsd_segment_relation.gpkg"
     connectivity_path = resolved_step_root / f"{MULTI_SEGMENT_CONNECTIVITY_GROUP_STEM}.gpkg"
@@ -422,14 +566,53 @@ def refresh_rcsd_road_ownership_after_surface(
             if str(props.get("connectivity_kind") or "") == "second_degree_bridge":
                 connectivity_supplement_road_ids.update(_parse_ids(props.get("rcsd_road_ids")))
 
+    special_junction_ids_by_road: dict[str, list[str]] = defaultdict(list)
+    replacement_plan_path_value = input_paths.get("step2_replacement_plan_path")
+    special_source_loaded = False
+    if replacement_plan_path_value:
+        replacement_plan_path = Path(str(replacement_plan_path_value))
+        if replacement_plan_path.is_file():
+            special_source_loaded = True
+            for row in read_features(replacement_plan_path):
+                props = row.get("properties") or {}
+                if props.get("plan_status") != "ready":
+                    continue
+                if props.get("execution_action") != "include_context":
+                    continue
+                if props.get("execution_scope") != "special_junction_group_internal":
+                    continue
+                special_junction_id = str(props.get("special_junction_id") or "").strip()
+                if not special_junction_id:
+                    continue
+                for road_id in _parse_ids(props.get("rcsd_road_ids")):
+                    if special_junction_id not in special_junction_ids_by_road[road_id]:
+                        special_junction_ids_by_road[road_id].append(special_junction_id)
+    if not special_source_loaded:
+        special_audit_path_value = input_paths.get("step2_special_junction_group_audit_path")
+        if special_audit_path_value:
+            special_audit_path = Path(str(special_audit_path_value))
+            if special_audit_path.is_file():
+                for row in read_features(special_audit_path):
+                    props = row.get("properties") or {}
+                    if props.get("gate_status") != "passed":
+                        continue
+                    special_junction_id = str(props.get("special_junction_id") or "").strip()
+                    if not special_junction_id:
+                        continue
+                    for road_id in _parse_ids(props.get("rcsd_junction_road_ids")):
+                        if special_junction_id not in special_junction_ids_by_road[road_id]:
+                            special_junction_ids_by_road[road_id].append(special_junction_id)
+
     rcsd_nodes = read_features(rcsdnode_path)
+    frcsd_roads = read_features(frcsd_road_path)
     outputs = build_and_write_rcsd_road_ownership(
         step_root=resolved_step_root,
         rcsd_roads=read_features(rcsdroad_path),
-        frcsd_roads=read_features(frcsd_road_path),
+        frcsd_roads=frcsd_roads,
         swsd_segments=read_features(swsd_segment_path),
         added_road_to_segments=added_road_to_segments,
         connectivity_supplement_road_ids=connectivity_supplement_road_ids,
+        special_junction_ids_by_road=special_junction_ids_by_road,
         canonicalizer=NodeCanonicalizer.from_node_features(rcsd_nodes),
         source_field_name=source_field_name,
         rcsd_source_value=rcsd_source_value,
@@ -440,42 +623,52 @@ def refresh_rcsd_road_ownership_after_surface(
         ownership_rows=outputs.ownership_rows,
         connectivity_group_rows=outputs.connectivity_group_rows,
     )
+    final_assignment_stats = reconcile_final_road_segment_assignments(
+        frcsd_roads=frcsd_roads,
+        added_road_to_segments=added_road_to_segments,
+        ownership_rows=outputs.ownership_rows,
+        source_field_name=source_field_name,
+        rcsd_source_value=rcsd_source_value,
+    )
+    frcsd_road_paths = write_feature_triplet(
+        step_root=resolved_step_root,
+        stem=STEP3_FRCSD_ROAD_STEM,
+        features=frcsd_roads,
+        fieldnames=_feature_fieldnames(frcsd_roads, ["id", source_field_name]),
+    )
+    added_road_rows = [
+        feature(
+            {
+                "entity_id": road_id,
+                "entity_type": "road",
+                "source": rcsd_source_value,
+                "reason": "retained_rcsd_segment_road",
+                "swsd_segment_ids": segment_ids,
+            },
+            None,
+        )
+        for road_id, segment_ids in sorted(added_road_to_segments.items())
+    ]
+    added_road_paths = write_feature_triplet(
+        step_root=resolved_step_root,
+        stem="t06_step3_added_rcsd_roads",
+        features=added_road_rows,
+        fieldnames=STEP3_CHANGE_AUDIT_FIELDS,
+    )
     relation_paths = write_feature_triplet(
         step_root=resolved_step_root,
-        stem="t06_step3_swsd_frcsd_segment_relation",
+        stem=STEP3_SWSD_FRCSD_SEGMENT_RELATION_STEM,
         features=relation_rows,
-        fieldnames=[
-            "swsd_segment_id",
-            "relation_status",
-            "relation_reason",
-            "swsd_pair_nodes",
-            "swsd_junc_nodes",
-            "junc_kind2_exempt_nodes",
-            "detached_junc_nodes",
-            "swsd_road_ids",
-            "removed_swsd_road_ids",
-            "retained_detached_swsd_road_ids",
-            "frcsd_road_ids",
-            "owned_frcsd_road_ids",
-            "connectivity_group_ids",
-            "related_connectivity_road_ids",
-            "frcsd_road_source_values",
-            "rcsd_pair_nodes",
-            "rcsd_junc_nodes",
-            "junction_c_ids",
-            "group_replacement_plan_ids",
-            "group_replacement_source_segment_ids",
-            "group_replacement_segment_ids",
-            "swsd_to_frcsd_node_map",
-            "source_mix",
-            "risk_flags",
-        ],
+        fieldnames=STEP3_SWSD_FRCSD_SEGMENT_RELATION_FIELDS,
     )
     summary_payload.update(outputs.summary)
+    summary_payload.update(final_assignment_stats)
     summary_outputs = dict(summary_payload.get("outputs") or {})
     summary_outputs.update(
         {
             **{f"rcsd_road_ownership_{key}": str(value) for key, value in outputs.ownership_paths.items()},
+            **{f"frcsd_road_{key}": str(value) for key, value in frcsd_road_paths.items()},
+            **{f"added_rcsd_roads_{key}": str(value) for key, value in added_road_paths.items()},
             **{
                 f"multi_segment_connectivity_group_{key}": str(value)
                 for key, value in outputs.connectivity_group_paths.items()
@@ -486,6 +679,15 @@ def refresh_rcsd_road_ownership_after_surface(
     summary_payload["outputs"] = summary_outputs
     write_json(resolved_summary_path, summary_payload)
     return outputs
+
+
+def _feature_fieldnames(features: list[dict[str, Any]], preferred: list[str]) -> list[str]:
+    fieldnames = list(preferred)
+    for row in features:
+        for key in (row.get("properties") or {}):
+            if key not in fieldnames:
+                fieldnames.append(key)
+    return fieldnames
 
 
 def _ownership_feature(
@@ -506,6 +708,7 @@ def _ownership_feature(
     final_road_ids: list[str],
     count_in_segment_metric: bool,
     connectivity_group_id: str = "",
+    special_junction_ids: list[str] | None = None,
     risk_flags: list[str] | None = None,
 ) -> dict[str, Any]:
     return feature(
@@ -516,6 +719,7 @@ def _ownership_feature(
             "owner_segment_id": owner_segment_id,
             "owner_segment_type": owner_segment_type,
             "connectivity_group_id": connectivity_group_id,
+            "special_junction_ids": special_junction_ids or [],
             "related_segment_ids": related_segment_ids,
             "candidate_segment_ids": candidate_segment_ids,
             "ownership_status": "resolved",
@@ -642,6 +846,15 @@ def _ownership_summary(
             1
             for props in props_rows
             if props.get("owner_type") == "multi_segment_connectivity" and props.get("replacement_status") == "used"
+        ),
+        "special_junction_internal_rcsd_road_count": sum(
+            1 for props in props_rows if props.get("owner_type") == "special_junction_internal"
+        ),
+        "special_junction_internal_rcsd_road_used_count": sum(
+            1
+            for props in props_rows
+            if props.get("owner_type") == "special_junction_internal"
+            and props.get("replacement_status") == "used"
         ),
         "reality_change_rcsd_road_count": sum(1 for props in props_rows if props.get("owner_type") == "reality_change"),
         "unresolved_exception_rcsd_road_count": sum(

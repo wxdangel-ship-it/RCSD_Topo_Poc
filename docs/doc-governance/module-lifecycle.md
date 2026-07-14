@@ -31,6 +31,7 @@
 | `t10_e2e_orchestration` | `Active` | `modules/t10_e2e_orchestration` | 端到端业务流程编排与 Case 证据组织模块；v1 支持 Case 级 replay、空间切片、T06 反馈闭环与内网全量总控，并在 T06 后、T09 前强制执行 audit-only 的 T11；T08 在 Case runner 外独立运行。 |
 | `t11_manual_relation_review` | `Active` | `modules/t11_manual_relation_review` | 人工 relation 修复候选抽取模块；作为 T10 的 audit-only 阶段从 Case/full run root 读取 T05/T06/T10 证据，输出人工审计候选与模板，不回写 T05/T06/T09。 |
 | `p01_arm_build` | `Active POC / 成果模块` | `modules/p01_arm_build` | 异构路口通行能力 POC / 成果模块，当前历史 P10 口径统一改称 P01。 |
+| `p02_wuhan_local_experiment` | `Active POC / 成果模块` | `modules/p02_wuhan_local_experiment` | 武汉局部人工锚定实验模块，复用 T08/T01/T05/T06 并收口关系转换与验证证据。 |
 | `_template` | `Template` | `modules/_template` | 新模块启动模板，不是业务模块。 |
 
 ## 4. 当前主链
@@ -39,7 +40,7 @@
 T08 -> T01 -> T07 -> T03 -> T04 -> T05 -> T06 -> T09
 ```
 
-P01 与主链相关，但定位为 POC / 成果模块，不作为 T09 正式替代契约。
+P01 与主链相关，但定位为 POC / 成果模块，不作为 T09 正式替代契约。P02 只做武汉局部实验编排与证据收口，不作为正式主链阶段。
 
 ## 5. 当前治理缺口
 

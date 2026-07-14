@@ -72,6 +72,7 @@ T10 负责组织端到端 Case package、Case replay、full pipeline manifest、
 | T10 | 端到端编排与 Case 证据组织，不替代 T01-T09 / T11 算法。 |
 | T11 | T06 后、T09 前的人工 relation 修复候选审计；不回写业务产物。 |
 | P01 | 异构路口通行能力 POC，不作为 T09 正式替代契约。 |
+| P02 | 武汉局部人工锚定实验编排与证据收口；复用 T08/T01/T05/T06，不替代这些模块的正式业务契约。 |
 
 ## 5. 质量与验收口径
 
@@ -89,6 +90,7 @@ T10 负责组织端到端 Case package、Case replay、full pipeline manifest、
 - T10 不修复上游算法，不替代 T01-T09 / T11 的模块契约。
 - T06 不用 problem registry 或 surface fallback 绕过 replacement plan。
 - P01 不替代 T09 正式通行规则恢复契约。
+- P02 不伪造缺失的 T07/T03/T04 道路面锚定成果，不把局部实验结论直接提升为全量口径。
 - T02 不继续承接新业务需求。
 
 ## 7. 改进路线

@@ -151,7 +151,8 @@ def test_step3_group_created_member_filters_distant_group_roads(tmp_path: Path) 
     relations = {item["swsd_segment_id"]: item for item in _props(artifacts.swsd_frcsd_segment_relation_gpkg_path)}
     assert relations["s1"]["frcsd_road_ids"] == ["rr1"]
     assert relations["s2"]["relation_status"] == "replaced"
-    assert relations["s2"]["frcsd_road_ids"] == ["rr1", "rr2"]
+    assert relations["s2"]["frcsd_road_ids"] == ["rr2"]
+    assert relations["s2"]["pruned_non_owner_frcsd_road_ids"] == ["rr1"]
 
 
 def test_step3_prefers_replacement_plan_json_to_keep_geometryless_special_rows(tmp_path: Path) -> None:

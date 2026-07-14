@@ -44,15 +44,16 @@
 
 ### Tool3：Nodes 类型聚合
 
-- 输入一：Nodes GPKG，依赖字段 `id / kind / grade`，可选字段 `mainnodeid / has_evd / is_anchor / subnodeid`。
+- 输入一：Nodes GPKG，依赖字段 `id / kind / grade`，可选字段 `mainnodeid / has_evd / is_anchor / subnodeid / closed_con / closed_connect`。`closed_connect` 是 `closed_con` 的正式输入别名；仅存在别名时 copy-on-write 新增 `closed_con`，两字段同时存在且值不一致时失败，原始字段不删除。
 - 输入二：Roads GPKG，依赖字段 `id / snodeid / enodeid / direction`；环岛聚合使用可选字段 `roadtype`。
 - 输出：
   - `t08_nodes_type_aggregation_tool3.gpkg`
   - `t08_nodes_type_aggregation_summary_tool3.json`
 - 输出 CRS：`EPSG:3857`。
-- 类型初始化：新增或覆盖 `kind_2 / grade_2`，初始值分别复制自 `kind / grade`，原始 `kind / grade` 不改写。
+- 类型初始化：新增或覆盖 `kind_2 / grade_2`，初始值分别复制自 `kind / grade`，原始 `kind / grade` 不改写；同时执行 `closed_connect -> closed_con` 规范化。
 - 环岛聚合：参考 T01 环岛构建，按 `roadtype bit3` 的 Road 连通组聚合；组内最小 Node `id` 为 `mainnode`，全组 `mainnodeid` 写为 mainnode。若聚合后环岛语义路口包含多个 node，mainnode 写 `grade_2 = 1 / kind_2 = 64`，成员写 `grade_2 = 0 / kind_2 = 0`；若聚合后环岛语义路口只有一个 node，则该 node 继承初始化后的原 `kind / grade` 到 `kind_2 / grade_2`，不变更为环岛类型。
 - 输出边界：Tool3 只输出 copy-on-write Nodes，不修改输入文件，不输出或改写 Roads。
+- 输入 Road 引用不存在的端点 Node 时，Tool3 不得删除 Road、补造 Node 或终止整个批次；该 Road 只从环岛拓扑计算中跳过，并在 summary `roundabout.topology_missing_endpoint_*` 与 `roadtype_issue_rows.action=ignored_for_roundabout_topology_only` 中审计。`counts.road_feature_count` 仍统计完整 Road 输入。
 - 所有输入、输出路径必须通过参数提供。
 
 ### Tool4：路口类型修复
@@ -455,7 +456,7 @@ Tool9：
 5. Tool2 `kind` 多值按 `|` 去重拼接；具有 `17` 主辅路出入口属性的 Road 必须从主 Kind 输出删除，并写入事件 Road 输出。
 6. Tool3 输出 Nodes GPKG 且 CRS 为 `EPSG:3857`。
 7. Tool3 保留原始 `kind / grade`，只在 copy-on-write 输出中写入 `kind_2 / grade_2 / mainnodeid / subnodeid`。
-8. Tool3 summary 可追溯环岛组、单节点环岛保留数量、更新节点数、CRS、字段解析与阶段性能；Tool3 不再构造复杂分歧 / 合流路口。
+8. Tool3 summary 可追溯环岛组、单节点环岛保留数量、缺失端点 Road/Node、更新节点数、CRS、字段解析与阶段性能；Tool3 不再构造复杂分歧 / 合流路口，缺失端点 Road 只跳过环岛拓扑计算且不从输入删除。
 9. Tool4 输出完整 Nodes / audit Nodes GPKG 且 CRS 为 `EPSG:3857`；提供 `--roads-output` 时 Roads 输出也必须为 `EPSG:3857`。
 10. Tool4 识别错误 T 型路口与 `kind_2 in {8,16}` 一入一出分合流路口，并按规则写回代表 node `kind_2`。
 11. Tool4 对提前右转与辅路 Road 执行入出度异常豁免；候选错误被豁免时不写入 audit Nodes，必须写入 summary `degree_exceptions`。

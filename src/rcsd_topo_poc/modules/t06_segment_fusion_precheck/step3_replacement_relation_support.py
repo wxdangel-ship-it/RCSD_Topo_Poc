@@ -680,6 +680,9 @@ def _build_swsd_frcsd_segment_relation_rows(
                         unit.external_retained_swsd_carrier_ids if unit is not None else []
                     ),
                     "frcsd_road_ids": frcsd_road_ids,
+                    "parallel_corridor_peer_road_ids": (
+                        unit.parallel_corridor_peer_road_ids if unit is not None else []
+                    ),
                     "frcsd_road_source_values": frcsd_road_source_values,
                     "rcsd_pair_nodes": rcsd_pair_nodes,
                     "rcsd_junc_nodes": rcsd_junc_nodes,

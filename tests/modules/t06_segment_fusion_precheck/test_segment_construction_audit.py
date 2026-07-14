@@ -10,6 +10,9 @@ from rcsd_topo_poc.modules.t06_segment_fusion_precheck.segment_construction_audi
     apply_side_road_only_replacement_gate,
     build_and_write_segment_construction_audit,
 )
+from rcsd_topo_poc.modules.t06_segment_fusion_precheck.step3_replacement_unit_support import (
+    _retain_topology_supplement_swsd_roads,
+)
 
 
 def _segment(segment_id: str, *, segment_type: str = "normal") -> dict:
@@ -204,3 +207,64 @@ def test_side_road_only_gate_uses_t01_side_attachment_provenance() -> None:
     assert unit.status == "passed"
     assert stats["allowed_segment_ids"] == ["seg"]
     assert stats["blocked_segment_ids"] == []
+
+
+def test_parallel_peer_corridor_cannot_replace_current_segment_internal_anchor_coverage() -> None:
+    swsd_roads = {
+        "sw_a": feature(
+            {"id": "sw_a", "snodeid": "a", "enodeid": "j", "direction": 2},
+            LineString([(0, 0), (50, 0)]),
+        ),
+        "sw_b": feature(
+            {"id": "sw_b", "snodeid": "j", "enodeid": "b", "direction": 2},
+            LineString([(50, 0), (100, 0)]),
+        ),
+    }
+    rcsd_roads = {
+        "replacement": feature(
+            {"id": "replacement", "snodeid": "ra", "enodeid": "rb", "direction": 2},
+            LineString([(0, 30), (100, 30)]),
+        ),
+        "peer_a": feature(
+            {"id": "peer_a", "snodeid": "ra", "enodeid": "rj", "direction": 2},
+            LineString([(0, 0), (50, 0)]),
+        ),
+        "peer_b": feature(
+            {"id": "peer_b", "snodeid": "rj", "enodeid": "rb", "direction": 2},
+            LineString([(50, 0), (100, 0)]),
+        ),
+    }
+    unit = SimpleNamespace(
+        segment_id="segment",
+        status="passed",
+        pair_nodes=["a", "b"],
+        junc_nodes=["j"],
+        junc_kind2_exempt_nodes=[],
+        rcsd_pair_nodes=["ra", "rb"],
+        rcsd_junc_nodes=["rj"],
+        optional_allowed_rcsd_nodes=[],
+        swsd_road_ids=["sw_a", "sw_b"],
+        rcsd_road_ids=["replacement"],
+        parallel_corridor_peer_road_ids=["peer_a", "peer_b"],
+        retained_detached_swsd_road_ids=[],
+        group_replacement_plan_ids=[],
+        group_replacement_source_segment_ids=[],
+        risk_flags=["visual_consistency_parallel_corridor_reassigned_from_primary"],
+    )
+    nodes = [
+        feature({"id": node_id, "mainnodeid": ""}, Point(float(index), 0))
+        for index, node_id in enumerate(["ra", "rj", "rb"])
+    ]
+
+    stats = _retain_topology_supplement_swsd_roads(
+        [unit],
+        swsd_road_by_id=swsd_roads,
+        rcsd_road_by_id=rcsd_roads,
+        rcsd_nodes=nodes,
+        global_rcsd_road_ids=["replacement", "peer_a", "peer_b"],
+        attachment_audit_rows=[],
+    )
+
+    assert stats == {"retained_swsd_road_count": 2, "affected_segment_count": 1}
+    assert unit.retained_detached_swsd_road_ids == ["sw_a", "sw_b"]
+    assert "parallel_corridor_peer_connectivity_used" not in unit.risk_flags

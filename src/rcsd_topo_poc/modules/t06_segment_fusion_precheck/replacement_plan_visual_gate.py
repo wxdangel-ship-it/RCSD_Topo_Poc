@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import heapq
 from collections import defaultdict, deque
 from typing import Any
 
@@ -151,6 +152,17 @@ def _apply_visual_consistency_road_conflict_gate(
         if not conflict_road_ids:
             continue
         swsd_geometry = swsd_geometry_by_segment.get(_safe_id(props.get("swsd_segment_id")))
+        if _reassign_parallel_corridor_from_primary(
+            props,
+            conflict_road_ids=conflict_road_ids,
+            primary_road_owner=primary_road_owner,
+            primary_plan_by_id=primary_plan_by_id,
+            swsd_geometry=swsd_geometry,
+            swsd_geometry_by_segment=swsd_geometry_by_segment,
+            rcsd_road_by_id=rcsd_road_by_id,
+            rcsd_node_canonicalizer=rcsd_node_canonicalizer,
+        ):
+            continue
         pruned_road_ids = [
             road_id
             for road_id in conflict_road_ids
@@ -228,6 +240,486 @@ def _apply_visual_consistency_road_conflict_gate(
         notes = str(props.get("notes") or "")
         suffix = f"conflict_rcsd_road_ids={blocking_conflict_road_ids or conflict_road_ids}"
         props["notes"] = f"{notes}; {suffix}" if notes else suffix
+
+
+def _reassign_parallel_corridor_from_primary(
+    props: dict[str, Any],
+    *,
+    conflict_road_ids: list[str],
+    primary_road_owner: dict[str, str],
+    primary_plan_by_id: dict[str, dict[str, Any]],
+    swsd_geometry: Any,
+    swsd_geometry_by_segment: dict[str, Any],
+    rcsd_road_by_id: dict[str, dict[str, Any]],
+    rcsd_node_canonicalizer: NodeCanonicalizer,
+) -> bool:
+    if props.get("swsd_directionality") != "single" or not conflict_road_ids:
+        return False
+    owner_plan_ids = unique_preserve_order(
+        [primary_road_owner.get(road_id, "") for road_id in conflict_road_ids if primary_road_owner.get(road_id)]
+    )
+    if len(owner_plan_ids) != 1:
+        return False
+    owner_plan_id = owner_plan_ids[0]
+    owner_props = primary_plan_by_id.get(owner_plan_id)
+    if not owner_props:
+        return False
+    owner_segment_id = _safe_id(owner_props.get("swsd_segment_id"))
+    owner_geometry = swsd_geometry_by_segment.get(owner_segment_id)
+    if owner_geometry is None or getattr(owner_geometry, "is_empty", False):
+        return False
+
+    current_road_ids = _parse_list(props.get("rcsd_road_ids"))
+    owner_road_ids = _parse_list(owner_props.get("rcsd_road_ids"))
+    owner_candidate_road_ids = [road_id for road_id in owner_road_ids if road_id not in set(current_road_ids)]
+    required_junction_nodes = unique_preserve_order(
+        [
+            _canonicalize_node_id(rcsd_node_canonicalizer, node_id)
+            for node_id in _parse_list(props.get("rcsd_junc_nodes"))
+            if _canonicalize_node_id(rcsd_node_canonicalizer, node_id)
+        ]
+    )
+    current_anchor_path = _directed_parallel_path_road_ids(
+        props,
+        current_road_ids,
+        require_ordered_junctions=True,
+        swsd_geometry=swsd_geometry,
+        rcsd_road_by_id=rcsd_road_by_id,
+        rcsd_node_canonicalizer=rcsd_node_canonicalizer,
+    )
+    alternative_pair_path = _directed_parallel_path_road_ids(
+        props,
+        owner_candidate_road_ids,
+        require_ordered_junctions=False,
+        swsd_geometry=swsd_geometry,
+        rcsd_road_by_id=rcsd_road_by_id,
+        rcsd_node_canonicalizer=rcsd_node_canonicalizer,
+    )
+    alternative_anchor_path = _directed_parallel_path_road_ids(
+        props,
+        owner_candidate_road_ids,
+        require_ordered_junctions=True,
+        swsd_geometry=swsd_geometry,
+        rcsd_road_by_id=rcsd_road_by_id,
+        rcsd_node_canonicalizer=rcsd_node_canonicalizer,
+    )
+    if not alternative_pair_path:
+        return False
+
+    if required_junction_nodes and current_anchor_path and not alternative_anchor_path:
+        owner_remaining_road_ids = [road_id for road_id in owner_road_ids if road_id not in set(conflict_road_ids)]
+        if not _plan_required_nodes_connected(
+            owner_props,
+            owner_remaining_road_ids,
+            rcsd_road_by_id=rcsd_road_by_id,
+            rcsd_node_canonicalizer=rcsd_node_canonicalizer,
+        ):
+            return False
+        owner_props["rcsd_road_ids"] = owner_remaining_road_ids
+        owner_props["retained_node_ids"] = _plan_retained_node_ids(
+            owner_props,
+            rcsd_road_by_id,
+            rcsd_node_canonicalizer,
+        )
+        owner_props["risk_flags"] = unique_preserve_order(
+            [
+                *_parse_list(owner_props.get("risk_flags")),
+                "primary_parallel_corridor_released_to_anchored_segment",
+            ]
+        )
+        owner_notes = str(owner_props.get("notes") or "")
+        owner_suffix = (
+            f"released_anchor_priority_rcsd_road_ids={conflict_road_ids}; "
+            f"released_to_segment_id={_safe_id(props.get('swsd_segment_id'))}"
+        )
+        owner_props["notes"] = f"{owner_notes}; {owner_suffix}" if owner_notes else owner_suffix
+
+        props["rcsd_road_ids"] = current_anchor_path
+        props["parallel_corridor_peer_road_ids"] = []
+        props["retained_node_ids"] = _plan_retained_node_ids(
+            props,
+            rcsd_road_by_id,
+            rcsd_node_canonicalizer,
+        )
+        props["risk_flags"] = unique_preserve_order(
+            [
+                *_parse_list(props.get("risk_flags")),
+                "anchor_priority_parallel_corridor_retained",
+            ]
+        )
+        notes = str(props.get("notes") or "")
+        suffix = (
+            f"anchor_priority_rcsd_road_ids={current_anchor_path}; "
+            "priority=anchor_relation>relative_position>distance"
+        )
+        props["notes"] = f"{notes}; {suffix}" if notes else suffix
+        for road_id in conflict_road_ids:
+            primary_road_owner.pop(road_id, None)
+        return True
+
+    if required_junction_nodes and alternative_anchor_path and not current_anchor_path:
+        alternative_set = set(alternative_anchor_path)
+        owner_remaining_road_ids = [road_id for road_id in owner_road_ids if road_id not in alternative_set]
+        if not _plan_required_nodes_connected(
+            owner_props,
+            owner_remaining_road_ids,
+            rcsd_road_by_id=rcsd_road_by_id,
+            rcsd_node_canonicalizer=rcsd_node_canonicalizer,
+        ):
+            return False
+        owner_props["rcsd_road_ids"] = owner_remaining_road_ids
+        owner_props["retained_node_ids"] = _plan_retained_node_ids(
+            owner_props,
+            rcsd_road_by_id,
+            rcsd_node_canonicalizer,
+        )
+        props["rcsd_road_ids"] = alternative_anchor_path
+        props["parallel_corridor_peer_road_ids"] = []
+        props["retained_node_ids"] = _plan_retained_node_ids(
+            props,
+            rcsd_road_by_id,
+            rcsd_node_canonicalizer,
+        )
+        props["risk_flags"] = unique_preserve_order(
+            [
+                *_parse_list(props.get("risk_flags")),
+                "anchor_priority_parallel_corridor_reassigned_from_primary",
+            ]
+        )
+        notes = str(props.get("notes") or "")
+        suffix = (
+            f"anchor_priority_rcsd_road_ids={alternative_anchor_path}; "
+            "priority=anchor_relation>relative_position>distance"
+        )
+        props["notes"] = f"{notes}; {suffix}" if notes else suffix
+        for road_id in alternative_anchor_path:
+            primary_road_owner.pop(road_id, None)
+        return True
+
+    if required_junction_nodes and not current_anchor_path and not alternative_anchor_path:
+        return False
+
+    alternative_road_ids = alternative_anchor_path or alternative_pair_path
+    owner_baseline_uncovered = _plan_uncovered_length_after_prune(
+        owner_props,
+        [],
+        swsd_geometry=owner_geometry,
+        rcsd_road_by_id=rcsd_road_by_id,
+    )
+    alternative_owner_uncovered = _plan_uncovered_length_after_prune(
+        owner_props,
+        alternative_road_ids,
+        swsd_geometry=owner_geometry,
+        rcsd_road_by_id=rcsd_road_by_id,
+    )
+    current_owner_uncovered = _plan_uncovered_length_after_prune(
+        owner_props,
+        conflict_road_ids,
+        swsd_geometry=owner_geometry,
+        rcsd_road_by_id=rcsd_road_by_id,
+    )
+    remaining_owner_road_ids = [road_id for road_id in owner_road_ids if road_id not in set(alternative_road_ids)]
+    if (
+        alternative_owner_uncovered > owner_baseline_uncovered + 1e-6
+        or not _plan_pair_nodes_directionally_connected(
+            owner_props,
+            remaining_owner_road_ids,
+            rcsd_road_by_id=rcsd_road_by_id,
+            rcsd_node_canonicalizer=rcsd_node_canonicalizer,
+        )
+    ):
+        return False
+    if alternative_owner_uncovered + 1e-6 >= current_owner_uncovered:
+        return False
+
+    alternative_set = set(alternative_road_ids)
+    owner_props["rcsd_road_ids"] = [road_id for road_id in owner_road_ids if road_id not in alternative_set]
+    owner_props["retained_node_ids"] = _plan_retained_node_ids(
+        owner_props,
+        rcsd_road_by_id,
+        rcsd_node_canonicalizer,
+    )
+    owner_props["risk_flags"] = unique_preserve_order(
+        [
+            *_parse_list(owner_props.get("risk_flags")),
+            "primary_parallel_corridor_transferred_to_visual_segment",
+        ]
+    )
+    owner_notes = str(owner_props.get("notes") or "")
+    owner_suffix = (
+        f"transferred_parallel_corridor_rcsd_road_ids={alternative_road_ids}; "
+        f"transferred_to_segment_id={_safe_id(props.get('swsd_segment_id'))}"
+    )
+    owner_props["notes"] = f"{owner_notes}; {owner_suffix}" if owner_notes else owner_suffix
+
+    props["rcsd_road_ids"] = alternative_road_ids
+    props["parallel_corridor_peer_road_ids"] = current_road_ids
+    props["retained_node_ids"] = _plan_retained_node_ids(
+        props,
+        rcsd_road_by_id,
+        rcsd_node_canonicalizer,
+    )
+    props["risk_flags"] = unique_preserve_order(
+        [
+            *_parse_list(props.get("risk_flags")),
+            "visual_consistency_parallel_corridor_reassigned_from_primary",
+        ]
+    )
+    notes = str(props.get("notes") or "")
+    suffix = (
+        f"reassigned_parallel_corridor_from_plan_id={owner_plan_id}; "
+        f"previous_rcsd_road_ids={current_road_ids}; "
+        f"reassigned_rcsd_road_ids={alternative_road_ids}"
+    )
+    props["notes"] = f"{notes}; {suffix}" if notes else suffix
+    for road_id in alternative_road_ids:
+        primary_road_owner.pop(road_id, None)
+    return True
+
+
+def _directed_parallel_path_road_ids(
+    props: dict[str, Any],
+    candidate_road_ids: list[str],
+    *,
+    require_ordered_junctions: bool = False,
+    swsd_geometry: Any,
+    rcsd_road_by_id: dict[str, dict[str, Any]],
+    rcsd_node_canonicalizer: NodeCanonicalizer,
+) -> list[str]:
+    pair_nodes = [
+        _canonicalize_node_id(rcsd_node_canonicalizer, node_id)
+        for node_id in _parse_list(props.get("rcsd_pair_nodes"))
+    ]
+    pair_nodes = [node_id for node_id in pair_nodes if node_id]
+    if len(pair_nodes) != 2 or swsd_geometry is None or getattr(swsd_geometry, "is_empty", False):
+        return []
+    search_buffer = swsd_geometry.buffer(MAX_FORMAL_REPLACEMENT_BUFFER_M)
+    adjacency: dict[str, list[tuple[str, float, str]]] = defaultdict(list)
+    for road_id in candidate_road_ids:
+        road = rcsd_road_by_id.get(road_id)
+        geometry = (road or {}).get("geometry")
+        if road is None or geometry is None or getattr(geometry, "is_empty", False):
+            continue
+        if not geometry.intersects(search_buffer):
+            continue
+        road_props = dict(road.get("properties") or {})
+        source = _canonicalize_node_id(
+            rcsd_node_canonicalizer,
+            road_props.get("snodeid") or road_props.get("snode_id") or road_props.get("source"),
+        )
+        target = _canonicalize_node_id(
+            rcsd_node_canonicalizer,
+            road_props.get("enodeid") or road_props.get("enode_id") or road_props.get("target"),
+        )
+        if not source or not target:
+            continue
+        direction = _coerce_optional_int(road_props.get("direction"))
+        weight = max(float(getattr(geometry, "length", 0.0) or 0.0), 1.0)
+        if direction in {0, 1, 2}:
+            adjacency[source].append((target, weight, road_id))
+        if direction in {0, 1, 3}:
+            adjacency[target].append((source, weight, road_id))
+
+    junction_nodes = (
+        unique_preserve_order(
+            [
+                _canonicalize_node_id(rcsd_node_canonicalizer, node_id)
+                for node_id in _parse_list(props.get("rcsd_junc_nodes"))
+                if _canonicalize_node_id(rcsd_node_canonicalizer, node_id)
+            ]
+        )
+        if require_ordered_junctions
+        else []
+    )
+    checkpoints = unique_preserve_order([pair_nodes[0], *junction_nodes, pair_nodes[1]])
+    path: list[str] = []
+    for checkpoint_index, (source, target) in enumerate(zip(checkpoints, checkpoints[1:])):
+        blocked_future_nodes = set(checkpoints[checkpoint_index + 2 :])
+        leg = _shortest_directed_path_road_ids(
+            adjacency,
+            source,
+            target,
+            blocked_nodes=blocked_future_nodes,
+        )
+        if not leg:
+            return []
+        path.extend(leg)
+    return unique_preserve_order(path)
+
+
+def _shortest_directed_path_road_ids(
+    adjacency: dict[str, list[tuple[str, float, str]]],
+    source: str,
+    target: str,
+    *,
+    blocked_nodes: set[str],
+) -> list[str]:
+    if source == target:
+        return []
+    queue: list[tuple[float, int, str]] = [(0.0, 0, source)]
+    distances = {source: 0.0}
+    previous: dict[str, tuple[str, str]] = {}
+    sequence = 0
+    while queue:
+        distance, _sequence, node_id = heapq.heappop(queue)
+        if distance > distances.get(node_id, float("inf")):
+            continue
+        if node_id == target:
+            break
+        for next_id, weight, road_id in sorted(adjacency.get(node_id, []), key=lambda item: (item[0], item[2])):
+            if next_id in blocked_nodes:
+                continue
+            next_distance = distance + weight
+            if next_distance >= distances.get(next_id, float("inf")):
+                continue
+            distances[next_id] = next_distance
+            previous[next_id] = (node_id, road_id)
+            sequence += 1
+            heapq.heappush(queue, (next_distance, sequence, next_id))
+    if target not in distances:
+        return []
+    path: list[str] = []
+    node_id = target
+    while node_id != source:
+        step = previous.get(node_id)
+        if step is None:
+            return []
+        node_id, road_id = step
+        path.append(road_id)
+    path.reverse()
+    return path
+
+
+def _plan_uncovered_length_after_prune(
+    props: dict[str, Any],
+    road_ids_to_prune: list[str],
+    *,
+    swsd_geometry: Any,
+    rcsd_road_by_id: dict[str, dict[str, Any]],
+) -> float:
+    prune_set = set(road_ids_to_prune)
+    geometries = [
+        road.get("geometry")
+        for road_id in _parse_list(props.get("rcsd_road_ids"))
+        if road_id not in prune_set
+        for road in [rcsd_road_by_id.get(road_id)]
+        if road is not None and road.get("geometry") is not None and not getattr(road.get("geometry"), "is_empty", False)
+    ]
+    if not geometries:
+        return float("inf")
+    retained_geometry = unary_union(geometries)
+    return float(swsd_geometry.difference(retained_geometry.buffer(VISUAL_CONFLICT_CORRIDOR_BUFFER_M)).length)
+
+
+def _plan_pair_nodes_directionally_connected(
+    props: dict[str, Any],
+    road_ids: list[str],
+    *,
+    rcsd_road_by_id: dict[str, dict[str, Any]],
+    rcsd_node_canonicalizer: NodeCanonicalizer,
+) -> bool:
+    pair_nodes = [
+        _canonicalize_node_id(rcsd_node_canonicalizer, node_id)
+        for node_id in _parse_list(props.get("rcsd_pair_nodes"))
+    ]
+    pair_nodes = [node_id for node_id in pair_nodes if node_id]
+    if len(pair_nodes) != 2:
+        return False
+    adjacency: dict[str, set[str]] = defaultdict(set)
+    for road_id in road_ids:
+        road = rcsd_road_by_id.get(road_id)
+        road_props = dict((road or {}).get("properties") or {})
+        source = _canonicalize_node_id(
+            rcsd_node_canonicalizer,
+            road_props.get("snodeid") or road_props.get("snode_id") or road_props.get("source"),
+        )
+        target = _canonicalize_node_id(
+            rcsd_node_canonicalizer,
+            road_props.get("enodeid") or road_props.get("enode_id") or road_props.get("target"),
+        )
+        if not source or not target:
+            continue
+        direction = _coerce_optional_int(road_props.get("direction"))
+        if direction in {0, 1, 2}:
+            adjacency[source].add(target)
+        if direction in {0, 1, 3}:
+            adjacency[target].add(source)
+
+    def reachable(source: str, target: str) -> bool:
+        queue: deque[str] = deque([source])
+        seen = {source}
+        while queue:
+            node_id = queue.popleft()
+            if node_id == target:
+                return True
+            for next_id in adjacency.get(node_id, set()):
+                if next_id in seen:
+                    continue
+                seen.add(next_id)
+                queue.append(next_id)
+        return False
+
+    source, target = pair_nodes
+    if props.get("swsd_directionality") == "dual":
+        return reachable(source, target) and reachable(target, source)
+    return reachable(source, target)
+
+
+def _plan_required_nodes_connected(
+    props: dict[str, Any],
+    road_ids: list[str],
+    *,
+    rcsd_road_by_id: dict[str, dict[str, Any]],
+    rcsd_node_canonicalizer: NodeCanonicalizer,
+) -> bool:
+    required_nodes = unique_preserve_order(
+        [
+            _canonicalize_node_id(rcsd_node_canonicalizer, node_id)
+            for node_id in [
+                *_parse_list(props.get("rcsd_pair_nodes")),
+                *_parse_list(props.get("rcsd_junc_nodes")),
+            ]
+            if _canonicalize_node_id(rcsd_node_canonicalizer, node_id)
+        ]
+    )
+    if len(required_nodes) < 2:
+        return False
+    undirected: dict[str, set[str]] = defaultdict(set)
+    vertices: set[str] = set()
+    for road_id in road_ids:
+        road = rcsd_road_by_id.get(road_id)
+        road_props = dict((road or {}).get("properties") or {})
+        source = _canonicalize_node_id(rcsd_node_canonicalizer, road_props.get("snodeid"))
+        target = _canonicalize_node_id(rcsd_node_canonicalizer, road_props.get("enodeid"))
+        if not source or not target:
+            continue
+        vertices.update((source, target))
+        undirected[source].add(target)
+        undirected[target].add(source)
+    if any(node_id not in vertices for node_id in required_nodes):
+        return False
+    queue: deque[str] = deque([required_nodes[0]])
+    seen = {required_nodes[0]}
+    while queue:
+        node_id = queue.popleft()
+        for next_id in undirected.get(node_id, set()):
+            if next_id in seen:
+                continue
+            seen.add(next_id)
+            queue.append(next_id)
+    return all(node_id in seen for node_id in required_nodes) and _plan_pair_nodes_directionally_connected(
+        props,
+        road_ids,
+        rcsd_road_by_id=rcsd_road_by_id,
+        rcsd_node_canonicalizer=rcsd_node_canonicalizer,
+    )
+
+
+def _coerce_optional_int(value: Any) -> int | None:
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return None
 
 
 def _is_same_path_group_member_owner(segment_id: str | None, owner_plan: dict[str, Any]) -> bool:

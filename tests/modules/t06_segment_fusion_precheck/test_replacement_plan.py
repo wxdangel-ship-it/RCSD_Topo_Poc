@@ -1020,6 +1020,156 @@ def test_visual_consistency_prunes_primary_body_conflict_when_junction_context_s
     assert "visual_consistency_road_conflict_with_primary_replacement_plan" not in by_segment["visual"]["risk_flags"]
 
 
+def test_visual_consistency_reassigns_parallel_corridor_when_it_preserves_primary_geometry() -> None:
+    roads = [
+        _road("primary_left", "p1", "p_mid", [(0, 0), (80, 0)]),
+        _road("primary_right", "p_mid", "p2", [(120, 0), (200, 0)]),
+        _road("current_visual", "v1", "v2", [(80, 0), (120, 0)]),
+        _road("parallel_a", "v1", "v_mid", [(80, 20), (100, 20)]),
+        _road("parallel_b", "v_mid", "v2", [(100, 20), (120, 20)]),
+    ]
+    for road in roads:
+        road["properties"]["direction"] = 2
+
+    rows = build_replacement_plan_rows(
+        replaceable_rows=[
+            _feature(
+                {
+                    "swsd_segment_id": "primary",
+                    "replacement_strategy": "buffer_segment_extraction",
+                    "swsd_pair_nodes": ["a", "b"],
+                    "rcsd_pair_nodes": ["p1", "p2"],
+                    "rcsd_road_ids": [
+                        "primary_left",
+                        "primary_right",
+                        "current_visual",
+                        "parallel_a",
+                        "parallel_b",
+                    ],
+                    "retained_node_ids": ["p1", "p_mid", "p2", "v1", "v_mid", "v2"],
+                },
+                LineString([(0, 0), (200, 0)]),
+            ),
+            _feature(
+                {
+                    "swsd_segment_id": "visual",
+                    "replacement_strategy": "buffer_segment_extraction",
+                    "geometry_buffer_coverage_issue": "retained_geometry_outside_swsd_visual_consistency_scope",
+                    "swsd_uncovered_by_rcsd_length_m": 0.0,
+                    "swsd_uncovered_by_rcsd_ratio": 0.0,
+                    "swsd_directionality": "single",
+                    "swsd_pair_nodes": ["c", "d"],
+                    "rcsd_pair_nodes": ["v1", "v2"],
+                    "rcsd_road_ids": ["current_visual"],
+                    "retained_node_ids": ["v1", "v2"],
+                },
+                LineString([(80, 20), (120, 20)]),
+            ),
+        ],
+        special_group_rows=[],
+        group_replacement_audit_rows=[],
+        rcsd_roads=roads,
+        rcsd_node_canonicalizer=NodeCanonicalizer(
+            {},
+            frozenset({"p1", "p_mid", "p2", "v1", "v_mid", "v2"}),
+        ),
+        swsd_segments=[
+            _feature({"id": "primary"}, LineString([(0, 0), (200, 0)])),
+            _feature({"id": "visual"}, LineString([(80, 20), (120, 20)])),
+        ],
+    )
+
+    by_segment = {row["properties"]["swsd_segment_id"]: row["properties"] for row in rows}
+    assert by_segment["primary"]["plan_status"] == "ready"
+    assert by_segment["primary"]["rcsd_road_ids"] == ["primary_left", "primary_right", "current_visual"]
+    assert "primary_parallel_corridor_transferred_to_visual_segment" in by_segment["primary"]["risk_flags"]
+    assert by_segment["visual"]["plan_status"] == "ready"
+    assert by_segment["visual"]["rcsd_road_ids"] == ["parallel_a", "parallel_b"]
+    assert "visual_consistency_parallel_corridor_reassigned_from_primary" in by_segment["visual"]["risk_flags"]
+    assert "visual_consistency_road_conflict_with_primary_replacement_plan" not in by_segment["visual"]["risk_flags"]
+
+
+def test_visual_consistency_keeps_ordered_anchor_corridor_before_relative_position_and_distance() -> None:
+    roads = [
+        _road("primary_left", "p1", "v1", [(0, 0), (80, 0)]),
+        _road("primary_right", "v2", "p2", [(120, 0), (200, 0)]),
+        _road("anchored_a", "v1", "j1", [(80, 0), (92, 0)]),
+        _road("anchored_b", "j1", "j2", [(92, 0), (108, 0)]),
+        _road("anchored_c", "j2", "v2", [(108, 0), (120, 0)]),
+        _road("near_a", "v1", "near_mid", [(80, 20), (100, 20)]),
+        _road("near_b", "near_mid", "v2", [(100, 20), (120, 20)]),
+    ]
+    for road in roads:
+        road["properties"]["direction"] = 2
+
+    rows = build_replacement_plan_rows(
+        replaceable_rows=[
+            _feature(
+                {
+                    "swsd_segment_id": "primary",
+                    "replacement_strategy": "buffer_segment_extraction",
+                    "swsd_directionality": "single",
+                    "swsd_pair_nodes": ["pa", "pb"],
+                    "rcsd_pair_nodes": ["p1", "p2"],
+                    "rcsd_road_ids": [
+                        "primary_left",
+                        "primary_right",
+                        "anchored_a",
+                        "anchored_b",
+                        "anchored_c",
+                        "near_a",
+                        "near_b",
+                    ],
+                    "retained_node_ids": ["p1", "v1", "j1", "j2", "v2", "near_mid", "p2"],
+                },
+                LineString([(0, 0), (200, 0)]),
+            ),
+            _feature(
+                {
+                    "swsd_segment_id": "anchored_visual",
+                    "replacement_strategy": "buffer_segment_extraction",
+                    "geometry_buffer_coverage_issue": "retained_geometry_outside_swsd_visual_consistency_scope",
+                    "swsd_uncovered_by_rcsd_length_m": 0.0,
+                    "swsd_uncovered_by_rcsd_ratio": 0.0,
+                    "swsd_directionality": "single",
+                    "swsd_pair_nodes": ["a", "b"],
+                    "swsd_junc_nodes": ["sw_j1", "sw_j2"],
+                    "rcsd_pair_nodes": ["v1", "v2"],
+                    "rcsd_junc_nodes": ["j1", "j2"],
+                    "rcsd_road_ids": ["anchored_a", "anchored_b", "anchored_c"],
+                    "retained_node_ids": ["v1", "j1", "j2", "v2"],
+                },
+                LineString([(80, 20), (120, 20)]),
+            ),
+        ],
+        special_group_rows=[],
+        group_replacement_audit_rows=[],
+        rcsd_roads=roads,
+        rcsd_node_canonicalizer=NodeCanonicalizer(
+            {},
+            frozenset({"p1", "v1", "j1", "j2", "v2", "near_mid", "p2"}),
+        ),
+        swsd_segments=[
+            _feature({"id": "primary"}, LineString([(0, 0), (200, 0)])),
+            _feature({"id": "anchored_visual"}, LineString([(80, 20), (120, 20)])),
+        ],
+    )
+
+    by_segment = {row["properties"]["swsd_segment_id"]: row["properties"] for row in rows}
+    assert by_segment["primary"]["plan_status"] == "ready"
+    assert by_segment["primary"]["rcsd_road_ids"] == [
+        "primary_left",
+        "primary_right",
+        "near_a",
+        "near_b",
+    ]
+    assert by_segment["anchored_visual"]["plan_status"] == "ready"
+    assert by_segment["anchored_visual"]["rcsd_road_ids"] == ["anchored_a", "anchored_b", "anchored_c"]
+    assert by_segment["anchored_visual"].get("parallel_corridor_peer_road_ids", []) == []
+    assert "anchor_priority_parallel_corridor_retained" in by_segment["anchored_visual"]["risk_flags"]
+    assert "priority=anchor_relation>relative_position>distance" in by_segment["anchored_visual"]["notes"]
+
+
 def test_standard_visual_consistency_high_deviation_requires_manual_review() -> None:
     rows = build_replacement_plan_rows(
         replaceable_rows=[

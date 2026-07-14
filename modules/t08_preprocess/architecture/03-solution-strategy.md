@@ -20,7 +20,7 @@ Tool2 命令脚本输出 Patch join / Kind enrich 阶段进度；Road / Raw Kind
 
 ## Tool3
 
-Tool3 先将 Nodes `kind / grade` 复制到 `kind_2 / grade_2`，再执行环岛拓扑聚合：
+Tool3 先将 Nodes `kind / grade` 复制到 `kind_2 / grade_2`，将原始别名 `closed_connect` copy-on-write 归一为规范字段 `closed_con`，再执行环岛拓扑聚合。若 `closed_connect / closed_con` 同时存在且值不一致，Tool3 失败并输出冲突，不选择任一字段覆盖：
 
 1. Roundabout aggregation：参考 T01，使用 `roadtype bit3` Road 连通组识别环岛，组内最小 Node `id` 作为 mainnode；多 node 环岛组才将 mainnode 写为 `kind_2 = 64`，单 node 环岛组保留初始化后的原 `kind / grade` 到 `kind_2 / grade_2`。
 

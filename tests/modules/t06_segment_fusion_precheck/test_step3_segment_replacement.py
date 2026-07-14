@@ -1017,7 +1017,9 @@ def test_step3_consumes_path_corridor_group_replacement_audit(tmp_path: Path) ->
     assert relations["s1"]["frcsd_road_ids"] == ["rr1"]
     assert relations["s2"]["relation_status"] == "replaced"
     assert relations["s2"]["rcsd_pair_nodes"] == ["20", "30"]
-    assert relations["s2"]["frcsd_road_ids"] == ["rr1", "rr2"]
+    assert relations["s2"]["frcsd_road_ids"] == ["rr2"]
+    assert relations["s2"]["pruned_non_owner_frcsd_road_ids"] == ["rr1"]
+    assert summary["final_rcsd_road_multi_segment_assignment_count"] == 0
     assert relations["s2"]["group_replacement_source_segment_ids"] == ["s2"]
     assert "group_path_corridor_replacement" in relations["s2"]["risk_flags"]
 

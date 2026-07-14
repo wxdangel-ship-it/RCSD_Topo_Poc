@@ -9,6 +9,7 @@ import fiona
 from pyproj import CRS
 from shapely.geometry import LineString, Point
 
+from rcsd_topo_poc.modules.t08_preprocess.nodes_type_aggregation import run_t08_nodes_type_aggregation
 from rcsd_topo_poc.modules.t08_preprocess.vector_io import write_gpkg
 
 
@@ -124,3 +125,98 @@ def test_tool3_script_aggregates_nodes_types_and_mainnode(tmp_path: Path) -> Non
     assert summary["performance"]["elapsed_seconds"] >= 0
     assert summary["performance"]["nodes_per_second"] is not None
     assert "complex_divmerge_seconds" not in summary["performance"]["stage_timings"]
+
+
+def test_tool3_normalizes_closed_connect_to_closed_con_copy_on_write(tmp_path: Path) -> None:
+    nodes_gpkg = tmp_path / "nodes.gpkg"
+    roads_gpkg = tmp_path / "roads.gpkg"
+    nodes_output = tmp_path / "nodes_alias_tool3.gpkg"
+    write_gpkg(
+        nodes_gpkg,
+        [_node({"id": "1", "kind": 4, "grade": 1, "mainnodeid": "1", "closed_connect": 3}, 0, 0)],
+        crs_text="EPSG:3857",
+    )
+    write_gpkg(
+        roads_gpkg,
+        [_road({"id": "r1", "snodeid": "1", "enodeid": "1", "direction": 1, "roadtype": 0}, [(0, 0), (1, 0), (0, 0)])],
+        crs_text="EPSG:3857",
+    )
+
+    artifacts = run_t08_nodes_type_aggregation(
+        nodes_gpkg=nodes_gpkg,
+        roads_gpkg=roads_gpkg,
+        nodes_output=nodes_output,
+        enable_roundabout=False,
+    )
+
+    _, props_by_id = _read_features(artifacts.nodes_output)
+    assert props_by_id["1"]["closed_connect"] == 3
+    assert props_by_id["1"]["closed_con"] == 3
+    summary = json.loads(artifacts.summary_output.read_text(encoding="utf-8"))
+    assert summary["field_audit"]["closed_con_source"] == "closed_connect"
+    assert summary["counts"]["closed_con_normalized_count"] == 1
+
+
+def test_tool3_rejects_conflicting_closed_con_alias_values(tmp_path: Path) -> None:
+    nodes_gpkg = tmp_path / "nodes.gpkg"
+    roads_gpkg = tmp_path / "roads.gpkg"
+    write_gpkg(
+        nodes_gpkg,
+        [_node({"id": "1", "kind": 4, "grade": 1, "mainnodeid": "1", "closed_con": 2, "closed_connect": 3}, 0, 0)],
+        crs_text="EPSG:3857",
+    )
+    write_gpkg(
+        roads_gpkg,
+        [_road({"id": "r1", "snodeid": "1", "enodeid": "1", "direction": 1, "roadtype": 0}, [(0, 0), (1, 0), (0, 0)])],
+        crs_text="EPSG:3857",
+    )
+
+    try:
+        run_t08_nodes_type_aggregation(
+            nodes_gpkg=nodes_gpkg,
+            roads_gpkg=roads_gpkg,
+            nodes_output=tmp_path / "nodes_conflict_tool3.gpkg",
+            enable_roundabout=False,
+        )
+    except ValueError as exc:
+        assert "closed_con/closed_connect conflict" in str(exc)
+    else:
+        raise AssertionError("Tool3 should reject conflicting closed_con aliases")
+
+
+def test_tool3_audits_and_skips_dangling_road_only_for_roundabout_topology(tmp_path: Path) -> None:
+    nodes_gpkg = tmp_path / "nodes.gpkg"
+    roads_gpkg = tmp_path / "roads.gpkg"
+    nodes_output = tmp_path / "nodes_dangling_tool3.gpkg"
+    write_gpkg(
+        nodes_gpkg,
+        [
+            _node({"id": "1", "kind": 4, "grade": 1, "mainnodeid": "1", "closed_con": 2}, 0, 0),
+            _node({"id": "2", "kind": 4, "grade": 1, "mainnodeid": "2", "closed_con": 2}, 10, 0),
+        ],
+        crs_text="EPSG:3857",
+    )
+    write_gpkg(
+        roads_gpkg,
+        [
+            _road({"id": "ok", "snodeid": "1", "enodeid": "2", "direction": 2, "roadtype": 0}, [(0, 0), (10, 0)]),
+            _road({"id": "dangling", "snodeid": "2", "enodeid": "missing", "direction": 2, "roadtype": 8}, [(10, 0), (20, 0)]),
+        ],
+        crs_text="EPSG:3857",
+    )
+
+    artifacts = run_t08_nodes_type_aggregation(
+        nodes_gpkg=nodes_gpkg,
+        roads_gpkg=roads_gpkg,
+        nodes_output=nodes_output,
+    )
+
+    _, props_by_id = _read_features(artifacts.nodes_output)
+    assert set(props_by_id) == {"1", "2"}
+    summary = json.loads(artifacts.summary_output.read_text(encoding="utf-8"))
+    assert summary["counts"]["road_feature_count"] == 2
+    assert summary["counts"]["topology_missing_endpoint_road_count"] == 1
+    assert summary["counts"]["topology_missing_endpoint_node_count"] == 1
+    assert summary["roundabout"]["topology_missing_endpoint_road_ids"] == ["dangling"]
+    assert summary["roundabout"]["topology_missing_endpoint_node_ids"] == ["missing"]
+    assert summary["roundabout"]["roundabout_road_count"] == 0

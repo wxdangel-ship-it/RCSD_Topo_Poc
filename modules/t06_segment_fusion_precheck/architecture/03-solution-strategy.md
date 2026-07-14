@@ -204,10 +204,11 @@ T06 采用三步链路：
 - Step3 优先消费 replacement plan，只执行 `plan_status=ready` 的 action，不处理 rejected，也不重新搜索 RCSD Segment。
 - 以 `swsd_segment_id` 建立替换单元，记录 SWSD `pair_nodes / junc_nodes / roads` 与 retained RCSD road/node。
 - `execution_scope=standard_segment` 执行普通 Segment 替换；`execution_scope=special_junction_group_internal` 只在特殊路口组全通过时引入内部 RCSD Road/Node；`execution_scope=path_corridor_group` 按 Step2 已验证的 group path corridor 合并生成组级原子替换单元。
+- Road 发布前执行唯一归属收口：锚定与 plan 约束确定候选范围，相对位置/几何只在候选内择一；特殊路口内部 Road 与 connectivity supplement Road 不分配 Segment owner。所有 `source=1` Road 的 `t06_swsd_segment_ids` 必须为单值或空值，多值直接 hard fail。
 - `path_corridor_group` 的 source carrier 使用 Step2 group probe / replacement plan 发布的完整 group `rcsd_road_ids`；非 source member 可继续按成员几何做作用域过滤，避免远距离 RCSD Road 误挂到成员 relation。
 - Step3 不重新判定 Step2 ready group plan 的可替换性。若后续 topology / coverage 兜底仍发现问题，必须按整组 SWSD corridor 与整组 RCSD road union 聚合审计；失败时整组失败或整组回退，并写明 group 级原因，不能让 source carrier 失败而同组其它 member 成功替换。
 - 删除被替换 SWSDRoad；若 Step1/Step2 replaceable 的 final `junc_nodes` 少于 T01 原始 `junc_nodes`，detached junc 触达的原 SWSDRoad 以 `source=2` 保留为局部 restriction carrier，并在 Segment relation 中记录 `replaced+retained_swsd`。
-- Segment relation 中的 `frcsd_road_ids` 表达最终 F-RCSD 中该 Segment 实际可消费的 carrier。`replaced` 关系应指向 `source=1` RCSD 替换道路；`retained_swsd / replaced+retained_swsd` 关系可指向 `source=2` 保留 SWSD carrier，但必须通过 `relation_status`、`frcsd_road_source_values / source_mix`、风险标记和审计层表达来源。
+- Segment relation 中的 `frcsd_road_ids` 表达最终 F-RCSD 中该 Segment 实际可消费的 carrier。`source=1` RCSD Road 只保留在唯一 owner Segment 的关系内；特殊路口内部 Road 与 connectivity supplement Road 通过独立关联字段表达，不进入任何 Segment 的 owned/carrier 清单。`retained_swsd / replaced+retained_swsd` 关系可指向 `source=2` 保留 SWSD carrier，但必须通过 `relation_status`、`frcsd_road_source_values / source_mix`、风险标记和审计层表达来源。
 - 已进入 Step3 ready plan 的 Segment 若在执行后仍因局部 topology / coverage 兜底无法安全替换，不得从 F-RCSD 丢失；应保留原 SWSD Road/Node 作为 `source=2` carrier，或在混合替换时标记 `replaced+retained_swsd` 并进入人工风险审计。
 - SWSDNode 只删除被替换 SWSDRoad 的端点 Node，不删除整个 SWSD 语义路口组。
 - 引入 Step2 retained RCSDRoad / RCSDNode；仅 `gate_status=passed` 的特殊组内部 RCSDRoad / RCSDNode 作为组级补充加入，`partial / blocked` 特殊组内部 RCSDRoad / RCSDNode 不进入 F-RCSD。

@@ -229,6 +229,7 @@ def _replacement_unit_row(unit: ReplacementUnit) -> dict[str, Any]:
         "removed_swsd_road_ids": unit.swsd_road_ids if unit.status == "passed" else [],
         "removed_swsd_node_ids": unit.removed_swsd_node_ids,
         "rcsd_road_ids": unit.rcsd_road_ids,
+        "parallel_corridor_peer_road_ids": unit.parallel_corridor_peer_road_ids,
         "rcsd_node_ids": unit.added_rcsd_node_ids,
         "rcsd_pair_nodes": unit.rcsd_pair_nodes,
         "rcsd_junc_nodes": unit.rcsd_junc_nodes,

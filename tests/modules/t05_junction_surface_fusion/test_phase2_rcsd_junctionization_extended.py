@@ -1,6 +1,34 @@
 from __future__ import annotations
 
 from tests.modules.t05_junction_surface_fusion.phase2_test_support import *  # noqa: F401,F403
+from rcsd_topo_poc.modules.t05_junction_surface_fusion.phase2_models import SplitPoint
+from rcsd_topo_poc.modules.t05_junction_surface_fusion.phase2_split import split_roads
+
+
+def test_split_roads_preserves_case_insensitive_rcsdnode_template_fields() -> None:
+    split_result, _, _ = split_roads(
+        target_id="612028267",
+        split_points_by_road={1: [SplitPoint(road_id=1, distance_m=5.0, geometry=Point(5, 0))]},
+        roads_by_id={
+            1: {
+                "properties": {"ID": 1, "SNodeID": 10, "ENodeID": 20},
+                "geometry": LineString([(0, 0), (10, 0)]),
+            }
+        },
+        next_road_id=100,
+        next_node_id=200,
+        swsd_properties={},
+        rcsdnode_template={"ID": None, "MainNodeID": None, "Kind": None},
+        min_split_gap_m=2.0,
+        min_endpoint_gap_m=2.0,
+    )
+
+    properties = split_result.new_node_features[0]["properties"]
+    assert properties["ID"] == 200
+    assert properties["MainNodeID"] is None
+    assert properties["target_id"] == "612028267"
+    assert "id" not in properties
+    assert "mainnodeid" not in properties
 
 
 def test_no_related_rcsd_outputs_failure_with_base_id_zero(tmp_path: Path) -> None:

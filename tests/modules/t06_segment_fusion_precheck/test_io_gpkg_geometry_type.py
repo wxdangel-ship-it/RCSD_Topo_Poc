@@ -3,10 +3,63 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import fiona
+import pytest
 from shapely.geometry import LineString, MultiLineString, Point, mapping
 
 from rcsd_topo_poc.modules.t06_segment_fusion_precheck import io as io_module
 from rcsd_topo_poc.modules.t06_segment_fusion_precheck.io import read_features, write_feature_triplet
+
+
+def test_read_features_normalizes_mixed_case_property_keys(tmp_path, monkeypatch):
+    path = tmp_path / "mixed_case.gpkg"
+    path.write_bytes(b"mixed-case")
+    io_module.clear_read_features_cache()
+
+    monkeypatch.setattr(
+        io_module,
+        "read_vector_layer",
+        lambda *args, **kwargs: SimpleNamespace(
+            features=[
+                SimpleNamespace(
+                    properties={
+                        "Id": "5855295910117642",
+                        "MainNodeId": "5855295910117642",
+                        "SubNodeId": "[5855295910117626]",
+                    },
+                    geometry=Point(1.0, 2.0),
+                )
+            ]
+        ),
+    )
+
+    properties = read_features(path)[0]["properties"]
+
+    assert properties == {
+        "id": "5855295910117642",
+        "mainnodeid": "5855295910117642",
+        "subnodeid": "[5855295910117626]",
+    }
+
+
+def test_read_features_blocks_conflicting_case_variants(tmp_path, monkeypatch):
+    path = tmp_path / "conflicting_case.gpkg"
+    path.write_bytes(b"conflict")
+    io_module.clear_read_features_cache()
+    monkeypatch.setattr(
+        io_module,
+        "read_vector_layer",
+        lambda *args, **kwargs: SimpleNamespace(
+            features=[
+                SimpleNamespace(
+                    properties={"ID": "1", "id": "2"},
+                    geometry=Point(1.0, 2.0),
+                )
+            ]
+        ),
+    )
+
+    with pytest.raises(ValueError, match="case-insensitive property conflict"):
+        read_features(path)
 
 
 def test_read_features_reuses_unchanged_snapshot_without_sharing_properties(tmp_path, monkeypatch):

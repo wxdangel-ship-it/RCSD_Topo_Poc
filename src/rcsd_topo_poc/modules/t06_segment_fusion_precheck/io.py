@@ -58,7 +58,10 @@ def read_features(path: str | Path, *, crs_override: str | None = None) -> list[
         stat = resolved.stat()
     except OSError:
         result = read_vector_layer(path, crs_override=crs_override)
-        return [{"properties": dict(item.properties), "geometry": item.geometry} for item in result.features]
+        return [
+            {"properties": _normalize_property_keys(dict(item.properties)), "geometry": item.geometry}
+            for item in result.features
+        ]
     snapshot = _read_features_snapshot(
         str(resolved),
         crs_override,
@@ -97,13 +100,39 @@ def _read_features_snapshot(
             _READ_FEATURES_SNAPSHOT_CACHE.move_to_end(key)
             return cached[1]
     result = read_vector_layer(path_text, crs_override=crs_override)
-    snapshot = tuple((dict(item.properties), item.geometry) for item in result.features)
+    snapshot = tuple(
+        (_normalize_property_keys(dict(item.properties)), item.geometry)
+        for item in result.features
+    )
     with _READ_FEATURES_SNAPSHOT_CACHE_LOCK:
         _READ_FEATURES_SNAPSHOT_CACHE[key] = version, snapshot
         _READ_FEATURES_SNAPSHOT_CACHE.move_to_end(key)
         while len(_READ_FEATURES_SNAPSHOT_CACHE) > _READ_FEATURES_CACHE_MAX_PATHS:
             _READ_FEATURES_SNAPSHOT_CACHE.popitem(last=False)
     return snapshot
+
+
+def _normalize_property_keys(properties: dict[str, Any]) -> dict[str, Any]:
+    normalized: dict[str, Any] = {}
+    source_keys: dict[str, str] = {}
+    for raw_key, value in properties.items():
+        key = str(raw_key).lower()
+        if key not in normalized:
+            normalized[key] = value
+            source_keys[key] = str(raw_key)
+            continue
+        current = normalized[key]
+        if current is None and value is not None:
+            normalized[key] = value
+            source_keys[key] = str(raw_key)
+            continue
+        if value is None or current == value:
+            continue
+        raise ValueError(
+            "case-insensitive property conflict: "
+            f"{source_keys[key]}={current!r} vs {raw_key}={value!r}"
+        )
+    return normalized
 
 
 def write_feature_triplet(

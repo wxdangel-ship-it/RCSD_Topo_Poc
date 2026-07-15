@@ -455,29 +455,33 @@ manifest 至少记录：
 
 该 runner 不生成 Case 级 `t10_t06_funnel.*`；全量替换率和质量审计应消费 T06/T11/T09 阶段正式输出或另行运行全量审计脚本。
 
-### 3.7 All-case statistical baseline registration
+### 3.7 T10 6 Case 与全量 Case 统计基线登记
 
-当前 T10 全量 Case 端到端统计基线登记如下：
+T10 6 Case 日常回归基线与 52 Case 全量统计基线使用独立指针，不得相互冒充：
 
-- 当前有效基线目录：`/mnt/e/Work/RCSD_Topo_Poc/outputs/baselines/t10_full_96b0ea5_20260710_060735`
-- 当前有效 T10 6 Case run root：`/mnt/e/Work/RCSD_Topo_Poc/outputs/baselines/t10_full_96b0ea5_20260710_060735/t10/e2e_full`
-- 当前有效 T10-Error 26 Case run root：`/mnt/e/Work/RCSD_Topo_Poc/outputs/baselines/t10_full_96b0ea5_20260710_060735/t10_error/e2e_full`
-- 当前有效 T10-Error-2 20 Case run root：`/mnt/e/Work/RCSD_Topo_Poc/outputs/baselines/t10_full_96b0ea5_20260710_060735/t10_error2/e2e_full`
-- 当前指针文件：
-  - `/mnt/e/Work/RCSD_Topo_Poc/outputs/baselines/LATEST_T10_ALL_CASES_BASELINE.txt`
-  - `/mnt/e/Work/RCSD_Topo_Poc/outputs/baselines/LATEST_T10_BASELINE.txt`
-  - `/mnt/e/Work/RCSD_Topo_Poc/outputs/baselines/LATEST_T10_FULL_BASELINE.txt`
-- 刷新日期：`2026-07-10`；版本：`96b0ea5`。
-- 6 Case 范围：`1885118`、`605415675`、`609214532`、`706247`、`74155468`、`991176`。
+- 当前 T10 6 Case 基线目录：`/mnt/e/Work/RCSD_Topo_Poc/outputs/baselines/t10_six_4b1c496_20260715_070100`
+- 当前 T10 6 Case run root：`/mnt/e/Work/RCSD_Topo_Poc/outputs/baselines/t10_six_4b1c496_20260715_070100/t10/e2e_full`
+- 当前 T10 6 Case 指针：`/mnt/e/Work/RCSD_Topo_Poc/outputs/baselines/LATEST_T10_BASELINE.txt`
+- 刷新日期：`2026-07-15`；业务代码版本：`4b1c496`。
+- Case 范围：`1885118`、`605415675`、`609214532`、`706247`、`74155468`、`991176`。
+- 可复现 worker 参数固定为：`T10_T03_WORKERS=16`、`T10_T04_WORKERS=1`、`T10_T05_READONLY_WORKERS=1`。T03 日常默认仍为自动检测 CPU 数量并限制为最多 `16`。
+- 完成口径：单次全量调用 `6/6 passed`，每个 Case 的 `T01 -> T07 Step1/2 -> T03 -> T04 -> T05 -> T06 Step1/2 -> T06 Step3 -> T11 -> T09` 共 `10/10` 阶段通过，合计 `60/60` 阶段通过。
+- 六案视觉检查 `6/6 passed`，正式检查图层 CRS 均为 `EPSG:3857`，缺失图层、端点缺路、SWSD advance-right 重叠异常均为 `0`；拓扑检查不执行 silent fix。
+- 当前 6 Case 根级产物：`baseline_summary.json`、`case_stage_status_baseline.csv`、`package_summary_baseline.csv`、`regression_validation_summary.json`、`qgis_update_manifest.csv`、`qgis_update_manifest.json`、`README.md`。
+
+当前 52 Case 全量统计基线继续保持：
+
+- 全量基线目录：`/mnt/e/Work/RCSD_Topo_Poc/outputs/baselines/t10_full_96b0ea5_20260710_060735`
+- T10-Error 26 Case run root：`/mnt/e/Work/RCSD_Topo_Poc/outputs/baselines/t10_full_96b0ea5_20260710_060735/t10_error/e2e_full`
+- T10-Error-2 20 Case run root：`/mnt/e/Work/RCSD_Topo_Poc/outputs/baselines/t10_full_96b0ea5_20260710_060735/t10_error2/e2e_full`
+- 全量指针：`LATEST_T10_ALL_CASES_BASELINE.txt` 与 `LATEST_T10_FULL_BASELINE.txt`，二者均继续指向上述 `96b0ea5` 目录。
 - 完成口径：T10 `6/6 passed`、T10-Error `26/26 passed`、T10-Error-2 `20/20 passed`，合计 `52/52 passed`、失败 Case 数为 `0`，`missing_artifacts=[]`。
-- 当前根级基线产物：`baseline_summary.json`、`case_stage_status_baseline.csv`、`package_summary_baseline.csv`、`unreplaced_rcsd_attribution_distribution_baseline.csv`、`qgis_update_manifest.csv`、`qgis_update_manifest.json`。
-- 各 package 的运行清单与汇总位于对应 `<package>/e2e_full/t10_e2e_run_manifest.json` 和 `<package>/e2e_full/t10_e2e_run_summary.json`；是否能单独代表 package 全量完成性，须结合下述续跑事实判断。
 
-T10 首次运行在两个 Case 完成后中断，随后四个 Case 以 `--case-id` 续写同一 run root；因此当前 T10 顶层 `t10_e2e_run_manifest.json` 与 `t10_e2e_run_summary.json` 都只描述最后一次四 Case 续跑，二者的 `case_count=4` 均不能单独代表六 Case package。正式六 Case 完成口径以根级 `baseline_summary.json`、`case_stage_status_baseline.csv` 及六个 Case 级 `t10_e2e_case_run_manifest.json` 为准，不得把顶层单次续跑产物误解为基线只含四个 Case。
+`96b0ea5` 基线中的 T10 首次运行在两个 Case 完成后中断，随后四个 Case 以 `--case-id` 续写同一 run root，因此其 T10 顶层 manifest/summary 只描述最后一次四 Case 续跑；完成性须结合根级汇总与六个 Case 级 manifest。新的 `4b1c496` 六案基线由一次调用完成，顶层 `t10_e2e_run_manifest.json` 与 `t10_e2e_run_summary.json` 可直接代表六案完整运行。
 
-`outputs/baselines/t10_all_cases_ce1cc72_20260707_153701` 及更早的 `outputs/baselines/t10_all_cases_3cd626d_20260701_214807` 仅作为历史快照引用；其中记录的详细漏斗、替换率和 Segment20 专项统计不得冒充当前 `96b0ea5` 基线。旧四 Case 指针 `LATEST_T10_4CASES_BASELINE.txt` 仍不作为有效入口。后续自动化或人工审计必须优先读取上述三个当前指针，不得硬编码历史目录。
+`outputs/baselines/t10_all_cases_ce1cc72_20260707_153701` 及更早的 `outputs/baselines/t10_all_cases_3cd626d_20260701_214807` 仅作为历史快照引用。旧四 Case 指针 `LATEST_T10_4CASES_BASELINE.txt` 仍不作为有效入口。后续自动化或人工审计必须按对比范围选择六案指针或全量指针，不得硬编码历史目录。
 
-该登记定义 T10、T10-Error 与 T10-Error-2 三套 package 的全量 Case 统计对比基线，不新增执行入口，不改变 T01-T09 算法接口。当前可用产物、历史快照边界与复用要求见 `architecture/statistical-baseline.md`。
+该登记不新增执行入口，不改变 T01-T09 算法接口。当前可用产物、回归结论、历史快照边界与复用要求见 `architecture/statistical-baseline.md`。
 
 ## 4. EntryPoints
 

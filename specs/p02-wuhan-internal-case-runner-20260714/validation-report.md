@@ -18,6 +18,10 @@
 - QGIS：正式单命令内完成工程生成；56 个图层全部加载、11 个分组齐全、工程写出和回读成功、嵌入 XML 可解析、缺失数据源 `0`、绝对 datasource `0`、预览渲染成功。
 - 自动化回归：P02/T08/T05 `94 passed`，T06 `418 passed`，T01 `242 passed`，P02 修改后复核 `9 passed`；合计 `763 passed`。
 - Python 编译检查和正式入口 `--help` 通过。
+- 合入 `main` 后从原始 GeoJSON 再次完整回放：`outputs/_work/p02_wuhan_local_experiment/p02_wuhan_main_e2e_20260714_2350`，17/17 阶段通过；49 项硬校验差异 `0`，13 个关键成果不一致数 `0`。
+- T10 六案跨模块回归：固定 `T03=16 / T04=1 / T05=1`，`outputs/_work/t10_e2e_case_runs/t10_six_4b1c496_20260715_070100` 单次运行 `6/6 passed`、`60/60` 阶段通过，T06/P02/T10 自动化测试 `508 passed`。
+- T10 GIS/拓扑检查：视觉汇总 `6/6 passed`；正式检查图层均为 `EPSG:3857`，缺失图层、端点缺路、advance-right 重叠异常均为 `0`；六案 RCSD Road 多 Segment 归属数均为 `0`，未执行 silent fix。
+- T10 性能检查：六案 T06 Step1/2 + Step3 合计 `550.15s`，上一性能候选为 `551.07s`，比值 `0.9983`。
 
 ## 待确认
 

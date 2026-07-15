@@ -1,7 +1,7 @@
 # T08 Tool10 轨迹聚合规格
 
-**Feature Branch**: `codex/t08-tool10-trajectory-aggregation`
-**Status**: Ready for implementation
+**Feature Branch**: `codex/t08-tool10-singleton-audit`
+**Status**: Implemented；2026-07-15 根据内网真实 Patch 结果修订单点段策略
 **Scope Mode**: SpecKit implementation
 
 ## 1. 需求与产品视角
@@ -38,8 +38,8 @@ Tool10 接收一个具体 Patch 目录，扫描 `<Patch>/Traj/*/raw_dat_pose.geo
 5. 每个点必须有有限 X/Y/Z。任一点缺 Z、Z 非有限或几何不合法时整批失败，不补 `0`、不丢点、不静默跳过源文件。
 6. 轨迹内排序键优先级为 `seq -> frame_id -> idx -> index -> timestamp -> feature index`，排序稳定且记录实际来源。
 7. 相邻点在米制坐标中满足任一条件时切段：距离间隔大于 `10m`、可解析时间间隔大于 `1s`、序号间隔大于 `20,000,000`。时间不可解析且序号连续时，距离阈值放宽为 `25m`，保持 Highway 参考方案行为。
-8. 每个输出段至少包含 2 个点；若断点造成单点段则整批失败，禁止因 LineString 限制而静默丢点。
-9. 输出前校验输出点总数等于输入点总数，输出所有几何均为 `LineStringZ`。
+8. 每个输出段至少包含 2 个点；若断点造成单点段，则从 LineString 图层排除并在 summary 中逐点记录来源、XYZ、排序信息、前后断点原因和排除原因。禁止静默丢点、跨断点拼接或复制点构造退化线。
+9. 输出前校验 `output_point_count + discarded_single_point_count = input_point_count`，输出所有几何均为 `LineStringZ`。
 10. 先完成全量输入校验，再通过同目录临时文件写 GPKG 和 summary；成功后替换正式成果。默认拒绝覆盖，`--overwrite` 才允许替换已有成果。
 
 ## 4. 输入输出字段
@@ -54,7 +54,7 @@ Tool10 接收一个具体 Patch 目录，扫描 `<Patch>/Traj/*/raw_dat_pose.geo
 - `split_reason_before`：该段前一个断点原因；
 - `source_path`：相对 Patch 的源文件路径。
 
-summary 记录输入文件、文件大小、解析 CRS、点数、Z 范围、排序来源、切段统计、参数、输出路径、运行环境、耗时和吞吐量。
+summary 记录输入文件、文件大小、解析 CRS、点数、Z 范围、排序来源、切段统计、被排除单点段逐点明细、参数、输出路径、运行环境、耗时和吞吐量。
 
 ## 5. 架构与研发视角
 
@@ -75,12 +75,12 @@ summary 记录输入文件、文件大小、解析 CRS、点数、Z 范围、排
 
 ## 7. 测试视角
 
-测试必须覆盖：单/多源轨迹聚合、排序、距离/时间/序号切段、Z 保留、`gpkg_geometry_columns.z = 1`、缺 Z/非有限 Z/非法几何/缺 CRS整批失败、显式默认 CRS、覆盖保护、点数守恒、脚本固定落盘路径，以及真实 Patch `00000009` 复制后的 3 段验证。
+测试必须覆盖：单/多源轨迹聚合、排序、距离/时间/序号切段、单点段显式审计排除、Z 保留、`gpkg_geometry_columns.z = 1`、缺 Z/非有限 Z/非法几何/缺 CRS整批失败、显式默认 CRS、覆盖保护、点数守恒、脚本固定落盘路径，以及真实 Patch `00000009` 复制后的 3 段验证。
 
 ## 8. QA 视角与验收标准
 
 1. **CRS**：输入 CRS 可追溯，XY 正确转换为 `EPSG:3857`，输出 CRS 元数据正确，Z 原值不变。
-2. **拓扑一致性**：只按显式阈值切段，不做 silent fix；点数守恒，单点段失败。
+2. **拓扑一致性**：只按显式阈值切段，不做 silent fix；单点段不跨断点拼接、不复制点，显式审计排除后仍满足点数守恒。
 3. **几何语义**：每个要素代表一条源轨迹的连续片段，且为 `LineStringZ`。
 4. **审计追溯**：输入、参数、排序来源、断点原因、输出和运行环境均可定位。
 5. **性能验证**：summary 提供点数、耗时与 points/s；用 61,861 点真实来源样本验证。

@@ -85,7 +85,7 @@ Tool9 读取 RCSDNode、RCSDRoad 与道路面 GPKG，并统一投影到 `EPSG:38
 
 Tool10 读取一个具体 Patch 的 `Traj/*/raw_dat_pose.geojson`。每个输入先完成 FeatureCollection、Point、有限 X/Y/Z 与显式 CRS 校验；任一输入失败即终止整批，不跳过文件或点。XY 使用 `always_xy` 转换到 `EPSG:3857`，Z 按输入原值保留。
 
-轨迹内排序键优先级为 `seq -> frame_id -> idx -> index -> timestamp -> feature index`。排序后按相邻点米制距离 `10m`、可解析时间间隔 `1s`、序号间隔 `20,000,000` 判断断点；时间不可解析但序号连续时使用 `25m` 距离阈值。断点规则只切分，不平滑、抽稀、吸附或补点。任何单点段均失败，以保证输入点数和输出点数严格相等。
+轨迹内排序键优先级为 `seq -> frame_id -> idx -> index -> timestamp -> feature index`。排序后按相邻点米制距离 `10m`、可解析时间间隔 `1s`、序号间隔 `20,000,000` 判断断点；时间不可解析但序号连续时使用 `25m` 距离阈值。断点规则只切分，不平滑、抽稀、吸附或补点。切分形成的单点段不能构成 LineString，因此从线图层排除并逐点写入 summary 审计；不得跨断点拼接或复制点，点数按“线输出点 + 审计排除点 = 输入点”守恒。
 
 全部输入通过后，所有轨迹段作为 `LineStringZ` 要素写入一个 `<Patch>/Traj/raw_dat_pose.gpkg` 的 `raw_dat_pose` 图层，并写 `raw_dat_pose_summary_tool10.json`。临时文件成功后才替换正式成果；默认拒绝覆盖，显式 `overwrite` 才允许更新。
 

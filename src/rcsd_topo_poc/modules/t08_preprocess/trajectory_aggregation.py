@@ -99,6 +99,7 @@ def run_t08_trajectory_aggregation(
     split_distance_gaps: list[float] = []
     split_time_gaps: list[float] = []
     split_seq_gaps: list[int] = []
+    discarded_single_points: list[dict[str, Any]] = []
     total_points = 0
     total_timestamp_unparseable = 0
     z_min = math.inf
@@ -135,6 +136,8 @@ def run_t08_trajectory_aggregation(
         split_time_gaps.extend(source_stats["split_time_gaps"])
         split_seq_gaps.extend(source_stats["split_seq_gaps"])
         split_examples.extend(source_stats["split_examples"])
+        source_discarded_single_points = source_stats["discarded_single_points"]
+        discarded_single_points.extend(source_discarded_single_points)
         input_audit.append(
             {
                 "source_traj_id": source_traj_id,
@@ -144,7 +147,8 @@ def run_t08_trajectory_aggregation(
                 "crs_source": loaded.crs_source,
                 "point_count": point_count,
                 "segment_count": len(source_records),
-                "split_applied": len(source_records) > 1,
+                "discarded_single_point_count": len(source_discarded_single_points),
+                "split_applied": bool(source_stats["split_applied"]),
                 "order_sources": sorted({point.order_source for point in loaded.points}),
                 "timestamp_unparseable_count": loaded.timestamp_unparseable_count,
                 "z_min": source_z_min,
@@ -154,18 +158,25 @@ def run_t08_trajectory_aggregation(
         _emit(
             progress_callback,
             f"Tool10 processed source {source_index}/{len(source_paths)}: "
-            f"{source_path.parent.name}, points={point_count}, segments={len(source_records)}.",
+            f"{source_path.parent.name}, points={point_count}, segments={len(source_records)}, "
+            f"discarded_single_points={len(source_discarded_single_points)}.",
         )
         if total_points >= interval and total_points % interval < point_count:
             _emit(progress_callback, f"Tool10 validated {total_points} input point(s).")
 
     load_elapsed = time.perf_counter() - load_started
     if not records:
-        raise ValueError("No output trajectory segments were produced")
-    output_point_count = sum(int(record["properties"]["point_count"]) for record in records)
-    if output_point_count != total_points:
         raise ValueError(
-            f"Trajectory point conservation failed: input={total_points}, output={output_point_count}"
+            "No output trajectory segments were produced after excluding "
+            f"{len(discarded_single_points)} audited single-point segment(s)"
+        )
+    output_point_count = sum(int(record["properties"]["point_count"]) for record in records)
+    accounted_point_count = output_point_count + len(discarded_single_points)
+    if accounted_point_count != total_points:
+        raise ValueError(
+            "Trajectory point accounting failed: "
+            f"input={total_points}, output={output_point_count}, "
+            f"discarded_single_points={len(discarded_single_points)}"
         )
     for index, record in enumerate(records, start=1):
         geometry = record.get("geometry")
@@ -218,6 +229,8 @@ def run_t08_trajectory_aggregation(
                 "source_file_count": len(source_paths),
                 "input_point_count": total_points,
                 "output_point_count": output_point_count,
+                "discarded_single_point_count": len(discarded_single_points),
+                "accounted_point_count": accounted_point_count,
                 "output_segment_count": len(records),
                 "split_source_count": sum(1 for row in input_audit if row["split_applied"]),
                 "split_by_distance_count": split_counts["distance"],
@@ -243,9 +256,12 @@ def run_t08_trajectory_aggregation(
                 "seq_gap_p90": _percentile(split_seq_gaps, 90.0),
                 "seq_gap_max": _maximum(split_seq_gaps),
                 "examples": split_examples[:20],
+                "discarded_single_points": discarded_single_points,
             },
             "geometry_audit": {
-                "point_conservation_passed": output_point_count == total_points,
+                "point_conservation_passed": accounted_point_count == total_points,
+                "point_conservation_formula": "output_point_count + discarded_single_point_count = input_point_count",
+                "single_point_policy": "excluded_from_linestring_with_explicit_audit",
                 "silent_geometry_fix_applied": False,
                 "smoothing_applied": False,
                 "simplification_applied": False,
@@ -409,16 +425,32 @@ def _split_trajectory(
 
     records: list[dict[str, Any]] = []
     source_split = len(split_points) > 2
-    for segment_index, ((start_index, reason_before), (end_index, _)) in enumerate(
+    discarded_single_points: list[dict[str, Any]] = []
+    for segment_index, ((start_index, reason_before), (end_index, reason_after)) in enumerate(
         zip(split_points[:-1], split_points[1:]),
         start=1,
     ):
         segment_points = points[start_index:end_index]
         if len(segment_points) < 2:
-            raise ValueError(
-                f"Trajectory split produced a single-point segment: {source_path}, "
-                f"segment={segment_index}, point_index={start_index}"
+            point = segment_points[0]
+            discarded_single_points.append(
+                {
+                    "source_traj_id": source_traj_id,
+                    "source_path": relative_source_path,
+                    "segment_index": segment_index,
+                    "point_index": start_index,
+                    "feature_index": point.feature_index,
+                    "seq": point.seq,
+                    "timestamp": point.timestamp_raw,
+                    "order_source": point.order_source,
+                    "drive_id": point.drive_id,
+                    "xyz": list(point.xyz),
+                    "split_reason_before": reason_before,
+                    "split_reason_after": reason_after,
+                    "discard_reason": "cannot_form_linestring",
+                }
             )
+            continue
         geometry = LineString([point.xyz for point in segment_points])
         if geometry.is_empty or not geometry.has_z:
             raise ValueError(f"Failed to build LineStringZ: {source_path}, segment={segment_index}")
@@ -449,6 +481,8 @@ def _split_trajectory(
         "split_time_gaps": time_gaps,
         "split_seq_gaps": seq_gaps,
         "split_examples": examples,
+        "discarded_single_points": discarded_single_points,
+        "split_applied": source_split,
     }
 
 

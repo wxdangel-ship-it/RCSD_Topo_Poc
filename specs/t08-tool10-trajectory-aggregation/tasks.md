@@ -33,3 +33,10 @@
 - [x] 检查 GPKG CRS、Z 标志、几何类型、点数守恒和审计字段。
 - [x] 检查入口登记、源码体量与 `git diff --check`。
 - [x] 完成已修改 / 已验证 / 待确认交付回报。
+
+## Phase 4 - 真实 Patch 单点段修订
+
+- [x] Product / Architecture：确认单点段从 LineString 图层排除，不跨断点拼接、不复制点。
+- [x] Development：逐点记录来源、XYZ、排序信息、前后断点原因和排除原因。
+- [x] Testing：增加首尾单点段审计排除与坏输入覆盖保护测试。
+- [x] QA：执行 Tool10 聚焦测试、T08 回归、体量与 diff 检查。

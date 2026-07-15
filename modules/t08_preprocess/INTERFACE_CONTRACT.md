@@ -224,11 +224,11 @@
   - 每条源轨迹至少包含 2 个点。
 - 排序：逐点按 `seq -> frame_id -> idx -> index -> timestamp -> feature index` 的优先级获得排序值并稳定排序；summary 记录实际排序来源。
 - 断点：XY 转换到 `EPSG:3857` 后，相邻点距离大于 `10m`、可解析时间间隔大于 `1s`、序号间隔大于 `20,000,000` 时切段；时间不可解析且序号连续时，距离阈值放宽为 `25m`。阈值可由 callable / 脚本参数显式覆盖。
-- 点数守恒：每个输出段至少 2 点；若切分产生单点段则整批失败。输出前必须验证全部输出段点数之和等于输入点数。
+- 点数守恒：每个输出段至少 2 点；若切分产生单点段，该点不写入 `LineStringZ` 图层，也不得与相邻段跨断点拼接或复制成退化线，必须在 summary 中逐点记录来源、XYZ、排序信息、前后断点原因和排除原因。输出前必须验证 `output_point_count + discarded_single_point_count = input_point_count`。
 - Z 语义：只转换 X/Y；Z 按输入浮点值原样写入 LineStringZ，不平滑、不插值、不做垂向坐标变换。
 - 输出段字段：`traj_id / source_traj_id / segment_index / point_count / split_applied / order_source / start_seq / end_seq / start_timestamp / end_timestamp / drive_ids / split_reason_before / source_path`。
 - 写入边界：先完成全部输入校验，再写同目录临时 GPKG / summary，成功后替换正式成果；默认拒绝已有输出，只有 `overwrite=True / --overwrite` 才允许替换。任何失败必须清理临时文件且保留已有正式成果。
-- summary 必须记录输入文件及大小、CRS 与来源、点数、Z 范围、排序来源、断点原因、点数守恒、参数、输出、运行环境、阶段耗时和 points/s。
+- summary 必须记录输入文件及大小、CRS 与来源、点数、Z 范围、排序来源、断点原因、被排除单点段明细、点数守恒、参数、输出、运行环境、阶段耗时和 points/s。
 
 ## 2. EntryPoints
 
@@ -522,8 +522,8 @@ bash scripts/t08_tool10_run_patches_innernet.sh \
 23. Tool9 对普通 node 按道路面覆盖 / 包含判定保留；对 `mainnodeid` 非空且非 `0` 的语义路口组，必须整组所有 node 均满足道路面覆盖 / 包含才保留。
 24. Tool9 仅保留与道路面相交且 `snodeid / enodeid` 均在最终保留 node 集合内的 RCSDRoad。
 25. Tool10 扫描一个 Patch 的全部 `Traj/*/raw_dat_pose.geojson`，将所有连续轨迹段聚合写入单个 `<Patch>/Traj/raw_dat_pose.gpkg` 的 `raw_dat_pose` 图层。
-26. Tool10 输出必须为 `EPSG:3857 LineStringZ`，且所有输出坐标 Z 与对应输入点 Z 数值相等；缺 Z、非有限 Z、非法 Point、未知 CRS 或单点段必须整批失败。
-27. Tool10 必须先投影 XY 再应用米制距离阈值，输出点总数必须等于输入点总数；不得静默跳过文件、要素或点。
+26. Tool10 输出必须为 `EPSG:3857 LineStringZ`，且所有输出坐标 Z 与对应输入点 Z 数值相等；缺 Z、非有限 Z、非法 Point 或未知 CRS 必须整批失败。切分形成的单点段必须从线图层排除并逐点审计，不得跨断点拼接、复制点或整批失败。
+27. Tool10 必须先投影 XY 再应用米制距离阈值，并验证 `output_point_count + discarded_single_point_count = input_point_count`；不得静默跳过文件、要素或点。
 28. Tool10 默认拒绝覆盖；显式覆盖时任何校验或临时写入失败不得替换已有正式成果。
 29. 所有路径均由参数提供或按 contract 从 `--patch-dir` 确定，不写死内网目录。
 30. 除 Tool1 转换成果与 Tool10 `Traj/raw_dat_pose.gpkg` 两个已登记特例外，所有 T08 成果输出文件名均以 `_toolX` 结尾。

@@ -36,6 +36,10 @@ from rcsd_topo_poc.modules.t08_preprocess.shp_to_gpkg import (
     run_t08_tool1_conversions,
     run_t08_tool1_shp_to_gpkg,
 )
+from rcsd_topo_poc.modules.t08_preprocess.trajectory_aggregation import (
+    T08TrajectoryAggregationArtifacts,
+    run_t08_trajectory_aggregation,
+)
 
 __all__ = [
     "ShpToGpkgResult",
@@ -47,6 +51,7 @@ __all__ = [
     "T08RcsdCleaningArtifacts",
     "T08RoadPreprocessArtifacts",
     "T08TrafficRestrictionArtifacts",
+    "T08TrajectoryAggregationArtifacts",
     "Tool1ConversionResult",
     "run_t08_complex_junction_preprocess",
     "run_t08_junction_type_repair",
@@ -56,6 +61,7 @@ __all__ = [
     "run_t08_rcsd_cleaning",
     "run_t08_road_preprocess",
     "run_t08_traffic_restriction",
+    "run_t08_trajectory_aggregation",
     "run_t08_tool1_conversions",
     "run_t08_tool1_shp_to_gpkg",
 ]

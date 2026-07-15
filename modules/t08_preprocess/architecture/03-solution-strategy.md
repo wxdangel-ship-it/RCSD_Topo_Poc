@@ -81,6 +81,14 @@ Tool9 读取 RCSDNode、RCSDRoad 与道路面 GPKG，并统一投影到 `EPSG:38
 4. RCSDRoad 先按几何与道路面相交过滤，再按 `snodeid / enodeid` 是否均属于最终保留 node 集合过滤。
 5. 输出 `rcsdnode_clean_tool9.gpkg / rcsdroad_clean_tool9.gpkg / rcsd_clean_summary_tool9.json`，不修改输入 RCSDNode、RCSDRoad 或道路面。
 
+## Tool10
+
+Tool10 读取一个具体 Patch 的 `Traj/*/raw_dat_pose.geojson`。每个输入先完成 FeatureCollection、Point、有限 X/Y/Z 与显式 CRS 校验；任一输入失败即终止整批，不跳过文件或点。XY 使用 `always_xy` 转换到 `EPSG:3857`，Z 按输入原值保留。
+
+轨迹内排序键优先级为 `seq -> frame_id -> idx -> index -> timestamp -> feature index`。排序后按相邻点米制距离 `10m`、可解析时间间隔 `1s`、序号间隔 `20,000,000` 判断断点；时间不可解析但序号连续时使用 `25m` 距离阈值。断点规则只切分，不平滑、抽稀、吸附或补点。任何单点段均失败，以保证输入点数和输出点数严格相等。
+
+全部输入通过后，所有轨迹段作为 `LineStringZ` 要素写入一个 `<Patch>/Traj/raw_dat_pose.gpkg` 的 `raw_dat_pose` 图层，并写 `raw_dat_pose_summary_tool10.json`。临时文件成功后才替换正式成果；默认拒绝覆盖，显式 `overwrite` 才允许更新。
+
 ## 输出策略
 
 - Tool1 转换成果输出为同目录同 stem、不同格式后缀的目标格式文件，summary 仍按 `_tool1` 命名。
@@ -92,4 +100,5 @@ Tool9 读取 RCSDNode、RCSDRoad 与道路面 GPKG，并统一投影到 `EPSG:38
 - Tool7 输出追加 `_tool7` 的显性 restriction GPKG 与 summary，不输出或改写 Nodes/Roads。
 - Tool8 输出追加 `_tool8` 的 Road 方向级显性 arrow GPKG 与 summary，不输出或改写 Laneinfo/Nodes/Roads。
 - Tool9 输出追加 `_tool9` 的清理后 RCSDNode / RCSDRoad GPKG 与 summary，不输出或改写输入道路面。
+- Tool10 输出用户指定命名特例 `Traj/raw_dat_pose.gpkg` 与 `_tool10` summary；所有轨迹段聚合在一个 GPKG 的一个图层中。
 - 所有路径由命令参数提供。

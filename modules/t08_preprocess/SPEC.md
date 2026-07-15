@@ -2,7 +2,7 @@
 
 ## 1. 模块定位
 
-T08 是项目正式预处理模块，负责 SWSD / RCSD 输入数据的格式转换、类型显性化、质量检查、字段修复、restriction / Laneinfo 显性化和 RCSD 清理。T08 为 T01、T03、T04、T05、T06、T09 提供规范输入，是当前主链的前置数据治理层。
+T08 是项目正式预处理模块，负责 SWSD / RCSD 输入数据的格式转换、类型显性化、质量检查、字段修复、restriction / Laneinfo 显性化、RCSD 清理和 Patch 轨迹聚合。T08 为 T01、T03、T04、T05、T06、T09 提供规范输入，是当前主链的前置数据治理层。
 
 ## 2. 业务目标
 
@@ -11,6 +11,7 @@ T08 是项目正式预处理模块，负责 SWSD / RCSD 输入数据的格式转
 - 把历史 T01/T02/T04 中的部分属性修复与预处理职责收敛到正式预处理模块。
 - 将 SWSD restriction 与 Laneinfo arrow 显性化，支撑 T09 通行规则恢复。
 - 清理 RCSDNode / RCSDRoad，保证下游 relation 与 Segment 替换输入可解释。
+- 将每个 Patch 下分散的 PointZ 轨迹严格聚合为带 Z 的 `LineStringZ` GPKG，保留断点与来源审计。
 
 ## 3. 当前范围
 
@@ -25,6 +26,7 @@ T08 是项目正式预处理模块，负责 SWSD / RCSD 输入数据的格式转
 - Tool7：交通限制显性化。
 - Tool8：Laneinfo arrow 显性化。
 - Tool9：RCSD 数据清理。
+- Tool10：Patch 轨迹聚合。
 
 ### 3.2 当前非目标
 
@@ -55,6 +57,7 @@ T08 是项目正式预处理模块，负责 SWSD / RCSD 输入数据的格式转
 | SW C 表 | Tool7 restriction 显性化输入。 |
 | SW Laneinfo | Tool8 arrow 显性化输入。 |
 | RCSDNode / RCSDRoad / 道路面 | Tool9 RCSD 清理输入。 |
+| `<Patch>/Traj/*/raw_dat_pose.geojson` | Tool10 PointZ 轨迹输入。 |
 
 ## 6. 输出
 
@@ -69,6 +72,8 @@ T08 是项目正式预处理模块，负责 SWSD / RCSD 输入数据的格式转
 | `sw_restriction_tool7.*` | 显性 restriction 证据。 |
 | `sw_arrow_tool8.*` | 显性 arrow 证据。 |
 | `rcsdnode_clean_tool9 / rcsdroad_clean_tool9` | 清理后的 RCSD 输入。 |
+| `<Patch>/Traj/raw_dat_pose.gpkg` | Tool10 单 GPKG、单 `raw_dat_pose` 图层的 `LineStringZ` 聚合轨迹。 |
+| `<Patch>/Traj/raw_dat_pose_summary_tool10.json` | Tool10 输入、CRS、Z、排序、切段与性能审计。 |
 
 ## 7. 关键业务步骤
 
@@ -83,15 +88,17 @@ T08 是项目正式预处理模块，负责 SWSD / RCSD 输入数据的格式转
 | Tool7 | 将 `CondType=1` restriction 转成显性 LineString。 |
 | Tool8 | 将 Laneinfo arrow 聚合为 Road 方向级 arrow LineString。 |
 | Tool9 | 基于道路面过滤 RCSDNode 语义组与 RCSDRoad 起终点拓扑。 |
+| Tool10 | 扫描 Patch 的全部 PointZ 轨迹，显式解析 CRS，转换 XY 到 `EPSG:3857`，按排序键与距离/时间/序号断点切分，并聚合写入一个 `LineStringZ` 图层。 |
 
 ## 8. 什么是对
 
-- 除 Tool1 转换成果外，所有 T08 输出文件名在扩展名前以 `_toolX` 结尾；Tool1 转换成果允许同 stem 换后缀。
+- 除 Tool1 转换成果和用户指定的 Tool10 `Traj/raw_dat_pose.gpkg` 外，所有 T08 输出文件名在扩展名前以 `_toolX` 结尾；Tool1 转换成果允许同 stem 换后缀，Tool10 summary 仍以 `_tool10` 结尾。
 - Tool3 不把单 node 环岛组误写为 `kind_2=64`。
 - Tool4/Tool5/Tool9 均使用 copy-on-write，不回写输入。
 - Tool6 只输出质检候选，不直接修复数据。
 - Tool7/Tool8 保留原始业务字段并显性化几何证据。
 - Tool9 删除 RCSD 语义组必须按组内所有 node 是否被道路面覆盖 / 包含判定。
+- Tool10 任一点缺 Z、Z 非有限、几何非法或 CRS 无法确认时整批失败；Z 不补零、不参与 XY 投影、不静默丢点。
 
 ## 9. 什么是错
 
@@ -100,8 +107,9 @@ T08 是项目正式预处理模块，负责 SWSD / RCSD 输入数据的格式转
 - 修改输入文件而不是输出新文件。
 - 把 restriction / arrow 显性化结果直接解释成 T09 最终通行规则。
 - 在 RCSD 清理中只按单 node 保留而破坏 `mainnodeid` 语义组。
+- 在 Tool10 中跳过坏轨迹、用 `0` 补 Z、按经纬度直接应用米制距离阈值，或因单点段而丢点。
 
 ## 10. 当前治理缺口
 
 - T08 文档已收敛为模块级 01-06 主结构，后续新增工具说明应优先落入 `03-solution-strategy.md`、`04-evidence-and-audit.md` 或 `06-risks-and-technical-debt.md`。
-- Tool1-9 需要持续保证脚本入口、接口契约、代码实现和文档描述同步。
+- Tool1-10 需要持续保证脚本入口、接口契约、代码实现和文档描述同步。

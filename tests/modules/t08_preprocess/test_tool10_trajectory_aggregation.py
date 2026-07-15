@@ -124,6 +124,8 @@ def test_tool10_aggregates_all_trajectories_into_one_linestringz_gpkg(tmp_path: 
     assert summary["counts"]["source_file_count"] == 2
     assert summary["counts"]["input_point_count"] == 7
     assert summary["counts"]["output_point_count"] == 7
+    assert summary["counts"]["discarded_single_point_count"] == 0
+    assert summary["counts"]["accounted_point_count"] == 7
     assert summary["counts"]["output_segment_count"] == 3
     assert summary["counts"]["split_by_distance_count"] == 1
     assert summary["z_audit"] == {
@@ -214,7 +216,42 @@ def test_tool10_splits_on_time_and_sequence_gaps(tmp_path: Path) -> None:
     assert {row["properties"]["split_reason_before"] for row in _read_layer_rows(artifacts.output_gpkg)} == {"", "time", "seq"}
 
 
-def test_tool10_single_point_segment_and_failed_overwrite_preserve_existing_outputs(tmp_path: Path) -> None:
+def test_tool10_single_point_segments_are_audited_and_excluded(tmp_path: Path) -> None:
+    patch_dir = tmp_path / "single-point-segments"
+    _write_trajectory(
+        patch_dir,
+        "traj-a",
+        [
+            _point_row([0.0, 0.0, 1.0], 1),
+            _point_row([100.0, 0.0, 2.0], 2),
+            _point_row([101.0, 0.0, 3.0], 3),
+            _point_row([200.0, 0.0, 4.0], 4),
+        ],
+    )
+
+    artifacts = run_t08_trajectory_aggregation(patch_dir=patch_dir)
+
+    rows = _read_layer_rows(artifacts.output_gpkg)
+    assert len(rows) == 1
+    assert rows[0]["properties"]["segment_index"] == 2
+    assert rows[0]["coordinates"] == [(100.0, 0.0, 2.0), (101.0, 0.0, 3.0)]
+    summary = json.loads(artifacts.summary_json.read_text(encoding="utf-8"))
+    assert summary["counts"]["input_point_count"] == 4
+    assert summary["counts"]["output_point_count"] == 2
+    assert summary["counts"]["discarded_single_point_count"] == 2
+    assert summary["counts"]["accounted_point_count"] == 4
+    assert summary["geometry_audit"]["point_conservation_passed"] is True
+    assert summary["geometry_audit"]["single_point_policy"] == "excluded_from_linestring_with_explicit_audit"
+    discarded = summary["split_audit"]["discarded_single_points"]
+    assert [row["point_index"] for row in discarded] == [0, 3]
+    assert [row["xyz"] for row in discarded] == [[0.0, 0.0, 1.0], [200.0, 0.0, 4.0]]
+    assert discarded[0]["split_reason_before"] == ""
+    assert discarded[0]["split_reason_after"] == "distance"
+    assert discarded[1]["split_reason_before"] == "distance"
+    assert discarded[1]["split_reason_after"] == ""
+
+
+def test_tool10_failed_overwrite_preserves_existing_outputs(tmp_path: Path) -> None:
     patch_dir = tmp_path / "atomic"
     source_path = _write_trajectory(
         patch_dir,
@@ -229,13 +266,12 @@ def test_tool10_single_point_segment_and_failed_overwrite_preserve_existing_outp
         patch_dir,
         "traj-a",
         [
-            _point_row([0.0, 0.0, 1.0], 1),
-            _point_row([100.0, 0.0, 2.0], 2),
-            _point_row([101.0, 0.0, 3.0], 3),
+            _point_row([0.0, 0.0], 1),
+            _point_row([1.0, 0.0, 2.0], 2),
         ],
     )
     assert source_path.is_file()
-    with pytest.raises(ValueError, match="single-point segment"):
+    with pytest.raises(ValueError, match="missing Z"):
         run_t08_trajectory_aggregation(patch_dir=patch_dir, overwrite=True)
 
     assert artifacts.output_gpkg.read_bytes() == original_gpkg

@@ -6,7 +6,7 @@
 
 ## 0. 成果输出命名约束
 
-除输入文件本身外，T08 成果输出文件名默认必须在扩展名前以 `_toolX` 结尾，`X` 为工具编号。例如 Tool2 的事件 Road 输出为 `event_road_0a_tool2.gpkg`。Tool1 是格式转换特例：转换成果使用输入文件同 stem、不同格式后缀；Tool1 summary 仍按 `_tool1` 命名。
+除输入文件本身外，T08 成果输出文件名默认必须在扩展名前以 `_toolX` 结尾，`X` 为工具编号。例如 Tool2 的事件 Road 输出为 `event_road_0a_tool2.gpkg`。Tool1 是格式转换特例：转换成果使用输入文件同 stem、不同格式后缀；Tool10 是用户指定的 Patch 落盘特例：聚合成果固定为 `<Patch>/Traj/raw_dat_pose.gpkg`。Tool1 / Tool10 summary 仍分别按 `_tool1 / _tool10` 命名。
 
 ## 1. 当前工具
 
@@ -210,6 +210,26 @@
 - summary 必须记录输入、输出、参数、字段解析、CRS、node 覆盖计数、语义组保留 / 删除计数、Road 相交计数、端点过滤计数、输出 bounds 与性能字段。
 - 所有输入、输出路径必须通过参数提供。
 
+### Tool10：Patch 轨迹聚合
+
+- 输入：一个具体 Patch 目录，固定扫描 `<Patch>/Traj/*/raw_dat_pose.geojson`。
+- 输出：
+  - `<Patch>/Traj/raw_dat_pose.gpkg`，仅包含 `raw_dat_pose` 图层；
+  - `<Patch>/Traj/raw_dat_pose_summary_tool10.json`。
+- 输出 CRS / 几何：`EPSG:3857 LineStringZ`；同一 Patch 的全部轨迹段聚合在一个 GPKG、一个图层中。
+- 输入约束：
+  - 输入必须为 GeoJSON FeatureCollection，所有要素必须为非空 Point；
+  - 每个 Point 必须有有限 X/Y/Z；缺 Z 或非有限 Z 整批失败，不补零、不跳过；
+  - GeoJSON 必须显式声明 CRS；仅当调用方提供 `default_crs_text / --default-crs` 时允许补充缺失 CRS，不允许按坐标范围推断；
+  - 每条源轨迹至少包含 2 个点。
+- 排序：逐点按 `seq -> frame_id -> idx -> index -> timestamp -> feature index` 的优先级获得排序值并稳定排序；summary 记录实际排序来源。
+- 断点：XY 转换到 `EPSG:3857` 后，相邻点距离大于 `10m`、可解析时间间隔大于 `1s`、序号间隔大于 `20,000,000` 时切段；时间不可解析且序号连续时，距离阈值放宽为 `25m`。阈值可由 callable / 脚本参数显式覆盖。
+- 点数守恒：每个输出段至少 2 点；若切分产生单点段则整批失败。输出前必须验证全部输出段点数之和等于输入点数。
+- Z 语义：只转换 X/Y；Z 按输入浮点值原样写入 LineStringZ，不平滑、不插值、不做垂向坐标变换。
+- 输出段字段：`traj_id / source_traj_id / segment_index / point_count / split_applied / order_source / start_seq / end_seq / start_timestamp / end_timestamp / drive_ids / split_reason_before / source_path`。
+- 写入边界：先完成全部输入校验，再写同目录临时 GPKG / summary，成功后替换正式成果；默认拒绝已有输出，只有 `overwrite=True / --overwrite` 才允许替换。任何失败必须清理临时文件且保留已有正式成果。
+- summary 必须记录输入文件及大小、CRS 与来源、点数、Z 范围、排序来源、断点原因、点数守恒、参数、输出、运行环境、阶段耗时和 points/s。
+
 ## 2. EntryPoints
 
 运行前先在 repo root 执行：
@@ -314,6 +334,13 @@ Tool9：
   --road-surface-gpkg /mnt/d/TestData/POC_Data/input/road_surface.gpkg \
   --nodes-output /mnt/d/TestData/POC_Data/t08_preprocess/rcsd/rcsdnode_clean_tool9.gpkg \
   --roads-output /mnt/d/TestData/POC_Data/t08_preprocess/rcsd/rcsdroad_clean_tool9.gpkg
+```
+
+Tool10：
+
+```bash
+.venv/bin/python scripts/t08_tool10_trajectory_aggregation.py \
+  --patch-dir /mnt/d/TestData/POC_Data/patch_all/00000009
 ```
 
 ## 3. Tool1 Params
@@ -447,7 +474,17 @@ Tool9：
 - `--node-predicate`：node 与道路面空间关系判定，默认 `covers`，可选 `contains`。
 - `--progress-interval`：可选控制台进度输出间隔，默认每 `10000` 条 Road 记录输出一次。
 
-## 12. Acceptance
+## 12. Tool10 Params
+
+- `--patch-dir`：必填，具体 Patch 目录；输入固定从其 `Traj/*/raw_dat_pose.geojson` 发现，输出固定写入该 `Traj` 根目录。
+- `--default-crs`：可选，仅在 GeoJSON 未声明 CRS 时显式指定所有缺失输入采用的 CRS。
+- `--max-distance-gap-m`：距离断点阈值，默认 `10.0`。
+- `--max-time-gap-s`：时间断点阈值，默认 `1.0`。
+- `--max-seq-gap`：序号断点阈值，默认 `20000000`。
+- `--overwrite`：可选；未提供时，任一正式输出已存在即失败；提供时采用临时文件成功后替换。
+- `--progress-interval`：可选控制台进度输出间隔，默认每 `10000` 个输入点输出一次。
+
+## 13. Acceptance
 
 1. Tool1 支持 SHP / GeoJSON 转 GPKG 与 GPKG 转 GeoJSON，转换成果均为输入目录下同 stem、不同格式后缀的目标格式文件；summary 仍按 `_tool1` 命名。
 2. Tool2 只接受 GPKG 输入。
@@ -473,6 +510,10 @@ Tool9：
 22. Tool9 输出 `rcsdnode_clean_tool9.gpkg / rcsdroad_clean_tool9.gpkg` 且 GPKG CRS 为 `EPSG:3857`。
 23. Tool9 对普通 node 按道路面覆盖 / 包含判定保留；对 `mainnodeid` 非空且非 `0` 的语义路口组，必须整组所有 node 均满足道路面覆盖 / 包含才保留。
 24. Tool9 仅保留与道路面相交且 `snodeid / enodeid` 均在最终保留 node 集合内的 RCSDRoad。
-25. 所有路径均由参数提供，不写死内网目录。
-26. 所有 T08 成果输出文件名均以 `_toolX` 结尾。
-27. summary 可追溯输入、输出、参数、字段解析、CRS 与计数。
+25. Tool10 扫描一个 Patch 的全部 `Traj/*/raw_dat_pose.geojson`，将所有连续轨迹段聚合写入单个 `<Patch>/Traj/raw_dat_pose.gpkg` 的 `raw_dat_pose` 图层。
+26. Tool10 输出必须为 `EPSG:3857 LineStringZ`，且所有输出坐标 Z 与对应输入点 Z 数值相等；缺 Z、非有限 Z、非法 Point、未知 CRS 或单点段必须整批失败。
+27. Tool10 必须先投影 XY 再应用米制距离阈值，输出点总数必须等于输入点总数；不得静默跳过文件、要素或点。
+28. Tool10 默认拒绝覆盖；显式覆盖时任何校验或临时写入失败不得替换已有正式成果。
+29. 所有路径均由参数提供或按 contract 从 `--patch-dir` 确定，不写死内网目录。
+30. 除 Tool1 转换成果与 Tool10 `Traj/raw_dat_pose.gpkg` 两个已登记特例外，所有 T08 成果输出文件名均以 `_toolX` 结尾。
+31. summary 可追溯输入、输出、参数、字段解析、CRS、Z、断点、计数、运行环境与性能。

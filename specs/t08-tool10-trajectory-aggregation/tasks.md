@@ -22,10 +22,12 @@
 - [x] 实现单 GPKG `LineStringZ` 聚合与审计 summary。
 - [x] 实现临时文件落盘、覆盖保护和失败清理。
 - [x] 导出 callable 并增加 Tool10 脚本。
+- [x] 增加无硬编码目录的 Tool10 内网多 Patch 参数化批处理入口。
 
 ## Phase 3 - Test / QA
 
 - [x] 增加 Tool10 聚焦测试。
+- [x] 覆盖内网批处理入口的无参数保护、多 Patch 参数执行、日志和结果落盘。
 - [x] 运行 Tool10 聚焦测试和 T08 全回归。
 - [x] 复制真实来源 Patch `00000009` 验证 3 段与 Z。
 - [x] 检查 GPKG CRS、Z 标志、几何类型、点数守恒和审计字段。

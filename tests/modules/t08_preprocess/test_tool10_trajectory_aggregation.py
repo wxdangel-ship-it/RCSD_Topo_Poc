@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import sqlite3
 import subprocess
 import sys
@@ -267,3 +268,47 @@ def test_tool10_script_uses_patch_derived_output_paths_and_overwrite_guard(tmp_p
     assert Path(artifacts["summary_json"]) == patch_dir / "Traj" / "raw_dat_pose_summary_tool10.json"
     assert second.returncode == 2
     assert "Output already exists" in second.stderr
+
+
+def test_tool10_innernet_batch_script_accepts_patch_arguments(tmp_path: Path) -> None:
+    patch_a = tmp_path / "batch-a"
+    patch_b = tmp_path / "batch-b"
+    for patch_dir, z_start in ((patch_a, 10.0), (patch_b, 20.0)):
+        _write_trajectory(
+            patch_dir,
+            "traj-a",
+            [
+                _point_row([0.0, 0.0, z_start], 1),
+                _point_row([1.0, 0.0, z_start + 1.0], 2),
+            ],
+        )
+
+    repo_root = Path(__file__).resolve().parents[3]
+    script = repo_root / "scripts" / "t08_tool10_run_patches_innernet.sh"
+    no_args = subprocess.run(
+        ["bash", str(script)],
+        cwd=repo_root,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    environment = dict(os.environ)
+    environment.update({"PYTHON": sys.executable, "LOG_ROOT": str(tmp_path / "logs")})
+    result = subprocess.run(
+        ["bash", str(script), str(patch_a), str(patch_b)],
+        cwd=repo_root,
+        env=environment,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert no_args.returncode == 2
+    assert "PATCH_DIR [PATCH_DIR ...]" in no_args.stderr
+    assert result.returncode == 0, result.stderr
+    assert "patch_count=2" in result.stdout
+    assert "success_count=2" in result.stdout
+    for patch_dir in (patch_a, patch_b):
+        assert (patch_dir / "Traj" / "raw_dat_pose.gpkg").is_file()
+        assert (patch_dir / "Traj" / "raw_dat_pose_summary_tool10.json").is_file()
+        assert (tmp_path / "logs" / f"{patch_dir.name}.log").is_file()

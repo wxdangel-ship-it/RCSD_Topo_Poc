@@ -60,6 +60,7 @@ summary 记录输入文件、文件大小、解析 CRS、点数、Z 范围、排
 
 - callable：`run_t08_trajectory_aggregation(...)`；
 - 正式入口：`scripts/t08_tool10_trajectory_aggregation.py --patch-dir <Patch>`；
+- 内网批处理入口：`scripts/t08_tool10_run_patches_innernet.sh PATCH_DIR [PATCH_DIR ...]`，Patch 目录只允许通过位置参数传入；
 - 实现位于 `src/rcsd_topo_poc/modules/t08_preprocess/trajectory_aggregation.py`；
 - 复用 T08 现有 GPKG writer，不新增依赖，不修改 T00 Tool10；
 - `raw_dat_pose.gpkg` 是用户指定的 Tool10 正式命名特例；summary 仍以 `_tool10` 结尾。

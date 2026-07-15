@@ -41,8 +41,10 @@
 
 ## 5. 入口契约
 
-- 正式入口：`.venv/bin/python scripts/p02_run_wuhan_internal_case.py --input-dir <raw-dir>`。
-- 唯一必填参数：`--input-dir`；可选 `--out-root / --run-id / --qgis-python`。`--qgis-mode skip` 仅用于开发诊断，正式内网执行不得使用。
+- 核心正式入口：`.venv/bin/python scripts/p02_run_wuhan_internal_case.py --input-dir <raw-dir>`；唯一必填参数为 `--input-dir`，可选 `--out-root / --run-id / --qgis-python`。`--qgis-mode skip` 仅用于开发诊断，正式内网执行不得使用。
+- WSL 内网固定 Case 包装入口：`bash scripts/p02_run_wuhan_innernet_case.sh [raw-input-dir]`。无参数时固定使用仓库 `/mnt/d/Work/RCSD_Topo_Poc`、输入 `/mnt/d/TestData/数据整理/result/result/5524176501019109_5524182406597110`、仓库 `.venv/bin/python` 与 `/usr/bin/python3` PyQGIS；可通过 `P02_REPO_DIR / P02_INPUT_DIR / P02_OUT_ROOT / P02_RUN_ID / P02_PYTHON_BIN / QGIS_PYTHON_BIN / P02_LOG_FILE` 显式覆盖。
+- WSL 包装入口只做路径、四输入文件、仓库 Python 和 PyQGIS 前置检查，随后以 `--qgis-mode required` 转调核心正式入口；不得复制 P02 或 T08/T01/T05/T06 算法，也不得回退到系统普通 Python。
+- WSL 包装入口必须将完整控制台日志保存在 `<out-root>/<run-id>.console.log`，并在核心入口返回后复核 manifest `17/17`、当前结果硬校验和 QGIS 工程写出/回读状态。
 - 入口只能编排既有 T08/T01/T05/T06，不得在 P02 内复制或改写这些模块的算法。
 - run root 必须全新且拒绝覆盖；任一阶段失败必须写入 manifest 并返回非 0。
 - 默认必须发现 `python-qgis-ltr` 或 `python-qgis`，也可通过 `--qgis-python` / `QGIS_PYTHON_BIN` 指定。

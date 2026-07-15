@@ -7,11 +7,21 @@
 - 生命周期：`Active POC / 成果模块`。
 - 上游：武汉局部 SWSD/RCSD 原始数据、用户人工关系。
 - 下游：P02 实验报告与待补关系清单。
-- 正式内网 Case 入口：`scripts/p02_run_wuhan_internal_case.py`；只负责本模块已确认的武汉单 Case 编排，不成为通用生产主链。
+- 核心正式内网 Case 入口：`scripts/p02_run_wuhan_internal_case.py`；WSL 固定 Case 包装入口：`scripts/p02_run_wuhan_innernet_case.sh`。二者只负责本模块已确认的武汉单 Case 编排，不成为通用生产主链。
 
 ## 内网执行
 
 输入目录必须包含：`node.geojson`、`road.geojson`、`RCSDNode.geojson`、`RCSDRoad.geojson`。
+
+武汉内网机器在 WSL 仓库 `/mnt/d/Work/RCSD_Topo_Poc` 中直接执行，无需粘贴多行命令：
+
+```bash
+bash scripts/p02_run_wuhan_innernet_case.sh
+```
+
+该入口默认读取 `/mnt/d/TestData/数据整理/result/result/5524176501019109_5524182406597110`，使用仓库 `.venv/bin/python` 和已安装 PyQGIS 的 `/usr/bin/python3`，将控制台日志写入 `outputs/_work/p02_wuhan_local_experiment/<run_id>.console.log`。如需运行同格式的其它原始目录，可把目录作为唯一位置参数传入。
+
+核心入口仍可单独调用：
 
 ```bash
 .venv/bin/python scripts/p02_run_wuhan_internal_case.py \

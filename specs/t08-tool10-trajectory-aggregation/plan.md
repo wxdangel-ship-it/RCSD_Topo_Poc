@@ -16,6 +16,7 @@
 - `src/rcsd_topo_poc/modules/t08_preprocess/**`
 - `tests/modules/t08_preprocess/**`
 - `scripts/t08_tool10_trajectory_aggregation.py`
+- `scripts/t08_tool10_run_patches_innernet.sh`
 - `docs/repository-metadata/entrypoint-registry.md`
 
 ## 3. 排除范围
@@ -31,5 +32,6 @@
 .venv/bin/python -m pytest tests/modules/t08_preprocess/test_tool10_trajectory_aggregation.py
 .venv/bin/python -m pytest tests/modules/t08_preprocess
 .venv/bin/python scripts/t08_tool10_trajectory_aggregation.py --help
+bash -n scripts/t08_tool10_run_patches_innernet.sh
 git diff --check
 ```

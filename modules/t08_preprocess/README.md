@@ -24,7 +24,7 @@
 
 ## 3. 当前入口位置
 
-T08 通过已登记 `scripts/t08_tool*.py` 执行 Tool1-Tool10。每个工具的参数、输入输出和约束以 `INTERFACE_CONTRACT.md` 与 `docs/repository-metadata/entrypoint-registry.md` 为准。
+T08 通过已登记 `scripts/t08_tool*.py` 执行 Tool1-Tool10；Tool10 另提供 `scripts/t08_tool10_run_patches_innernet.sh` 作为多 Patch 参数化批处理入口。每个工具的参数、输入输出和约束以 `INTERFACE_CONTRACT.md` 与 `docs/repository-metadata/entrypoint-registry.md` 为准。
 
 ## 4. 阅读顺序
 

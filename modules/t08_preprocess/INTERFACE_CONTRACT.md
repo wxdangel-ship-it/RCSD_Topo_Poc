@@ -343,6 +343,15 @@ Tool10：
   --patch-dir /mnt/d/TestData/POC_Data/patch_all/00000009
 ```
 
+Tool10 内网多 Patch 参数化批处理：
+
+```bash
+bash scripts/t08_tool10_run_patches_innernet.sh \
+  PATCH_DIR_1 PATCH_DIR_2 [PATCH_DIR_3 ...]
+```
+
+批处理脚本不内置 Patch 目录；所有 Patch 均从位置参数读取。参数可以是 WSL 路径，也可以是在 WSL shell 中以单引号包裹的 Windows 路径。脚本逐 Patch 调用 `t08_tool10_trajectory_aggregation.py`，单 Patch 失败不阻止其余 Patch，最终以非零退出码和汇总清单报告整批失败。
+
 ## 3. Tool1 Params
 
 - `--input-shp`：可重复传入多个 Shapefile，输出为输入目录下 `<input_stem>.gpkg`。
@@ -483,6 +492,8 @@ Tool10：
 - `--max-seq-gap`：序号断点阈值，默认 `20000000`。
 - `--overwrite`：可选；未提供时，任一正式输出已存在即失败；提供时采用临时文件成功后替换。
 - `--progress-interval`：可选控制台进度输出间隔，默认每 `10000` 个输入点输出一次。
+- `scripts/t08_tool10_run_patches_innernet.sh PATCH_DIR [PATCH_DIR ...]`：内网多 Patch 批处理；Patch 目录全部通过位置参数传入，禁止写死业务目录。
+- 批处理环境变量：`OVERWRITE=1` 显式覆盖已有结果；`DEFAULT_CRS / MAX_DISTANCE_GAP_M / MAX_TIME_GAP_S / MAX_SEQ_GAP / PROGRESS_INTERVAL` 覆盖同名 Tool10 参数；`PYTHON / REPO_ROOT / LOG_ROOT` 可显式覆盖运行环境与日志根目录。
 
 ## 13. Acceptance
 
@@ -517,3 +528,4 @@ Tool10：
 29. 所有路径均由参数提供或按 contract 从 `--patch-dir` 确定，不写死内网目录。
 30. 除 Tool1 转换成果与 Tool10 `Traj/raw_dat_pose.gpkg` 两个已登记特例外，所有 T08 成果输出文件名均以 `_toolX` 结尾。
 31. summary 可追溯输入、输出、参数、字段解析、CRS、Z、断点、计数、运行环境与性能。
+32. Tool10 内网批处理入口支持任意数量 Patch 位置参数，不得内置具体 Patch 目录；必须逐 Patch 留存日志并在结束时汇总成功/失败。

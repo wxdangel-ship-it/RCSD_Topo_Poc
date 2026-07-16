@@ -93,7 +93,7 @@ def is_step3_initial_topology_audit_deferred() -> bool:
 
 
 def select_step3_publish_jobs(jobs: Mapping[str, T]) -> dict[str, T]:
-    if is_decision_only_validation_step3_run():
+    if is_validation_step3_run() or is_decision_only_validation_step3_run():
         return {}
     return dict(jobs)
 

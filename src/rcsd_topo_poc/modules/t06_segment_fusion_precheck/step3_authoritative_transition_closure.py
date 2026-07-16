@@ -7,6 +7,10 @@ from typing import Any
 from .io import read_features, write_feature_triplet
 from .parsing import ParseError, parse_id_list, unique_preserve_order
 from .schemas import feature
+from .step3_replacement_plan_reader import (
+    is_deferred_replacement_plan,
+    read_replacement_plan_rows,
+)
 from .step3_semantic_junction_groups import discover_intersection_match_path, valid_t05_relation_targets
 
 
@@ -44,6 +48,8 @@ def apply_authoritative_transition_closure(
     rcsd_source_value: int,
     current_transition_node_ids: set[str] | None = None,
     max_gap_m: float = AUTHORITATIVE_TRANSITION_MAX_GAP_M,
+    surface_audit_rows: list[dict[str, Any]] | None = None,
+    write_outputs: bool = True,
 ) -> dict[str, Any]:
     formal_transition_node_ids = (
         current_transition_node_ids
@@ -51,7 +57,10 @@ def apply_authoritative_transition_closure(
         else _formal_transition_node_ids(step_root)
     )
     transition_node_ids = formal_transition_node_ids & _hard_gate_cascade_node_ids(step_root)
-    blocked_node_ids = _patch_blocked_surface_node_ids(step_root)
+    blocked_node_ids = _patch_blocked_surface_node_ids(
+        step_root,
+        rows=surface_audit_rows,
+    )
     t05_targets = _t05_targets_for_step(step_root)
     stats = sync_authoritative_transition_mainnodes(
         relation_rows=relation_rows,
@@ -64,12 +73,13 @@ def apply_authoritative_transition_closure(
         rcsd_source_value=rcsd_source_value,
         max_gap_m=max_gap_m,
     )
-    write_feature_triplet(
-        step_root=step_root,
-        stem=AUTHORITATIVE_TRANSITION_CLOSURE_STEM,
-        features=stats["audit_rows"],
-        fieldnames=AUTHORITATIVE_TRANSITION_CLOSURE_FIELDS,
-    )
+    if write_outputs:
+        write_feature_triplet(
+            step_root=step_root,
+            stem=AUTHORITATIVE_TRANSITION_CLOSURE_STEM,
+            features=stats["audit_rows"],
+            fieldnames=AUTHORITATIVE_TRANSITION_CLOSURE_FIELDS,
+        )
     return stats
 
 
@@ -271,12 +281,13 @@ def _hard_gate_cascade_node_ids(step_root: Path) -> set[str]:
     if not plan_value:
         return set()
     plan_path = Path(plan_value)
-    if "final_topology_hard_gate_" not in plan_path.name or not plan_path.is_file():
+    if "final_topology_hard_gate_" not in plan_path.name:
         return set()
-    payload = json.loads(plan_path.read_text(encoding="utf-8"))
+    if not plan_path.is_file() and not is_deferred_replacement_plan(plan_path):
+        return set()
     incident_node_ids: set[str] = set()
     direct_failure_node_ids: set[str] = set()
-    for row in payload.get("features") or []:
+    for row in read_replacement_plan_rows(plan_path):
         props = dict(row.get("properties") or {})
         risk_flags = set(_ids(props.get("risk_flags")))
         if (
@@ -290,12 +301,16 @@ def _hard_gate_cascade_node_ids(step_root: Path) -> set[str]:
     return incident_node_ids - direct_failure_node_ids
 
 
-def _patch_blocked_surface_node_ids(step_root: Path) -> set[str]:
+def _patch_blocked_surface_node_ids(
+    step_root: Path,
+    *,
+    rows: list[dict[str, Any]] | None = None,
+) -> set[str]:
     path = step_root / "t06_step3_surface_topology_audit.gpkg"
-    if not path.is_file():
+    if rows is None and not path.is_file():
         return set()
     result = set()
-    for row in read_features(path):
+    for row in rows if rows is not None else read_features(path):
         props = dict(row.get("properties") or {})
         reason = str(props.get("audit_reason") or "")
         if reason not in _PATCH_BLOCK_REASONS and "patch_conflict" not in reason and "t04_reject" not in reason:

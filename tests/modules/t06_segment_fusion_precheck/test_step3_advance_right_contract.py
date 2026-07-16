@@ -9,6 +9,26 @@ from rcsd_topo_poc.modules.t06_segment_fusion_precheck.step3_advance_right_contr
     apply_junction_advance_right_contract,
     apply_retained_swsd_segment_attachment_contract,
 )
+from rcsd_topo_poc.modules.t06_segment_fusion_precheck.step3_advance_right_common import (
+    _replace_features_by_id,
+)
+
+
+def test_replace_features_by_id_preserves_sequential_splice_order() -> None:
+    first = {"properties": {"id": "1"}, "geometry": Point(0, 0)}
+    second = {"properties": {"id": "2"}, "geometry": Point(1, 0)}
+    third = {"properties": {"id": "3"}, "geometry": Point(2, 0)}
+    replacement_1 = {"properties": {"id": "10"}, "geometry": Point(0, 0)}
+    replacement_2 = {"properties": {"id": "20"}, "geometry": Point(1, 0)}
+    missing_replacement = {"properties": {"id": "40"}, "geometry": Point(4, 0)}
+    features = [first, second, third]
+
+    _replace_features_by_id(
+        features,
+        {"1": [replacement_1], "2": [replacement_2], "4": [missing_replacement]},
+    )
+
+    assert [item["properties"]["id"] for item in features] == ["10", "20", "3", "40"]
 
 
 def test_retained_non_advance_swsd_attachment_contract_is_noop() -> None:

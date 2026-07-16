@@ -24,6 +24,7 @@ from .schemas import PROCESS_CRS_TEXT
 
 
 _SUPPRESS_FEATURE_JSON_DEPTH = 0
+_JSON_WRITE_CHUNK_CHARS = 1 << 20
 _READ_FEATURES_CACHE_MAX_PATHS = 24
 _READ_FEATURES_SNAPSHOT_CACHE: OrderedDict[
     tuple[str, str | None],
@@ -77,7 +78,7 @@ def read_features(path: str | Path, *, crs_override: str | None = None) -> list[
             {"properties": _normalize_property_keys(dict(item.properties)), "geometry": item.geometry}
             for item in result.features
         ]
-    resolved = Path(path).resolve()
+    resolved = Path(path).absolute()
     try:
         stat = resolved.stat()
     except OSError:
@@ -122,7 +123,7 @@ def clear_read_features_cache(*, force: bool = False) -> None:
 
 
 def discard_read_features_cache(path: str | Path) -> None:
-    resolved = str(Path(path).resolve())
+    resolved = str(Path(path).absolute())
     with _READ_FEATURES_SNAPSHOT_CACHE_LOCK:
         for key in list(_READ_FEATURES_SNAPSHOT_CACHE):
             if key[0] == resolved:
@@ -141,7 +142,7 @@ def _active_preserved_read_feature_paths() -> set[str] | None:
 @contextmanager
 def preserve_read_features_cache(paths: Iterable[str | Path] | None = None) -> Iterable[None]:
     global _PRESERVE_READ_FEATURES_CACHE_DEPTH
-    preserved_paths = None if paths is None else {str(Path(path).resolve()) for path in paths}
+    preserved_paths = None if paths is None else {str(Path(path).absolute()) for path in paths}
     _PRESERVE_READ_FEATURES_CACHE_DEPTH += 1
     _PRESERVED_READ_FEATURE_PATHS.append(preserved_paths)
     try:
@@ -240,7 +241,7 @@ def write_feature_triplet(
     effective_write_json_output = write_json_output and _SUPPRESS_FEATURE_JSON_DEPTH <= 0
     if effective_write_json_output:
         _notify_output_progress(progress, "json", "start", json_path)
-        write_json(
+        _write_normalized_json(
             json_path,
             {
                 "row_count": len(features),
@@ -340,14 +341,34 @@ def write_csv(path: str | Path, rows: Iterable[dict[str, Any]], fieldnames: list
 
 
 def write_json(path: str | Path, payload: Any) -> None:
+    _write_normalized_json(path, _plain_value(payload))
+
+
+def _write_normalized_json(path: str | Path, payload: Any) -> None:
+    """Write a payload that has already been converted to JSON-native values."""
     out_path = Path(path)
     write_path = _staged_output_path(out_path)
     write_path.parent.mkdir(parents=True, exist_ok=True)
     with write_path.open("w", encoding="utf-8") as fp:
-        json.dump(_plain_value(payload), fp, ensure_ascii=False, indent=2, allow_nan=False)
+        _dump_json_buffered(fp, payload)
     if write_path != out_path:
         out_path.parent.mkdir(parents=True, exist_ok=True)
         copy2(write_path, out_path)
+
+
+def _dump_json_buffered(fp: Any, payload: Any, *, chunk_chars: int = _JSON_WRITE_CHUNK_CHARS) -> None:
+    encoder = json.JSONEncoder(ensure_ascii=False, indent=2, allow_nan=False)
+    pending: list[str] = []
+    pending_chars = 0
+    for chunk in encoder.iterencode(payload):
+        pending.append(chunk)
+        pending_chars += len(chunk)
+        if pending_chars >= chunk_chars:
+            fp.write("".join(pending))
+            pending.clear()
+            pending_chars = 0
+    if pending:
+        fp.write("".join(pending))
 
 
 def _feature_json(feature: dict[str, Any]) -> dict[str, Any]:

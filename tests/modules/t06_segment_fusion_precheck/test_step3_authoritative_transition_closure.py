@@ -8,6 +8,10 @@ from rcsd_topo_poc.modules.t06_segment_fusion_precheck.step3_authoritative_trans
     _hard_gate_cascade_node_ids,
     sync_authoritative_transition_mainnodes,
 )
+from rcsd_topo_poc.modules.t06_segment_fusion_precheck.step3_replacement_plan_reader import (
+    defer_replacement_plan_writes,
+    write_replacement_plan_json,
+)
 
 
 def _node(node_id: str, source: int, x: float, *, mainnodeid=0) -> dict:
@@ -134,3 +138,27 @@ def test_hard_gate_candidate_nodes_only_come_from_current_rollback_plan(tmp_path
     )
 
     assert _hard_gate_cascade_node_ids(tmp_path) == {"n2", "j1"}
+
+
+def test_hard_gate_candidate_nodes_read_deferred_plan(tmp_path) -> None:
+    plan_path = tmp_path / "t06_step3_surface_aware_replacement_plan_final_topology_hard_gate_1.json"
+    rows = [
+        {
+            "properties": {
+                "source_reason": "final_frcsd_topology_hard_gate_failed",
+                "swsd_pair_nodes": ["n1", "n2"],
+                "swsd_junc_nodes": ["j1"],
+                "final_topology_hard_gate_failure_node_ids": ["n1"],
+            },
+            "geometry": None,
+        }
+    ]
+    (tmp_path / "t06_step3_summary.json").write_text(
+        json.dumps({"input_paths": {"step2_replacement_plan_path": str(plan_path)}}),
+        encoding="utf-8",
+    )
+
+    with defer_replacement_plan_writes():
+        write_replacement_plan_json(plan_path, rows)
+        assert not plan_path.exists()
+        assert _hard_gate_cascade_node_ids(tmp_path) == {"n2", "j1"}

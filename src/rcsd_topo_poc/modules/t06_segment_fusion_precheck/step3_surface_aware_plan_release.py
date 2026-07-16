@@ -11,7 +11,6 @@ from .io import (
     preserve_read_features_cache,
     read_features,
     suppress_feature_json_outputs,
-    write_feature_triplet,
     write_json,
 )
 from .rcsd_road_ownership import refresh_rcsd_road_ownership_after_surface
@@ -25,10 +24,6 @@ from .step3_final_topology_gate import (
     rollback_plan_ids_for_failed_segments as _rollback_plan_ids_for_failed_segments,
     topology_fail_keys,
 )
-from .step3_authoritative_transition_closure import (
-    AUTHORITATIVE_TRANSITION_CLOSURE_FIELDS,
-    AUTHORITATIVE_TRANSITION_CLOSURE_STEM,
-)
 from .parsing import unique_preserve_order
 from .schemas import (
     STEP2_REPLACEMENT_PLAN_STEM,
@@ -40,10 +35,18 @@ from .step3_semantic_junction_groups import (
 )
 from .step3_output_slimming import retire_intermediate_step3_plan
 from .step3_corridor_coverage_cache import preserve_corridor_coverage_decisions
-from .step3_replacement_plan_reader import read_replacement_plan_rows
+from .step3_replacement_plan_reader import (
+    copy_replacement_plan_rows as _copy_plan_rows,
+    defer_replacement_plan_writes,
+    materialize_deferred_replacement_plan,
+    read_replacement_plan_rows,
+    write_replacement_plan_json,
+)
 from .step3_segment_replacement import T06Step3Artifacts, run_t06_step3_segment_replacement
 from .step3_topology_connectivity_audit import STEP3_TOPOLOGY_CONNECTIVITY_AUDIT_STEM
+from .step3_topology_connectivity_support import _ReusableCoverageCache
 from .step3_surface_topology_audit import run_surface_topology_postprocess
+from .step3_validation_output_deferred import publish_deferred_validation_outputs
 from .step3_surface_runtime import (
     Step3SurfaceRuntimeState,
     normalize_step3_surface_runtime_state,
@@ -118,7 +121,7 @@ def run_surface_aware_step3_segment_replacement(
     progress: bool,
 ) -> tuple[T06Step3Artifacts, dict[str, Any] | None]:
     has_surface_inputs = any(surface_inputs.values())
-    topology_coverage_cache: dict[Any, Any] = {}
+    topology_coverage_cache: dict[Any, Any] = _ReusableCoverageCache()
     preflight_plan_rows = _preflight_replacement_plan_rows(step2_replaceable_path)
     if has_surface_inputs and preflight_plan_rows:
         with (
@@ -133,6 +136,7 @@ def run_surface_aware_step3_segment_replacement(
                 ]
             ),
             preserve_corridor_coverage_decisions(),
+            defer_replacement_plan_writes(),
         ):
             preplanned_result = _run_preplanned_release_step3(
                 plan_rows=preflight_plan_rows,
@@ -461,7 +465,7 @@ def _run_preplanned_release_step3(
                 surface_inputs=surface_inputs,
                 surface_topology_closure=surface_topology_closure,
                 write_feature_json_outputs=False,
-                topology_coverage_cache={},
+                topology_coverage_cache=topology_coverage_cache,
                 validation_only=True,
             )
         validation_runtime_state = (
@@ -504,17 +508,22 @@ def _run_preplanned_release_step3(
         baseline_rows = _block_postplan_anchor_rows_for_baseline(_copy_plan_rows(candidate_rows), baseline_plan_ids)
         baseline_plan_root = validation_root / "baseline_plan" / resolved_run_id / STEP3_DIR
         baseline_plan = _write_plan_json(baseline_plan_root, baseline_rows, "postplan_baseline")
-        baseline_artifacts, _ = run_validation(
+        baseline_artifacts, baseline_surface_summary = run_validation(
             baseline_plan,
             "postplan_baseline",
             decision_only=True,
         )
-        internal_baseline_fail_keys = _topology_fail_keys(baseline_artifacts.step_root)
+        internal_baseline_fail_keys = _topology_fail_keys(
+            baseline_artifacts.step_root,
+            _runtime_state_from_summary(baseline_surface_summary),
+        )
         internal_baseline_run_count = 1
+        del baseline_artifacts, baseline_surface_summary
     rollback_reference_fail_keys = external_baseline_fail_keys or internal_baseline_fail_keys
     artifacts, surface_summary = run_validation(candidate_plan, "candidate")
+    current_runtime_state = _runtime_state_from_summary(surface_summary)
     full_step3_run_count = validation_run_count
-    final_fail_keys = _topology_fail_keys(artifacts.step_root)
+    final_fail_keys = _topology_fail_keys(artifacts.step_root, current_runtime_state)
     added_fail_keys = final_fail_keys - rollback_reference_fail_keys
     postplan_added_fail_keys = _postplan_anchor_added_fail_keys(added_fail_keys)
     postplan_rollback_plan_ids: set[str] = set()
@@ -555,7 +564,15 @@ def _run_preplanned_release_step3(
         # visual plans appear pre-approved.
         visual_reference_fail_keys = external_baseline_fail_keys if external_baseline_root else set()
         visual_added_fail_keys = surface_safe_fail_keys - visual_reference_fail_keys
-        visual_non_replaced_plan_ids = _visual_conflict_non_replaced_plan_ids(artifacts.step_root, visual_released)
+        visual_non_replaced_plan_ids = _visual_conflict_non_replaced_plan_ids(
+            artifacts.step_root,
+            visual_released,
+            relation_rows=(
+                current_runtime_state.segment_relation_rows
+                if current_runtime_state is not None
+                else None
+            ),
+        )
         visual_rollback_plan_ids = _visual_conflict_rollback_plan_ids(
             visual_added_fail_keys,
             visual_released,
@@ -584,9 +601,11 @@ def _run_preplanned_release_step3(
         safe_rows = _rollback_release_rows(safe_rows, rollback_plan_ids)
         safe_rows = _rollback_visual_conflict_release_rows(safe_rows, visual_rollback_plan_ids)
         topology_safe_plan = _write_plan_json(step_root, safe_rows, "topology_safe")
+        del artifacts, surface_summary, current_runtime_state
         artifacts, surface_summary = run_validation(topology_safe_plan, "topology_safe")
+        current_runtime_state = _runtime_state_from_summary(surface_summary)
         full_step3_run_count = validation_run_count
-        final_fail_keys = _topology_fail_keys(artifacts.step_root)
+        final_fail_keys = _topology_fail_keys(artifacts.step_root, current_runtime_state)
         residual_added_fail_keys = final_fail_keys - rollback_reference_fail_keys
         residual_postplan_added_fail_keys = _postplan_anchor_added_fail_keys(residual_added_fail_keys)
         if residual_postplan_added_fail_keys and postplan_released:
@@ -602,12 +621,14 @@ def _run_preplanned_release_step3(
                     conservative_rows,
                     "topology_safe_residual",
                 )
+                del artifacts, surface_summary, current_runtime_state
                 artifacts, surface_summary = run_validation(
                     conservative_plan,
                     "topology_safe_residual",
                 )
+                current_runtime_state = _runtime_state_from_summary(surface_summary)
                 full_step3_run_count = validation_run_count
-                final_fail_keys = _topology_fail_keys(artifacts.step_root)
+                final_fail_keys = _topology_fail_keys(artifacts.step_root, current_runtime_state)
                 retire_intermediate_step3_plan(topology_safe_plan, conservative_plan)
                 topology_safe_plan = conservative_plan
                 postplan_rollback_plan_ids.update(residual_postplan_rollback_plan_ids)
@@ -616,7 +637,15 @@ def _run_preplanned_release_step3(
     hard_gate_rollback_plan_ids: set[str] = set()
     current_plan_rows = read_replacement_plan_rows(topology_safe_plan or candidate_plan)
     for iteration in range(1, 3):
-        decision = final_topology_gate_decision(artifacts.step_root, current_plan_rows)
+        decision = final_topology_gate_decision(
+            artifacts.step_root,
+            current_plan_rows,
+            audit_rows=(
+                current_runtime_state.topology_connectivity_audit_rows
+                if current_runtime_state is not None
+                else None
+            ),
+        )
         new_rollback_plan_ids = set(decision["rollback_plan_ids"]) - hard_gate_rollback_plan_ids
         hard_gate_iterations.append(
             {
@@ -645,12 +674,14 @@ def _run_preplanned_release_step3(
             hard_gate_rows,
             f"final_topology_hard_gate_{iteration}",
         )
+        del artifacts, surface_summary, current_runtime_state
         artifacts, surface_summary = run_validation(
             hard_gate_plan,
             f"final_topology_hard_gate_{iteration}",
         )
+        current_runtime_state = _runtime_state_from_summary(surface_summary)
         full_step3_run_count = validation_run_count
-        final_fail_keys = _topology_fail_keys(artifacts.step_root)
+        final_fail_keys = _topology_fail_keys(artifacts.step_root, current_runtime_state)
         retire_intermediate_step3_plan(topology_safe_plan, hard_gate_plan)
         topology_safe_plan = hard_gate_plan
         current_plan_rows = hard_gate_rows
@@ -666,13 +697,17 @@ def _run_preplanned_release_step3(
     )
     if not final_authoritative_transition_rows:
         final_authoritative_transition_rows = latest_authoritative_transition_closure_rows
-    if final_authoritative_transition_rows:
-        write_feature_triplet(
-            step_root=artifacts.step_root,
-            stem=AUTHORITATIVE_TRANSITION_CLOSURE_STEM,
-            features=final_authoritative_transition_rows,
-            fieldnames=AUTHORITATIVE_TRANSITION_CLOSURE_FIELDS,
-        )
+    if final_runtime_state is None:
+        raise RuntimeError("Final validation runtime state is unavailable for deferred output publication.")
+    final_runtime_state.authoritative_transition_closure_rows = list(
+        final_authoritative_transition_rows
+    )
+    materialize_deferred_replacement_plan(topology_safe_plan or candidate_plan)
+    publish_deferred_validation_outputs(
+        final_runtime_state,
+        artifacts.step_root,
+        excluded_job_names={"road", "segment_relation"},
+    )
     refresh_rcsd_road_ownership_after_surface(
         step_root=artifacts.step_root,
         summary_path=artifacts.summary_path,
@@ -701,8 +736,12 @@ def _run_preplanned_release_step3(
         relation_rows=(final_runtime_state.segment_relation_rows if final_runtime_state is not None else None),
     )
     full_step3_run_count = validation_run_count
-    final_fail_keys = _topology_fail_keys(artifacts.step_root)
-    final_hard_gate_decision = final_topology_gate_decision(artifacts.step_root, current_plan_rows)
+    final_fail_keys = _topology_fail_keys(artifacts.step_root, final_runtime_state)
+    final_hard_gate_decision = final_topology_gate_decision(
+        artifacts.step_root,
+        current_plan_rows,
+        audit_rows=final_runtime_state.topology_connectivity_audit_rows,
+    )
     candidate_plan_retired = retire_intermediate_step3_plan(candidate_plan, topology_safe_plan or candidate_plan)
     visual_release_audit = None
     if visual_released:
@@ -827,18 +866,39 @@ def _run_validation_step3(*, decision_only: bool = False, **kwargs: Any) -> T06S
 
 def _run_isolated_baseline(payload: dict[str, Any]) -> set[tuple[str, str, str, str, str]]:
     artifacts = _run_validation_step3(**payload["step3_kwargs"], decision_only=True)
-    _run_surface(
+    surface_summary = _run_surface(
         artifacts,
         **payload["surface_kwargs"],
         write_feature_json_outputs=False,
         topology_coverage_cache={},
         validation_only=True,
     )
-    return _topology_fail_keys(artifacts.step_root)
+    return _topology_fail_keys(
+        artifacts.step_root,
+        _runtime_state_from_summary(surface_summary),
+    )
 
 
-def _topology_fail_keys(step_root: Path) -> set[tuple[str, str, str, str, str]]:
-    return topology_fail_keys(step_root, read_rows=read_features)
+def _topology_fail_keys(
+    step_root: Path,
+    runtime_state: Step3SurfaceRuntimeState | None = None,
+) -> set[tuple[str, str, str, str, str]]:
+    return topology_fail_keys(
+        step_root,
+        read_rows=read_features,
+        audit_rows=(
+            runtime_state.topology_connectivity_audit_rows
+            if runtime_state is not None
+            else None
+        ),
+    )
+
+
+def _runtime_state_from_summary(
+    summary: dict[str, Any] | None,
+) -> Step3SurfaceRuntimeState | None:
+    state = (summary or {}).get("_step3_surface_runtime_state")
+    return state if isinstance(state, Step3SurfaceRuntimeState) else None
 
 
 def _run_surface(
@@ -864,6 +924,7 @@ def _run_surface(
             surface_topology_closure=surface_topology_closure,
             topology_coverage_cache=topology_coverage_cache,
             runtime_state=runtime_state,
+            defer_promotable_outputs=validation_only,
         )
     else:
         with suppress_feature_json_outputs():
@@ -875,6 +936,7 @@ def _run_surface(
                 surface_topology_closure=surface_topology_closure,
                 topology_coverage_cache=topology_coverage_cache,
                 runtime_state=runtime_state,
+                defer_promotable_outputs=validation_only,
             )
     semantic_stats = refresh_semantic_junction_topology_audit(
         step_root=artifacts.step_root,
@@ -884,7 +946,16 @@ def _run_surface(
             if runtime_state is not None
             else None
         ),
+        topology_rows=(
+            runtime_state.topology_connectivity_audit_rows
+            if runtime_state is not None
+            else None
+        ),
+        write_outputs=not validation_only,
+        preserve_gpkg_rewrite_semantics=validation_only,
     )
+    if validation_only and runtime_state is not None:
+        runtime_state.publish_topology_connectivity_json = bool(semantic_stats.get("semantic_junction_topology_fail_downgraded_count"))
     if not validation_only:
         refresh_rcsd_road_ownership_after_surface(
             step_root=artifacts.step_root,
@@ -913,6 +984,7 @@ def _run_surface_topology_postprocess(
     surface_topology_closure: bool,
     topology_coverage_cache: dict[Any, Any] | None = None,
     runtime_state: Step3SurfaceRuntimeState | None = None,
+    defer_promotable_outputs: bool = False,
 ) -> dict[str, Any]:
     return run_surface_topology_postprocess(
         step_root=artifacts.step_root,
@@ -926,6 +998,7 @@ def _run_surface_topology_postprocess(
         apply_closure=surface_topology_closure,
         topology_coverage_cache=topology_coverage_cache,
         runtime_state=runtime_state,
+        defer_promotable_outputs=defer_promotable_outputs,
     )
 
 def _rollback_release_rows(rows: list[dict[str, Any]], rollback_plan_ids: set[str]) -> list[dict[str, Any]]:
@@ -1135,12 +1208,17 @@ def _is_t05_semantic_surface_release(item: dict[str, Any]) -> bool:
     return True
 
 
-def _visual_conflict_non_replaced_plan_ids(step_root: Path, released: list[dict[str, Any]]) -> set[str]:
+def _visual_conflict_non_replaced_plan_ids(
+    step_root: Path,
+    released: list[dict[str, Any]],
+    *,
+    relation_rows: list[dict[str, Any]] | None = None,
+) -> set[str]:
     relation_path = step_root / f"{STEP3_SWSD_FRCSD_SEGMENT_RELATION_STEM}.gpkg"
-    if not relation_path.is_file():
+    if relation_rows is None and not relation_path.is_file():
         return set()
     status_by_segment: dict[str, str] = {}
-    for row in read_features(relation_path):
+    for row in relation_rows if relation_rows is not None else read_features(relation_path):
         props = row.get("properties") or {}
         segment_id = str(props.get("swsd_segment_id") or "")
         if segment_id:
@@ -1199,26 +1277,8 @@ def _fail_keys_after_release_rollback(
 
 def _write_plan_json(step_root: Path, rows: list[dict[str, Any]], label: str) -> Path:
     path = step_root / f"{SURFACE_RELEASE_PLAN_STEM}_{label}.json"
-    write_json(path, {"row_count": len(rows), "features": rows})
+    write_replacement_plan_json(path, rows)
     return path
-
-
-def _copy_plan_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    copied: list[dict[str, Any]] = []
-    for row in rows:
-        properties = {
-            key: value
-            for key, value in dict(row.get("properties") or {}).items()
-            if value is not None and key != "absorbed_group_member_segments"
-        }
-        copied.append(
-            {
-                "type": row.get("type", "Feature"),
-                "properties": properties,
-                "geometry": row.get("geometry"),
-            }
-        )
-    return copied
 
 
 def _write_release_audit(step_root: Path, payload: dict[str, Any]) -> None:

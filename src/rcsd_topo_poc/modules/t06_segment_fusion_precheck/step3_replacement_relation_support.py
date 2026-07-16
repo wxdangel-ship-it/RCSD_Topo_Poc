@@ -202,17 +202,12 @@ def _build_junction_states(
         state.original_main_props = _original_main_props(c_id, group)
 
     added_node_ids = set(added_node_to_segments)
-    for node in rcsd_nodes:
-        node_id = _feature_id(node)
-        if node_id not in added_node_ids:
-            continue
-        canonical_id = canonicalizer.canonicalize(node_id)
-        segment_ids = set(added_node_to_segments[node_id])
-        for state in junctions.values():
-            if canonical_id in state.mapped_rcsd_semantic_ids and segment_ids.intersection(state.replacement_segment_ids):
-                state.added_rcsd_node_ids.append(node_id)
-    for state in junctions.values():
-        state.added_rcsd_node_ids = unique_preserve_order(state.added_rcsd_node_ids)
+    _assign_added_rcsd_nodes_to_junction_states(
+        junctions=junctions,
+        rcsd_nodes=rcsd_nodes,
+        added_node_to_segments=added_node_to_segments,
+        canonicalizer=canonicalizer,
+    )
     append_advance_attachment_rcsd_nodes(
         junctions=junctions,
         rcsd_roads=rcsd_roads,
@@ -220,6 +215,34 @@ def _build_junction_states(
         added_node_ids=added_node_ids,
     )
     return junctions
+
+
+def _assign_added_rcsd_nodes_to_junction_states(
+    *,
+    junctions: dict[str, JunctionState],
+    rcsd_nodes: list[dict[str, Any]],
+    added_node_to_segments: dict[str, list[str]],
+    canonicalizer: NodeCanonicalizer,
+) -> None:
+    """Assign added nodes without scanning every junction for every RCSD node."""
+    states_by_semantic_id: dict[str, list[tuple[JunctionState, frozenset[str]]]] = defaultdict(list)
+    for state in junctions.values():
+        replacement_segment_ids = frozenset(state.replacement_segment_ids)
+        for semantic_id in state.mapped_rcsd_semantic_ids:
+            states_by_semantic_id[semantic_id].append((state, replacement_segment_ids))
+
+    added_node_ids = set(added_node_to_segments)
+    for node in rcsd_nodes:
+        node_id = _feature_id(node)
+        if node_id not in added_node_ids:
+            continue
+        canonical_id = canonicalizer.canonicalize(node_id)
+        segment_ids = set(added_node_to_segments[node_id])
+        for state, replacement_segment_ids in states_by_semantic_id.get(canonical_id, []):
+            if not segment_ids.isdisjoint(replacement_segment_ids):
+                state.added_rcsd_node_ids.append(node_id)
+    for state in junctions.values():
+        state.added_rcsd_node_ids = unique_preserve_order(state.added_rcsd_node_ids)
 
 def _apply_junction_rebuild(
     frcsd_nodes: list[dict[str, Any]],
@@ -853,9 +876,12 @@ def _select_added_rcsd_nodes(
     units: list[ReplacementUnit],
 ) -> dict[str, list[str]]:
     semantic_to_segments: dict[str, list[str]] = defaultdict(list)
+    raw_retained_node_to_segments: dict[str, list[str]] = defaultdict(list)
     for unit in units:
         for semantic_id in unique_preserve_order([*unit.retained_node_ids, *unit.rcsd_pair_nodes, *unit.rcsd_junc_nodes, *unit.optional_allowed_rcsd_nodes]):
             semantic_to_segments[semantic_id].append(unit.segment_id)
+        for raw_node_id in unit.retained_node_ids:
+            raw_retained_node_to_segments[raw_node_id].append(unit.segment_id)
     result: dict[str, list[str]] = {}
     for node in rcsd_nodes:
         node_id = _feature_id(node)
@@ -864,7 +890,7 @@ def _select_added_rcsd_nodes(
             continue
         segment_ids = semantic_to_segments.get(canonical_id, [])
         if not segment_ids:
-            segment_ids = [unit.segment_id for unit in units if node_id in unit.retained_node_ids]
+            segment_ids = raw_retained_node_to_segments.get(node_id, [])
         result[node_id] = unique_preserve_order(segment_ids)
     return result
 

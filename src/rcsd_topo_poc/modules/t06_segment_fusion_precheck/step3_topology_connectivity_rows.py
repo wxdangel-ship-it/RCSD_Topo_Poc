@@ -142,6 +142,30 @@ from .step3_topology_connectivity_attachment import (
     _attachment_refs_by_swsd_node,
 )
 
+RelationRoadContextCache = dict[
+    int,
+    tuple[list[dict[str, Any]], "_DirectedRoadGraph"],
+]
+
+
+def _relation_road_context(
+    props: dict[str, Any],
+    *,
+    road_index: "_RoadIndex",
+    canonicalizer: NodeCanonicalizer,
+    cache: RelationRoadContextCache | None,
+) -> tuple[list[dict[str, Any]], "_DirectedRoadGraph"]:
+    key = id(props)
+    if cache is not None:
+        cached = cache.get(key)
+        if cached is not None:
+            return cached
+    selected_roads = _relation_roads(props, road_index)
+    result = (selected_roads, _DirectedRoadGraph(selected_roads, canonicalizer=canonicalizer))
+    if cache is not None:
+        cache[key] = result
+    return result
+
 def _segment_internal_rows(
     *,
     swsd_segments: list[dict[str, Any]],
@@ -156,6 +180,7 @@ def _segment_internal_rows(
     attachment_refs_by_node: dict[str, list["_NodeRef"]],
     coverage_cache: CoverageCache,
     road_signature_cache: RoadSignatureCache,
+    relation_road_context_cache: RelationRoadContextCache | None = None,
 ) -> list[dict[str, Any]]:
     segment_by_id = {_feature_id(segment): segment for segment in swsd_segments}
     rows: list[dict[str, Any]] = []
@@ -175,9 +200,13 @@ def _segment_internal_rows(
             road_index=road_index,
             swsd_source_value=swsd_source_value,
         )
-        selected_roads = _relation_roads(props, road_index)
+        selected_roads, graph = _relation_road_context(
+            props,
+            road_index=road_index,
+            canonicalizer=canonicalizer,
+            cache=relation_road_context_cache,
+        )
         selected_road_ids = [_feature_id(road) for road in selected_roads]
-        graph = _DirectedRoadGraph(selected_roads, canonicalizer=canonicalizer)
         mapped_pair_nodes = [
             _mapped_node_refs_for_swsd_node(
                 props,
@@ -348,6 +377,7 @@ def _segment_road_rows(
     attachment_refs_by_node: dict[str, list["_NodeRef"]],
     coverage_cache: CoverageCache,
     road_signature_cache: RoadSignatureCache,
+    relation_road_context_cache: RelationRoadContextCache | None = None,
 ) -> list[dict[str, Any]]:
     segment_by_id = {_feature_id(segment): segment for segment in swsd_segments}
     swsd_road_by_id = {_feature_id(road): road for road in swsd_roads}
@@ -365,8 +395,12 @@ def _segment_road_rows(
         is_swsd_buffer_corridor_release = SWSD_BUFFER_CORRIDOR_RELEASE_RISK in risk_flags
         semantic_node_ids = set(unique_preserve_order([*_as_id_list(segment_props.get("pair_nodes")), *_as_id_list(segment_props.get("junc_nodes"))]))
         pair_node_ids = set(_as_id_list(props.get("swsd_pair_nodes")))
-        selected_roads = _relation_roads(props, road_index)
-        graph = _DirectedRoadGraph(selected_roads, canonicalizer=canonicalizer)
+        selected_roads, graph = _relation_road_context(
+            props,
+            road_index=road_index,
+            canonicalizer=canonicalizer,
+            cache=relation_road_context_cache,
+        )
         retained_swsd_road_ids = _retained_swsd_relation_road_ids(
             props,
             road_index=road_index,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import fiona
@@ -11,6 +12,59 @@ from rcsd_topo_poc.modules.t06_segment_fusion_precheck.io import read_features, 
 from rcsd_topo_poc.modules.t06_segment_fusion_precheck.step3_validation_publish import (
     decision_only_validation_step3_run,
 )
+
+
+def test_buffered_json_writer_preserves_stdlib_bytes_with_bounded_write_count() -> None:
+    payload = {"rows": [{"id": index, "name": f"道路-{index}"} for index in range(100)]}
+    chunks: list[str] = []
+
+    class Writer:
+        write = chunks.append
+
+    io_module._dump_json_buffered(Writer(), payload, chunk_chars=128)
+
+    assert "".join(chunks) == json.dumps(
+        payload,
+        ensure_ascii=False,
+        indent=2,
+        allow_nan=False,
+    )
+    assert 1 < len(chunks) < 100
+
+
+def test_write_feature_triplet_passes_pre_normalized_payload_to_json_writer(tmp_path, monkeypatch) -> None:
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(io_module, "write_gpkg", lambda *args, **kwargs: None)
+    monkeypatch.setattr(io_module, "write_csv", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        io_module,
+        "_write_normalized_json",
+        lambda path, payload: captured.update(path=path, payload=payload),
+    )
+
+    write_feature_triplet(
+        step_root=tmp_path,
+        stem="normalized",
+        features=[
+            {
+                "properties": {"id": "1", "tags": ("a", "b")},
+                "geometry": Point(1.0, 2.0),
+            }
+        ],
+        fieldnames=["id", "tags"],
+    )
+
+    assert captured["path"] == tmp_path / "normalized.json"
+    assert captured["payload"] == {
+        "row_count": 1,
+        "features": [
+            {
+                "properties": {"id": "1", "tags": ["a", "b"]},
+                "geometry": mapping(Point(1.0, 2.0)),
+                "crs": io_module.PROCESS_CRS_TEXT,
+            }
+        ],
+    }
 
 
 def test_read_features_normalizes_mixed_case_property_keys(tmp_path, monkeypatch):

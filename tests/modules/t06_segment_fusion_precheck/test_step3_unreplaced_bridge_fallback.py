@@ -4,13 +4,37 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 
 from shapely.geometry import LineString
+from shapely.geometry.base import BaseGeometry
 
 from rcsd_topo_poc.modules.t06_segment_fusion_precheck.graph_builders import NodeCanonicalizer
 from rcsd_topo_poc.modules.t06_segment_fusion_precheck.schemas import feature
+from rcsd_topo_poc.modules.t06_segment_fusion_precheck import step3_unreplaced_bridge_fallback as fallback
 from rcsd_topo_poc.modules.t06_segment_fusion_precheck.step3_unreplaced_bridge_fallback import (
     SECOND_DEGREE_BRIDGE_RISK,
     apply_unreplaced_second_degree_bridge_fallback,
 )
+
+
+def test_geometry_match_reuses_one_unit_buffer_for_multiple_candidate_roads(monkeypatch) -> None:
+    original_buffer = BaseGeometry.buffer
+    buffer_calls = 0
+
+    def counted_buffer(self, *args, **kwargs):
+        nonlocal buffer_calls
+        buffer_calls += 1
+        return original_buffer(self, *args, **kwargs)
+
+    monkeypatch.setattr(BaseGeometry, "buffer", counted_buffer)
+    unit_geometry = LineString([(0.0, 0.0), (20.0, 0.0)])
+    unit_buffer_cache: list[BaseGeometry] = []
+    for offset in (0.0, 1.0):
+        assert fallback._road_geometry_matches_unit(
+            {"geometry": LineString([(0.0, offset), (20.0, offset)])},
+            unit_geometry,
+            unit_buffer_cache=unit_buffer_cache,
+        )
+
+    assert buffer_calls == 1
 
 
 @dataclass

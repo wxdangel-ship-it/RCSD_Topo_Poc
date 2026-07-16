@@ -83,6 +83,22 @@ CoverageCacheKey = tuple[float, tuple[tuple[str, str, str], ...]]
 CoverageCache = dict[CoverageCacheKey, BaseGeometry]
 RoadSignature = tuple[tuple[str, str, str], ...]
 RoadSignatureCache = dict[tuple[int, ...], tuple[tuple[dict[str, Any], ...], RoadSignature]]
+UncoveredMetric = tuple[float | None, float | None]
+UncoveredMetricKey = tuple[str, float, RoadSignature]
+_MAX_UNCOVERED_METRICS = 200_000
+_METRIC_PREWARM_BATCH_SIZE = 64
+
+
+class _ReusableCoverageCache(dict[CoverageCacheKey, BaseGeometry]):
+    """Release buffered geometries between validations while retaining compact metrics."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.uncovered_metrics: dict[UncoveredMetricKey, UncoveredMetric] = {}
+
+
+def _coverage_cache_needs_prewarm(coverage_cache: CoverageCache) -> bool:
+    return not isinstance(coverage_cache, _ReusableCoverageCache) or not coverage_cache.uncovered_metrics
 
 
 def _relation_roads(props: dict[str, Any], road_index: "_RoadIndex") -> list[dict[str, Any]]:
@@ -120,12 +136,22 @@ class _DirectedRoadGraph:
                 self.forward[target].add(source)
             self.undirected[source].add(target)
             self.undirected[target].add(source)
+        self.undirected_component_by_node = _undirected_component_index(self.undirected)
 
     def reachable_any(self, starts: list[str], targets: list[str]) -> bool:
         return _reachable_any(self.forward, starts, targets)
 
     def undirected_reachable_any(self, starts: list[str], targets: list[str]) -> bool:
-        return _reachable_any(self.undirected, starts, targets)
+        if not starts or not targets:
+            return False
+        target_components = {
+            self.undirected_component_by_node.get(node, node)
+            for node in targets
+        }
+        return any(
+            self.undirected_component_by_node.get(node, node) in target_components
+            for node in starts
+        )
 
 
 class _RoadIndex:
@@ -270,6 +296,21 @@ def _segment_uncovered_metrics(
     segment_geometry = (segment or {}).get("geometry")
     if not isinstance(segment_geometry, BaseGeometry) or segment_geometry.is_empty or segment_geometry.length <= 0:
         return None, None
+    metric_cache = (
+        coverage_cache.uncovered_metrics
+        if isinstance(coverage_cache, _ReusableCoverageCache)
+        else None
+    )
+    metric_key: UncoveredMetricKey | None = None
+    if metric_cache is not None:
+        metric_key = _uncovered_metric_key(
+            segment_geometry,
+            buffer_m=buffer_m,
+            road_signature=_road_signature(roads, signature_cache=road_signature_cache),
+        )
+        cached_metric = metric_cache.get(metric_key)
+        if cached_metric is not None:
+            return cached_metric
     buffered_roads = _buffered_road_union(
         roads,
         buffer_m=buffer_m,
@@ -277,10 +318,14 @@ def _segment_uncovered_metrics(
         road_signature_cache=road_signature_cache,
     )
     if buffered_roads is None:
-        return 1.0, float(segment_geometry.length)
-    uncovered = segment_geometry.difference(buffered_roads)
-    length = float(uncovered.length)
-    return length / float(segment_geometry.length), length
+        result = (1.0, float(segment_geometry.length))
+    else:
+        uncovered = segment_geometry.difference(buffered_roads)
+        length = float(uncovered.length)
+        result = (length / float(segment_geometry.length), length)
+    if metric_cache is not None and metric_key is not None:
+        _remember_uncovered_metric(metric_cache, metric_key, result)
+    return result
 
 
 def _buffered_road_union(
@@ -317,7 +362,19 @@ def _prewarm_relation_coverage_cache(
     road_index: "_RoadIndex",
     coverage_cache: CoverageCache,
     signature_cache: RoadSignatureCache,
+    swsd_segment_by_id: dict[str, dict[str, Any]] | None = None,
+    swsd_road_by_id: dict[str, dict[str, Any]] | None = None,
 ) -> None:
+    if isinstance(coverage_cache, _ReusableCoverageCache) and swsd_segment_by_id is not None:
+        _prewarm_relation_uncovered_metrics(
+            relation_props,
+            road_index=road_index,
+            coverage_cache=coverage_cache,
+            signature_cache=signature_cache,
+            swsd_segment_by_id=swsd_segment_by_id,
+            swsd_road_by_id=swsd_road_by_id or {},
+        )
+        return
     buffer_sizes = (
         SEGMENT_ROAD_COVERAGE_BUFFER_M,
         SEGMENT_COVERAGE_BUFFER_M,
@@ -361,6 +418,148 @@ def _prewarm_relation_coverage_cache(
         )
         for (signature, _), geometry in zip(pending, buffered):
             coverage_cache[(float(buffer_m), signature)] = geometry
+
+
+def _prewarm_relation_uncovered_metrics(
+    relation_props: list[dict[str, Any]],
+    *,
+    road_index: "_RoadIndex",
+    coverage_cache: _ReusableCoverageCache,
+    signature_cache: RoadSignatureCache,
+    swsd_segment_by_id: dict[str, dict[str, Any]],
+    swsd_road_by_id: dict[str, dict[str, Any]],
+) -> None:
+    tasks_by_signature: dict[
+        RoadSignature,
+        tuple[list[dict[str, Any]], dict[UncoveredMetricKey, BaseGeometry]],
+    ] = {}
+
+    def add_metric_tasks(
+        feature_item: dict[str, Any] | None,
+        *,
+        road_signature: RoadSignature,
+        task_by_key: dict[UncoveredMetricKey, BaseGeometry],
+        buffer_sizes: tuple[float, ...],
+    ) -> None:
+        geometry = _feature_line(feature_item or {})
+        if geometry is None or geometry.is_empty or geometry.length <= 0:
+            return
+        for buffer_m in buffer_sizes:
+            key = _uncovered_metric_key(
+                geometry,
+                buffer_m=buffer_m,
+                road_signature=road_signature,
+            )
+            if key not in coverage_cache.uncovered_metrics:
+                task_by_key[key] = geometry
+
+    for props in relation_props:
+        roads = _relation_roads(props, road_index)
+        signature = _road_signature(roads, signature_cache=signature_cache)
+        _, task_by_key = tasks_by_signature.setdefault(signature, (roads, {}))
+        segment_id = str(props.get("swsd_segment_id") or "")
+        segment = swsd_segment_by_id.get(segment_id)
+        add_metric_tasks(
+            segment,
+            road_signature=signature,
+            task_by_key=task_by_key,
+            buffer_sizes=(SEGMENT_COVERAGE_BUFFER_M, SEGMENT_CORRIDOR_BUFFER_M),
+        )
+        if str(props.get("relation_status") or "") in {"", "failed", "retained_swsd"}:
+            continue
+        segment_props = dict((segment or {}).get("properties") or {})
+        semantic_node_ids = set(
+            unique_preserve_order(
+                [
+                    *_as_id_list(segment_props.get("pair_nodes")),
+                    *_as_id_list(segment_props.get("junc_nodes")),
+                ]
+            )
+        )
+        road_ids = _as_id_list(props.get("swsd_road_ids")) or _as_id_list(segment_props.get("roads"))
+        for road_id in road_ids:
+            swsd_road = swsd_road_by_id.get(road_id)
+            endpoints = _road_endpoint_node_ids(swsd_road or {})
+            if len(endpoints) < 2 or not all(endpoint in semantic_node_ids for endpoint in endpoints[:2]):
+                continue
+            add_metric_tasks(
+                swsd_road,
+                road_signature=signature,
+                task_by_key=task_by_key,
+                buffer_sizes=(SEGMENT_ROAD_COVERAGE_BUFFER_M, SEGMENT_CORRIDOR_BUFFER_M),
+            )
+
+    entries = list(tasks_by_signature.items())
+    for start in range(0, len(entries), _METRIC_PREWARM_BATCH_SIZE):
+        union_entries: list[
+            tuple[RoadSignature, dict[UncoveredMetricKey, BaseGeometry], BaseGeometry]
+        ] = []
+        for signature, (roads, task_by_key) in entries[start : start + _METRIC_PREWARM_BATCH_SIZE]:
+            road_geometries = [
+                geometry
+                for road in roads
+                for geometry in [_feature_line(road)]
+                if geometry is not None and not geometry.is_empty
+            ]
+            if not road_geometries:
+                for key, geometry in task_by_key.items():
+                    _remember_uncovered_metric(
+                        coverage_cache.uncovered_metrics,
+                        key,
+                        (1.0, float(geometry.length)),
+                    )
+                continue
+            union_entries.append((signature, task_by_key, unary_union(road_geometries)))
+        for buffer_m in (
+            SEGMENT_ROAD_COVERAGE_BUFFER_M,
+            SEGMENT_COVERAGE_BUFFER_M,
+            SEGMENT_CORRIDOR_BUFFER_M,
+        ):
+            pending = [
+                (task_by_key, union_geometry)
+                for _, task_by_key, union_geometry in union_entries
+                if any(key[1] == float(buffer_m) for key in task_by_key)
+            ]
+            if not pending:
+                continue
+            buffered_unions = vectorized_buffer(
+                [union_geometry for _, union_geometry in pending],
+                buffer_m,
+                quad_segs=16,
+            )
+            for (task_by_key, _), buffered_union in zip(pending, buffered_unions):
+                for key, geometry in task_by_key.items():
+                    if key[1] != float(buffer_m):
+                        continue
+                    uncovered_length = float(geometry.difference(buffered_union).length)
+                    _remember_uncovered_metric(
+                        coverage_cache.uncovered_metrics,
+                        key,
+                        (uncovered_length / float(geometry.length), uncovered_length),
+                    )
+
+
+def _uncovered_metric_key(
+    geometry: BaseGeometry,
+    *,
+    buffer_m: float,
+    road_signature: RoadSignature,
+) -> UncoveredMetricKey:
+    return (
+        hashlib.blake2b(geometry.wkb, digest_size=16).hexdigest(),
+        float(buffer_m),
+        road_signature,
+    )
+
+
+def _remember_uncovered_metric(
+    metric_cache: dict[UncoveredMetricKey, UncoveredMetric],
+    key: UncoveredMetricKey,
+    value: UncoveredMetric,
+) -> None:
+    if key in metric_cache or len(metric_cache) >= _MAX_UNCOVERED_METRICS:
+        return
+    metric_cache[key] = value
 
 
 def _road_buffer_cache_key(
@@ -473,6 +672,23 @@ def _reachable_any(graph: dict[str, set[str]], starts: list[str], targets: list[
             seen.add(next_node)
             queue.append(next_node)
     return False
+
+
+def _undirected_component_index(graph: dict[str, set[str]]) -> dict[str, str]:
+    component_by_node: dict[str, str] = {}
+    for start in graph:
+        if start in component_by_node:
+            continue
+        queue = deque([start])
+        component_by_node[start] = start
+        while queue:
+            node = queue.popleft()
+            for next_node in graph.get(node, set()):
+                if next_node in component_by_node:
+                    continue
+                component_by_node[next_node] = start
+                queue.append(next_node)
+    return component_by_node
 
 
 def _road_endpoint_node_ids(road: dict[str, Any]) -> list[str]:

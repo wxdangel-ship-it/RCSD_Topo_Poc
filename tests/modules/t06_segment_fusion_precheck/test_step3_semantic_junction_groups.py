@@ -298,3 +298,51 @@ def test_refresh_semantic_junction_topology_audit_rewrites_surface_output(tmp_pa
     assert summary["semantic_junction_topology_fail_downgraded_count"] == 1
     assert summary["topology_connectivity_fail_count"] == 0
     assert summary["topology_connectivity_warn_count"] == 1
+
+
+def test_refresh_semantic_junction_topology_audit_preserves_gpkg_rewrite_semantics(tmp_path: Path) -> None:
+    topology_rows = [
+        feature(
+            {
+                "audit_layer": "formal_replacement_source_consistency",
+                "audit_status": "pass",
+                "audit_reason": "formal_replacement_uses_rcsd_source_only",
+            },
+            None,
+        ),
+        feature(
+            {
+                "audit_layer": "segment_junction_connectivity",
+                "audit_status": "fail",
+                "audit_reason": "junction_incident_segment_mapped_points_diverged",
+                "swsd_node_id": "A",
+                "frcsd_node_ids": ["A", "R"],
+                "action": "",
+                "action_reason": "",
+            },
+            Point(0, 0),
+        ),
+    ]
+    group_rows = [
+        feature(
+            {
+                "semantic_junction_group_id": "SJG:R",
+                "swsd_node_ids": ["A"],
+                "frcsd_node_ids": ["A", "R"],
+            },
+            Point(0, 0),
+        )
+    ]
+
+    stats = refresh_semantic_junction_topology_audit(
+        step_root=tmp_path,
+        semantic_group_rows=group_rows,
+        topology_rows=topology_rows,
+        write_outputs=False,
+        preserve_gpkg_rewrite_semantics=True,
+    )
+
+    assert stats == {"semantic_junction_topology_fail_downgraded_count": 1}
+    assert len(topology_rows) == 1
+    assert topology_rows[0]["properties"]["audit_status"] == "warn"
+    assert topology_rows[0]["properties"]["frcsd_node_ids"] == '["A","R"]'

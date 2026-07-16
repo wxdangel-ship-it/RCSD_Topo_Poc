@@ -8,6 +8,7 @@ from typing import Any
 
 
 NULL_TEXTS = {"", "none", "null", "nan", "na", "n/a", "[]"}
+_MAX_NULL_TEXT_LENGTH = max(map(len, NULL_TEXTS))
 
 
 class ParseError(ValueError):
@@ -27,10 +28,25 @@ def normalize_id(value: Any) -> str:
         if value.is_integer():
             return str(int(value))
         return str(value)
+    if (
+        isinstance(value, str)
+        and value
+        and "." not in value
+        and not value[0].isspace()
+        and not value[-1].isspace()
+        and value[0] not in "\"'"
+        and value[-1] not in "\"'"
+        and (
+            len(value) > _MAX_NULL_TEXT_LENGTH
+            or value[0].isdigit()
+            or value.lower() not in NULL_TEXTS
+        )
+    ):
+        return value
     text = str(value).strip().strip("\"'")
     if text.lower() in NULL_TEXTS:
         raise ParseError("empty id")
-    if re.fullmatch(r"-?\d+\.0+", text):
+    if "." in text and re.fullmatch(r"-?\d+\.0+", text):
         return str(int(float(text)))
     return text
 
@@ -75,13 +91,7 @@ def parse_id_list(value: Any, *, allow_empty: bool = True) -> list[str]:
 
 
 def unique_preserve_order(values: list[str]) -> list[str]:
-    seen: set[str] = set()
-    result: list[str] = []
-    for value in values:
-        if value not in seen:
-            seen.add(value)
-            result.append(value)
-    return result
+    return list(dict.fromkeys(values))
 
 
 def directionality_from_sgrade(value: Any) -> str | None:

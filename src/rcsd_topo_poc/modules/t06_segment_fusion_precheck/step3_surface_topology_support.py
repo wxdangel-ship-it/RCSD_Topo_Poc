@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import json
 from collections import Counter, defaultdict
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -65,6 +66,67 @@ SURFACE_TOPOLOGY_AUDIT_FIELDS = [
 ]
 
 
+@dataclass(frozen=True)
+class SurfaceTopologyInvariantContext:
+    surfaces: dict[str, gpd.GeoDataFrame]
+    t04_rejects: dict[str, list[dict[str, str]]]
+    step2_junc_mappings: dict[tuple[str, str], list[str]]
+    step2_dropped_junc_nodes: dict[str, list[str]]
+
+
+def load_surface_topology_invariant_context(
+    *,
+    step_root: Path,
+    t07_surface_path: str | Path | None,
+    t03_surface_path: str | Path | None,
+    t04_surface_path: str | Path | None,
+    t04_audit_path: str | Path | None,
+    t05_surface_path: str | Path | None,
+    cache: dict[Any, Any] | None,
+) -> SurfaceTopologyInvariantContext:
+    step2_source_path = _step2_junc_source_path(step_root)
+    signature = tuple(
+        _input_signature(path)
+        for path in (
+            t07_surface_path,
+            t03_surface_path,
+            t04_surface_path,
+            t04_audit_path,
+            t05_surface_path,
+            step2_source_path,
+        )
+    )
+    cached = getattr(cache, "surface_topology_invariant_context", None)
+    if cached is not None and cached[0] == signature:
+        return cached[1]
+    step2_rows = _read_step2_junc_rows(step2_source_path) if step2_source_path is not None else []
+    context = SurfaceTopologyInvariantContext(
+        surfaces=_load_surfaces(
+            t07_surface_path=t07_surface_path,
+            t03_surface_path=t03_surface_path,
+            t04_surface_path=t04_surface_path,
+            t05_surface_path=t05_surface_path,
+        ),
+        t04_rejects=_load_t04_rejects(t04_audit_path),
+        step2_junc_mappings=_step2_optional_junc_mappings(step2_rows),
+        step2_dropped_junc_nodes=_step2_dropped_junc_nodes(step2_rows),
+    )
+    if cache is not None and hasattr(cache, "__dict__"):
+        cache.surface_topology_invariant_context = (signature, context)
+    return context
+
+
+def _input_signature(path: str | Path | None) -> tuple[str, int, int]:
+    if path is None:
+        return "", 0, 0
+    resolved = Path(path).absolute()
+    try:
+        stat = resolved.stat()
+    except OSError:
+        return str(resolved), 0, 0
+    return str(resolved), stat.st_size, stat.st_mtime_ns
+
+
 def _load_surfaces(
     *,
     t07_surface_path: str | Path | None,
@@ -118,8 +180,12 @@ def _load_t04_rejects(path: str | Path | None) -> dict[str, list[dict[str, str]]
 
 
 def _load_step2_optional_junc_mappings(step_root: Path) -> dict[tuple[str, str], list[str]]:
+    return _step2_optional_junc_mappings(_iter_step2_junc_rows(step_root))
+
+
+def _step2_optional_junc_mappings(rows: list[dict[str, Any]]) -> dict[tuple[str, str], list[str]]:
     result: dict[tuple[str, str], list[str]] = defaultdict(list)
-    for row in _iter_step2_junc_rows(step_root):
+    for row in rows:
         segment_id = _safe_id(row.get("swsd_segment_id"))
         if not segment_id:
             continue
@@ -137,8 +203,12 @@ def _load_step2_optional_junc_mappings(step_root: Path) -> dict[tuple[str, str],
 
 
 def _load_step2_dropped_junc_nodes(step_root: Path) -> dict[str, list[str]]:
+    return _step2_dropped_junc_nodes(_iter_step2_junc_rows(step_root))
+
+
+def _step2_dropped_junc_nodes(rows: list[dict[str, Any]]) -> dict[str, list[str]]:
     result: dict[str, list[str]] = defaultdict(list)
-    for row in _iter_step2_junc_rows(step_root):
+    for row in rows:
         segment_id = _safe_id(row.get("swsd_segment_id"))
         if not segment_id:
             continue
@@ -149,13 +219,18 @@ def _load_step2_dropped_junc_nodes(step_root: Path) -> dict[str, list[str]]:
 
 
 def _iter_step2_junc_rows(step_root: Path) -> list[dict[str, Any]]:
+    path = _step2_junc_source_path(step_root)
+    return _read_step2_junc_rows(path) if path is not None else []
+
+
+def _step2_junc_source_path(step_root: Path) -> Path | None:
     for step2_root in _step2_junc_roots(step_root):
         for stem in (STEP2_REPLACEMENT_PLAN_STEM, STEP2_FAILURE_BUSINESS_AUDIT_STEM):
             for suffix in (".gpkg", ".csv"):
                 path = step2_root / f"{stem}{suffix}"
                 if path.is_file():
-                    return _read_step2_junc_rows(path)
-    return []
+                    return path
+    return None
 
 
 def _step2_junc_roots(step_root: Path) -> list[Path]:

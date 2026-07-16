@@ -69,7 +69,6 @@ from .step3_advance_right_support import (
     _dedupe_midroad_split_points,
     _nearby_generated_projection_node_id,
     _split_rcsd_advance_road_at_existing_nodes,
-    _replace_feature_by_id,
     _replace_rcsd_road_in_units,
     _feature_line,
     _road_endpoint_points,
@@ -270,6 +269,7 @@ def _apply_contract_split_points(
 ) -> dict[str, int]:
     split_road_to_segments: dict[str, list[str]] = {}
     split_original_ids: set[str] = set()
+    replacements_by_road_id: dict[str, list[dict[str, Any]]] = {}
     next_road_id = _next_numeric_id(rcsd_road_by_id)
     retained_node_segments = _retained_node_segments_by_node(units)
     for road_id in sorted(split_points_by_road, key=_id_sort_key):
@@ -294,7 +294,7 @@ def _apply_contract_split_points(
             added_road_to_segments[road_id] = segment_ids
             continue
         split_original_ids.add(road_id)
-        _replace_feature_by_id(rcsd_roads, road_id, split_roads)
+        replacements_by_road_id[road_id] = split_roads
         rcsd_road_by_id.pop(road_id, None)
         split_ids = [_feature_id(item) for item in split_roads]
         current_split_segments: dict[str, list[str]] = {}
@@ -311,10 +311,30 @@ def _apply_contract_split_points(
         _replace_rcsd_road_in_units(units, road_id, split_ids)
         for split_id, segment_ids_for_split in current_split_segments.items():
             _append_rcsd_road_to_units(units, split_id, segment_ids_for_split)
+    _replace_features_by_id(rcsd_roads, replacements_by_road_id)
     return {
         "rcsd_split_original_road_count": len(split_original_ids),
         "rcsd_split_road_count": len(split_road_to_segments),
     }
+
+
+def _replace_features_by_id(
+    features: list[dict[str, Any]],
+    replacements_by_id: dict[str, list[dict[str, Any]]],
+) -> None:
+    if not replacements_by_id:
+        return
+    remaining = dict(replacements_by_id)
+    replaced: list[dict[str, Any]] = []
+    for item in features:
+        replacements = remaining.pop(_feature_id(item), None)
+        if replacements is None:
+            replaced.append(item)
+        else:
+            replaced.extend(replacements)
+    for replacements in remaining.values():
+        replaced.extend(replacements)
+    features[:] = replaced
 
 
 def _retained_node_segments_by_node(units: list[Any]) -> dict[str, list[str]]:

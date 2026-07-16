@@ -153,6 +153,9 @@ def build_and_write_segment_construction_audit(
     }
     step1_rejects = _reject_reasons_by_segment(step1_rejected_rows)
     step2_rejects = _reject_reasons_by_segment(step2_rejected_rows)
+    failed_nodes_by_segment = _failed_nodes_by_segment(
+        [*step1_rejected_rows, *step2_rejected_rows]
+    )
     relation_by_segment = {
         _segment_id(row, "swsd_segment_id"): row
         for row in segment_relation_rows
@@ -189,9 +192,7 @@ def build_and_write_segment_construction_audit(
             junc_nodes=junc_nodes,
             step1_reasons=step1_reasons,
             step2_reasons=step2_reasons,
-            step1_rows=step1_rejected_rows,
-            step2_rows=step2_rejected_rows,
-            segment_id=segment_id,
+            failed_nodes=failed_nodes_by_segment.get(segment_id, set()),
         )
         main_corridor_status = _main_corridor_status(is_replaceable, step2_reasons)
         retained_road_ids = _retained_candidate_roads(relation_props)
@@ -329,9 +330,7 @@ def _anchor_statuses(
     junc_nodes: set[str],
     step1_reasons: list[str],
     step2_reasons: list[str],
-    step1_rows: list[dict[str, Any]],
-    step2_rows: list[dict[str, Any]],
-    segment_id: str,
+    failed_nodes: set[str],
 ) -> tuple[str, str]:
     if is_replaceable:
         return "complete", "complete"
@@ -340,19 +339,25 @@ def _anchor_statuses(
         return "incomplete", "not_evaluated"
     if any("junc" in reason for reason in reasons):
         return "complete", "incomplete"
-    failed_nodes = set()
-    for row in [*step1_rows, *step2_rows]:
-        if _segment_id(row, "swsd_segment_id") != segment_id:
-            continue
-        props = row.get("properties") or {}
-        failed_nodes.update(_parse_ids(props.get("failed_node_ids")))
-        failed_nodes.update(_parse_ids(props.get("failed_pair_nodes")))
-        failed_nodes.update(_parse_ids(props.get("failed_junc_nodes")))
     if failed_nodes & pair_nodes:
         return "incomplete", "not_evaluated"
     if failed_nodes & junc_nodes:
         return "complete", "incomplete"
     return "complete", "complete"
+
+
+def _failed_nodes_by_segment(rows: list[dict[str, Any]]) -> dict[str, set[str]]:
+    result: dict[str, set[str]] = {}
+    for row in rows:
+        segment_id = _segment_id(row, "swsd_segment_id")
+        if not segment_id:
+            continue
+        props = row.get("properties") or {}
+        failed_nodes = result.setdefault(segment_id, set())
+        failed_nodes.update(_parse_ids(props.get("failed_node_ids")))
+        failed_nodes.update(_parse_ids(props.get("failed_pair_nodes")))
+        failed_nodes.update(_parse_ids(props.get("failed_junc_nodes")))
+    return result
 
 
 def _main_corridor_status(is_replaceable: bool, reasons: list[str]) -> str:

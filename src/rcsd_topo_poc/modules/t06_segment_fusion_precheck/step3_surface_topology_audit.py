@@ -94,6 +94,7 @@ from .step3_surface_topology_support import (
     _bool_or_none,
     _distance_within,
     _points_geometry,
+    load_surface_topology_invariant_context,
 )
 
 from .step3_surface_topology_relation import (
@@ -158,6 +159,7 @@ def run_surface_topology_postprocess(
     apply_closure: bool = True,
     topology_coverage_cache: dict[Any, Any] | None = None,
     runtime_state: Step3SurfaceRuntimeState | None = None,
+    defer_promotable_outputs: bool = False,
 ) -> dict[str, Any]:
     resolved_step_root = Path(step_root)
     node_path = resolved_step_root / f"{STEP3_FRCSD_NODE_STEM}.gpkg"
@@ -182,15 +184,19 @@ def run_surface_topology_postprocess(
     road_by_id = _road_features_by_id_from_features(road_features)
     swsd_roads = runtime_state.swsd_roads if runtime_state is not None else read_features(swsd_roads_path)
     node_patch_ids = _swsd_patch_ids_by_node(swsd_roads)
-    surfaces = _load_surfaces(
+    invariant_context = load_surface_topology_invariant_context(
+        step_root=resolved_step_root,
         t07_surface_path=t07_surface_path,
         t03_surface_path=t03_surface_path,
         t04_surface_path=t04_surface_path,
+        t04_audit_path=t04_audit_path,
         t05_surface_path=t05_surface_path,
+        cache=topology_coverage_cache,
     )
-    t04_rejects = _load_t04_rejects(t04_audit_path)
-    step2_junc_mappings = _load_step2_optional_junc_mappings(resolved_step_root)
-    step2_dropped_junc_nodes = _load_step2_dropped_junc_nodes(resolved_step_root)
+    surfaces = invariant_context.surfaces
+    t04_rejects = invariant_context.t04_rejects
+    step2_junc_mappings = invariant_context.step2_junc_mappings
+    step2_dropped_junc_nodes = invariant_context.step2_dropped_junc_nodes
     topology_coverage_cache = topology_coverage_cache if topology_coverage_cache is not None else {}
     topology_audit_rows: list[dict[str, Any]] | None = None
     retained_sync_totals: dict[str, int] = {}
@@ -203,6 +209,7 @@ def run_surface_topology_postprocess(
         step2_junc_mappings=step2_junc_mappings,
         step2_dropped_junc_nodes=step2_dropped_junc_nodes,
         relation_rows=runtime_state.segment_relation_rows if runtime_state is not None else None,
+        write_outputs=not defer_promotable_outputs,
     )
     if relation_update_count or not topology_path.is_file():
         topology_audit_rows, retained_sync_stats = _rebuild_topology_connectivity_audit(
@@ -216,6 +223,7 @@ def run_surface_topology_postprocess(
             write_outputs=False,
             runtime_state=runtime_state,
             junction_only=True,
+            defer_promotable_outputs=defer_promotable_outputs,
         )
         _add_retained_sync_stats(retained_sync_totals, retained_sync_stats)
     materialized_updates: list[str] = []
@@ -259,37 +267,51 @@ def run_surface_topology_postprocess(
             *action_audit_rows,
             *[pass_row for pass_row in pass_rows if not _is_surface_action_row(pass_row)],
         ]
-        surface_paths = write_feature_triplet(
-            step_root=resolved_step_root,
-            stem=SURFACE_TOPOLOGY_AUDIT_STEM,
-            features=audit_rows,
-            fieldnames=SURFACE_TOPOLOGY_AUDIT_FIELDS,
-        )
+        if defer_promotable_outputs and runtime_state is not None:
+            runtime_state.surface_topology_audit_rows = list(audit_rows)
+            surface_paths = {
+                "gpkg": resolved_step_root / f"{SURFACE_TOPOLOGY_AUDIT_STEM}.gpkg",
+                "csv": resolved_step_root / f"{SURFACE_TOPOLOGY_AUDIT_STEM}.csv",
+            }
+        else:
+            surface_paths = write_feature_triplet(
+                step_root=resolved_step_root,
+                stem=SURFACE_TOPOLOGY_AUDIT_STEM,
+                features=audit_rows,
+                fieldnames=SURFACE_TOPOLOGY_AUDIT_FIELDS,
+            )
         pass_relation_update_count = 0
         if pass_relation_updates:
             pass_relation_update_count = _apply_relation_node_map_updates(
                 step_root=resolved_step_root,
                 updates=pass_relation_updates,
                 relation_rows=runtime_state.segment_relation_rows if runtime_state is not None else None,
+                write_outputs=not defer_promotable_outputs,
             )
         if not pass_closure_updates and not pass_relation_update_count and not pass_materialized_updates:
             break
         closure_updates = unique_preserve_order([*closure_updates, *pass_closure_updates])
         relation_update_count += pass_relation_update_count
         materialized_updates = unique_preserve_order([*materialized_updates, *pass_materialized_updates])
-        write_feature_triplet(
-            step_root=resolved_step_root,
-            stem=STEP3_FRCSD_NODE_STEM,
-            features=node_features,
-            fieldnames=node_fields,
-        )
-        if pass_materialized_updates:
+        if defer_promotable_outputs and runtime_state is not None:
+            runtime_state.deferred_publish_fieldnames["node"] = list(node_fields)
+        else:
             write_feature_triplet(
                 step_root=resolved_step_root,
-                stem=STEP3_FRCSD_ROAD_STEM,
-                features=road_features,
-                fieldnames=road_fields,
+                stem=STEP3_FRCSD_NODE_STEM,
+                features=node_features,
+                fieldnames=node_fields,
             )
+        if pass_materialized_updates:
+            if defer_promotable_outputs and runtime_state is not None:
+                runtime_state.deferred_publish_fieldnames["road"] = list(road_fields)
+            else:
+                write_feature_triplet(
+                    step_root=resolved_step_root,
+                    stem=STEP3_FRCSD_ROAD_STEM,
+                    features=road_features,
+                    fieldnames=road_fields,
+                )
         topology_audit_rows, retained_sync_stats = _rebuild_topology_connectivity_audit(
             step_root=resolved_step_root,
             swsd_segment_path=swsd_segment_path,
@@ -300,17 +322,21 @@ def run_surface_topology_postprocess(
             coverage_cache=topology_coverage_cache,
             write_outputs=False,
             runtime_state=runtime_state,
+            defer_promotable_outputs=defer_promotable_outputs,
         )
         _add_retained_sync_stats(retained_sync_totals, retained_sync_stats)
         if not pass_materialized_updates:
             break
 
     if topology_audit_rows is not None:
-        _write_topology_connectivity_audit_rows(
-            resolved_step_root,
-            topology_audit_rows,
-            retained_sync_totals,
-        )
+        if runtime_state is not None:
+            runtime_state.topology_connectivity_audit_rows = topology_audit_rows
+        if not defer_promotable_outputs:
+            _write_topology_connectivity_audit_rows(
+                resolved_step_root,
+                topology_audit_rows,
+                retained_sync_totals,
+            )
 
     summary = _surface_summary(audit_rows)
     summary.update(

@@ -17,11 +17,13 @@ FINAL_TOPOLOGY_REPAIRABLE_CATEGORIES = {"segment_transition", "independent_attac
 def final_topology_gate_decision(
     step_root: Path,
     plan_rows: list[dict[str, Any]],
+    *,
+    audit_rows: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     path = step_root / f"{STEP3_TOPOLOGY_CONNECTIVITY_AUDIT_STEM}.gpkg"
-    if not path.is_file():
+    if audit_rows is None and not path.is_file():
         return _empty_gate_decision()
-    audit_rows = read_features(path)
+    audit_rows = audit_rows if audit_rows is not None else read_features(path)
     annotate_final_frcsd_topology_rows(audit_rows)
     ready_plan_items = _ready_plan_items(plan_rows)
     plan_ids_by_segment: dict[str, set[str]] = {}
@@ -118,12 +120,13 @@ def topology_fail_keys(
     step_root: Path,
     *,
     read_rows=read_features,
+    audit_rows: list[dict[str, Any]] | None = None,
 ) -> set[tuple[str, str, str, str, str]]:
     path = step_root / f"{STEP3_TOPOLOGY_CONNECTIVITY_AUDIT_STEM}.gpkg"
-    if not path.is_file():
+    if audit_rows is None and not path.is_file():
         return set()
     result: set[tuple[str, str, str, str, str]] = set()
-    rows = read_rows(path)
+    rows = audit_rows if audit_rows is not None else read_rows(path)
     annotate_final_frcsd_topology_rows(rows)
     for row in rows:
         props = row.get("properties") or {}

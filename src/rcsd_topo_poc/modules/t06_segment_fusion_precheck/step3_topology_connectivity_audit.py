@@ -95,6 +95,7 @@ RoadSignatureCache = dict[tuple[int, ...], tuple[tuple[dict[str, Any], ...], Roa
 
 
 from .step3_topology_connectivity_support import (
+    _coverage_cache_needs_prewarm,
     _DirectedRoadGraph,
     _RoadIndex,
     _RoadLineSpatialIndex,
@@ -173,7 +174,7 @@ def build_topology_connectivity_audit_rows(
     canonicalizer = NodeCanonicalizer.from_node_features(frcsd_nodes)
     final_graph = _DirectedRoadGraph(frcsd_roads, canonicalizer=canonicalizer)
     final_road_index = _RoadLineSpatialIndex(frcsd_roads)
-    relation_props = [dict(row.get("properties") or {}) for row in segment_relation_rows]
+    relation_props = [row.get("properties") or {} for row in segment_relation_rows]
     relation_by_segment = {str(props.get("swsd_segment_id")): props for props in relation_props}
     attachment_refs_by_node = _attachment_refs_by_swsd_node(
         advance_right_audit_rows,
@@ -182,12 +183,18 @@ def build_topology_connectivity_audit_rows(
     if coverage_cache is None:
         coverage_cache = {}
     road_signature_cache: RoadSignatureCache = {}
-    _prewarm_relation_coverage_cache(
-        relation_props,
-        road_index=road_index,
-        coverage_cache=coverage_cache,
-        signature_cache=road_signature_cache,
-    )
+    swsd_segment_by_id = {_feature_id(segment): segment for segment in swsd_segments}
+    swsd_road_by_id = {_feature_id(road): road for road in swsd_roads or []}
+    relation_road_context_cache: dict[int, Any] = {}
+    if _coverage_cache_needs_prewarm(coverage_cache):
+        _prewarm_relation_coverage_cache(
+            relation_props,
+            road_index=road_index,
+            coverage_cache=coverage_cache,
+            signature_cache=road_signature_cache,
+            swsd_segment_by_id=swsd_segment_by_id,
+            swsd_road_by_id=swsd_road_by_id,
+        )
 
     rows: list[dict[str, Any]] = []
     rows.extend(
@@ -219,6 +226,7 @@ def build_topology_connectivity_audit_rows(
             attachment_refs_by_node=attachment_refs_by_node,
             coverage_cache=coverage_cache,
             road_signature_cache=road_signature_cache,
+            relation_road_context_cache=relation_road_context_cache,
         )
     )
     rows.extend(
@@ -236,6 +244,7 @@ def build_topology_connectivity_audit_rows(
             attachment_refs_by_node=attachment_refs_by_node,
             coverage_cache=coverage_cache,
             road_signature_cache=road_signature_cache,
+            relation_road_context_cache=relation_road_context_cache,
         )
     )
     rows.extend(
@@ -294,9 +303,9 @@ def build_group_path_corridor_internal_audit_rows(
     """Build only the rows consumed by the group-corridor fallback gate."""
 
     relation_props = [
-        dict(row.get("properties") or {})
+        row.get("properties") or {}
         for row in segment_relation_rows
-        if _is_group_path_corridor_relation(dict(row.get("properties") or {}))
+        if _is_group_path_corridor_relation(row.get("properties") or {})
     ]
     if not relation_props:
         return []
@@ -348,7 +357,7 @@ def build_surface_junction_connectivity_audit_rows(
     relation_by_segment = {
         str(properties.get("swsd_segment_id") or ""): properties
         for row in segment_relation_rows
-        for properties in [dict(row.get("properties") or {})]
+        for properties in [row.get("properties") or {}]
     }
     attachment_refs_by_node = _attachment_refs_by_swsd_node(
         advance_right_audit_rows,

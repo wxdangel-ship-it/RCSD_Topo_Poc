@@ -21,7 +21,7 @@ from rcsd_topo_poc.modules.t06_segment_fusion_precheck.step3_surface_runtime imp
 )
 
 
-def test_validation_context_keeps_promotable_publish_jobs_and_restores_state() -> None:
+def test_validation_context_defers_promotable_publish_jobs_and_restores_state() -> None:
     jobs = {
         "road": object(),
         "node": object(),
@@ -36,7 +36,7 @@ def test_validation_context_keeps_promotable_publish_jobs_and_restores_state() -
     assert select_step3_publish_jobs(jobs) == jobs
     with validation_step3_run():
         assert is_validation_step3_run()
-        assert select_step3_publish_jobs(jobs) == jobs
+        assert select_step3_publish_jobs(jobs) == {}
     assert not is_validation_step3_run()
 
 

@@ -109,6 +109,7 @@ def _apply_step2_plan_relation_node_map_updates(
     step2_junc_mappings: dict[tuple[str, str], list[str]],
     step2_dropped_junc_nodes: dict[str, list[str]],
     relation_rows: list[dict[str, Any]] | None = None,
+    write_outputs: bool = True,
 ) -> int:
     if not step2_junc_mappings and not step2_dropped_junc_nodes:
         return 0
@@ -154,7 +155,7 @@ def _apply_step2_plan_relation_node_map_updates(
             risk_flags.append("step2_optional_junc_plan_node_map")
         props["risk_flags"] = unique_preserve_order(risk_flags)
         updated += 1
-    if updated:
+    if updated and write_outputs:
         write_feature_triplet(
             step_root=step_root,
             stem=STEP3_SWSD_FRCSD_SEGMENT_RELATION_STEM,
@@ -205,6 +206,7 @@ def _apply_relation_node_map_updates(
     step_root: Path,
     updates: list[dict[str, Any]],
     relation_rows: list[dict[str, Any]] | None = None,
+    write_outputs: bool = True,
 ) -> int:
     relation_path = step_root / f"{STEP3_SWSD_FRCSD_SEGMENT_RELATION_STEM}.gpkg"
     if relation_rows is None and not relation_path.is_file():
@@ -224,7 +226,7 @@ def _apply_relation_node_map_updates(
                 row_changed = True
         if row_changed:
             updated += 1
-    if updated:
+    if updated and write_outputs:
         write_feature_triplet(
             step_root=step_root,
             stem=STEP3_SWSD_FRCSD_SEGMENT_RELATION_STEM,
@@ -339,6 +341,7 @@ def _rebuild_topology_connectivity_audit(
     write_outputs: bool = True,
     runtime_state: Step3SurfaceRuntimeState | None = None,
     junction_only: bool = False,
+    defer_promotable_outputs: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     swsd_segments = runtime_state.swsd_segments if runtime_state is not None else read_features(swsd_segment_path)
     swsd_roads = runtime_state.swsd_roads if runtime_state is not None else read_features(swsd_roads_path)
@@ -388,31 +391,45 @@ def _rebuild_topology_connectivity_audit(
             swsd_source_value=swsd_source_value,
             rcsd_source_value=rcsd_source_value,
             current_transition_node_ids=current_transition_node_ids,
+            surface_audit_rows=(
+                runtime_state.surface_topology_audit_rows
+                if runtime_state is not None
+                else None
+            ),
+            write_outputs=not defer_promotable_outputs,
         )
         if runtime_state is not None and authoritative_stats.get("audit_rows"):
             runtime_state.authoritative_transition_closure_rows = list(
                 authoritative_stats["audit_rows"]
             )
-        if (
+        rewrites_relation_and_node = (
             retained_sync_stats.get("retained_swsd_carrier_mainnode_row_count", 0) > 0
             or authoritative_stats.get("applied_node_count", 0) > 0
-        ):
-            write_feature_triplet(
-                step_root=step_root,
-                stem=STEP3_SWSD_FRCSD_SEGMENT_RELATION_STEM,
-                features=relation_rows,
-                fieldnames=STEP3_SWSD_FRCSD_SEGMENT_RELATION_FIELDS,
+        )
+        if rewrites_relation_and_node:
+            node_fieldnames = (
+                _runtime_fieldnames(frcsd_nodes)
+                if runtime_state is not None and not node_path.is_file()
+                else _fieldnames_from_gpkg(node_path)
             )
-            write_feature_triplet(
-                step_root=step_root,
-                stem=STEP3_FRCSD_NODE_STEM,
-                features=frcsd_nodes,
-                fieldnames=(
-                    _runtime_fieldnames(frcsd_nodes)
-                    if runtime_state is not None and not node_path.is_file()
-                    else _fieldnames_from_gpkg(node_path)
-                ),
-            )
+            if defer_promotable_outputs and runtime_state is not None:
+                runtime_state.deferred_publish_fieldnames["segment_relation"] = list(
+                    STEP3_SWSD_FRCSD_SEGMENT_RELATION_FIELDS
+                )
+                runtime_state.deferred_publish_fieldnames["node"] = node_fieldnames
+            else:
+                write_feature_triplet(
+                    step_root=step_root,
+                    stem=STEP3_SWSD_FRCSD_SEGMENT_RELATION_STEM,
+                    features=relation_rows,
+                    fieldnames=STEP3_SWSD_FRCSD_SEGMENT_RELATION_FIELDS,
+                )
+                write_feature_triplet(
+                    step_root=step_root,
+                    stem=STEP3_FRCSD_NODE_STEM,
+                    features=frcsd_nodes,
+                    fieldnames=node_fieldnames,
+                )
         if junction_only:
             rows = build_surface_junction_connectivity_audit_rows(
                 swsd_segments=swsd_segments,

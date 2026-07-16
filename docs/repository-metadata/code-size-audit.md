@@ -2,13 +2,14 @@
 
 ## 范围
 
-- 主审计日期：2026-06-12；T09 增量审计：2026-07-10；T10 性能与 60KB 治理增量审计：2026-07-11；T01/T06 ownership 增量审计：2026-07-12；T10 增加 T11 工作流增量审计：2026-07-13；T06 性能恢复与 Step3 修复性拆分增量审计：2026-07-14
+- 主审计日期：2026-06-12；T09 增量审计：2026-07-10；T10 性能与 60KB 治理增量审计：2026-07-11；T01/T06 ownership 增量审计：2026-07-12；T10 增加 T11 工作流增量审计：2026-07-13；T06 性能恢复与 Step3 修复性拆分增量审计：2026-07-14；T06 全量性能恢复增量审计：2026-07-16
 - 阈值：单文件超过 `100 KB`
 - 口径：按 `code-boundaries-and-entrypoints.md`，审计纳入版本管理的 `src/`、`scripts/`、`tests/`、`tools/` 下源码 / 脚本文件。
 - 本表只记录结构债事实，不代表本轮进入对应模块正文治理。
 - 用户于 2026-07-11 明确确认 T02 已废弃并授权本轮不拆分；T02 超线文件继续登记为结构债，但从本轮 60KB 收敛验收中排除，且本轮未触碰 T02 源码或测试。
 - 2026-07-13 T10 增加 T11 工作流后的 Windows worktree 扫描确认：除下列 Retired T02 文件外，`>= 61440 bytes` 文件仍仅为 `step2_trunk_utils.py`（`62004` bytes）与 `step3_surface_aware_plan_release.py`（`74453` bytes），均低于 100KB 硬阈值且本轮未触碰；本轮修改的 9 个源码/脚本/测试文件全部低于 60KiB，最大为 `case_runner_pipeline.py`（`58855` bytes）。Final topology gate 已拆至 `step3_final_topology_gate.py`（`9687` bytes），hard-gate 级联 transition 收口已拆至 `step3_authoritative_transition_closure.py`（`14812` bytes）；主编排文件仍低于 100KB。
 - 2026-07-14 T06 性能恢复轮次将 `step3_surface_aware_plan_release.py` 的 surface release 决策、输入索引与计划行构建职责拆至 `step3_surface_release_plan.py`；完成验证态审计传递与最终发布收口后，主编排文件为 `57187` bytes，新模块为 `19639` bytes，二者均低于 60KiB 安全线，既有正式入口与调用签名保持不变。本轮扫描 T06 的 `src/` 与 `tests/` 共 `153` 个源码/脚本文件，`>= 61440 bytes` 为 `0`。
+- 2026-07-16 T06 全量性能恢复轮次发现后续回归新增用例使 `test_replacement_plan.py` 漂移到 `63163` bytes；已将末尾两个独立 risk-marker 用例迁移至 `test_replacement_plan_risk_markers.py`。拆分后原文件 `60142` bytes、新文件 `3534` bytes；新增 validation runtime / deferred final publish、deferred hard-gate plan、拓扑审计内存复用、ID 解析及内网验收包测试后，T06 `src/` 与 `tests/` 共 `160` 个源码/脚本文件，另有 `2` 个既有 `scripts/t06*` 脚本，核心合计 `162` 个；SpecKit 下另有 `3` 个一次性内网验收脚本，纳入体量扫描后总计 `165` 个，`>= 61440 bytes` 为 `0`。当前 T06 最大文件为本轮修改源码 `step3_surface_aware_plan_release.py`（`60870` bytes），其次为既有 `test_step3_surface_topology_audit.py`（`60787` bytes），均低于 60KiB。除 Retired T02 外仍只有本轮未触碰的 T01 `step2_trunk_utils.py` 超过 60KiB，作为既有治理缺口继续登记；正式入口和调用签名不变，一次性验收工件不登记为官方入口。
 
 ## 结果
 

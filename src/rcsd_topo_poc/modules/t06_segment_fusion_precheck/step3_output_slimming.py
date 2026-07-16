@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from .io import write_json
+from .step3_replacement_plan_reader import retire_deferred_replacement_plan
 from .schemas import STEP3_SUMMARY
 
 
@@ -165,6 +166,8 @@ def compact_step3_outputs(step_root: str | Path) -> dict[str, Any]:
 def retire_intermediate_step3_plan(candidate_path: Path | None, final_path: Path | None) -> bool:
     if candidate_path is None or final_path is None:
         return False
+    if retire_deferred_replacement_plan(candidate_path, final_path):
+        return True
     if candidate_path == final_path or not candidate_path.exists():
         return False
     candidate_path.unlink()

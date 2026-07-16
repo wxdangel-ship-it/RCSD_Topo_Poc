@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from shapely.geometry import LineString, Point
 
 from rcsd_topo_poc.modules.t00_utility_toolbox.common import write_vector
@@ -27,6 +29,20 @@ from rcsd_topo_poc.modules.t06_segment_fusion_precheck.step3_surface_aware_plan_
     _visual_conflict_release_plan_rows,
     _visual_conflict_rollback_plan_ids,
 )
+
+
+def _validation_runtime_state() -> SimpleNamespace:
+    return SimpleNamespace(
+        authoritative_transition_closure_rows=[],
+        topology_connectivity_audit_rows=[],
+        segment_relation_rows=[],
+        frcsd_roads=[],
+        swsd_segments=[],
+        swsd_roads=[],
+        swsd_nodes=[],
+        step2_replaceable_rows=[],
+        connectivity_supplement_road_ids=set(),
+    )
 
 
 def test_postplan_anchor_added_fail_keys_exclude_advance_right_layer() -> None:
@@ -623,6 +639,8 @@ def test_surface_aware_visual_release_reuses_candidate_when_no_rollback(monkeypa
         encoding="utf-8",
     )
     calls = []
+    runtime_state = _validation_runtime_state()
+    topology_gate_audit_rows = []
 
     def fake_run_step3(*, write_feature_json_outputs=True, **kwargs):
         calls.append((write_feature_json_outputs, kwargs.get("step2_replacement_plan_path")))
@@ -644,8 +662,13 @@ def test_surface_aware_visual_release_reuses_candidate_when_no_rollback(monkeypa
         return path
 
     monkeypatch.setattr(release_module, "_run_step3", fake_run_step3)
-    monkeypatch.setattr(release_module, "_run_surface", lambda *args, **kwargs: {})
+    monkeypatch.setattr(
+        release_module,
+        "_run_surface",
+        lambda *args, **kwargs: {"_step3_surface_runtime_state": runtime_state},
+    )
     monkeypatch.setattr(release_module, "promote_validation_step3_outputs", lambda artifacts, _root: artifacts)
+    monkeypatch.setattr(release_module, "publish_deferred_validation_outputs", lambda *_args, **_kwargs: {})
     monkeypatch.setattr(release_module, "refresh_rcsd_road_ownership_after_surface", lambda **_kwargs: None)
     monkeypatch.setattr(release_module, "refresh_segment_construction_audit_after_surface", lambda **_kwargs: None)
     monkeypatch.setattr(release_module, "_topology_fail_keys", lambda *args, **kwargs: set())
@@ -667,6 +690,14 @@ def test_surface_aware_visual_release_reuses_candidate_when_no_rollback(monkeypa
     monkeypatch.setattr(release_module, "_rollback_plan_ids", lambda *args, **kwargs: set())
     monkeypatch.setattr(release_module, "_visual_conflict_non_replaced_plan_ids", lambda *args, **kwargs: set())
     monkeypatch.setattr(release_module, "_visual_conflict_rollback_plan_ids", lambda *args, **kwargs: set())
+    monkeypatch.setattr(
+        release_module,
+        "final_topology_gate_decision",
+        lambda _root, _rows, audit_rows=None: (
+            topology_gate_audit_rows.append(audit_rows)
+            or {"rollback_plan_ids": [], "repairable_failures": [], "repairable_failure_count": 0}
+        ),
+    )
 
     release_module.run_surface_aware_step3_segment_replacement(
         step2_replaceable_path=tmp_path / "replaceable.gpkg",
@@ -687,6 +718,7 @@ def test_surface_aware_visual_release_reuses_candidate_when_no_rollback(monkeypa
     assert len(calls) == 1
     assert calls[0][1].name == "plan_candidate.json"
     assert [call[0] for call in calls] == [False]
+    assert topology_gate_audit_rows[-1] is runtime_state.topology_connectivity_audit_rows
 
 
 def test_surface_aware_visual_release_skips_surface_safe_intermediate_rerun(monkeypatch, tmp_path) -> None:
@@ -723,7 +755,7 @@ def test_surface_aware_visual_release_skips_surface_safe_intermediate_rerun(monk
     surface_fail = ("segment_junction_connectivity", "s_surface", "", "", "surface_fail")
     visual_fail = ("segment_junction_connectivity", "s_visual", "", "", "visual_fail")
 
-    def fake_topology_fail_keys(_step_root):
+    def fake_topology_fail_keys(_step_root, _runtime_state=None):
         if current_plan["name"] == "t06_step3_surface_aware_replacement_plan_candidate.json":
             return {baseline_fail, surface_fail}
         if current_plan["name"] == "t06_step3_surface_aware_replacement_plan_visual_candidate.json":
@@ -731,8 +763,13 @@ def test_surface_aware_visual_release_skips_surface_safe_intermediate_rerun(monk
         return {baseline_fail}
 
     monkeypatch.setattr(release_module, "_run_step3", fake_run_step3)
-    monkeypatch.setattr(release_module, "_run_surface", lambda *args, **kwargs: {})
+    monkeypatch.setattr(
+        release_module,
+        "_run_surface",
+        lambda *args, **kwargs: {"_step3_surface_runtime_state": _validation_runtime_state()},
+    )
     monkeypatch.setattr(release_module, "promote_validation_step3_outputs", lambda artifacts, _root: artifacts)
+    monkeypatch.setattr(release_module, "publish_deferred_validation_outputs", lambda *_args, **_kwargs: {})
     monkeypatch.setattr(release_module, "refresh_rcsd_road_ownership_after_surface", lambda **_kwargs: None)
     monkeypatch.setattr(release_module, "refresh_segment_construction_audit_after_surface", lambda **_kwargs: None)
     monkeypatch.setattr(release_module, "_topology_fail_keys", fake_topology_fail_keys)

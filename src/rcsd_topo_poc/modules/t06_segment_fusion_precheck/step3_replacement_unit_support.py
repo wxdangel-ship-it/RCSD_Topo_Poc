@@ -24,6 +24,13 @@ from .parsing import ParseError, normalize_id, parse_id_list, parse_positive_int
 
 from .road_attributes import is_near_advance_right_turn_duplicate as _is_adv_dup
 
+from .step3_corridor_coverage_cache import (
+    cached_buffered_road_corridor,
+    cached_corridor_coverage_decision,
+)
+
+from .step3_replacement_plan_reader import is_deferred_replacement_plan
+
 from .schemas import (
     STEP2_GROUP_REPLACEMENT_AUDIT_STEM,
     STEP2_REPLACEMENT_PLAN_STEM,
@@ -195,7 +202,7 @@ def _resolve_replacement_plan_path(
 ) -> Path | None:
     if explicit_path is not None:
         path = Path(explicit_path)
-        if not path.is_file():
+        if not path.is_file() and not is_deferred_replacement_plan(path):
             raise FileNotFoundError(f"replacement plan file does not exist: {path}")
         return path
     step2_dir = Path(step2_replaceable_path).parent
@@ -431,7 +438,7 @@ def _retain_topology_supplement_swsd_roads(
         semantic_nodes = set(unique_preserve_order([*unit.pair_nodes, *unit.junc_nodes]))
         if not semantic_nodes:
             continue
-        unit_corridor = _road_union_corridor(
+        unit_roads = (
             [rcsd_road_by_id[road_id] for road_id in unit.rcsd_road_ids if road_id in rcsd_road_by_id]
         )
         retained: list[str] = []
@@ -453,9 +460,9 @@ def _retain_topology_supplement_swsd_roads(
             path_reverse = global_graph.reachable_any(end_nodes, start_nodes)
             undirected_connected = global_graph.undirected_reachable_any(start_nodes, end_nodes)
             direction = _coerce_int((road.get("properties") or {}).get("direction")) if road is not None else None
-            coverage_failed, coverage_released = _road_corridor_coverage_failed(
+            coverage_failed, coverage_released = _road_corridor_coverage_failed_from_roads(
                 road,
-                unit_corridor,
+                unit_roads,
                 allowed_surface=allowed_surface,
             )
             if coverage_released:
@@ -593,6 +600,40 @@ def _road_corridor_coverage_failed(
         max_uncovered_ratio=TS_MAX_RATIO,
         min_uncovered_length_m=TS_MIN_LEN_M,
         allowed_surface=allowed_surface,
+    )
+
+def _road_corridor_coverage_failed_from_roads(
+    swsd_road: dict[str, Any] | None,
+    selected_roads: list[dict[str, Any]],
+    *,
+    allowed_surface: Any | None = None,
+) -> tuple[bool, bool]:
+    if swsd_road is None:
+        return False, False
+    line = swsd_road.get("geometry")
+    if line is None or line.is_empty or line.length <= 0:
+        return False, False
+    road_geometries = [
+        road.get("geometry")
+        for road in selected_roads
+        if road.get("geometry") is not None and not road.get("geometry").is_empty
+    ]
+    if not road_geometries:
+        return False, False
+    return cached_corridor_coverage_decision(
+        line=line,
+        road_geometries=road_geometries,
+        allowed_surface=allowed_surface,
+        buffer_m=2.0,
+        compute=lambda: _road_corridor_coverage_failed(
+            swsd_road,
+            cached_buffered_road_corridor(
+                road_geometries=road_geometries,
+                buffer_m=2.0,
+                compute=lambda: unary_union(road_geometries).buffer(2.0),
+            ),
+            allowed_surface=allowed_surface,
+        ),
     )
 
 def _directed_path_missing(

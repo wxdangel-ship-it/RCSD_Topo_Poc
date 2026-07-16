@@ -20,7 +20,12 @@ class Step3SurfaceRuntimeState:
     semantic_junction_group_rows: list[dict[str, Any]]
     advance_right_audit_rows: list[dict[str, Any]]
     connectivity_supplement_road_ids: set[str]
+    deferred_publish_jobs: dict[str, Any] = field(default_factory=dict)
+    deferred_publish_fieldnames: dict[str, list[str]] = field(default_factory=dict)
+    surface_topology_audit_rows: list[dict[str, Any]] = field(default_factory=list)
+    topology_connectivity_audit_rows: list[dict[str, Any]] = field(default_factory=list)
     authoritative_transition_closure_rows: list[dict[str, Any]] = field(default_factory=list)
+    publish_topology_connectivity_json: bool = False
 
 
 _LATEST_STATE: ContextVar[Step3SurfaceRuntimeState | None] = ContextVar(
@@ -39,10 +44,13 @@ def normalize_step3_surface_runtime_state(state: Step3SurfaceRuntimeState) -> No
         state.frcsd_roads,
         state.frcsd_nodes,
         state.segment_relation_rows,
-        state.semantic_junction_group_rows,
-        state.advance_right_audit_rows,
     ):
-        _normalize_vector_roundtrip_properties(rows)
+        normalize_vector_roundtrip_properties(rows)
+    for row in state.topology_connectivity_audit_rows:
+        properties = row.get("properties") or {}
+        value = properties.get("topology_road_lineage_id")
+        if not value or value in ("[]", "{}"):
+            properties["topology_road_lineage_id"] = ""
 
 
 def take_step3_surface_runtime_state(step_root: Path) -> Step3SurfaceRuntimeState | None:
@@ -53,7 +61,7 @@ def take_step3_surface_runtime_state(step_root: Path) -> Step3SurfaceRuntimeStat
     return state
 
 
-def _normalize_vector_roundtrip_properties(rows: list[dict[str, Any]]) -> None:
+def normalize_vector_roundtrip_properties(rows: list[dict[str, Any]]) -> None:
     """Match the property representation returned after a GPKG round trip."""
 
     for row in rows:

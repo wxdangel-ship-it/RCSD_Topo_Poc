@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
 import csv
 from dataclasses import dataclass
 from hashlib import sha1
@@ -78,12 +78,16 @@ class OwnershipOutputs:
 
 
 class _SegmentSpatialIndex:
+    _MAX_SEGMENT_BUFFER_CACHE = 512
+
     def __init__(self, segments: list[dict[str, Any]]) -> None:
         self.segment_by_id: dict[str, dict[str, Any]] = {}
         self.segment_type_by_id: dict[str, str] = {}
         self.geometries: list[Any] = []
         self.segment_ids: list[str] = []
         self.geometry_index_by_identity: dict[int, int] = {}
+        self._segment_buffer_cache: OrderedDict[tuple[int, float], Any] = OrderedDict()
+        self._segment_buffer_use_count: dict[tuple[int, float], int] = defaultdict(int)
         for segment in segments:
             segment_id = _feature_id(segment)
             geometry = segment.get("geometry")
@@ -108,7 +112,14 @@ class _SegmentSpatialIndex:
         road_length = float(road_geometry.length or 0.0)
         if road_length <= 0.0:
             return []
-        query_result = self.tree.query(road_geometry.buffer(OWNERSHIP_MATCH_BUFFER_M))
+        try:
+            query_result = self.tree.query(
+                road_geometry,
+                predicate="dwithin",
+                distance=OWNERSHIP_MATCH_BUFFER_M,
+            )
+        except TypeError:
+            query_result = self.tree.query(road_geometry.buffer(OWNERSHIP_MATCH_BUFFER_M))
         indexes: list[int] = []
         for value in query_result:
             if isinstance(value, Integral):
@@ -126,10 +137,31 @@ class _SegmentSpatialIndex:
             distance = float(road_geometry.distance(segment_geometry))
             if distance > OWNERSHIP_MATCH_BUFFER_M:
                 continue
-            cover20 = _coverage_ratio(road_geometry, segment_geometry, OWNERSHIP_TIGHT_BUFFER_M)
-            cover50 = _coverage_ratio(road_geometry, segment_geometry, OWNERSHIP_MATCH_BUFFER_M)
+            cover20 = _coverage_ratio_against_buffer(
+                road_geometry,
+                self._buffered_segment(index, OWNERSHIP_TIGHT_BUFFER_M),
+            )
+            cover50 = _coverage_ratio_against_buffer(
+                road_geometry,
+                self._buffered_segment(index, OWNERSHIP_MATCH_BUFFER_M),
+            )
             scored.append((segment_id, cover20, cover50, distance))
         return sorted(scored, key=lambda item: (-item[1], -item[2], item[3], item[0]))
+
+    def _buffered_segment(self, index: int, buffer_m: float) -> Any:
+        key = (index, float(buffer_m))
+        cached = self._segment_buffer_cache.get(key)
+        if cached is not None:
+            self._segment_buffer_cache.move_to_end(key)
+            return cached
+        buffered = self.geometries[index].buffer(buffer_m)
+        self._segment_buffer_use_count[key] += 1
+        if self._segment_buffer_use_count[key] >= 2:
+            self._segment_buffer_use_count.pop(key, None)
+            self._segment_buffer_cache[key] = buffered
+            if len(self._segment_buffer_cache) > self._MAX_SEGMENT_BUFFER_CACHE:
+                self._segment_buffer_cache.popitem(last=False)
+        return buffered
 
 
 def build_and_write_rcsd_road_ownership(
@@ -603,7 +635,11 @@ def refresh_rcsd_road_ownership_after_surface(
     added_road_path = resolved_step_root / "t06_step3_added_rcsd_roads.csv"
     relation_path = resolved_step_root / "t06_step3_swsd_frcsd_segment_relation.gpkg"
     connectivity_path = resolved_step_root / f"{MULTI_SEGMENT_CONNECTIVITY_GROUP_STEM}.gpkg"
-    required = [rcsdroad_path, rcsdnode_path, frcsd_road_path, added_road_path, relation_path]
+    required = [rcsdroad_path, rcsdnode_path, added_road_path]
+    if frcsd_roads is None:
+        required.append(frcsd_road_path)
+    if relation_rows is None:
+        required.append(relation_path)
     if not all(path.is_file() for path in required):
         return None
 
@@ -1079,11 +1115,15 @@ def _union_geometry(geometries: list[Any]) -> Any:
 
 
 def _coverage_ratio(road_geometry: Any, segment_geometry: Any, buffer_m: float) -> float:
+    return _coverage_ratio_against_buffer(road_geometry, segment_geometry.buffer(buffer_m))
+
+
+def _coverage_ratio_against_buffer(road_geometry: Any, buffered_segment_geometry: Any) -> float:
     length = float(road_geometry.length or 0.0)
     if length <= 0.0:
         return 0.0
     try:
-        covered = float(road_geometry.intersection(segment_geometry.buffer(buffer_m)).length)
+        covered = float(road_geometry.intersection(buffered_segment_geometry).length)
     except Exception:
         return 0.0
     return min(1.0, max(0.0, covered / length))

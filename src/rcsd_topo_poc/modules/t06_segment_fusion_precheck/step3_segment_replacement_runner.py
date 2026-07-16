@@ -1017,6 +1017,11 @@ def run_t06_step3_segment_replacement(
                 semantic_junction_group_rows=semantic_junction_group_rows,
                 advance_right_audit_rows=right_attach_audit_rows,
                 connectivity_supplement_road_ids=connectivity_supplement_road_ids,
+                deferred_publish_jobs=all_publish_jobs,
+                deferred_publish_fieldnames={
+                    name: list(job.fieldnames)
+                    for name, job in all_publish_jobs.items()
+                },
             )
         )
 

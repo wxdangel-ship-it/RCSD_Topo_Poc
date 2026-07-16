@@ -219,6 +219,7 @@ def _geometry_matched_edges_reachable_from_scope(
 ) -> dict[str, tuple[str, str]]:
     if not scope_nodes:
         return {}
+    unit_buffer_cache: list[Any] = []
     pending: list[str] = []
     seen: set[str] = set()
     for node_id in scope_nodes:
@@ -234,7 +235,11 @@ def _geometry_matched_edges_reachable_from_scope(
         if road_id in added_road_ids:
             continue
         edge = edges.get(road_id)
-        if edge is None or not _road_geometry_matches_unit(road_by_id.get(road_id), unit_geometry):
+        if edge is None or not _road_geometry_matches_unit(
+            road_by_id.get(road_id),
+            unit_geometry,
+            unit_buffer_cache=unit_buffer_cache,
+        ):
             continue
         result[road_id] = edge
         for node_id in edge:
@@ -246,7 +251,12 @@ def _geometry_matched_edges_reachable_from_scope(
     return result
 
 
-def _road_geometry_matches_unit(road: dict[str, Any] | None, unit_geometry: Any) -> bool:
+def _road_geometry_matches_unit(
+    road: dict[str, Any] | None,
+    unit_geometry: Any,
+    *,
+    unit_buffer_cache: list[Any] | None = None,
+) -> bool:
     if road is None:
         return False
     road_geometry = _as_geometry(road.get("geometry"))
@@ -259,7 +269,13 @@ def _road_geometry_matches_unit(road: dict[str, Any] | None, unit_geometry: Any)
     if float(road_geometry.distance(unit_geometry)) > GEOMETRY_COMPONENT_MAX_DISTANCE_M:
         return False
     try:
-        covered_length = float(road_geometry.intersection(unit_geometry.buffer(GEOMETRY_COMPONENT_BUFFER_M)).length)
+        if unit_buffer_cache is None:
+            buffered_unit = unit_geometry.buffer(GEOMETRY_COMPONENT_BUFFER_M)
+        else:
+            if not unit_buffer_cache:
+                unit_buffer_cache.append(unit_geometry.buffer(GEOMETRY_COMPONENT_BUFFER_M))
+            buffered_unit = unit_buffer_cache[0]
+        covered_length = float(road_geometry.intersection(buffered_unit).length)
     except Exception:
         return False
     return covered_length / road_length >= GEOMETRY_COMPONENT_MIN_COVER_RATIO

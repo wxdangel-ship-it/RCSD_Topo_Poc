@@ -12,6 +12,7 @@ from shapely.geometry import MultiPoint
 from .io import read_features, write_feature_triplet, write_json
 from .parsing import ParseError, normalize_id, parse_id_list, unique_preserve_order
 from .schemas import STEP2_SUMMARY, STEP3_SUMMARY, feature
+from .step3_surface_runtime import normalize_vector_roundtrip_properties
 from .step3_topology_connectivity_audit import (
     STEP3_TOPOLOGY_CONNECTIVITY_AUDIT_FIELDS,
     STEP3_TOPOLOGY_CONNECTIVITY_AUDIT_STEM,
@@ -63,6 +64,7 @@ def build_semantic_junction_groups(
 
     node_index = _NodeIndex(frcsd_nodes, source_field_name, swsd_source_value, rcsd_source_value)
     affected = _affected_segments_by_swsd_node(segment_relation_rows)
+    relation_context_index = _build_relation_context_index(segment_relation_rows)
     rows: list[dict[str, Any]] = []
     assigned_node_count = 0
     for base_id, swsd_node_ids in sorted(relations_by_base.items(), key=lambda item: _id_sort_key(item[0])):
@@ -77,7 +79,7 @@ def build_semantic_junction_groups(
         affected_segment_ids = unique_preserve_order(
             segment_id for swsd_node_id in swsd_node_ids for segment_id in affected.get(swsd_node_id, [])
         )
-        relation_statuses, source_mixes = _relation_context(segment_relation_rows, affected_segment_ids)
+        relation_statuses, source_mixes = _relation_context(relation_context_index, affected_segment_ids)
         rows.append(
             feature(
                 {
@@ -144,7 +146,7 @@ def downgrade_semantic_junction_topology_rows(
 
 
 def discover_intersection_match_path(step2_replaceable_path: str | Path) -> Path | None:
-    step2_root = Path(step2_replaceable_path).resolve().parent
+    step2_root = Path(step2_replaceable_path).absolute().parent
     summary_path = step2_root / STEP2_SUMMARY
     if not summary_path.is_file():
         return None
@@ -155,7 +157,7 @@ def discover_intersection_match_path(step2_replaceable_path: str | Path) -> Path
     candidates = [path] if path.is_absolute() else [Path.cwd() / path, summary_path.parent / path]
     for candidate in candidates:
         if candidate.is_file():
-            return candidate.resolve()
+            return candidate.absolute()
     return None
 
 
@@ -172,15 +174,27 @@ def refresh_semantic_junction_topology_audit(
     step_root: str | Path,
     summary_path: str | Path | None = None,
     semantic_group_rows: list[dict[str, Any]] | None = None,
+    topology_rows: list[dict[str, Any]] | None = None,
+    write_outputs: bool = True,
+    preserve_gpkg_rewrite_semantics: bool = False,
 ) -> dict[str, int]:
     root = Path(step_root)
     group_path = root / f"{STEP3_SEMANTIC_JUNCTION_GROUPS_STEM}.gpkg"
     topology_path = root / f"{STEP3_TOPOLOGY_CONNECTIVITY_AUDIT_STEM}.gpkg"
-    if (semantic_group_rows is None and not group_path.is_file()) or not topology_path.is_file():
+    if (
+        semantic_group_rows is None
+        and not group_path.is_file()
+    ) or (topology_rows is None and not topology_path.is_file()):
         return {"semantic_junction_topology_fail_downgraded_count": 0}
     semantic_group_rows = semantic_group_rows if semantic_group_rows is not None else read_features(group_path)
-    topology_rows = read_features(topology_path)
+    topology_rows = topology_rows if topology_rows is not None else read_features(topology_path)
     downgrade_stats = downgrade_semantic_junction_topology_rows(topology_rows, semantic_group_rows)
+    if (
+        preserve_gpkg_rewrite_semantics
+        and downgrade_stats.get("semantic_junction_topology_fail_downgraded_count", 0) > 0
+    ):
+        topology_rows[:] = [row for row in topology_rows if row.get("geometry") is not None]
+        normalize_vector_roundtrip_properties(topology_rows)
     summary_stats = {
         **summarize_topology_connectivity_audit(topology_rows),
         **downgrade_stats,
@@ -188,12 +202,13 @@ def refresh_semantic_junction_topology_audit(
     if downgrade_stats.get("semantic_junction_topology_fail_downgraded_count", 0) <= 0:
         _merge_summary_stats(summary_path or root / STEP3_SUMMARY, summary_stats)
         return downgrade_stats
-    write_feature_triplet(
-        step_root=root,
-        stem=STEP3_TOPOLOGY_CONNECTIVITY_AUDIT_STEM,
-        features=topology_rows,
-        fieldnames=STEP3_TOPOLOGY_CONNECTIVITY_AUDIT_FIELDS,
-    )
+    if write_outputs:
+        write_feature_triplet(
+            step_root=root,
+            stem=STEP3_TOPOLOGY_CONNECTIVITY_AUDIT_STEM,
+            features=topology_rows,
+            fieldnames=STEP3_TOPOLOGY_CONNECTIVITY_AUDIT_FIELDS,
+        )
     _merge_summary_stats(summary_path or root / STEP3_SUMMARY, summary_stats)
     return downgrade_stats
 
@@ -240,16 +255,36 @@ def _affected_segments_by_swsd_node(rows: list[dict[str, Any]]) -> dict[str, lis
     return dict(result)
 
 
-def _relation_context(rows: list[dict[str, Any]], segment_ids: list[str]) -> tuple[list[str], list[str]]:
-    wanted = set(segment_ids)
-    statuses: list[str] = []
-    sources: list[str] = []
-    for row in rows:
+def _build_relation_context_index(
+    rows: list[dict[str, Any]],
+) -> dict[str, list[tuple[int, str, str]]]:
+    index: dict[str, list[tuple[int, str, str]]] = defaultdict(list)
+    for position, row in enumerate(rows):
         props = row.get("properties") or {}
-        if str(props.get("swsd_segment_id") or "") not in wanted:
+        segment_id = str(props.get("swsd_segment_id") or "")
+        if not segment_id:
             continue
-        statuses.append(str(props.get("relation_status") or ""))
-        sources.append(str(props.get("source_mix") or ""))
+        index[segment_id].append(
+            (
+                position,
+                str(props.get("relation_status") or ""),
+                str(props.get("source_mix") or ""),
+            )
+        )
+    return dict(index)
+
+
+def _relation_context(
+    index: dict[str, list[tuple[int, str, str]]],
+    segment_ids: list[str],
+) -> tuple[list[str], list[str]]:
+    wanted = set(segment_ids)
+    matches = sorted(
+        (item for segment_id in wanted for item in index.get(segment_id, [])),
+        key=lambda item: item[0],
+    )
+    statuses = [status for _, status, _ in matches]
+    sources = [source for _, _, source in matches]
     return unique_preserve_order(statuses), unique_preserve_order(sources)
 
 

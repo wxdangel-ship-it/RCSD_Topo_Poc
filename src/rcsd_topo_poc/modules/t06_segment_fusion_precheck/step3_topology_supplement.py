@@ -10,7 +10,10 @@ from shapely.strtree import STRtree
 
 from .parsing import ParseError, normalize_id, parse_id_list, unique_preserve_order
 from .road_attributes import is_advance_right_turn_road
-from .step3_corridor_coverage_cache import cached_corridor_coverage_decision
+from .step3_corridor_coverage_cache import (
+    cached_buffered_road_corridor,
+    cached_corridor_coverage_decision,
+)
 
 
 TOPOLOGY_SUPPLEMENT_SPLIT_REASON = "topology_supplement_from_swsd"
@@ -477,7 +480,11 @@ def _corridor_coverage_failed(
         buffer_m=buffer_m,
         compute=lambda: coverage_failed_after_junction_surface_release(
             line,
-            unary_union(geometries).buffer(buffer_m),
+            cached_buffered_road_corridor(
+                road_geometries=geometries,
+                buffer_m=buffer_m,
+                compute=lambda: unary_union(geometries).buffer(buffer_m),
+            ),
             max_uncovered_ratio=SEGMENT_MAX_UNCOVERED_RATIO,
             min_uncovered_length_m=SEGMENT_MIN_UNCOVERED_LENGTH_M,
             allowed_surface=allowed_surface,

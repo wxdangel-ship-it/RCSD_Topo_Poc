@@ -1,9 +1,31 @@
 from shapely.geometry import LineString
 from shapely.ops import unary_union
 
+from rcsd_topo_poc.modules.t06_segment_fusion_precheck.graph_builders import NodeCanonicalizer
 from rcsd_topo_poc.modules.t06_segment_fusion_precheck import step3_topology_connectivity_audit as audit
+from rcsd_topo_poc.modules.t06_segment_fusion_precheck import step3_topology_connectivity_rows as rows
 from rcsd_topo_poc.modules.t06_segment_fusion_precheck import step3_topology_connectivity_support as support
 from rcsd_topo_poc.modules.t06_segment_fusion_precheck import step3_surface_topology_relation as surface_relation
+
+
+def test_relation_road_context_reuses_selected_roads_and_graph_within_one_audit() -> None:
+    road = {
+        "properties": {"id": "r1", "source": 1, "snodeid": "n1", "enodeid": "n2"},
+        "geometry": LineString([(0, 0), (10, 0)]),
+    }
+    props = {"frcsd_road_ids": ["r1"], "frcsd_road_source_values": ["1"]}
+    cache = {}
+    kwargs = {
+        "road_index": support._RoadIndex([road], source_field_name="source"),
+        "canonicalizer": NodeCanonicalizer.from_node_features([]),
+        "cache": cache,
+    }
+
+    first = rows._relation_road_context(props, **kwargs)
+    second = rows._relation_road_context(props, **kwargs)
+
+    assert second is first
+    assert len(cache) == 1
 
 
 def test_buffered_road_union_reuses_explicit_shared_cache_only() -> None:
@@ -101,6 +123,112 @@ def test_relation_coverage_prewarm_skips_union_when_all_buffers_are_cached(monke
 
     assert calls == 1
     assert len(coverage_cache) == 3
+
+
+def test_reusable_metric_cache_survives_geometry_release_and_matches_equal_inputs(monkeypatch) -> None:
+    segment = {
+        "properties": {"id": "s1"},
+        "geometry": LineString([(0, 0), (20, 0)]),
+    }
+    roads = [
+        {
+            "properties": {"id": "r1", "source": 1},
+            "geometry": LineString([(0, 0), (20, 0)]),
+        }
+    ]
+    coverage_cache = support._ReusableCoverageCache()
+    assert support._coverage_cache_needs_prewarm(coverage_cache)
+
+    first = support._segment_uncovered_metrics(
+        segment,
+        roads,
+        buffer_m=5.0,
+        coverage_cache=coverage_cache,
+        road_signature_cache={},
+    )
+    assert coverage_cache.uncovered_metrics
+    assert not support._coverage_cache_needs_prewarm(coverage_cache)
+
+    coverage_cache.clear()
+    monkeypatch.setattr(
+        support,
+        "_buffered_road_union",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("metric cache must bypass buffering")),
+    )
+    second = support._segment_uncovered_metrics(
+        {"properties": {"id": "s1"}, "geometry": LineString([(0, 0), (20, 0)])},
+        [{"properties": {"id": "r1", "source": 1}, "geometry": LineString([(0, 0), (20, 0)])}],
+        buffer_m=5.0,
+        coverage_cache=coverage_cache,
+        road_signature_cache={},
+    )
+
+    assert second == first
+    assert coverage_cache == {}
+
+
+def test_reusable_geometry_cache_uses_explicit_run_lifetime() -> None:
+    coverage_cache = support._ReusableCoverageCache()
+    geometry = LineString([(0, 0), (1, 0)]).buffer(1.0)
+
+    coverage_cache[(1.0, (("1", "r1", "a"),))] = geometry
+    coverage_cache[(1.0, (("1", "r2", "b"),))] = geometry
+    coverage_cache[(1.0, (("1", "r3", "c"),))] = geometry
+
+    assert len(coverage_cache) == 3
+    coverage_cache.clear()
+    assert coverage_cache == {}
+
+
+def test_reusable_prewarm_materializes_compact_metrics_without_retaining_buffers(monkeypatch) -> None:
+    segment = {
+        "properties": {"id": "s1", "pair_nodes": ["n1", "n2"], "roads": ["sw1"]},
+        "geometry": LineString([(0, 0), (20, 0)]),
+    }
+    swsd_road = {
+        "properties": {"id": "sw1", "snodeid": "n1", "enodeid": "n2"},
+        "geometry": LineString([(0, 0), (20, 0)]),
+    }
+    roads = [
+        {
+            "properties": {"id": "r1", "source": 1, "snodeid": "n1", "enodeid": "n2"},
+            "geometry": LineString([(0, 0), (20, 0)]),
+        }
+    ]
+    relation_props = [
+        {
+            "swsd_segment_id": "s1",
+            "swsd_road_ids": ["sw1"],
+            "relation_status": "replaced",
+            "frcsd_road_ids": ["r1"],
+            "frcsd_road_source_values": ["1"],
+        }
+    ]
+    coverage_cache = support._ReusableCoverageCache()
+
+    support._prewarm_relation_coverage_cache(
+        relation_props,
+        road_index=support._RoadIndex(roads, source_field_name="source"),
+        coverage_cache=coverage_cache,
+        signature_cache={},
+        swsd_segment_by_id={"s1": segment},
+        swsd_road_by_id={"sw1": swsd_road},
+    )
+
+    assert coverage_cache == {}
+    assert len(coverage_cache.uncovered_metrics) == 3
+    monkeypatch.setattr(
+        support,
+        "_buffered_road_union",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("prewarmed metric must bypass buffering")),
+    )
+    assert support._segment_uncovered_metrics(
+        segment,
+        roads,
+        buffer_m=5.0,
+        coverage_cache=coverage_cache,
+        road_signature_cache={},
+    ) == (0.0, 0.0)
 
 
 def test_surface_topology_rebuild_releases_large_caches_before_output(tmp_path, monkeypatch) -> None:

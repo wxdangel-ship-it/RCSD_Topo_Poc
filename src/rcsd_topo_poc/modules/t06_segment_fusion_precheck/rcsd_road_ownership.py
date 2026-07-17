@@ -28,6 +28,7 @@ MULTI_SEGMENT_CONNECTIVITY_GROUP_STEM = "t06_multi_segment_connectivity_group"
 ADVANCE_RIGHT_FORMWAY_MASK = 128
 OWNERSHIP_MATCH_BUFFER_M = 50.0
 OWNERSHIP_TIGHT_BUFFER_M = 20.0
+OWNERSHIP_QUERY_EPSILON_M = 1e-6
 
 RCSD_ROAD_OWNERSHIP_FIELDS = [
     "rcsd_road_id",
@@ -116,7 +117,7 @@ class _SegmentSpatialIndex:
             query_result = self.tree.query(
                 road_geometry,
                 predicate="dwithin",
-                distance=OWNERSHIP_MATCH_BUFFER_M,
+                distance=OWNERSHIP_MATCH_BUFFER_M + OWNERSHIP_QUERY_EPSILON_M,
             )
         except TypeError:
             query_result = self.tree.query(road_geometry.buffer(OWNERSHIP_MATCH_BUFFER_M))

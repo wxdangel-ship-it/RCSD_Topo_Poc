@@ -6,7 +6,7 @@ from pathlib import Path
 from types import ModuleType
 from types import SimpleNamespace
 
-from shapely.geometry import Point
+from shapely.geometry import LineString, Point
 
 from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import write_vector
 
@@ -107,19 +107,35 @@ def test_business_comparison_normalizes_run_roots(tmp_path: Path) -> None:
     baseline_t06.mkdir(parents=True)
     candidate_t06.mkdir(parents=True)
     (baseline_t06 / "summary.json").write_text(
-        '{"status":"passed","artifact":"'
-        + str(baseline_t06 / "step1_identify_fusion_units/result.gpkg")
-        + '"}',
+        json.dumps(
+            {
+                "status": "passed",
+                "artifact": str(baseline_t06 / "step1_identify_fusion_units/result.gpkg"),
+            }
+        ),
         encoding="utf-8",
     )
     (candidate_t06 / "summary.json").write_text(
-        '{"status":"passed","artifact":"'
-        + str(tmp_path / "stale_candidate_v7/step1_identify_fusion_units/result.gpkg")
-        + '"}',
+        json.dumps(
+            {
+                "status": "passed",
+                "artifact": str(
+                    tmp_path / "stale_candidate_v7/step1_identify_fusion_units/result.gpkg"
+                ),
+            }
+        ),
         encoding="utf-8",
     )
     (baseline_t06 / "audit.csv").write_text("id,status\n1,ok\n2,review\n", encoding="utf-8")
     (candidate_t06 / "audit.csv").write_text("id,status\n2,review\n1,ok\n", encoding="utf-8")
+    (baseline_t06 / "step2_extract_rcsd_segments").mkdir()
+    (candidate_t06 / "step2_extract_rcsd_segments").mkdir()
+    (baseline_t06 / "step2_extract_rcsd_segments/t06_step2_heartbeat.json").write_text(
+        '{"phase":"done","elapsed_sec":100}', encoding="utf-8"
+    )
+    (candidate_t06 / "step2_extract_rcsd_segments/t06_step2_heartbeat.json").write_text(
+        '{"phase":"watchdog_sample","elapsed_sec":50}', encoding="utf-8"
+    )
     write_vector(
         baseline_t06 / "result.gpkg",
         [{"properties": {"id": "1"}, "geometry": Point(1.0, 2.0)}],
@@ -136,7 +152,10 @@ def test_business_comparison_normalizes_run_roots(tmp_path: Path) -> None:
     )
 
     assert comparison["passed"] is True
-    assert comparison["reference_artifact_count"] == 3
+    assert comparison["reference_artifact_count"] == 4
+    assert comparison["ignored_runtime_json_changes"] == [
+        "step2_extract_rcsd_segments/t06_step2_heartbeat.json"
+    ]
 
     validator.semantic_fingerprint = lambda *_args, **_kwargs: (_ for _ in ()).throw(
         AssertionError("valid checkpoint should avoid recomputing semantic fingerprints")
@@ -160,6 +179,12 @@ def test_collector_exports_and_verifies_250kib_text_bundle(tmp_path: Path) -> No
     (evidence / "t06_innernet_validation_summary.json").write_text(
         '{"overall_passed":true}', encoding="utf-8"
     )
+    (evidence / "t06_business_mismatch_diagnostics.json").write_text(
+        '{"ownership_csv":{"changed_row_count":1}}', encoding="utf-8"
+    )
+    (evidence / "t06_ownership_boundary_probe.json").write_text(
+        '{"epsilon_restores_legacy_top8":true}', encoding="utf-8"
+    )
     (candidate / "t06_perf_validation.status").write_text("STATUS=PASSED\n", encoding="utf-8")
     (candidate / "t10_innernet_full_pipeline_manifest.json").write_text(
         '{"pipeline_status":"passed"}', encoding="utf-8"
@@ -172,6 +197,87 @@ def test_collector_exports_and_verifies_250kib_text_bundle(tmp_path: Path) -> No
 
     assert parts
     assert all(path.is_file() and path.stat().st_size <= 250 * 1024 for path in parts)
+    assert (evidence / "handoff_package/t06_business_mismatch_diagnostics.json").is_file()
+    assert (evidence / "handoff_package/t06_ownership_boundary_probe.json").is_file()
+
+
+def test_keyed_csv_diagnostics_reports_exact_business_fields(tmp_path: Path) -> None:
+    validator = _load_validator()
+    baseline = tmp_path / "baseline.csv"
+    candidate = tmp_path / "candidate.csv"
+    baseline.write_text(
+        "rcsd_road_id,owner_type,candidate_segment_ids\n"
+        '1,single_segment,"[1, 2]"\n'
+        "2,unresolved_exception,[]\n"
+        "3,single_segment,[3]\n",
+        encoding="utf-8",
+    )
+    candidate.write_text(
+        "rcsd_road_id,owner_type,candidate_segment_ids\n"
+        '1,single_segment,"[1, 4]"\n'
+        "2,reality_change,[]\n"
+        "4,single_segment,[4]\n",
+        encoding="utf-8",
+    )
+
+    result = validator._compare_keyed_csv(
+        baseline,
+        candidate,
+        key_field="rcsd_road_id",
+    )
+
+    assert result["passed"] is False
+    assert result["baseline_row_count"] == 3
+    assert result["candidate_row_count"] == 3
+    assert result["changed_row_count"] == 2
+    assert result["changed_field_counts"] == {"candidate_segment_ids": 1, "owner_type": 1}
+    assert result["missing_key_count"] == 1
+    assert result["missing_key_samples"] == ["3"]
+    assert result["extra_key_count"] == 1
+    assert result["extra_key_samples"] == ["4"]
+
+
+def test_ownership_boundary_probe_keeps_query_slack_out_of_business_scope(tmp_path: Path) -> None:
+    validator = _load_validator()
+    baseline = tmp_path / "baseline"
+    step3 = baseline / validator.T06_RELATIVE_ROOT / "step3_segment_replacement"
+    segment_root = baseline / "t01_full_data"
+    step3.mkdir(parents=True)
+    segment_root.mkdir(parents=True)
+    write_vector(
+        step3 / "t06_rcsd_road_ownership.gpkg",
+        [
+            {
+                "properties": {"rcsd_road_id": "road"},
+                "geometry": LineString([(0.0, 0.0), (10.0, 0.0)]),
+            }
+        ],
+    )
+    write_vector(
+        segment_root / "segment.gpkg",
+        [
+            {"properties": {"id": "near", "segment_type": "normal"}, "geometry": Point(0, 49)},
+            {
+                "properties": {"id": "boundary", "segment_type": "normal"},
+                "geometry": Point(0, 50),
+            },
+            {
+                "properties": {"id": "query_slack_only", "segment_type": "normal"},
+                "geometry": Point(0, 50.0000005),
+            },
+        ],
+    )
+
+    result = validator.build_ownership_boundary_probe(
+        baseline_run_root=baseline,
+        road_id="road",
+    )
+
+    assert result["epsilon_restores_legacy_exact_set"] is True
+    assert result["epsilon_restores_legacy_top8"] is True
+    assert result["legacy_buffer_exact_ids"] == ["boundary", "near"]
+    assert result["dwithin_epsilon_exact_ids"] == ["boundary", "near"]
+    assert "query_slack_only" in result["dwithin_epsilon_raw_ids"]
 
 
 def test_summary_consistency_rejects_audit_or_compat_business_drift(tmp_path: Path) -> None:

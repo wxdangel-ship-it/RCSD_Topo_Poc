@@ -40,6 +40,8 @@ def collect(args: argparse.Namespace) -> tuple[Path, ...]:
 
     for name in (
         "t06_innernet_validation_summary.json",
+        "t06_business_mismatch_diagnostics.json",
+        "t06_ownership_boundary_probe.json",
         "baseline_t06_semantic_manifest.json",
         "candidate_t06_semantic_manifest.json",
         "t06_step12.time.txt",

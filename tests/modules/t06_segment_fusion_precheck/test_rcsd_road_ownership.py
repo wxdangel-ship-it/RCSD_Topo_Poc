@@ -71,17 +71,34 @@ def test_segment_spatial_index_keeps_exact_50m_candidate_boundary_and_bounds_buf
     index = _SegmentSpatialIndex(
         [
             _segment("near", [(0, 49), (10, 49)]),
+            _segment("boundary", [(0, 50), (10, 50)]),
+            _segment("query_slack_only", [(0, 50.0000005), (10, 50.0000005)]),
             _segment("far", [(0, 51), (10, 51)]),
         ]
     )
     road = LineString([(0, 0), (10, 0)])
+    recorded_queries: list[tuple[object, tuple, dict]] = []
+    delegate_tree = index.tree
+
+    class RecordingTree:
+        def query(self, geometry, *args, **kwargs):
+            recorded_queries.append((geometry, args, kwargs))
+            return delegate_tree.query(geometry, *args, **kwargs)
+
+    index.tree = RecordingTree()
 
     first = index.scored_candidates(road)
     second = index.scored_candidates(road)
 
-    assert [row[0] for row in first] == ["near"]
+    assert [row[0] for row in first] == ["near", "boundary"]
     assert second == first
-    assert len(index._segment_buffer_cache) == 2
+    assert len(recorded_queries) == 2
+    assert all(not args for _, args, _ in recorded_queries)
+    assert all(
+        kwargs == {"predicate": "dwithin", "distance": 50.000001}
+        for _, _, kwargs in recorded_queries
+    )
+    assert len(index._segment_buffer_cache) == 4
     assert len(index._segment_buffer_cache) <= index._MAX_SEGMENT_BUFFER_CACHE
 
 

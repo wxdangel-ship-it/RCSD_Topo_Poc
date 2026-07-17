@@ -41,9 +41,9 @@
 
 - [x] `1885118` 七类门禁通过：业务/GIS/审计等价；Step3 wall 下降 `50.12%`，peak RSS 下降 `25.16%`，swap 为 0。
 - [x] 六例业务结构化差异为 0；每例 Step3 wall 与 peak RSS 均不回退，聚合 Step3 下降 `44.73%`，swap 均为 0。
-- [ ] 全量内网业务/CRS/topology/geometry/audit 不回退。
-- [ ] 全量 Step3 与 T06 总耗时均达到当前 50% 目标。
-- [ ] peak RSS、swap、OOM 门禁通过。
+- [ ] 全量内网业务/CRS/topology/geometry/audit 不回退；首轮候选仅 ownership 的一个 `candidate_segment_ids` 发生边界漂移，兼容修复已完成本地六例回归，待内网复验。
+- [x] 全量 Step3 与 T06 总耗时均达到当前 50% 目标。
+- [x] peak RSS、swap、OOM 门禁通过。
 
 ## Project Structure
 

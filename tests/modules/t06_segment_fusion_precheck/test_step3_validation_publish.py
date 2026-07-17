@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from rcsd_topo_poc.modules.t06_segment_fusion_precheck import step3_surface_aware_plan_release as release
@@ -166,5 +167,6 @@ def test_promote_validation_outputs_copies_and_rebases_paths(tmp_path: Path) -> 
     assert promoted.run_root == final_step_root.resolve().parent
     assert promoted.step_root == final_step_root.resolve()
     assert promoted.frcsd_road_gpkg_path.read_bytes() == b"gpkg"
-    assert str(final_step_root.resolve()) in promoted.summary_path.read_text(encoding="utf-8")
+    promoted_summary = json.loads(promoted.summary_path.read_text(encoding="utf-8"))
+    assert str(final_step_root.resolve()) in promoted_summary["output_path"]
     assert str(source_step_root.resolve()) not in promoted.summary_path.read_text(encoding="utf-8")

@@ -10,8 +10,12 @@ import re
 import sys
 import time
 from collections import Counter
+from numbers import Integral
 from pathlib import Path
 from typing import Any
+
+import fiona
+from shapely.geometry import shape
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -28,6 +32,9 @@ from tests.modules.t10_e2e_orchestration.artifact_equivalence import (  # noqa: 
 from rcsd_topo_poc.modules.t06_segment_fusion_precheck.step3_output_slimming import (  # noqa: E402
     COMPAT_TOP_LEVEL_KEYS,
 )
+from rcsd_topo_poc.modules.t06_segment_fusion_precheck import (  # noqa: E402
+    rcsd_road_ownership,
+)
 
 
 BASELINE_STEP3_INTERNAL_SECONDS = 32207.946
@@ -37,6 +44,11 @@ TARGET_T06_WALL_SECONDS = 21464.149
 BASELINE_PEAK_RSS_KB = 9365992
 T06_RELATIVE_ROOT = Path("t06_segment_fusion_precheck/t06_innernet_precheck")
 BUSINESS_FINGERPRINT_VERSION = 2
+MAX_DIAGNOSTIC_SAMPLES = 50
+RUNTIME_ONLY_JSON_CHANGES = {
+    "step2_extract_rcsd_segments/t06_step2_heartbeat.json",
+    "step3_segment_replacement/t06_step3_heartbeat.json",
+}
 
 
 def parse_elapsed_seconds(value: str) -> float:
@@ -168,7 +180,15 @@ def compare_business_outputs(
         "step3_segment_replacement/t06_step3_detail_metrics.json",
         "step3_segment_replacement/t06_step3_summary.json",
     }
-    unexpected_json_changes = sorted(set(json_comparison["changed"]) - allowed_json_changes)
+    unexpected_json_changes = sorted(
+        set(json_comparison["changed"]) - allowed_json_changes - RUNTIME_ONLY_JSON_CHANGES
+    )
+    business_diagnostics = build_business_mismatch_diagnostics(
+        baseline_run_root=baseline_run_root,
+        candidate_run_root=candidate_run_root,
+    )
+    ownership_diagnostics = business_diagnostics["ownership_csv"]
+    _write_json(out_dir / "t06_business_mismatch_diagnostics.json", business_diagnostics)
     summary_consistency = _validate_candidate_step3_summaries(baseline_t06, candidate_t06)
     comparison.update(
         {
@@ -188,11 +208,320 @@ def compare_business_outputs(
             "stable_artifacts": stable_comparison,
             "json_artifacts": json_comparison,
             "allowed_json_changes": sorted(allowed_json_changes),
+            "ignored_runtime_json_changes": sorted(
+                set(json_comparison["changed"]) & RUNTIME_ONLY_JSON_CHANGES
+            ),
             "unexpected_json_changes": unexpected_json_changes,
+            "ownership_diagnostics": ownership_diagnostics,
             "candidate_summary_consistency": summary_consistency,
         }
     )
     return comparison
+
+
+def build_business_mismatch_diagnostics(
+    *,
+    baseline_run_root: Path,
+    candidate_run_root: Path,
+) -> dict[str, Any]:
+    baseline_t06 = baseline_run_root.resolve() / T06_RELATIVE_ROOT
+    candidate_t06 = candidate_run_root.resolve() / T06_RELATIVE_ROOT
+    return {
+        "schema_version": 1,
+        "ownership_csv": _compare_keyed_csv(
+            baseline_t06 / "step3_segment_replacement/t06_rcsd_road_ownership.csv",
+            candidate_t06 / "step3_segment_replacement/t06_rcsd_road_ownership.csv",
+            key_field="rcsd_road_id",
+        ),
+    }
+
+
+def build_ownership_boundary_probe(
+    *,
+    baseline_run_root: Path,
+    road_id: str,
+) -> dict[str, Any]:
+    baseline_root = baseline_run_root.resolve()
+    ownership_path = (
+        baseline_root
+        / T06_RELATIVE_ROOT
+        / "step3_segment_replacement/t06_rcsd_road_ownership.gpkg"
+    )
+    segment_path = baseline_root / "t01_full_data/segment.gpkg"
+    road_geometry = _read_named_geometry(
+        ownership_path,
+        key_field="rcsd_road_id",
+        key_value=road_id,
+    )
+    segments = _read_segment_features(segment_path)
+    index = rcsd_road_ownership._SegmentSpatialIndex(segments)
+    delegate_tree = index.tree
+
+    class LegacyBufferTree:
+        def query(self, geometry: Any, *_args: Any, **_kwargs: Any) -> Any:
+            return delegate_tree.query(
+                geometry.buffer(rcsd_road_ownership.OWNERSHIP_MATCH_BUFFER_M)
+            )
+
+    def scored(mode: str) -> list[dict[str, Any]]:
+        original_tree = index.tree
+        original_epsilon = rcsd_road_ownership.OWNERSHIP_QUERY_EPSILON_M
+        index._segment_buffer_cache.clear()
+        index._segment_buffer_use_count.clear()
+        try:
+            if mode == "legacy_buffer":
+                index.tree = LegacyBufferTree()
+            else:
+                index.tree = delegate_tree
+                rcsd_road_ownership.OWNERSHIP_QUERY_EPSILON_M = (
+                    0.0 if mode == "dwithin_50" else original_epsilon
+                )
+            return [
+                {
+                    "segment_id": segment_id,
+                    "coverage_20m": coverage_20m,
+                    "coverage_50m": coverage_50m,
+                    "distance_m": distance_m,
+                }
+                for segment_id, coverage_20m, coverage_50m, distance_m in index.scored_candidates(
+                    road_geometry
+                )[:8]
+            ]
+        finally:
+            index.tree = original_tree
+            rcsd_road_ownership.OWNERSHIP_QUERY_EPSILON_M = original_epsilon
+
+    legacy_raw = delegate_tree.query(
+        road_geometry.buffer(rcsd_road_ownership.OWNERSHIP_MATCH_BUFFER_M)
+    )
+    dwithin_50_raw = delegate_tree.query(
+        road_geometry,
+        predicate="dwithin",
+        distance=rcsd_road_ownership.OWNERSHIP_MATCH_BUFFER_M,
+    )
+    dwithin_epsilon_raw = delegate_tree.query(
+        road_geometry,
+        predicate="dwithin",
+        distance=(
+            rcsd_road_ownership.OWNERSHIP_MATCH_BUFFER_M
+            + rcsd_road_ownership.OWNERSHIP_QUERY_EPSILON_M
+        ),
+    )
+    legacy_raw_ids, legacy_exact_ids = _probe_query_ids(index, road_geometry, legacy_raw)
+    dwithin_50_raw_ids, dwithin_50_exact_ids = _probe_query_ids(
+        index,
+        road_geometry,
+        dwithin_50_raw,
+    )
+    dwithin_epsilon_raw_ids, dwithin_epsilon_exact_ids = _probe_query_ids(
+        index,
+        road_geometry,
+        dwithin_epsilon_raw,
+    )
+    legacy_top8 = scored("legacy_buffer")
+    dwithin_50_top8 = scored("dwithin_50")
+    dwithin_epsilon_top8 = scored("dwithin_epsilon")
+    return {
+        "schema_version": 1,
+        "baseline_run_root": str(baseline_root),
+        "ownership_path": str(ownership_path),
+        "segment_path": str(segment_path),
+        "road_id": road_id,
+        "segment_count": len(segments),
+        "match_buffer_m": rcsd_road_ownership.OWNERSHIP_MATCH_BUFFER_M,
+        "query_epsilon_m": rcsd_road_ownership.OWNERSHIP_QUERY_EPSILON_M,
+        "legacy_buffer_raw_ids": legacy_raw_ids,
+        "legacy_buffer_exact_ids": legacy_exact_ids,
+        "dwithin_50_raw_ids": dwithin_50_raw_ids,
+        "dwithin_50_exact_ids": dwithin_50_exact_ids,
+        "dwithin_epsilon_raw_ids": dwithin_epsilon_raw_ids,
+        "dwithin_epsilon_exact_ids": dwithin_epsilon_exact_ids,
+        "legacy_buffer_top8": legacy_top8,
+        "dwithin_50_top8": dwithin_50_top8,
+        "dwithin_epsilon_top8": dwithin_epsilon_top8,
+        "epsilon_restores_legacy_exact_set": dwithin_epsilon_exact_ids == legacy_exact_ids,
+        "epsilon_restores_legacy_top8": dwithin_epsilon_top8 == legacy_top8,
+        "dwithin_50_matches_legacy_exact_set": dwithin_50_exact_ids == legacy_exact_ids,
+        "dwithin_50_matches_legacy_top8": dwithin_50_top8 == legacy_top8,
+    }
+
+
+def _read_named_geometry(path: Path, *, key_field: str, key_value: str) -> Any:
+    if not path.is_file():
+        raise FileNotFoundError(f"Vector input does not exist: {path}")
+    layer = fiona.listlayers(path)[0]
+    with fiona.open(path, layer=layer) as source:
+        for row in source:
+            properties = dict(row["properties"])
+            if str(properties.get(key_field) or "") == key_value:
+                geometry = row.get("geometry")
+                if geometry is None:
+                    raise ValueError(f"Road {key_value} has no geometry in {path}")
+                return shape(geometry)
+    raise KeyError(f"Road {key_value} was not found in {path}")
+
+
+def _read_segment_features(path: Path) -> list[dict[str, Any]]:
+    if not path.is_file():
+        raise FileNotFoundError(f"Segment input does not exist: {path}")
+    layer = fiona.listlayers(path)[0]
+    rows: list[dict[str, Any]] = []
+    with fiona.open(path, layer=layer) as source:
+        for row in source:
+            geometry = row.get("geometry")
+            if geometry is None:
+                continue
+            properties = dict(row["properties"])
+            rows.append(
+                {
+                    "properties": {
+                        "id": properties.get("id"),
+                        "segment_type": properties.get("segment_type"),
+                    },
+                    "geometry": shape(geometry),
+                }
+            )
+    return rows
+
+
+def _probe_query_ids(
+    index: Any,
+    road_geometry: Any,
+    query_result: Any,
+) -> tuple[list[str], list[str]]:
+    indexes: list[int] = []
+    for value in query_result:
+        if isinstance(value, Integral):
+            indexes.append(int(value))
+            continue
+        resolved = index.geometry_index_by_identity.get(id(value))
+        if resolved is not None:
+            indexes.append(resolved)
+    unique_indexes = sorted(set(indexes))
+    raw_ids = sorted(index.segment_ids[item] for item in unique_indexes)
+    exact_ids = sorted(
+        index.segment_ids[item]
+        for item in unique_indexes
+        if float(road_geometry.distance(index.geometries[item]))
+        <= rcsd_road_ownership.OWNERSHIP_MATCH_BUFFER_M
+    )
+    return raw_ids, exact_ids
+
+
+def _compare_keyed_csv(
+    baseline_path: Path,
+    candidate_path: Path,
+    *,
+    key_field: str,
+    max_samples: int = MAX_DIAGNOSTIC_SAMPLES,
+) -> dict[str, Any]:
+    if not baseline_path.is_file() or not candidate_path.is_file():
+        return {
+            "applicable": False,
+            "passed": False,
+            "baseline_path": str(baseline_path),
+            "candidate_path": str(candidate_path),
+            "error": "baseline or candidate CSV is missing",
+        }
+
+    baseline_rows: dict[str, dict[str, str]] = {}
+    baseline_duplicate_keys: list[str] = []
+    baseline_row_count = 0
+    with baseline_path.open("r", encoding="utf-8-sig", newline="") as stream:
+        reader = csv.DictReader(stream)
+        baseline_fieldnames = list(reader.fieldnames or [])
+        for row in reader:
+            baseline_row_count += 1
+            key = str(row.get(key_field) or "")
+            if key in baseline_rows:
+                if len(baseline_duplicate_keys) < max_samples:
+                    baseline_duplicate_keys.append(key)
+                continue
+            baseline_rows[key] = {str(name): str(value or "") for name, value in row.items()}
+
+    changed_field_counts: Counter[str] = Counter()
+    changed_samples: list[dict[str, Any]] = []
+    extra_keys: list[str] = []
+    extra_key_count = 0
+    candidate_seen: set[str] = set()
+    candidate_duplicate_keys: list[str] = []
+    candidate_row_count = 0
+    changed_row_count = 0
+    with candidate_path.open("r", encoding="utf-8-sig", newline="") as stream:
+        reader = csv.DictReader(stream)
+        candidate_fieldnames = list(reader.fieldnames or [])
+        compared_fields = sorted(set(baseline_fieldnames) | set(candidate_fieldnames))
+        for row in reader:
+            candidate_row_count += 1
+            key = str(row.get(key_field) or "")
+            if key in candidate_seen:
+                if len(candidate_duplicate_keys) < max_samples:
+                    candidate_duplicate_keys.append(key)
+                continue
+            candidate_seen.add(key)
+            baseline_row = baseline_rows.pop(key, None)
+            if baseline_row is None:
+                extra_key_count += 1
+                if len(extra_keys) < max_samples:
+                    extra_keys.append(key)
+                continue
+            field_changes: dict[str, dict[str, str]] = {}
+            for field in compared_fields:
+                baseline_value = str(baseline_row.get(field) or "")
+                candidate_value = str(row.get(field) or "")
+                if baseline_value == candidate_value:
+                    continue
+                changed_field_counts[field] += 1
+                field_changes[field] = {
+                    "baseline": _trim_diagnostic_value(baseline_value),
+                    "candidate": _trim_diagnostic_value(candidate_value),
+                }
+            if not field_changes:
+                continue
+            changed_row_count += 1
+            if len(changed_samples) < max_samples:
+                changed_samples.append({key_field: key, "fields": field_changes})
+
+    missing_keys = sorted(baseline_rows)[:max_samples]
+    missing_key_count = len(baseline_rows)
+    passed = not any(
+        (
+            changed_row_count,
+            missing_key_count,
+            extra_key_count,
+            baseline_duplicate_keys,
+            candidate_duplicate_keys,
+            baseline_fieldnames != candidate_fieldnames,
+        )
+    )
+    return {
+        "applicable": True,
+        "passed": passed,
+        "key_field": key_field,
+        "baseline_path": str(baseline_path),
+        "candidate_path": str(candidate_path),
+        "baseline_row_count": baseline_row_count,
+        "candidate_row_count": candidate_row_count,
+        "baseline_fieldnames": baseline_fieldnames,
+        "candidate_fieldnames": candidate_fieldnames,
+        "changed_row_count": changed_row_count,
+        "changed_field_counts": dict(sorted(changed_field_counts.items())),
+        "changed_samples": sorted(changed_samples, key=lambda item: str(item.get(key_field) or "")),
+        "missing_key_count": missing_key_count,
+        "missing_key_samples": missing_keys,
+        "extra_key_count": extra_key_count,
+        "extra_key_samples": sorted(extra_keys),
+        "baseline_duplicate_key_samples": sorted(baseline_duplicate_keys),
+        "candidate_duplicate_key_samples": sorted(candidate_duplicate_keys),
+        "sample_limit": max_samples,
+    }
+
+
+def _trim_diagnostic_value(value: str, *, max_chars: int = 2000) -> str:
+    text = str(value)
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars] + f"...<truncated {len(text) - max_chars} chars>"
 
 
 def _validate_candidate_step3_summaries(baseline_t06: Path, candidate_t06: Path) -> dict[str, Any]:
@@ -472,6 +801,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--baseline-run-root", type=Path, required=True)
     parser.add_argument("--candidate-run-root", type=Path, required=True)
     parser.add_argument("--out-dir", type=Path, required=True)
+    parser.add_argument(
+        "--diagnostics-only",
+        action="store_true",
+        help="Compare keyed ownership CSV rows without rebuilding full semantic manifests.",
+    )
+    parser.add_argument(
+        "--ownership-boundary-probe-road-id",
+        help="Probe legacy buffer, exact dwithin, and epsilon dwithin membership for one RCSD Road.",
+    )
     return parser
 
 
@@ -480,7 +818,27 @@ def main() -> int:
     out_dir = args.out_dir.resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
     try:
-        summary = run_validation(args)
+        if args.ownership_boundary_probe_road_id:
+            summary = build_ownership_boundary_probe(
+                baseline_run_root=args.baseline_run_root,
+                road_id=args.ownership_boundary_probe_road_id,
+            )
+            output_path = out_dir / "t06_ownership_boundary_probe.json"
+            exit_passed = bool(
+                summary.get("epsilon_restores_legacy_exact_set")
+                and summary.get("epsilon_restores_legacy_top8")
+            )
+        elif args.diagnostics_only:
+            summary = build_business_mismatch_diagnostics(
+                baseline_run_root=args.baseline_run_root,
+                candidate_run_root=args.candidate_run_root,
+            )
+            output_path = out_dir / "t06_business_mismatch_diagnostics.json"
+            exit_passed = bool(summary.get("ownership_csv", {}).get("passed"))
+        else:
+            summary = run_validation(args)
+            output_path = out_dir / "t06_innernet_validation_summary.json"
+            exit_passed = bool(summary.get("overall_passed"))
     except Exception as exc:
         summary = {
             "schema_version": 1,
@@ -489,9 +847,16 @@ def main() -> int:
             "overall_passed": False,
             "error": f"{type(exc).__name__}: {exc}",
         }
-    _write_json(out_dir / "t06_innernet_validation_summary.json", summary)
+        if args.ownership_boundary_probe_road_id:
+            output_path = out_dir / "t06_ownership_boundary_probe.json"
+        elif args.diagnostics_only:
+            output_path = out_dir / "t06_business_mismatch_diagnostics.json"
+        else:
+            output_path = out_dir / "t06_innernet_validation_summary.json"
+        exit_passed = False
+    _write_json(output_path, summary)
     print(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True, allow_nan=False))
-    return 0 if summary.get("overall_passed") else 1
+    return 0 if exit_passed else 1
 
 
 if __name__ == "__main__":

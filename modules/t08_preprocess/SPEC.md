@@ -12,7 +12,7 @@ T08 是项目正式预处理模块，负责 SWSD / RCSD 输入数据的格式转
 - 将 SWSD restriction 与 Laneinfo arrow 显性化，支撑 T09 通行规则恢复。
 - 清理 RCSDNode / RCSDRoad，保证下游 relation 与 Segment 替换输入可解释。
 - 将每个 Patch 下分散的 PointZ 轨迹严格聚合为带 Z 的 `LineStringZ` GPKG，保留断点与来源审计。
-- 将全量 Patch 下的原始 SWSD、RCSD 和融合后 FRCSD 整理为统一目录，并独立发布指定实验 Patch 子集。
+- 将全量 Patch 下的原始 SWSD、RCSD 和融合后 FRCSD 整理为统一目录，并可选独立发布指定实验 Patch 子集。
 
 ## 3. 当前范围
 
@@ -28,7 +28,7 @@ T08 是项目正式预处理模块，负责 SWSD / RCSD 输入数据的格式转
 - Tool8：Laneinfo arrow 显性化。
 - Tool9：RCSD 数据清理。
 - Tool10：Patch 轨迹聚合。
-- Tool11：Patch 级 SWSD / RCSD / FRCSD 数据整理与实验子集发布。
+- Tool11：Patch 级 SWSD / RCSD / FRCSD 全量整理与可选实验子集发布。
 
 ### 3.2 当前非目标
 
@@ -80,7 +80,7 @@ T08 是项目正式预处理模块，负责 SWSD / RCSD 输入数据的格式转
 | `<Patch>/Traj/raw_dat_pose.gpkg` | Tool10 单 GPKG、单 `raw_dat_pose` 图层的 `LineStringZ` 聚合轨迹。 |
 | `<Patch>/Traj/raw_dat_pose_summary_tool10.json` | Tool10 输入、CRS、Z、排序、切段与性能审计。 |
 | `<output-root>/<PatchID>/<SWSD|RCSD|FRCSD>` | Tool11 全量 Patch 统一目录成果。 |
-| `<experiment-output-root>/<PatchID>/<SWSD|RCSD|FRCSD>` | Tool11 指定实验 Patch 独立物理副本。 |
+| `<experiment-output-root>/<PatchID>/<SWSD|RCSD|FRCSD>` | Tool11 可选的指定实验 Patch 独立物理副本。 |
 | `*_tool11.json` | Tool11 成功或失败的逐 Patch、逐文件哈希与性能审计。 |
 
 ## 7. 关键业务步骤
@@ -97,7 +97,7 @@ T08 是项目正式预处理模块，负责 SWSD / RCSD 输入数据的格式转
 | Tool8 | 将 Laneinfo arrow 聚合为 Road 方向级 arrow LineString。 |
 | Tool9 | 基于道路面过滤 RCSDNode 语义组与 RCSDRoad 起终点拓扑。 |
 | Tool10 | 扫描 Patch 的全部 PointZ 轨迹，显式解析 CRS，转换 XY 到 `EPSG:3857`，按排序键与距离/时间/序号断点切分，并聚合写入一个 `LineStringZ` 图层。 |
-| Tool11 | 扫描原始根下全部数字 Patch，递归复制 SWSD/RCSD，FRCSD 只复制三个白名单 GeoJSON；全部哈希通过后发布全量根和实验子集根。 |
+| Tool11 | 扫描原始根下全部数字 Patch，递归复制 SWSD/RCSD，FRCSD 只复制三个白名单 GeoJSON；全部哈希通过后发布全量根，只有显式请求时才同步发布实验子集根。 |
 
 ## 8. 什么是对
 
@@ -108,7 +108,7 @@ T08 是项目正式预处理模块，负责 SWSD / RCSD 输入数据的格式转
 - Tool7/Tool8 保留原始业务字段并显性化几何证据。
 - Tool9 删除 RCSD 语义组必须按组内所有 node 是否被道路面覆盖 / 包含判定。
 - Tool10 任一点缺 Z、Z 非有限、几何非法或 CRS 无法确认时整批失败；Z 不补零、不参与 XY 投影。合法点因断点形成单点段时不写入 LineString 图层，但必须逐点显式审计，禁止静默丢弃。
-- Tool11 不解析或改变业务数据；源、主输出和实验输出逐文件 SHA-256 必须一致。任一 Patch 缺目录/白名单文件、出现链接/特殊文件或哈希不一致时整批失败，不发布部分正式根。
+- Tool11 不解析或改变业务数据；源与主输出逐文件 SHA-256 必须一致，启用实验输出时第三份哈希也必须一致。任一 Patch 缺目录/白名单文件、出现链接/特殊文件或哈希不一致时整批失败，不发布部分正式根。
 
 ## 9. 什么是错
 
@@ -118,7 +118,7 @@ T08 是项目正式预处理模块，负责 SWSD / RCSD 输入数据的格式转
 - 把 restriction / arrow 显性化结果直接解释成 T09 最终通行规则。
 - 在 RCSD 清理中只按单 node 保留而破坏 `mainnodeid` 语义组。
 - 在 Tool10 中跳过坏轨迹、用 `0` 补 Z、按经纬度直接应用米制距离阈值，或静默丢弃/跨断点拼接单点段。
-- 在 Tool11 中跟随符号链接、只按文件大小判断一致、复制 FRCSD 非白名单文件、缺失实验 Patch 仍发布，或在校验完成前删除已有输出。
+- 在 Tool11 中跟随符号链接、只按文件大小判断一致、复制 FRCSD 非白名单文件、启用实验输出时缺失实验 Patch 仍发布，或在校验完成前删除已有输出。
 
 ## 10. 当前治理缺口
 

@@ -237,11 +237,11 @@
   - `SD_City/target_level1/** -> <output-root>/<PatchID>/SWSD/**`，递归全量复制并保留空目录；
   - `SD_City/base_origin/** -> <output-root>/<PatchID>/RCSD/**`，递归全量复制并保留空目录；
   - `rc_sw_gd_merge/RCSDNode.geojson / RCSDRoad.geojson / RCSDRoadNextRoad.geojson -> <output-root>/<PatchID>/FRCSD/`，只复制这三个根级白名单文件。
-- 默认实验 Patch：`5524185996921171 / 5724833136255764 / 5524185996921755 / 5724833136255765 / 5724833136255763 / 5524185996921337`；通过重复 `experiment_patch_ids / --experiment-patch-id` 可整体替换默认列表。
-- 实验输出：只把实验列表 Patch 物理复制到 `<experiment-output-root>/<PatchID>/<SWSD|RCSD|FRCSD>`；实验文件从已验证的主暂存成果复制，源、主输出和实验输出 SHA-256 必须一致。
-- 输入约束：必需目录和三个 FRCSD 文件缺失、实验 Patch 不存在、出现符号链接/特殊文件时整批失败；必须检查完全部 Patch 后一次报告所有预检错误。
-- 路径边界：源根、主输出根和实验输出根必须两两互不重叠；不允许相同路径或父子包含关系。
-- 发布边界：两个输出根分别在自身父目录暂存；全部目录、文件、字节和哈希校验成功后才发布。默认拒绝已有根；显式 `overwrite / --overwrite` 时先备份旧根，任一步发布失败都必须回滚。
+- 实验模式：`experiment_output_root / --experiment-output-root` 缺省时关闭实验输出，不读取、不校验实验 Patch 列表；显式提供实验根时，默认实验 Patch 为 `5524185996921171 / 5724833136255764 / 5524185996921755 / 5724833136255765 / 5724833136255763 / 5524185996921337`，可通过重复 `experiment_patch_ids / --experiment-patch-id` 整体替换默认列表。
+- 实验输出：启用时只把实验列表 Patch 物理复制到 `<experiment-output-root>/<PatchID>/<SWSD|RCSD|FRCSD>`；实验文件从已验证的主暂存成果复制，源、主输出和实验输出 SHA-256 必须一致。
+- 输入约束：必需目录和三个 FRCSD 文件缺失、出现符号链接/特殊文件时整批失败；启用实验模式后，实验 Patch 不存在也整批失败。必须检查完全部 Patch 后一次报告所有预检错误。
+- 路径边界：源根、主输出根和已启用的实验输出根必须两两互不重叠；不允许相同路径或父子包含关系。
+- 发布边界：所有已请求输出根分别在自身父目录暂存；全部目录、文件、字节和哈希校验成功后才发布。默认拒绝已有根；显式 `overwrite / --overwrite` 时先备份旧根，任一步发布失败都必须回滚。
 - 内容语义：Tool11 不解析或转换 CRS，不修改字段、几何或拓扑；逐字节哈希一致是内容不变性的正式证明。
 - summary：成功和业务失败均写位于主输出根同级且文件名以 `_tool11.json` 结尾的 summary；记录全部路径、参数、逐 Patch/逐文件大小与哈希、空目录、忽略项、错误、发布状态、GIS 不变性、环境和性能。
 - 输出命名：Tool11 业务复制文件保留原名，是已登记命名特例；summary 仍以 `_tool11` 结尾。
@@ -373,9 +373,10 @@ Tool11：
 ```bash
 .venv/bin/python scripts/t08_tool11_patch_data_organization.py \
   --source-root /mnt/d/TestData/POC_Data/source_patches \
-  --output-root /mnt/d/TestData/POC_Data/organized_patches \
-  --experiment-output-root /mnt/d/TestData/POC_Data/experiment_patches
+  --output-root /mnt/d/TestData/POC_Data/organized_patches
 ```
+
+需要实验子集时，额外传入 `--experiment-output-root`；不传时 artifacts JSON 中 `experiment_output_root=null`。
 
 Tool11 内网 WSL 固定场景入口：
 
@@ -383,7 +384,7 @@ Tool11 内网 WSL 固定场景入口：
 bash scripts/t08_tool11_run_innernet.sh
 ```
 
-该封装入口把用户确认的 `D:\TestData\数据整理\20260715\20260715\rcsd_tar_gz`、`D:\TestData\POC_QA\Patch_all`、`D:\TestData\POC_QA\Patch_test` 作为默认根，使用 `wslpath` 转换 Windows 路径，固定传入 6 个实验 Patch，并把完整控制台输出写入持久日志；实际整理仍只调用正式 Python 入口。
+该封装入口把用户确认的 `D:\TestData\数据整理\20260715\20260715\rcsd_tar_gz` 和 `D:\TestData\POC_QA\Patch_all` 作为默认根，默认只整理全量 Patch，不校验或生成实验 Patch；显式设置 `T08_TOOL11_EXPERIMENT_OUTPUT_ROOT` 才启用固定 6 Patch 实验模式。脚本使用 `wslpath` 转换 Windows 路径，并把完整控制台输出写入持久日志；实际整理仍只调用正式 Python 入口。
 
 ## 3. Tool1 Params
 
@@ -532,14 +533,14 @@ bash scripts/t08_tool11_run_innernet.sh
 
 - `--source-root`：必填，直接包含 `<PatchID>` 子目录的原始数据根。
 - `--output-root`：必填，全量整理输出根。
-- `--experiment-output-root`：必填，实验 Patch 独立输出根。
-- `--experiment-patch-id`：可重复；出现任意一次时整体替换默认 6 Patch 列表。
+- `--experiment-output-root`：可选，实验 Patch 独立输出根；缺省时为全量-only，不生成实验根。
+- `--experiment-patch-id`：可重复；仅允许与 `--experiment-output-root` 同时使用，出现任意一次时整体替换默认 6 Patch 列表。
 - `--summary-output`：可选，文件名必须以 `_tool11.json` 结尾；默认在主输出根同级生成带 UTC 时间与 run token 的唯一文件名。
-- `--overwrite`：可选；未提供时任一正式输出根或显式 summary 已存在即失败；提供时仅在新成果全部校验通过后整体替换并支持发布失败回滚。
+- `--overwrite`：可选；未提供时任一已请求正式输出根或显式 summary 已存在即失败；提供时仅在新成果全部校验通过后整体替换并支持发布失败回滚。
 - `--progress-interval-files`：可选，默认每处理 `100` 个文件输出一次进度，必须大于 `0`。
 - 脚本成功返回 `0` 并在 stdout 输出 artifacts JSON；参数、预检、复制、校验或发布失败返回 `2`，进度和错误写 stderr。
-- 内网 WSL 封装入口默认使用已确认的三个 Windows 根路径和 6 个实验 Patch；`T08_TOOL11_SOURCE_ROOT / T08_TOOL11_OUTPUT_ROOT / T08_TOOL11_EXPERIMENT_OUTPUT_ROOT` 可覆盖三个根，`T08_TOOL11_REPO_ROOT / T08_TOOL11_PYTHON / T08_TOOL11_SUMMARY_OUTPUT / T08_TOOL11_LOG_FILE` 可覆盖运行与审计位置。
-- 内网 WSL 封装入口默认 `OVERWRITE=0`，只有显式 `OVERWRITE=1` 才向正式 Python 入口传入 `--overwrite`；`PROGRESS_INTERVAL_FILES` 默认 `100`。封装入口必须保留正式入口退出码，并在日志和结束信息中给出两个输出根、summary 与控制台日志路径。
+- 内网 WSL 封装入口默认使用已确认的原始根和全量输出根，处于全量-only 模式；`T08_TOOL11_SOURCE_ROOT / T08_TOOL11_OUTPUT_ROOT` 可覆盖两个默认根，显式设置 `T08_TOOL11_EXPERIMENT_OUTPUT_ROOT` 才启用固定 6 Patch 实验模式。`T08_TOOL11_REPO_ROOT / T08_TOOL11_PYTHON / T08_TOOL11_SUMMARY_OUTPUT / T08_TOOL11_LOG_FILE` 可覆盖运行与审计位置。
+- 内网 WSL 封装入口默认 `OVERWRITE=0`，只有显式 `OVERWRITE=1` 才向正式 Python 入口传入 `--overwrite`；`PROGRESS_INTERVAL_FILES` 默认 `100`。封装入口必须保留正式入口退出码，并在日志和结束信息中给出已请求输出根、summary 与控制台日志路径。
 
 ## 14. Acceptance
 
@@ -576,9 +577,10 @@ bash scripts/t08_tool11_run_innernet.sh
 31. summary 可追溯输入、输出、参数、字段解析、CRS、Z、断点、计数、运行环境与性能。
 32. Tool10 内网批处理入口支持任意数量 Patch 位置参数，不得内置具体 Patch 目录；必须逐 Patch 留存日志并在结束时汇总成功/失败。
 33. Tool11 主输出 Patch 集必须等于源根全部数字 Patch 集；SWSD/RCSD 相对文件与空目录集合保持，FRCSD 文件集合精确等于三个白名单文件。
-34. Tool11 实验根 Patch 集必须精确等于默认或显式实验 Patch 列表，缺失任一实验 Patch 时整批失败。
+34. Tool11 缺省实验根时必须只发布全量根、实验计数为 `0` 且不得校验默认实验 Patch；显式启用实验根后，其 Patch 集必须精确等于默认或显式实验 Patch 列表，缺失任一实验 Patch 时整批失败。
 35. Tool11 每个文件的源、主输出和可选实验输出 SHA-256 必须一致；文件与字节计数必须守恒。
-36. Tool11 默认拒绝覆盖；显式覆盖也必须在两个新根全部校验成功后发布，失败不得破坏已有正式根或留下部分新根。
+36. Tool11 默认拒绝覆盖；显式覆盖也必须在所有已请求新根全部校验成功后发布，失败不得破坏已有正式根或留下部分新根。
 37. Tool11 成功和业务失败 summary 均以 `_tool11.json` 结尾，并记录 CRS 未转换、无拓扑/几何操作、`silent_fix_applied=false`、逐文件哈希和性能。
 38. Tool11 不跟随符号链接，不复制特殊文件，不修改源目录，不复制 FRCSD 白名单以外的内容。
-39. Tool11 内网 WSL 封装入口必须将已确认的三个 Windows 路径作为可覆盖默认值，固定使用 6 个实验 Patch，自动转换路径并保留控制台日志；默认不得隐式覆盖已有成果。
+39. Tool11 内网 WSL 封装入口必须将已确认的原始根和全量输出根作为可覆盖默认值，默认运行全量-only，自动转换路径并保留控制台日志；默认不得隐式覆盖已有成果。
+40. `experiment_patch_ids / --experiment-patch-id` 在没有实验输出根时必须显式失败，不能静默忽略调用者输入。

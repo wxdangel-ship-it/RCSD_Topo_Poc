@@ -4,7 +4,6 @@ set -Eeuo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 DEFAULT_SOURCE_ROOT='D:\TestData\数据整理\20260715\20260715\rcsd_tar_gz'
 DEFAULT_OUTPUT_ROOT='D:\TestData\POC_QA\Patch_all'
-DEFAULT_EXPERIMENT_OUTPUT_ROOT='D:\TestData\POC_QA\Patch_test'
 EXPERIMENT_PATCH_IDS=(
   5524185996921171
   5724833136255764
@@ -22,21 +21,24 @@ Usage:
 Default innernet paths:
   source:     D:\TestData\数据整理\20260715\20260715\rcsd_tar_gz
   all output: D:\TestData\POC_QA\Patch_all
-  experiment: D:\TestData\POC_QA\Patch_test
 
-The experiment output is pinned to these PatchIDs:
+Default mode:
+  Full Patch organization only. No experiment output is created or validated.
+
+Set T08_TOOL11_EXPERIMENT_OUTPUT_ROOT to explicitly enable the optional
+experiment output with these pinned PatchIDs:
   5524185996921171 5724833136255764 5524185996921755
   5724833136255765 5724833136255763 5524185996921337
 
 Optional environment overrides:
   T08_TOOL11_SOURCE_ROOT             Source root; Windows or WSL path.
   T08_TOOL11_OUTPUT_ROOT             Full Patch output root; Windows or WSL path.
-  T08_TOOL11_EXPERIMENT_OUTPUT_ROOT  Experiment output root; Windows or WSL path.
+  T08_TOOL11_EXPERIMENT_OUTPUT_ROOT  Optional experiment output root; unset by default.
   T08_TOOL11_REPO_ROOT               Repository root; defaults to the script parent.
   T08_TOOL11_PYTHON                  Python; defaults to <repo>/.venv/bin/python.
   T08_TOOL11_SUMMARY_OUTPUT          Explicit _tool11.json audit path.
   T08_TOOL11_LOG_FILE                Persistent console log path.
-  OVERWRITE                          0 by default; set to 1 to replace both output roots.
+  OVERWRITE                          0 by default; set to 1 to replace requested output roots.
   PROGRESS_INTERVAL_FILES            Progress interval; defaults to 100 files.
 EOF
 }
@@ -83,12 +85,15 @@ to_windows_path() {
 repo_root_raw="${T08_TOOL11_REPO_ROOT:-$(cd -- "$SCRIPT_DIR/.." && pwd)}"
 source_root_raw="${T08_TOOL11_SOURCE_ROOT:-$DEFAULT_SOURCE_ROOT}"
 output_root_raw="${T08_TOOL11_OUTPUT_ROOT:-$DEFAULT_OUTPUT_ROOT}"
-experiment_output_root_raw="${T08_TOOL11_EXPERIMENT_OUTPUT_ROOT:-$DEFAULT_EXPERIMENT_OUTPUT_ROOT}"
+experiment_output_root_raw="${T08_TOOL11_EXPERIMENT_OUTPUT_ROOT:-}"
 
 repo_root="$(to_wsl_path "$repo_root_raw")"
 source_root="$(to_wsl_path "$source_root_raw")"
 output_root="$(to_wsl_path "$output_root_raw")"
-experiment_output_root="$(to_wsl_path "$experiment_output_root_raw")"
+experiment_output_root=""
+if [[ -n "$experiment_output_root_raw" ]]; then
+  experiment_output_root="$(to_wsl_path "$experiment_output_root_raw")"
+fi
 python_bin_raw="${T08_TOOL11_PYTHON:-$repo_root/.venv/bin/python}"
 python_bin="$(to_wsl_path "$python_bin_raw")"
 tool="$repo_root/scripts/t08_tool11_patch_data_organization.py"
@@ -118,7 +123,11 @@ on_exit() {
     echo "[FAILED] T08 Tool11 innernet organization exited with code $exit_code."
   fi
   echo "[RESULT] Full Patch root: $(to_windows_path "$output_root")"
-  echo "[RESULT] Experiment root: $(to_windows_path "$experiment_output_root")"
+  if [[ -n "$experiment_output_root" ]]; then
+    echo "[RESULT] Experiment root: $(to_windows_path "$experiment_output_root")"
+  else
+    echo "[RESULT] Experiment output: disabled"
+  fi
   echo "[RESULT] Audit summary: $(to_windows_path "$summary_output")"
   echo "[RESULT] Console log: $(to_windows_path "$log_file")"
 }
@@ -154,8 +163,12 @@ echo "[CHECK] Repository: $repo_root"
 echo "[CHECK] Python: $python_bin"
 echo "[CHECK] Source: $source_root"
 echo "[CHECK] Full output: $output_root"
-echo "[CHECK] Experiment output: $experiment_output_root"
-echo "[CHECK] Experiment Patch count: ${#EXPERIMENT_PATCH_IDS[@]}"
+if [[ -n "$experiment_output_root" ]]; then
+  echo "[CHECK] Experiment output: $experiment_output_root"
+  echo "[CHECK] Experiment Patch count: ${#EXPERIMENT_PATCH_IDS[@]}"
+else
+  echo "[CHECK] Experiment output: disabled (full-only mode)"
+fi
 echo "[CHECK] Overwrite: $overwrite"
 echo "[CHECK] Audit summary: $summary_output"
 echo "[CHECK] Console log: $log_file"
@@ -167,13 +180,15 @@ args=(
   "$tool"
   --source-root "$source_root"
   --output-root "$output_root"
-  --experiment-output-root "$experiment_output_root"
   --summary-output "$summary_output"
   --progress-interval-files "$progress_interval_files"
 )
-for patch_id in "${EXPERIMENT_PATCH_IDS[@]}"; do
-  args+=(--experiment-patch-id "$patch_id")
-done
+if [[ -n "$experiment_output_root" ]]; then
+  args+=(--experiment-output-root "$experiment_output_root")
+  for patch_id in "${EXPERIMENT_PATCH_IDS[@]}"; do
+    args+=(--experiment-patch-id "$patch_id")
+  done
+fi
 if [[ "$overwrite" == "1" ]]; then
   args+=(--overwrite)
 fi
@@ -181,8 +196,12 @@ fi
 cd "$repo_root"
 "${args[@]}"
 
-if [[ ! -d "$output_root" || ! -d "$experiment_output_root" ]]; then
-  echo "[VERIFY] Tool11 returned success but an output root is missing." >&2
+if [[ ! -d "$output_root" ]]; then
+  echo "[VERIFY] Tool11 returned success but the full output root is missing." >&2
+  exit 1
+fi
+if [[ -n "$experiment_output_root" && ! -d "$experiment_output_root" ]]; then
+  echo "[VERIFY] Tool11 returned success but the experiment output root is missing." >&2
   exit 1
 fi
 if [[ ! -f "$summary_output" ]]; then
@@ -190,4 +209,4 @@ if [[ ! -f "$summary_output" ]]; then
   exit 1
 fi
 
-echo "[VERIFY] Both output roots and the Tool11 audit summary exist."
+echo "[VERIFY] Requested output roots and the Tool11 audit summary exist."

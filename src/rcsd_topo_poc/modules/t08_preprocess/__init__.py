@@ -40,14 +40,25 @@ from rcsd_topo_poc.modules.t08_preprocess.trajectory_aggregation import (
     T08TrajectoryAggregationArtifacts,
     run_t08_trajectory_aggregation,
 )
+from rcsd_topo_poc.modules.t08_preprocess.patch_data_organization import (
+    DEFAULT_EXPERIMENT_PATCH_IDS,
+    FRCSD_FILE_NAMES,
+    T08PatchDataOrganizationArtifacts,
+    T08PatchDataOrganizationError,
+    run_t08_patch_data_organization,
+)
 
 __all__ = [
     "ShpToGpkgResult",
+    "DEFAULT_EXPERIMENT_PATCH_IDS",
+    "FRCSD_FILE_NAMES",
     "T08ComplexJunctionPreprocessArtifacts",
     "T08JunctionTypeRepairArtifacts",
     "T08LaneArrowArtifacts",
     "T08NodesTypeAggregationArtifacts",
     "T08NodesTypeQcArtifacts",
+    "T08PatchDataOrganizationArtifacts",
+    "T08PatchDataOrganizationError",
     "T08RcsdCleaningArtifacts",
     "T08RoadPreprocessArtifacts",
     "T08TrafficRestrictionArtifacts",
@@ -58,6 +69,7 @@ __all__ = [
     "run_t08_lane_arrow",
     "run_t08_nodes_type_aggregation",
     "run_t08_nodes_type_qc",
+    "run_t08_patch_data_organization",
     "run_t08_rcsd_cleaning",
     "run_t08_road_preprocess",
     "run_t08_traffic_restriction",

@@ -6,7 +6,7 @@
 
 ## 0. 成果输出命名约束
 
-除输入文件本身外，T08 成果输出文件名默认必须在扩展名前以 `_toolX` 结尾，`X` 为工具编号。例如 Tool2 的事件 Road 输出为 `event_road_0a_tool2.gpkg`。Tool1 是格式转换特例：转换成果使用输入文件同 stem、不同格式后缀；Tool10 是用户指定的 Patch 落盘特例：聚合成果固定为 `<Patch>/Traj/raw_dat_pose.gpkg`。Tool1 / Tool10 summary 仍分别按 `_tool1 / _tool10` 命名。
+除输入文件本身外，T08 成果输出文件名默认必须在扩展名前以 `_toolX` 结尾，`X` 为工具编号。例如 Tool2 的事件 Road 输出为 `event_road_0a_tool2.gpkg`。当前登记三个特例：Tool1 转换成果使用输入文件同 stem、不同格式后缀；Tool10 聚合成果固定为 `<Patch>/Traj/raw_dat_pose.gpkg`；Tool11 整理后的 SWSD/RCSD/FRCSD 业务文件保持源文件名。三个工具的 summary 仍分别按 `_tool1 / _tool10 / _tool11` 命名。
 
 ## 1. 当前工具
 
@@ -230,6 +230,22 @@
 - 写入边界：先完成全部输入校验，再写同目录临时 GPKG / summary，成功后替换正式成果；默认拒绝已有输出，只有 `overwrite=True / --overwrite` 才允许替换。任何失败必须清理临时文件且保留已有正式成果。
 - summary 必须记录输入文件及大小、CRS 与来源、点数、Z 范围、排序来源、断点原因、被排除单点段明细、点数守恒、参数、输出、运行环境、阶段耗时和 points/s。
 
+### Tool11：Patch 级数据整理
+
+- 输入根：`<source-root>`，全部名称为数字的直接子目录按 PatchID 处理；非 Patch 文件/目录不复制并写根级忽略审计。
+- 每个 Patch 输入映射：
+  - `SD_City/target_level1/** -> <output-root>/<PatchID>/SWSD/**`，递归全量复制并保留空目录；
+  - `SD_City/base_origin/** -> <output-root>/<PatchID>/RCSD/**`，递归全量复制并保留空目录；
+  - `rc_sw_gd_merge/RCSDNode.geojson / RCSDRoad.geojson / RCSDRoadNextRoad.geojson -> <output-root>/<PatchID>/FRCSD/`，只复制这三个根级白名单文件。
+- 默认实验 Patch：`5524185996921171 / 5724833136255764 / 5524185996921755 / 5724833136255765 / 5724833136255763 / 5524185996921337`；通过重复 `experiment_patch_ids / --experiment-patch-id` 可整体替换默认列表。
+- 实验输出：只把实验列表 Patch 物理复制到 `<experiment-output-root>/<PatchID>/<SWSD|RCSD|FRCSD>`；实验文件从已验证的主暂存成果复制，源、主输出和实验输出 SHA-256 必须一致。
+- 输入约束：必需目录和三个 FRCSD 文件缺失、实验 Patch 不存在、出现符号链接/特殊文件时整批失败；必须检查完全部 Patch 后一次报告所有预检错误。
+- 路径边界：源根、主输出根和实验输出根必须两两互不重叠；不允许相同路径或父子包含关系。
+- 发布边界：两个输出根分别在自身父目录暂存；全部目录、文件、字节和哈希校验成功后才发布。默认拒绝已有根；显式 `overwrite / --overwrite` 时先备份旧根，任一步发布失败都必须回滚。
+- 内容语义：Tool11 不解析或转换 CRS，不修改字段、几何或拓扑；逐字节哈希一致是内容不变性的正式证明。
+- summary：成功和业务失败均写位于主输出根同级且文件名以 `_tool11.json` 结尾的 summary；记录全部路径、参数、逐 Patch/逐文件大小与哈希、空目录、忽略项、错误、发布状态、GIS 不变性、环境和性能。
+- 输出命名：Tool11 业务复制文件保留原名，是已登记命名特例；summary 仍以 `_tool11` 结尾。
+
 ## 2. EntryPoints
 
 运行前先在 repo root 执行：
@@ -351,6 +367,15 @@ bash scripts/t08_tool10_run_patches_innernet.sh \
 ```
 
 批处理脚本不内置 Patch 目录；所有 Patch 均从位置参数读取。参数可以是 WSL 路径，也可以是在 WSL shell 中以单引号包裹的 Windows 路径。脚本逐 Patch 调用 `t08_tool10_trajectory_aggregation.py`，单 Patch 失败不阻止其余 Patch，最终以非零退出码和汇总清单报告整批失败。
+
+Tool11：
+
+```bash
+.venv/bin/python scripts/t08_tool11_patch_data_organization.py \
+  --source-root /mnt/d/TestData/POC_Data/source_patches \
+  --output-root /mnt/d/TestData/POC_Data/organized_patches \
+  --experiment-output-root /mnt/d/TestData/POC_Data/experiment_patches
+```
 
 ## 3. Tool1 Params
 
@@ -495,7 +520,18 @@ bash scripts/t08_tool10_run_patches_innernet.sh \
 - `scripts/t08_tool10_run_patches_innernet.sh PATCH_DIR [PATCH_DIR ...]`：内网多 Patch 批处理；Patch 目录全部通过位置参数传入，禁止写死业务目录。
 - 批处理环境变量：`OVERWRITE=1` 显式覆盖已有结果；`DEFAULT_CRS / MAX_DISTANCE_GAP_M / MAX_TIME_GAP_S / MAX_SEQ_GAP / PROGRESS_INTERVAL` 覆盖同名 Tool10 参数；`PYTHON / REPO_ROOT / LOG_ROOT` 可显式覆盖运行环境与日志根目录。
 
-## 13. Acceptance
+## 13. Tool11 Params
+
+- `--source-root`：必填，直接包含 `<PatchID>` 子目录的原始数据根。
+- `--output-root`：必填，全量整理输出根。
+- `--experiment-output-root`：必填，实验 Patch 独立输出根。
+- `--experiment-patch-id`：可重复；出现任意一次时整体替换默认 6 Patch 列表。
+- `--summary-output`：可选，文件名必须以 `_tool11.json` 结尾；默认在主输出根同级生成带 UTC 时间与 run token 的唯一文件名。
+- `--overwrite`：可选；未提供时任一正式输出根或显式 summary 已存在即失败；提供时仅在新成果全部校验通过后整体替换并支持发布失败回滚。
+- `--progress-interval-files`：可选，默认每处理 `100` 个文件输出一次进度，必须大于 `0`。
+- 脚本成功返回 `0` 并在 stdout 输出 artifacts JSON；参数、预检、复制、校验或发布失败返回 `2`，进度和错误写 stderr。
+
+## 14. Acceptance
 
 1. Tool1 支持 SHP / GeoJSON 转 GPKG 与 GPKG 转 GeoJSON，转换成果均为输入目录下同 stem、不同格式后缀的目标格式文件；summary 仍按 `_tool1` 命名。
 2. Tool2 只接受 GPKG 输入。
@@ -526,6 +562,12 @@ bash scripts/t08_tool10_run_patches_innernet.sh \
 27. Tool10 必须先投影 XY 再应用米制距离阈值，并验证 `output_point_count + discarded_single_point_count = input_point_count`；不得静默跳过文件、要素或点。
 28. Tool10 默认拒绝覆盖；显式覆盖时任何校验或临时写入失败不得替换已有正式成果。
 29. 所有路径均由参数提供或按 contract 从 `--patch-dir` 确定，不写死内网目录。
-30. 除 Tool1 转换成果与 Tool10 `Traj/raw_dat_pose.gpkg` 两个已登记特例外，所有 T08 成果输出文件名均以 `_toolX` 结尾。
+30. 除 Tool1 转换成果、Tool10 `Traj/raw_dat_pose.gpkg` 与 Tool11 保持原名的业务复制文件三个已登记特例外，所有 T08 成果输出文件名均以 `_toolX` 结尾。
 31. summary 可追溯输入、输出、参数、字段解析、CRS、Z、断点、计数、运行环境与性能。
 32. Tool10 内网批处理入口支持任意数量 Patch 位置参数，不得内置具体 Patch 目录；必须逐 Patch 留存日志并在结束时汇总成功/失败。
+33. Tool11 主输出 Patch 集必须等于源根全部数字 Patch 集；SWSD/RCSD 相对文件与空目录集合保持，FRCSD 文件集合精确等于三个白名单文件。
+34. Tool11 实验根 Patch 集必须精确等于默认或显式实验 Patch 列表，缺失任一实验 Patch 时整批失败。
+35. Tool11 每个文件的源、主输出和可选实验输出 SHA-256 必须一致；文件与字节计数必须守恒。
+36. Tool11 默认拒绝覆盖；显式覆盖也必须在两个新根全部校验成功后发布，失败不得破坏已有正式根或留下部分新根。
+37. Tool11 成功和业务失败 summary 均以 `_tool11.json` 结尾，并记录 CRS 未转换、无拓扑/几何操作、`silent_fix_applied=false`、逐文件哈希和性能。
+38. Tool11 不跟随符号链接，不复制特殊文件，不修改源目录，不复制 FRCSD 白名单以外的内容。

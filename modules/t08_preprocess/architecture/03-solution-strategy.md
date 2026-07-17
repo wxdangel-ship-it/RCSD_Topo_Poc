@@ -89,6 +89,14 @@ Tool10 读取一个具体 Patch 的 `Traj/*/raw_dat_pose.geojson`。每个输入
 
 全部输入通过后，所有轨迹段作为 `LineStringZ` 要素写入一个 `<Patch>/Traj/raw_dat_pose.gpkg` 的 `raw_dat_pose` 图层，并写 `raw_dat_pose_summary_tool10.json`。临时文件成功后才替换正式成果；默认拒绝覆盖，显式 `overwrite` 才允许更新。
 
+## Tool11
+
+Tool11 扫描原始根下全部数字 Patch 目录，并先完成全量预检：`SD_City/target_level1`、`SD_City/base_origin`、`rc_sw_gd_merge` 以及三个 FRCSD 白名单文件必须存在；链接和特殊文件必须显式失败。预检不因单个 Patch 失败而提前停止，summary 一次记录全部 Patch 缺失项。
+
+SWSD 和 RCSD 分别递归复制到 `<output-root>/<PatchID>/SWSD` 与 `RCSD`，保留相对目录、文件名和空目录；FRCSD 只复制 `RCSDNode.geojson / RCSDRoad.geojson / RCSDRoadNextRoad.geojson`。每个文件复制后分别计算源与主输出 SHA-256；实验 Patch 再从已验证主暂存成果物理复制到独立实验暂存根，并核对第三份 SHA-256。
+
+两个输出根均在各自父目录暂存。只有 Patch 集、实验 Patch 集、目录、文件、字节和哈希全部通过后才发布；默认拒绝已有根，显式 `overwrite` 时先备份旧根，任一步提交失败都回滚。Tool11 不解析 CRS、不执行空间或拓扑运算，GIS 语义通过逐字节一致性证明。
+
 ## 输出策略
 
 - Tool1 转换成果输出为同目录同 stem、不同格式后缀的目标格式文件，summary 仍按 `_tool1` 命名。
@@ -101,4 +109,5 @@ Tool10 读取一个具体 Patch 的 `Traj/*/raw_dat_pose.geojson`。每个输入
 - Tool8 输出追加 `_tool8` 的 Road 方向级显性 arrow GPKG 与 summary，不输出或改写 Laneinfo/Nodes/Roads。
 - Tool9 输出追加 `_tool9` 的清理后 RCSDNode / RCSDRoad GPKG 与 summary，不输出或改写输入道路面。
 - Tool10 输出用户指定命名特例 `Traj/raw_dat_pose.gpkg` 与 `_tool10` summary；所有轨迹段聚合在一个 GPKG 的一个图层中。
+- Tool11 输出保持原名的 `<PatchID>/<SWSD|RCSD|FRCSD>` 业务目录与 `_tool11` summary；summary 位于主输出根同级，确保预检失败也可审计。
 - 所有路径由命令参数提供。

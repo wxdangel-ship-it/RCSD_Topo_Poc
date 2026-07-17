@@ -8,7 +8,7 @@
 - `directories`: 要创建的 SWSD/RCSD/FRCSD 相对目录集合，包含空目录。
 - `ignored_frcsd_entries`: `rc_sw_gd_merge` 中非白名单条目。
 - `errors`: 本 Patch 预检错误。
-- `is_experiment`: 是否属于实验列表。
+- `is_experiment`: 是否属于已启用实验列表；全量-only 时始终为 `false`。
 
 ## PatchFilePlan
 
@@ -20,9 +20,9 @@
 ## FileAudit
 
 - `patch_id / role / relative_path`
-- `source_path / main_output_path / experiment_output_path`
+- `source_path / main_output_path / experiment_output_path`，实验未启用时后者为 `null`。
 - `size_bytes`
-- `source_sha256 / main_output_sha256 / experiment_output_sha256`
+- `source_sha256 / main_output_sha256 / experiment_output_sha256`，实验未启用时后者为 `null`。
 - `source_stable_during_copy`
 - `verified`
 
@@ -36,6 +36,8 @@
 - `gis_audit`
 - `performance`
 - `environment`
+
+`outputs.experiment_output_root` 与 `parameters.experiment_enabled` 明确区分全量-only 和实验模式；全量-only 时实验根为 `null`、实验计数为 `0`。
 
 ## 发布状态
 

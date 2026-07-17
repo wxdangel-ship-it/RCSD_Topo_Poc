@@ -101,6 +101,7 @@ def test_tool11_organizes_all_patches_and_default_experiment_subset(tmp_path: Pa
     }
     assert summary["performance"]["bytes_per_second"] >= 0
     assert artifacts.summary_json.stem.endswith("_tool11")
+    assert artifacts.experiment_output_root == experiment_root.resolve()
     assert all(row["verified"] for row in summary["file_audit"])
     experiment_rows = [row for row in summary["file_audit"] if row["experiment_output_path"]]
     assert experiment_rows
@@ -110,6 +111,51 @@ def test_tool11_organizes_all_patches_and_default_experiment_subset(tmp_path: Pa
         == row["experiment_output_sha256"]
         for row in experiment_rows
     )
+
+
+def test_tool11_organizes_all_patches_without_experiment_output(tmp_path: Path) -> None:
+    source_root = tmp_path / "source"
+    for patch_id in ("100", "200"):
+        _make_patch(source_root, patch_id)
+    output_root = tmp_path / "organized"
+
+    artifacts = run_t08_patch_data_organization(
+        source_root=source_root,
+        output_root=output_root,
+        progress_interval_files=1,
+    )
+
+    assert {path.name for path in output_root.iterdir()} == {"100", "200"}
+    assert artifacts.experiment_output_root is None
+    summary = json.loads(artifacts.summary_json.read_text(encoding="utf-8"))
+    assert summary["status"] == "passed"
+    assert summary["outputs"]["experiment_output_root"] is None
+    assert summary["parameters"]["experiment_enabled"] is False
+    assert summary["parameters"]["experiment_patch_ids"] == []
+    assert summary["counts"]["experiment_patch_count"] == 0
+    assert summary["counts"]["experiment_output_file_count"] == 0
+    assert summary["publication"]["main_output_published"] is True
+    assert summary["publication"]["experiment_output_requested"] is False
+    assert summary["publication"]["experiment_output_published"] is False
+    assert summary["integrity_audit"]["experiment_output_requested"] is False
+    assert summary["integrity_audit"]["experiment_file_set_exact"] is None
+    assert summary["integrity_audit"]["experiment_directory_set_exact"] is None
+    assert all(row["experiment_output_path"] is None for row in summary["file_audit"])
+
+
+def test_tool11_rejects_experiment_patch_ids_without_experiment_root(tmp_path: Path) -> None:
+    source_root = tmp_path / "source"
+    _make_patch(source_root, "100")
+
+    with pytest.raises(
+        T08PatchDataOrganizationError,
+        match="experiment_patch_ids requires experiment_output_root",
+    ):
+        run_t08_patch_data_organization(
+            source_root=source_root,
+            output_root=tmp_path / "organized",
+            experiment_patch_ids=("100",),
+        )
 
 
 def test_tool11_collects_all_patch_preflight_errors_without_partial_outputs(tmp_path: Path) -> None:
@@ -344,7 +390,7 @@ def test_tool11_script_is_parameterized_and_reports_failure_summary(tmp_path: Pa
     assert "--experiment-output-root" in help_result.stdout
 
 
-def test_tool11_innernet_wrapper_pins_paths_and_experiment_patch_ids() -> None:
+def test_tool11_innernet_wrapper_defaults_to_full_only() -> None:
     repo_root = Path(__file__).resolve().parents[3]
     script_text = (repo_root / "scripts/t08_tool11_run_innernet.sh").read_text(
         encoding="utf-8"
@@ -352,7 +398,9 @@ def test_tool11_innernet_wrapper_pins_paths_and_experiment_patch_ids() -> None:
 
     assert r"D:\TestData\数据整理\20260715\20260715\rcsd_tar_gz" in script_text
     assert r"D:\TestData\POC_QA\Patch_all" in script_text
-    assert r"D:\TestData\POC_QA\Patch_test" in script_text
+    assert r"D:\TestData\POC_QA\Patch_test" not in script_text
+    assert "DEFAULT_EXPERIMENT_OUTPUT_ROOT" not in script_text
+    assert "Experiment output: disabled (full-only mode)" in script_text
     for patch_id in DEFAULT_EXPERIMENT_PATCH_IDS:
         assert patch_id in script_text
     assert 'overwrite="${OVERWRITE:-0}"' in script_text
@@ -368,12 +416,11 @@ def test_tool11_innernet_wrapper_runs_formal_entry_and_refuses_default_overwrite
     tmp_path: Path,
 ) -> None:
     source_root = tmp_path / "source"
-    for patch_id in DEFAULT_EXPERIMENT_PATCH_IDS:
+    for patch_id in ("100", "200"):
         _make_patch(source_root, patch_id)
 
     repo_root = Path(__file__).resolve().parents[3]
     output_root = tmp_path / "all"
-    experiment_root = tmp_path / "experiment"
     first_summary = tmp_path / "first_tool11.json"
     first_log = tmp_path / "first.console.log"
     environment = os.environ.copy()
@@ -382,7 +429,6 @@ def test_tool11_innernet_wrapper_runs_formal_entry_and_refuses_default_overwrite
             "T08_TOOL11_REPO_ROOT": str(repo_root),
             "T08_TOOL11_SOURCE_ROOT": str(source_root),
             "T08_TOOL11_OUTPUT_ROOT": str(output_root),
-            "T08_TOOL11_EXPERIMENT_OUTPUT_ROOT": str(experiment_root),
             "T08_TOOL11_PYTHON": sys.executable,
             "T08_TOOL11_SUMMARY_OUTPUT": str(first_summary),
             "T08_TOOL11_LOG_FILE": str(first_log),
@@ -402,12 +448,11 @@ def test_tool11_innernet_wrapper_runs_formal_entry_and_refuses_default_overwrite
 
     assert first.returncode == 0, first.stdout + first.stderr
     assert output_root.is_dir()
-    assert experiment_root.is_dir()
     assert first_summary.is_file()
     assert "[DONE] T08 Tool11 innernet organization passed." in first.stdout
-    assert "[VERIFY] Both output roots and the Tool11 audit summary exist." in first_log.read_text(
-        encoding="utf-8"
-    )
+    first_log_text = first_log.read_text(encoding="utf-8")
+    assert "Experiment output: disabled (full-only mode)" in first_log_text
+    assert "[VERIFY] Requested output roots and the Tool11 audit summary exist." in first_log_text
 
     second_summary = tmp_path / "second_tool11.json"
     second_log = tmp_path / "second.console.log"

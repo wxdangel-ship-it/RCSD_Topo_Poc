@@ -6,7 +6,7 @@
 
 ## 1. Summary
 
-新增 T08 Tool11 callable、通用 Python 入口和内网 WSL 固定场景封装入口，将全量 Patch 的 SWSD/RCSD/FRCSD 整理成统一目录，同时生成独立实验子集。实现采用标准库递归复制、逐文件 SHA-256、全量预检、双根暂存发布、覆盖回滚和成功/失败 summary；WSL 封装负责已确认默认路径、路径转换、固定实验 Patch 与持久日志。
+新增 T08 Tool11 callable、通用 Python 入口和内网 WSL 固定场景封装入口，将全量 Patch 的 SWSD/RCSD/FRCSD 整理成统一目录，并可选生成独立实验子集。实现采用标准库递归复制、逐文件 SHA-256、全量预检、请求根暂存发布、覆盖回滚和成功/失败 summary；WSL 封装默认全量-only，负责已确认默认路径、可选实验开关、路径转换与持久日志。
 
 ## 2. Technical Context
 
@@ -63,8 +63,8 @@ from rcsd_topo_poc.modules.t08_preprocess import run_t08_patch_data_organization
 artifacts = run_t08_patch_data_organization(
     source_root=...,
     output_root=...,
-    experiment_output_root=...,
-    experiment_patch_ids=None,  # None 使用确认的 6 个默认值
+    experiment_output_root=None,  # None 为全量-only
+    experiment_patch_ids=None,    # 实验根启用时 None 使用确认的 6 个默认值
     summary_output=None,        # None 使用唯一同级 `_tool11.json`
     overwrite=False,
 )
@@ -74,11 +74,11 @@ artifacts = run_t08_patch_data_organization(
 
 1. 解析并验证根目录边界。
 2. 扫描全部 Patch，聚合所有缺目录/缺文件/特殊条目错误。
-3. 拒绝冲突输出，建立两个同级暂存根。
+3. 拒绝冲突输出，建立全量暂存根；显式请求实验输出时再建立实验暂存根。
 4. 复制 SWSD/RCSD 全树和 FRCSD 白名单，逐文件哈希验证。
-5. 从主暂存成果物理复制实验 Patch，并再次哈希验证。
+5. 启用实验输出时，从主暂存成果物理复制实验 Patch，并再次哈希验证。
 6. 校验 Patch、目录、文件和字节计数。
-7. 发布两个根；显式覆盖时失败可回滚。
+7. 发布所有已请求根；显式覆盖时失败可回滚。
 8. 原子写成功或失败 summary。
 
 ## 6. Verification Order
@@ -90,7 +90,7 @@ artifacts = run_t08_patch_data_organization(
 5. `git diff --check`。
 6. 入口文件、registry 和模块契约一致性搜索。
 7. 所有变更 `.py`/脚本字节数检查，确认无 code-size audit 表变化。
-8. 需求逐项审计：全量 Patch、三类映射、6 Patch 实验集、哈希、失败保护、GIS 五项。
+8. 需求逐项审计：全量-only、三类映射、可选 6 Patch 实验集、哈希、失败保护、GIS 五项。
 
 ## 7. Risks
 

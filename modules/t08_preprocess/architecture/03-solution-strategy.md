@@ -93,9 +93,9 @@ Tool10 读取一个具体 Patch 的 `Traj/*/raw_dat_pose.geojson`。每个输入
 
 Tool11 扫描原始根下全部数字 Patch 目录，并先完成全量预检：`SD_City/target_level1`、`SD_City/base_origin`、`rc_sw_gd_merge` 以及三个 FRCSD 白名单文件必须存在；链接和特殊文件必须显式失败。预检不因单个 Patch 失败而提前停止，summary 一次记录全部 Patch 缺失项。
 
-SWSD 和 RCSD 分别递归复制到 `<output-root>/<PatchID>/SWSD` 与 `RCSD`，保留相对目录、文件名和空目录；FRCSD 只复制 `RCSDNode.geojson / RCSDRoad.geojson / RCSDRoadNextRoad.geojson`。每个文件复制后分别计算源与主输出 SHA-256；实验 Patch 再从已验证主暂存成果物理复制到独立实验暂存根，并核对第三份 SHA-256。
+SWSD 和 RCSD 分别递归复制到 `<output-root>/<PatchID>/SWSD` 与 `RCSD`，保留相对目录、文件名和空目录；FRCSD 只复制 `RCSDNode.geojson / RCSDRoad.geojson / RCSDRoadNextRoad.geojson`。每个文件复制后分别计算源与主输出 SHA-256；只有显式提供实验输出根时，实验 Patch 才从已验证主暂存成果物理复制到独立实验暂存根，并核对第三份 SHA-256。
 
-两个输出根均在各自父目录暂存。只有 Patch 集、实验 Patch 集、目录、文件、字节和哈希全部通过后才发布；默认拒绝已有根，显式 `overwrite` 时先备份旧根，任一步提交失败都回滚。Tool11 不解析 CRS、不执行空间或拓扑运算，GIS 语义通过逐字节一致性证明。
+全量输出根始终在自身父目录暂存；实验输出启用时也在自身父目录独立暂存。只有全部已请求输出的 Patch 集、目录、文件、字节和哈希通过后才发布；默认拒绝已有根，显式 `overwrite` 时先备份旧根，任一步提交失败都回滚。Tool11 不解析 CRS、不执行空间或拓扑运算，GIS 语义通过逐字节一致性证明。
 
 ## 输出策略
 

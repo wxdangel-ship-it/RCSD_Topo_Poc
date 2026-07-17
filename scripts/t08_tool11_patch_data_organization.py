@@ -19,7 +19,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "T08 Tool11: organize every Patch into SWSD/RCSD/FRCSD trees and "
-            "publish an independent experiment Patch subset."
+            "optionally publish an independent experiment Patch subset."
         )
     )
     parser.add_argument(
@@ -34,16 +34,18 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--experiment-output-root",
-        required=True,
-        help="Independent destination root for experiment Patches.",
+        help=(
+            "Optional independent destination root for experiment Patches. "
+            "Omit it to organize only the full Patch output."
+        ),
     )
     parser.add_argument(
         "--experiment-patch-id",
         action="append",
         dest="experiment_patch_ids",
         help=(
-            "Experiment PatchID. Repeat to replace the six default PatchIDs; "
-            "omit all occurrences to use the defaults."
+            "Experiment PatchID; requires --experiment-output-root. Repeat to "
+            "replace the six default PatchIDs; omit all occurrences to use the defaults."
         ),
     )
     parser.add_argument(
@@ -56,7 +58,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--overwrite",
         action="store_true",
-        help="Replace both existing output roots only after full copy and SHA-256 verification.",
+        help="Replace requested existing output roots only after full copy and SHA-256 verification.",
     )
     parser.add_argument(
         "--progress-interval-files",
@@ -86,7 +88,11 @@ def main(argv: list[str] | None = None) -> int:
         artifacts = run_t08_patch_data_organization(
             source_root=Path(args.source_root),
             output_root=Path(args.output_root),
-            experiment_output_root=Path(args.experiment_output_root),
+            experiment_output_root=(
+                Path(args.experiment_output_root)
+                if args.experiment_output_root
+                else None
+            ),
             experiment_patch_ids=args.experiment_patch_ids,
             summary_output=(Path(args.summary_output) if args.summary_output else None),
             overwrite=args.overwrite,
@@ -103,7 +109,10 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     print(
         json.dumps(
-            {key: str(value) for key, value in artifacts.__dict__.items()},
+            {
+                key: (str(value) if value is not None else None)
+                for key, value in artifacts.__dict__.items()
+            },
             ensure_ascii=False,
             indent=2,
         )

@@ -40,3 +40,12 @@
 - [x] T021 新增 `scripts/t08_tool11_run_innernet.sh`，固化已确认默认路径和 6 个实验 Patch，并提供 WSL 路径转换、日志、覆盖保护与环境变量覆盖。
 - [x] T022 同步 spec、plan、quickstart、README、INTERFACE_CONTRACT 和 entrypoint registry。
 - [x] T023 验证 shell 语法、默认值契约、临时目录端到端执行、Tool11/T08 回归、入口一致性和文件体量。
+
+## Phase 7 - 全量-only 默认模式
+
+- [x] T024 冻结“实验输出可选、内网封装默认全量-only”的产品与接口口径。
+- [x] T025 写入前检查 callable、Python 入口、WSL 入口和测试文件体量。
+- [x] T026 实现无实验根时实验列表归零、只暂存/校验/发布全量根，并保留显式实验模式兼容性。
+- [x] T027 将内网 WSL 封装改为默认不传实验根，显式环境变量才恢复固定 6 Patch 实验模式。
+- [x] T028 同步模块源事实、架构、SpecKit、CLI contract、quickstart 和入口登记。
+- [x] T029 验证全量-only、实验兼容、覆盖保护、CLI/WSL 入口、T08 全量回归和文件体量。

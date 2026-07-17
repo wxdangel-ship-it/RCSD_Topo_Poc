@@ -41,7 +41,7 @@ _COPY_CHUNK_SIZE = 1024 * 1024
 @dataclass(frozen=True)
 class T08PatchDataOrganizationArtifacts:
     output_root: Path
-    experiment_output_root: Path
+    experiment_output_root: Path | None
     summary_json: Path
 
 
@@ -84,21 +84,25 @@ def run_t08_patch_data_organization(
     *,
     source_root: str | Path,
     output_root: str | Path,
-    experiment_output_root: str | Path,
+    experiment_output_root: str | Path | None = None,
     experiment_patch_ids: Sequence[str] | None = None,
     summary_output: str | Path | None = None,
     overwrite: bool = False,
     progress_callback: Callable[[str], None] | None = None,
     progress_interval_files: int = 100,
 ) -> T08PatchDataOrganizationArtifacts:
-    """Organize every Patch into SWSD/RCSD/FRCSD trees and publish an experiment subset."""
+    """Organize every Patch and optionally publish an independent experiment subset."""
 
     started = time.perf_counter()
     generated_at = datetime.now(timezone.utc)
     run_token = uuid.uuid4().hex
     source_path = Path(source_root).expanduser().resolve()
     output_path = Path(output_root).expanduser().resolve()
-    experiment_output_path = Path(experiment_output_root).expanduser().resolve()
+    experiment_output_path = (
+        Path(experiment_output_root).expanduser().resolve()
+        if experiment_output_root is not None
+        else None
+    )
     requested_summary_path = _resolve_summary_path(
         summary_output,
         output_root=output_path,
@@ -126,7 +130,17 @@ def run_t08_patch_data_organization(
     try:
         if interval <= 0:
             raise ValueError(f"progress_interval_files must be > 0: {progress_interval_files}")
-        normalized_experiment_ids = _normalize_experiment_patch_ids(experiment_patch_ids)
+        if experiment_output_path is None:
+            if experiment_patch_ids is not None:
+                raise ValueError(
+                    "experiment_patch_ids requires experiment_output_root"
+                )
+            normalized_experiment_ids = ()
+        else:
+            normalized_experiment_ids = _normalize_experiment_patch_ids(
+                experiment_patch_ids
+            )
+        summary["parameters"]["experiment_enabled"] = experiment_output_path is not None
         summary["parameters"]["experiment_patch_ids"] = list(normalized_experiment_ids)
 
         preflight_issues = _validate_root_boundaries(
@@ -135,10 +149,13 @@ def run_t08_patch_data_organization(
             experiment_output_path,
             requested_summary_path,
         )
+        directory_roots = [source_path, output_path]
+        if experiment_output_path is not None:
+            directory_roots.append(experiment_output_path)
         summary["root_audit"]["paths_pairwise_non_overlapping"] = not any(
             _paths_overlap(left, right)
-            for index, left in enumerate((source_path, output_path, experiment_output_path))
-            for right in (source_path, output_path, experiment_output_path)[index + 1 :]
+            for index, left in enumerate(directory_roots)
+            for right in directory_roots[index + 1 :]
         )
         scan_started = time.perf_counter()
         plans, patch_rows, ignored_root_entries, scan_issues = _discover_patch_plans(
@@ -160,7 +177,7 @@ def run_t08_patch_data_organization(
             patch_row["main_output_patch_dir"] = str(output_path / patch_id)
             patch_row["experiment_output_patch_dir"] = (
                 str(experiment_output_path / patch_id)
-                if patch_row.get("is_experiment")
+                if experiment_output_path is not None and patch_row.get("is_experiment")
                 else None
             )
         summary["root_audit"]["ignored_entries"] = ignored_root_entries
@@ -178,14 +195,20 @@ def run_t08_patch_data_organization(
             f"experiment_patch_count={len(normalized_experiment_ids)}.",
         )
         main_stage = _owned_sibling_path(output_path, run_token=run_token, kind="tmp")
-        experiment_stage = _owned_sibling_path(
-            experiment_output_path,
-            run_token=run_token,
-            kind="tmp",
+        experiment_stage = (
+            _owned_sibling_path(
+                experiment_output_path,
+                run_token=run_token,
+                kind="tmp",
+            )
+            if experiment_output_path is not None
+            else None
         )
-        stage_paths.extend((main_stage, experiment_stage))
+        stage_paths.append(main_stage)
         _prepare_empty_stage(main_stage, run_token=run_token)
-        _prepare_empty_stage(experiment_stage, run_token=run_token)
+        if experiment_stage is not None:
+            stage_paths.append(experiment_stage)
+            _prepare_empty_stage(experiment_stage, run_token=run_token)
 
         copy_started = time.perf_counter()
         file_audit, copy_counts = _copy_plans(
@@ -233,19 +256,21 @@ def run_t08_patch_data_organization(
                 overwrite=overwrite,
             )
         )
-        publish_states.append(
-            _publish_staged_path(
-                experiment_stage,
-                experiment_output_path,
-                run_token=run_token,
-                overwrite=overwrite,
+        if experiment_stage is not None and experiment_output_path is not None:
+            publish_states.append(
+                _publish_staged_path(
+                    experiment_stage,
+                    experiment_output_path,
+                    run_token=run_token,
+                    overwrite=overwrite,
+                )
             )
-        )
         publish_elapsed = time.perf_counter() - publish_started
         summary["status"] = "passed"
         summary["publication"] = {
             "main_output_published": True,
-            "experiment_output_published": True,
+            "experiment_output_requested": experiment_output_path is not None,
+            "experiment_output_published": experiment_output_path is not None,
             "summary_published": True,
             "rollback_applied": False,
         }
@@ -307,6 +332,7 @@ def run_t08_patch_data_organization(
         }
         summary["publication"] = {
             "main_output_published": False,
+            "experiment_output_requested": experiment_output_path is not None,
             "experiment_output_published": False,
             "summary_published": True,
             "rollback_applied": bool(publish_states),
@@ -347,7 +373,7 @@ def _summary_skeleton(
     run_token: str,
     source_root: Path,
     output_root: Path,
-    experiment_output_root: Path,
+    experiment_output_root: Path | None,
     summary_path: Path,
     overwrite: bool,
 ) -> dict[str, Any]:
@@ -368,10 +394,13 @@ def _summary_skeleton(
         },
         "outputs": {
             "output_root": str(output_root),
-            "experiment_output_root": str(experiment_output_root),
+            "experiment_output_root": (
+                str(experiment_output_root) if experiment_output_root is not None else None
+            ),
             "summary_json": str(summary_path),
         },
         "parameters": {
+            "experiment_enabled": experiment_output_root is not None,
             "experiment_patch_ids": [],
             "overwrite": bool(overwrite),
             "copy_chunk_size_bytes": _COPY_CHUNK_SIZE,
@@ -398,6 +427,7 @@ def _summary_skeleton(
         },
         "publication": {
             "main_output_published": False,
+            "experiment_output_requested": experiment_output_root is not None,
             "experiment_output_published": False,
             "summary_published": False,
             "rollback_applied": False,
@@ -449,17 +479,18 @@ def _resolve_summary_path(
 def _validate_root_boundaries(
     source_root: Path,
     output_root: Path,
-    experiment_output_root: Path,
+    experiment_output_root: Path | None,
     summary_path: Path,
 ) -> list[str]:
     issues: list[str] = []
     if not source_root.is_dir():
         issues.append(f"source root does not exist or is not a directory: {source_root}")
-    roots = (
+    roots = [
         ("source_root", source_root),
         ("output_root", output_root),
-        ("experiment_output_root", experiment_output_root),
-    )
+    ]
+    if experiment_output_root is not None:
+        roots.append(("experiment_output_root", experiment_output_root))
     for index, (left_label, left_path) in enumerate(roots):
         for right_label, right_path in roots[index + 1 :]:
             if _paths_overlap(left_path, right_path):
@@ -475,16 +506,16 @@ def _validate_root_boundaries(
 
 def _output_conflicts(
     output_root: Path,
-    experiment_output_root: Path,
+    experiment_output_root: Path | None,
     summary_path: Path,
     *,
     overwrite: bool,
 ) -> list[str]:
     issues: list[str] = []
-    for label, path in (
-        ("output root", output_root),
-        ("experiment output root", experiment_output_root),
-    ):
+    output_paths = [("output root", output_root)]
+    if experiment_output_root is not None:
+        output_paths.append(("experiment output root", experiment_output_root))
+    for label, path in output_paths:
         if path.exists() and not path.is_dir():
             issues.append(f"{label} exists and is not a directory: {path}")
         elif path.exists() and not overwrite:
@@ -712,9 +743,9 @@ def _copy_plans(
     plans: Sequence[_PatchPlan],
     *,
     main_stage: Path,
-    experiment_stage: Path,
+    experiment_stage: Path | None,
     output_root: Path,
-    experiment_output_root: Path,
+    experiment_output_root: Path | None,
     progress_callback: Callable[[str], None] | None,
     progress_interval_files: int,
     patch_rows: list[dict[str, Any]],
@@ -729,6 +760,8 @@ def _copy_plans(
                 main_directory = _role_target(main_stage, plan.patch_id, role, relative_directory)
                 main_directory.mkdir(parents=True, exist_ok=True)
                 if plan.is_experiment:
+                    if experiment_stage is None:
+                        raise RuntimeError("experiment stage is unavailable")
                     experiment_directory = _role_target(
                         experiment_stage,
                         plan.patch_id,
@@ -760,6 +793,8 @@ def _copy_plans(
             experiment_sha256: str | None = None
             experiment_verified: bool | None = None
             if plan.is_experiment:
+                if experiment_stage is None or experiment_output_root is None:
+                    raise RuntimeError("experiment output is unavailable")
                 experiment_stage_path = (
                     experiment_stage
                     / plan.patch_id
@@ -914,7 +949,7 @@ def _apply_directory_metadata(
     plans: Sequence[_PatchPlan],
     *,
     main_stage: Path,
-    experiment_stage: Path,
+    experiment_stage: Path | None,
 ) -> None:
     for plan in plans:
         for role, relative_directories in plan.directories.items():
@@ -938,6 +973,8 @@ def _apply_directory_metadata(
                 )
                 shutil.copystat(source_directory, main_directory)
                 if plan.is_experiment:
+                    if experiment_stage is None:
+                        raise RuntimeError("experiment stage is unavailable")
                     experiment_directory = _role_target(
                         experiment_stage,
                         plan.patch_id,
@@ -963,7 +1000,7 @@ def _build_integrity_audit(
     copy_counts: dict[str, int],
     experiment_patch_ids: Sequence[str],
     main_stage: Path,
-    experiment_stage: Path,
+    experiment_stage: Path | None,
 ) -> dict[str, Any]:
     errors: list[str] = []
     if not all(bool(row.get("verified")) for row in file_audit):
@@ -981,24 +1018,29 @@ def _build_integrity_audit(
     if actual_experiment_ids != sorted(experiment_patch_ids):
         errors.append("experiment PatchID set mismatch")
     expected_main_files, expected_main_directories = _expected_tree_inventory(plans)
-    expected_experiment_files, expected_experiment_directories = _expected_tree_inventory(
-        [plan for plan in plans if plan.is_experiment]
-    )
     actual_main_files, actual_main_directories = _tree_inventory(main_stage)
-    actual_experiment_files, actual_experiment_directories = _tree_inventory(experiment_stage)
     main_files_exact = actual_main_files == expected_main_files
     main_directories_exact = actual_main_directories == expected_main_directories
-    experiment_files_exact = actual_experiment_files == expected_experiment_files
-    experiment_directories_exact = (
-        actual_experiment_directories == expected_experiment_directories
-    )
+    experiment_files_exact: bool | None = None
+    experiment_directories_exact: bool | None = None
+    if experiment_stage is not None:
+        expected_experiment_files, expected_experiment_directories = (
+            _expected_tree_inventory([plan for plan in plans if plan.is_experiment])
+        )
+        actual_experiment_files, actual_experiment_directories = _tree_inventory(
+            experiment_stage
+        )
+        experiment_files_exact = actual_experiment_files == expected_experiment_files
+        experiment_directories_exact = (
+            actual_experiment_directories == expected_experiment_directories
+        )
     if not main_files_exact:
         errors.append("main output staged file set mismatch")
     if not main_directories_exact:
         errors.append("main output staged directory set mismatch")
-    if not experiment_files_exact:
+    if experiment_files_exact is False:
         errors.append("experiment output staged file set mismatch")
-    if not experiment_directories_exact:
+    if experiment_directories_exact is False:
         errors.append("experiment output staged directory set mismatch")
     source_patch_ids = sorted(plan.patch_id for plan in plans)
     main_patch_ids = sorted(
@@ -1021,6 +1063,7 @@ def _build_integrity_audit(
         "main_patch_ids_exact": main_patch_ids_exact,
         "main_file_set_exact": main_files_exact,
         "main_directory_set_exact": main_directories_exact,
+        "experiment_output_requested": experiment_stage is not None,
         "experiment_file_set_exact": experiment_files_exact,
         "experiment_directory_set_exact": experiment_directories_exact,
         "experiment_patch_ids_exact": actual_experiment_ids == sorted(experiment_patch_ids),
@@ -1195,17 +1238,17 @@ def _failure_summary_path(
     requested_summary_existed: bool,
     source_root: Path,
     output_root: Path,
-    experiment_output_root: Path,
+    experiment_output_root: Path | None,
     run_token: str,
 ) -> Path:
-    unsafe = any(
-        _is_within(preferred_path, root)
-        for root in (source_root, output_root, experiment_output_root)
-    )
+    roots = [source_root, output_root]
+    if experiment_output_root is not None:
+        roots.append(experiment_output_root)
+    unsafe = any(_is_within(preferred_path, root) for root in roots)
     if not requested_summary_existed and not preferred_path.exists() and not unsafe:
         return preferred_path
     candidate = output_root.parent / f"{output_root.name}_failure_{run_token[:12]}_tool11.json"
-    if any(_is_within(candidate, root) for root in (source_root, output_root, experiment_output_root)):
+    if any(_is_within(candidate, root) for root in roots):
         candidate = Path(tempfile.gettempdir()) / f"t08_tool11_failure_{run_token}_tool11.json"
     return candidate.resolve()
 

@@ -6,7 +6,7 @@
 
 ## 1. Summary
 
-新增 T08 Tool11 callable 和唯一 repo 级脚本入口，将全量 Patch 的 SWSD/RCSD/FRCSD 整理成统一目录，同时生成独立实验子集。实现采用标准库递归复制、逐文件 SHA-256、全量预检、双根暂存发布、覆盖回滚和成功/失败 summary。
+新增 T08 Tool11 callable、通用 Python 入口和内网 WSL 固定场景封装入口，将全量 Patch 的 SWSD/RCSD/FRCSD 整理成统一目录，同时生成独立实验子集。实现采用标准库递归复制、逐文件 SHA-256、全量预检、双根暂存发布、覆盖回滚和成功/失败 summary；WSL 封装负责已确认默认路径、路径转换、固定实验 Patch 与持久日志。
 
 ## 2. Technical Context
 
@@ -15,7 +15,7 @@
 **Storage**: 本地/挂载文件系统目录与 JSON summary
 **Testing**: pytest
 **Target Platform**: Windows PowerShell 与 WSL/Linux 文件系统路径
-**Project Type**: Python library callable + repo script
+**Project Type**: Python library callable + repo Python/shell scripts
 **Performance Goals**: 流式复制，不把业务文件整体载入内存；summary 提供 bytes/s 和 MiB/s
 **Constraints**: 不修改源数据；不发布部分成果；所有源码/脚本低于 100KB
 **Scale/Scope**: 原始根下全部数字 Patch，递归文件规模由数据集决定
@@ -48,6 +48,7 @@ modules/t08_preprocess/architecture/06-risks-and-technical-debt.md
 src/rcsd_topo_poc/modules/t08_preprocess/__init__.py
 src/rcsd_topo_poc/modules/t08_preprocess/patch_data_organization.py
 scripts/t08_tool11_patch_data_organization.py
+scripts/t08_tool11_run_innernet.sh
 tests/modules/t08_preprocess/test_tool11_patch_data_organization.py
 docs/repository-metadata/entrypoint-registry.md
 ```
@@ -83,12 +84,13 @@ artifacts = run_t08_patch_data_organization(
 ## 6. Verification Order
 
 1. Tool11 聚焦 pytest。
-2. Tool11 脚本 `--help` 与 CLI 成功/失败测试。
-3. T08 全量 pytest。
-4. `git diff --check`。
-5. 入口文件、registry 和模块契约一致性搜索。
-6. 所有变更 `.py`/脚本字节数检查，确认无 code-size audit 表变化。
-7. 需求逐项审计：全量 Patch、三类映射、6 Patch 实验集、哈希、失败保护、GIS 五项。
+2. Tool11 Python 脚本 `--help` 与 CLI 成功/失败测试。
+3. Tool11 内网 WSL 封装 shell 语法、默认值与临时目录成功/拒绝覆盖测试。
+4. T08 全量 pytest。
+5. `git diff --check`。
+6. 入口文件、registry 和模块契约一致性搜索。
+7. 所有变更 `.py`/脚本字节数检查，确认无 code-size audit 表变化。
+8. 需求逐项审计：全量 Patch、三类映射、6 Patch 实验集、哈希、失败保护、GIS 五项。
 
 ## 7. Risks
 

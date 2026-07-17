@@ -377,6 +377,14 @@ Tool11：
   --experiment-output-root /mnt/d/TestData/POC_Data/experiment_patches
 ```
 
+Tool11 内网 WSL 固定场景入口：
+
+```bash
+bash scripts/t08_tool11_run_innernet.sh
+```
+
+该封装入口把用户确认的 `D:\TestData\数据整理\20260715\20260715\rcsd_tar_gz`、`D:\TestData\POC_QA\Patch_all`、`D:\TestData\POC_QA\Patch_test` 作为默认根，使用 `wslpath` 转换 Windows 路径，固定传入 6 个实验 Patch，并把完整控制台输出写入持久日志；实际整理仍只调用正式 Python 入口。
+
 ## 3. Tool1 Params
 
 - `--input-shp`：可重复传入多个 Shapefile，输出为输入目录下 `<input_stem>.gpkg`。
@@ -530,6 +538,8 @@ Tool11：
 - `--overwrite`：可选；未提供时任一正式输出根或显式 summary 已存在即失败；提供时仅在新成果全部校验通过后整体替换并支持发布失败回滚。
 - `--progress-interval-files`：可选，默认每处理 `100` 个文件输出一次进度，必须大于 `0`。
 - 脚本成功返回 `0` 并在 stdout 输出 artifacts JSON；参数、预检、复制、校验或发布失败返回 `2`，进度和错误写 stderr。
+- 内网 WSL 封装入口默认使用已确认的三个 Windows 根路径和 6 个实验 Patch；`T08_TOOL11_SOURCE_ROOT / T08_TOOL11_OUTPUT_ROOT / T08_TOOL11_EXPERIMENT_OUTPUT_ROOT` 可覆盖三个根，`T08_TOOL11_REPO_ROOT / T08_TOOL11_PYTHON / T08_TOOL11_SUMMARY_OUTPUT / T08_TOOL11_LOG_FILE` 可覆盖运行与审计位置。
+- 内网 WSL 封装入口默认 `OVERWRITE=0`，只有显式 `OVERWRITE=1` 才向正式 Python 入口传入 `--overwrite`；`PROGRESS_INTERVAL_FILES` 默认 `100`。封装入口必须保留正式入口退出码，并在日志和结束信息中给出两个输出根、summary 与控制台日志路径。
 
 ## 14. Acceptance
 
@@ -571,3 +581,4 @@ Tool11：
 36. Tool11 默认拒绝覆盖；显式覆盖也必须在两个新根全部校验成功后发布，失败不得破坏已有正式根或留下部分新根。
 37. Tool11 成功和业务失败 summary 均以 `_tool11.json` 结尾，并记录 CRS 未转换、无拓扑/几何操作、`silent_fix_applied=false`、逐文件哈希和性能。
 38. Tool11 不跟随符号链接，不复制特殊文件，不修改源目录，不复制 FRCSD 白名单以外的内容。
+39. Tool11 内网 WSL 封装入口必须将已确认的三个 Windows 路径作为可覆盖默认值，固定使用 6 个实验 Patch，自动转换路径并保留控制台日志；默认不得隐式覆盖已有成果。

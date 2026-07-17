@@ -9,6 +9,14 @@
   --experiment-output-root <实验数据根>
 ```
 
+已确认内网目录的 WSL 固定场景封装：
+
+```bash
+bash scripts/t08_tool11_run_innernet.sh
+```
+
+封装默认使用 `D:\TestData\数据整理\20260715\20260715\rcsd_tar_gz`、`D:\TestData\POC_QA\Patch_all` 和 `D:\TestData\POC_QA\Patch_test`，固定传入已确认的 6 个实验 Patch；路径可通过 `T08_TOOL11_SOURCE_ROOT / T08_TOOL11_OUTPUT_ROOT / T08_TOOL11_EXPERIMENT_OUTPUT_ROOT` 覆盖。
+
 ## 参数
 
 - `--source-root`：必填，直接包含 `<PatchID>` 子目录的原始数据根。
@@ -23,6 +31,8 @@
 
 - `0`：两个输出根和 summary 均成功发布。
 - `2`：参数、预检、复制、校验或发布失败。
+
+WSL 封装保留正式 Python 入口退出码；封装自身的路径、环境或参数预检失败也返回 `2`。
 
 ## 标准输出
 
@@ -44,3 +54,4 @@
 - `--overwrite` 不允许边复制边删除旧成果。
 - 新的两个暂存根全部校验成功后才进入发布。
 - 发布中任一步失败时恢复已有根；临时/备份目录按 run token 精确清理。
+- WSL 封装默认 `OVERWRITE=0`；只有显式 `OVERWRITE=1` 才传入 `--overwrite`，完整控制台输出必须写入持久日志。

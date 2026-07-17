@@ -24,7 +24,7 @@
 
 ## 3. 当前入口位置
 
-T08 通过已登记 `scripts/t08_tool*.py` 执行 Tool1-Tool11；Tool10 另提供 `scripts/t08_tool10_run_patches_innernet.sh` 作为多 Patch 参数化批处理入口。Tool11 通过 `scripts/t08_tool11_patch_data_organization.py` 整理全量 Patch 并发布独立实验子集。每个工具的参数、输入输出和约束以 `INTERFACE_CONTRACT.md` 与 `docs/repository-metadata/entrypoint-registry.md` 为准。
+T08 通过已登记 `scripts/t08_tool*.py` 执行 Tool1-Tool11；Tool10 另提供 `scripts/t08_tool10_run_patches_innernet.sh` 作为多 Patch 参数化批处理入口。Tool11 的正式核心入口为 `scripts/t08_tool11_patch_data_organization.py`；内网 WSL 可通过 `scripts/t08_tool11_run_innernet.sh` 使用已确认的三个默认 Windows 路径、6 个实验 Patch、持久日志和显式覆盖开关。每个工具的参数、输入输出和约束以 `INTERFACE_CONTRACT.md` 与 `docs/repository-metadata/entrypoint-registry.md` 为准。
 
 ## 4. 阅读顺序
 

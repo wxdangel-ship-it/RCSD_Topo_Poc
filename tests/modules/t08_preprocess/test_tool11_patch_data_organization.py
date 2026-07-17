@@ -342,3 +342,89 @@ def test_tool11_script_is_parameterized_and_reports_failure_summary(tmp_path: Pa
     assert "summary_json=" in second.stderr
     assert help_result.returncode == 0
     assert "--experiment-output-root" in help_result.stdout
+
+
+def test_tool11_innernet_wrapper_pins_paths_and_experiment_patch_ids() -> None:
+    repo_root = Path(__file__).resolve().parents[3]
+    script_text = (repo_root / "scripts/t08_tool11_run_innernet.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert r"D:\TestData\数据整理\20260715\20260715\rcsd_tar_gz" in script_text
+    assert r"D:\TestData\POC_QA\Patch_all" in script_text
+    assert r"D:\TestData\POC_QA\Patch_test" in script_text
+    for patch_id in DEFAULT_EXPERIMENT_PATCH_IDS:
+        assert patch_id in script_text
+    assert 'overwrite="${OVERWRITE:-0}"' in script_text
+    assert "wslpath -u" in script_text
+    assert "t08_tool11_patch_data_organization.py" in script_text
+
+
+@pytest.mark.skipif(
+    os.name == "nt" or shutil.which("bash") is None,
+    reason="The innernet wrapper functional test requires a POSIX bash/WSL process.",
+)
+def test_tool11_innernet_wrapper_runs_formal_entry_and_refuses_default_overwrite(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "source"
+    for patch_id in DEFAULT_EXPERIMENT_PATCH_IDS:
+        _make_patch(source_root, patch_id)
+
+    repo_root = Path(__file__).resolve().parents[3]
+    output_root = tmp_path / "all"
+    experiment_root = tmp_path / "experiment"
+    first_summary = tmp_path / "first_tool11.json"
+    first_log = tmp_path / "first.console.log"
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "T08_TOOL11_REPO_ROOT": str(repo_root),
+            "T08_TOOL11_SOURCE_ROOT": str(source_root),
+            "T08_TOOL11_OUTPUT_ROOT": str(output_root),
+            "T08_TOOL11_EXPERIMENT_OUTPUT_ROOT": str(experiment_root),
+            "T08_TOOL11_PYTHON": sys.executable,
+            "T08_TOOL11_SUMMARY_OUTPUT": str(first_summary),
+            "T08_TOOL11_LOG_FILE": str(first_log),
+            "OVERWRITE": "0",
+            "PROGRESS_INTERVAL_FILES": "1",
+        }
+    )
+
+    first = subprocess.run(
+        ["bash", "scripts/t08_tool11_run_innernet.sh"],
+        cwd=repo_root,
+        env=environment,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert first.returncode == 0, first.stdout + first.stderr
+    assert output_root.is_dir()
+    assert experiment_root.is_dir()
+    assert first_summary.is_file()
+    assert "[DONE] T08 Tool11 innernet organization passed." in first.stdout
+    assert "[VERIFY] Both output roots and the Tool11 audit summary exist." in first_log.read_text(
+        encoding="utf-8"
+    )
+
+    second_summary = tmp_path / "second_tool11.json"
+    second_log = tmp_path / "second.console.log"
+    environment["T08_TOOL11_SUMMARY_OUTPUT"] = str(second_summary)
+    environment["T08_TOOL11_LOG_FILE"] = str(second_log)
+    second = subprocess.run(
+        ["bash", "scripts/t08_tool11_run_innernet.sh"],
+        cwd=repo_root,
+        env=environment,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert second.returncode == 2
+    assert "already exists" in second.stdout
+    assert second_summary.is_file()
+    assert "[FAILED] T08 Tool11 innernet organization exited with code 2." in second_log.read_text(
+        encoding="utf-8"
+    )

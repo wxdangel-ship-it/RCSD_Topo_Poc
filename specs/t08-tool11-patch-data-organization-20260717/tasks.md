@@ -33,3 +33,10 @@
 - [x] T017 运行 `git diff --check`、入口一致性和变更文件体量检查。
 - [x] T018 逐项核对 FR-001 至 FR-022、SC-001 至 SC-006。
 - [x] T019 更新任务勾选和 validation report，区分已修改、已验证、待确认。
+
+## Phase 6 - 内网固定场景入口
+
+- [x] T020 写入前检查新 shell 入口和现有测试文件体量。
+- [x] T021 新增 `scripts/t08_tool11_run_innernet.sh`，固化已确认默认路径和 6 个实验 Patch，并提供 WSL 路径转换、日志、覆盖保护与环境变量覆盖。
+- [x] T022 同步 spec、plan、quickstart、README、INTERFACE_CONTRACT 和 entrypoint registry。
+- [x] T023 验证 shell 语法、默认值契约、临时目录端到端执行、Tool11/T08 回归、入口一致性和文件体量。

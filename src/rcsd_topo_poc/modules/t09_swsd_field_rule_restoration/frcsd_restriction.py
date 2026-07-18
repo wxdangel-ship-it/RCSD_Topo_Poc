@@ -26,6 +26,7 @@ from rcsd_topo_poc.modules.t09_swsd_field_rule_restoration.schemas import (
     RestorationStrategy,
     normalize_restoration_strategy,
 )
+from rcsd_topo_poc.utils.field_names import get_case_insensitive_property
 
 
 FRCSDS_RESTRICTION_STEM = "frcsd_restriction"
@@ -954,15 +955,7 @@ def _as_id_list(value: Any) -> list[str]:
 
 
 def _case_get(props: dict[str, Any], candidates: tuple[str, ...], default: Any = None) -> Any:
-    for candidate in candidates:
-        if candidate in props:
-            return props.get(candidate)
-    lowered = {str(key).lower(): key for key in props}
-    for candidate in candidates:
-        key = lowered.get(candidate.lower())
-        if key is not None:
-            return props.get(key)
-    return default
+    return get_case_insensitive_property(props, candidates, default=default)
 
 
 def _required_id(value: Any, label: str) -> str:

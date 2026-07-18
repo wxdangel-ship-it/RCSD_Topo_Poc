@@ -40,6 +40,7 @@ from rcsd_topo_poc.modules.t03_virtual_junction_anchor.finalization_models impor
     FinalizationReviewIndexRow,
 )
 from rcsd_topo_poc.modules.t05_junction_surface_fusion.phase2_io import write_relation_geojson_crs84
+from rcsd_topo_poc.utils.field_names import PropertyLookup
 
 
 T03_REVIEW_ACCEPTED_DIRNAME = "t03_review_accepted"
@@ -912,10 +913,11 @@ def _build_virtual_intersection_polygon_feature(
     acceptance_class = "accepted"
     success = True
     representative_properties = dict(representative_feature.properties)
+    representative_lookup = PropertyLookup(representative_properties)
     representative_node_id = feature_id(representative_feature) or streamed_result.case_id
     mainnodeid = feature_mainnodeid(representative_feature) or representative_node_id
-    kind_2 = coerce_int(representative_properties.get("kind_2"))
-    grade_2 = coerce_int(representative_properties.get("grade_2"))
+    kind_2 = coerce_int(representative_lookup.get("kind_2"))
+    grade_2 = coerce_int(representative_lookup.get("grade_2"))
     official_review = derive_stage3_official_review_decision(
         success=success,
         business_outcome_class=business_outcome_class,
@@ -923,19 +925,19 @@ def _build_virtual_intersection_polygon_feature(
         acceptance_reason=streamed_result.reason,
         status=streamed_result.reason,
         root_cause_layer=streamed_result.root_cause_layer,
-        representative_has_evd=representative_properties.get("has_evd"),
-        representative_is_anchor=representative_properties.get("is_anchor"),
+        representative_has_evd=representative_lookup.get("has_evd"),
+        representative_is_anchor=representative_lookup.get("is_anchor"),
         representative_kind_2=kind_2,
     )
     properties = {
         "mainnodeid": mainnodeid,
         "kind": resolve_stage3_output_kind(
-            representative_kind=representative_properties.get("kind"),
+            representative_kind=representative_lookup.get("kind"),
             representative_kind_2=kind_2,
             representative_properties=representative_properties,
         ),
         "kind_source": resolve_stage3_output_kind_source(
-            representative_kind=representative_properties.get("kind"),
+            representative_kind=representative_lookup.get("kind"),
             representative_kind_2=kind_2,
             representative_properties=representative_properties,
         ),
@@ -1167,7 +1169,7 @@ def write_updated_nodes_outputs(
     for case_id in sorted(selected_case_ids, key=sort_patch_key):
         representative_feature = representative_by_case_id.get(case_id) or resolve_representative_feature(shared_nodes, case_id)
         representative_node_id = feature_id(representative_feature) or case_id
-        previous_is_anchor = representative_feature.properties.get("is_anchor")
+        previous_is_anchor = PropertyLookup(representative_feature.properties).get("is_anchor")
         if case_id in streamed_results:
             streamed_result = streamed_results[case_id]
             step7_state = streamed_result.step7_state

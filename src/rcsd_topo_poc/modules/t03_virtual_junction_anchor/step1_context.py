@@ -14,6 +14,7 @@ from rcsd_topo_poc.modules.t03_virtual_junction_anchor.case_models import (
     Step1Context,
 )
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.id_utils import normalize_id
+from rcsd_topo_poc.utils.field_names import PropertyLookup
 
 
 def _normalize_text(value: object) -> str | None:
@@ -32,30 +33,23 @@ def _coerce_int(value: object) -> int | None:
         return None
 
 
-def _get_case_insensitive(props: dict, field_name: str) -> object:
-    target = field_name.lower()
-    for key, value in props.items():
-        if str(key).lower() == target:
-            return value
-    return None
-
-
 def _parse_nodes(features: Iterable[LayerFeature]) -> tuple[NodeRecord, ...]:
     rows: list[NodeRecord] = []
     for feature_index, feature in enumerate(features):
         props = dict(feature.properties)
-        node_id = _normalize_text(props.get("id"))
+        lookup = PropertyLookup(props)
+        node_id = _normalize_text(lookup.get("id"))
         if node_id is None or feature.geometry is None:
             continue
         rows.append(
             NodeRecord(
                 feature_index=feature_index,
                 node_id=node_id,
-                mainnodeid=_normalize_text(props.get("mainnodeid")),
-                has_evd=_normalize_text(props.get("has_evd")),
-                is_anchor=_normalize_text(props.get("is_anchor")),
-                kind_2=_coerce_int(props.get("kind_2")),
-                grade_2=_coerce_int(props.get("grade_2")),
+                mainnodeid=_normalize_text(lookup.get("mainnodeid")),
+                has_evd=_normalize_text(lookup.get("has_evd")),
+                is_anchor=_normalize_text(lookup.get("is_anchor")),
+                kind_2=_coerce_int(lookup.get("kind_2")),
+                grade_2=_coerce_int(lookup.get("grade_2")),
                 geometry=feature.geometry,
             )
         )
@@ -66,18 +60,37 @@ def _parse_roads(features: Iterable[LayerFeature]) -> tuple[RoadRecord, ...]:
     rows: list[RoadRecord] = []
     for feature_index, feature in enumerate(features):
         props = dict(feature.properties)
-        road_id = _normalize_text(props.get("id"))
-        if road_id is None or feature.geometry is None:
-            continue
+        lookup = PropertyLookup(props)
+        road_id = _normalize_text(lookup.get("id"))
+        snodeid = _normalize_text(lookup.get("snodeid"))
+        enodeid = _normalize_text(lookup.get("enodeid"))
+        direction = _coerce_int(lookup.get("direction"))
+        invalid_fields = [
+            field_name
+            for field_name, value in (
+                ("id", road_id),
+                ("snodeid", snodeid),
+                ("enodeid", enodeid),
+                ("direction", direction),
+            )
+            if value is None
+        ]
+        if feature.geometry is None or feature.geometry.is_empty:
+            invalid_fields.append("geometry")
+        if invalid_fields:
+            raise ValueError(
+                f"road feature[{feature_index}] missing/invalid required fields: "
+                f"{', '.join(invalid_fields)}"
+            )
         rows.append(
             RoadRecord(
                 feature_index=feature_index,
                 road_id=road_id,
-                snodeid=_normalize_text(props.get("snodeid")),
-                enodeid=_normalize_text(props.get("enodeid")),
-                direction=_coerce_int(props.get("direction")),
+                snodeid=snodeid,
+                enodeid=enodeid,
+                direction=direction,
                 geometry=feature.geometry,
-                formway=_coerce_int(_get_case_insensitive(props, "formway")),
+                formway=_coerce_int(lookup.get("formway")),
             )
         )
     return tuple(rows)

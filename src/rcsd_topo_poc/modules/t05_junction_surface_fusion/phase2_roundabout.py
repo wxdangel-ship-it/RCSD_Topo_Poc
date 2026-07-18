@@ -9,6 +9,8 @@ from shapely.geometry.base import BaseGeometry
 from shapely.ops import unary_union
 from shapely.strtree import STRtree
 
+from rcsd_topo_poc.utils.field_names import get_case_insensitive_property
+
 from .phase2_models import SwsdTargetContext
 
 
@@ -335,10 +337,7 @@ def _usable_geometry(geometry: Any) -> bool:
 
 
 def _field_value(properties: dict[str, Any], field_name: str) -> Any:
-    for key, value in properties.items():
-        if key.lower() == field_name:
-            return value
-    return None
+    return get_case_insensitive_property(properties, field_name)
 
 
 def _int_field_value(properties: dict[str, Any], field_name: str) -> int | None:

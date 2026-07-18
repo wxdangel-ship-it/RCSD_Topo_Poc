@@ -16,6 +16,7 @@ from rcsd_topo_poc.modules.p01_arm_build.io import (
 )
 from rcsd_topo_poc.modules.p01_arm_build.models import DatasetInput, LoadedDataset, NodeRecord, RoadRecord
 from rcsd_topo_poc.modules.p01_arm_build.topology import valid_mainnodeid
+from rcsd_topo_poc.utils.field_names import normalize_field_name
 
 
 @dataclass(frozen=True)
@@ -63,7 +64,7 @@ def _scan_node_groups(path: Path) -> tuple[dict[str, tuple[str | None, str | Non
     groups: dict[str, list[str]] = {}
     node_to_group: dict[str, str] = {}
     with fiona.open(path) as src:
-        schema_properties = tuple(str(key).lower() for key in src.schema.get("properties", {}).keys())
+        schema_properties = tuple(normalize_field_name(key) for key in src.schema.get("properties", {}).keys())
         feature_count = 0
         for feature in src:
             feature_count += 1
@@ -89,7 +90,7 @@ def _scan_road_graph(
     road_groups: dict[str, tuple[str, str, str, str]] = {}
     adjacency: dict[str, list[tuple[str, str]]] = {}
     with fiona.open(path) as src:
-        schema_properties = tuple(str(key).lower() for key in src.schema.get("properties", {}).keys())
+        schema_properties = tuple(normalize_field_name(key) for key in src.schema.get("properties", {}).keys())
         feature_count = 0
         for feature in src:
             feature_count += 1

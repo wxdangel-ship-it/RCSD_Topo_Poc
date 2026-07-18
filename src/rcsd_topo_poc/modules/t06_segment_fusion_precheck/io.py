@@ -19,6 +19,7 @@ from shapely.geometry.base import BaseGeometry
 
 from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import read_vector_layer
 from rcsd_topo_poc.modules.t05_junction_surface_fusion.phase2_io import write_gpkg
+from rcsd_topo_poc.utils.field_names import normalize_property_keys as _normalize_property_keys
 
 from .schemas import PROCESS_CRS_TEXT
 
@@ -184,29 +185,6 @@ def _read_features_snapshot(
         while len(_READ_FEATURES_SNAPSHOT_CACHE) > _READ_FEATURES_CACHE_MAX_PATHS:
             _READ_FEATURES_SNAPSHOT_CACHE.popitem(last=False)
     return snapshot
-
-
-def _normalize_property_keys(properties: dict[str, Any]) -> dict[str, Any]:
-    normalized: dict[str, Any] = {}
-    source_keys: dict[str, str] = {}
-    for raw_key, value in properties.items():
-        key = str(raw_key).lower()
-        if key not in normalized:
-            normalized[key] = value
-            source_keys[key] = str(raw_key)
-            continue
-        current = normalized[key]
-        if current is None and value is not None:
-            normalized[key] = value
-            source_keys[key] = str(raw_key)
-            continue
-        if value is None or current == value:
-            continue
-        raise ValueError(
-            "case-insensitive property conflict: "
-            f"{source_keys[key]}={current!r} vs {raw_key}={value!r}"
-        )
-    return normalized
 
 
 def write_feature_triplet(

@@ -13,6 +13,7 @@ from rcsd_topo_poc.modules.t08_preprocess.vector_io import (
     resolve_field_name,
     write_gpkg,
 )
+from rcsd_topo_poc.utils.field_names import normalize_field_name, normalize_property_keys
 
 
 REQUIRED_OVERRIDE_FIELDS = (
@@ -258,7 +259,7 @@ def apply_confirmed_endpoint_overrides(
 def _load_overrides(path: Path) -> tuple[dict[str, str], ...]:
     with path.open("r", encoding="utf-8-sig", newline="") as handle:
         reader = csv.DictReader(handle)
-        fieldnames = set(reader.fieldnames or ())
+        fieldnames = {normalize_field_name(field) for field in (reader.fieldnames or ())}
         if set(REQUIRED_OVERRIDE_FIELDS) - fieldnames:
             raise ValueError(f"invalid confirmed endpoint override schema: {path}")
         rows = list(reader)
@@ -267,8 +268,8 @@ def _load_overrides(path: Path) -> tuple[dict[str, str], ...]:
     overrides: list[dict[str, str]] = []
     seen: set[str] = set()
     for row in rows:
-        item = {key: _text(value) for key, value in row.items()}
-        item["endpoint_field"] = item["endpoint_field"].lower()
+        item = {key: _text(value) for key, value in normalize_property_keys(row).items()}
+        item["endpoint_field"] = normalize_field_name(item["endpoint_field"])
         if not all(item.get(field) for field in REQUIRED_OVERRIDE_FIELDS):
             raise ValueError(f"invalid confirmed endpoint override row: {row}")
         if item["endpoint_field"] not in {"snodeid", "enodeid"}:

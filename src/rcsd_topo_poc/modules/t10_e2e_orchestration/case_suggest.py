@@ -10,6 +10,8 @@ from typing import Any, Iterable, Mapping, Sequence
 from shapely.geometry import shape
 from shapely.geometry.base import BaseGeometry
 
+from rcsd_topo_poc.utils.field_names import get_case_insensitive_property
+
 from .contracts import T10_MODULE_ID, T10_VERSION
 
 
@@ -276,11 +278,7 @@ def _selector_paths(selector_evidence: Mapping[str, str | Sequence[str]]) -> dic
 
 
 def _field_value(props: Mapping[str, Any], field_name: str) -> Any:
-    expected = field_name.lower()
-    for key, value in props.items():
-        if str(key).lower() == expected:
-            return value
-    return None
+    return get_case_insensitive_property(props, field_name)
 
 
 def _first_text(props: Mapping[str, Any], fields: Iterable[str]) -> str:

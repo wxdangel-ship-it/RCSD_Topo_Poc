@@ -25,6 +25,7 @@ from rcsd_topo_poc.modules.t00_utility_toolbox.common import (
     resolve_geojson_crs,
     write_json,
 )
+from rcsd_topo_poc.utils.field_names import PropertyLookup, normalize_field_name
 
 
 RUN_ID_PREFIX = "t00_tool7_geojson_to_gpkg"
@@ -95,24 +96,25 @@ def _infer_sqlite_type(values: list[Any]) -> str:
 
 def _resolve_field_mapping(features: list[_PreparedFeature]) -> dict[str, str]:
     field_mapping: dict[str, str] = {}
-    used_lower = {FID_COLUMN_NAME.lower(), GEOMETRY_COLUMN_NAME.lower()}
+    used_lower = {normalize_field_name(FID_COLUMN_NAME), normalize_field_name(GEOMETRY_COLUMN_NAME)}
     original_field_names: list[str] = []
-    seen_original_fields: set[str] = set()
+    seen_logical_fields: set[str] = set()
     for feature in features:
         for name in feature.properties.keys():
-            if name not in seen_original_fields:
+            logical_name = normalize_field_name(name)
+            if logical_name not in seen_logical_fields:
                 original_field_names.append(name)
-                seen_original_fields.add(name)
+                seen_logical_fields.add(logical_name)
 
     for original_name in original_field_names:
         base_name = str(original_name).strip() or "field"
         candidate = base_name
         suffix_index = 1
-        while candidate.lower() in used_lower:
+        while normalize_field_name(candidate) in used_lower:
             suffix_index += 1
             candidate = f"{base_name}_{suffix_index}"
         field_mapping[original_name] = candidate
-        used_lower.add(candidate.lower())
+        used_lower.add(normalize_field_name(candidate))
     return field_mapping
 
 
@@ -231,8 +233,11 @@ def _write_single_gpkg(
     has_z = 1 if any(feature.geometry.has_z for feature in features) else 0
     now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     bounds = aggregate_bounds([feature.geometry for feature in features])
+    feature_lookups = [PropertyLookup(feature.properties) for feature in features]
     field_types = {
-        original_name: _infer_sqlite_type([_normalize_value(feature.properties.get(original_name)) for feature in features])
+        original_name: _infer_sqlite_type(
+            [_normalize_value(lookup.get(original_name)) for lookup in feature_lookups]
+        )
         for original_name in field_mapping
     }
 
@@ -290,8 +295,8 @@ def _write_single_gpkg(
             f"({', '.join(_quote_identifier(name) for name in insert_columns)}) VALUES ({placeholders})"
         )
 
-        for feature in features:
-            row_values = [_normalize_value(feature.properties.get(original_name)) for original_name in field_mapping]
+        for feature, lookup in zip(features, feature_lookups):
+            row_values = [_normalize_value(lookup.get(original_name)) for original_name in field_mapping]
             row_values.append(_build_gpkg_geometry_blob(feature.geometry, srs_id))
             conn.execute(insert_sql, row_values)
 
@@ -334,7 +339,7 @@ def _convert_single_geojson_file(
             prepared_features.append(
                 _PreparedFeature(
                     geometry=repaired_geometry,
-                    properties=dict(feature.get("properties") or {}),
+                    properties=dict(PropertyLookup(feature.get("properties") or {}).resolved_items()),
                 )
             )
         except Exception as exc:

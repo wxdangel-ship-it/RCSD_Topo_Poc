@@ -19,6 +19,8 @@ from shapely.geometry import GeometryCollection, MultiPolygon, Polygon, mapping,
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import transform as shapely_transform
 
+from rcsd_topo_poc.utils.field_names import resolve_case_insensitive_field_name
+
 
 TARGET_CRS = CRS.from_epsg(3857)
 DEFAULT_GEOJSON_CRS = CRS.from_epsg(4326)
@@ -410,15 +412,6 @@ def aggregate_bounds(geometries: Iterable[BaseGeometry]) -> list[float] | None:
     max_x = max(bounds[2] for bounds in bounds_values)
     max_y = max(bounds[3] for bounds in bounds_values)
     return [float(min_x), float(min_y), float(max_x), float(max_y)]
-
-
-def resolve_case_insensitive_field_name(properties: dict[str, Any], candidates: Iterable[str]) -> str | None:
-    lower_map = {str(key).lower(): str(key) for key in properties.keys()}
-    for candidate in candidates:
-        resolved = lower_map.get(candidate.lower())
-        if resolved is not None:
-            return resolved
-    return None
 
 
 def _json_compatible(value: Any) -> Any:

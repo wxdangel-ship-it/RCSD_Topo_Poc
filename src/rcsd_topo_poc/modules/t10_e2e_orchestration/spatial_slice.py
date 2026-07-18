@@ -12,10 +12,10 @@ from rcsd_topo_poc.modules.t08_preprocess.vector_io import (
     VectorFeature,
     VectorReadResult,
     aggregate_bounds,
-    get_case_insensitive_property,
     read_vector,
     write_gpkg,
 )
+from rcsd_topo_poc.utils.field_names import get_case_insensitive_property
 
 from .contracts import EXTERNAL_INPUT_REQUIREMENTS
 
@@ -688,12 +688,7 @@ def _unique_sorted(values: Any) -> list[str]:
 
 
 def _field_value(properties: Mapping[str, Any], field_name: str) -> Any:
-    if isinstance(properties, dict):
-        return get_case_insensitive_property(properties, (field_name,))
-    for key, value in properties.items():
-        if str(key).lower() == field_name.lower():
-            return value
-    return None
+    return get_case_insensitive_property(properties, field_name)
 
 
 def _normalize_id(value: Any) -> str | None:

@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 from typing import Any
 
+from rcsd_topo_poc.utils.field_names import get_case_insensitive_property
+
 from .phase2_ids import normalize_target_id
 from .phase2_models import (
     SCENE_DIRECT,
@@ -231,10 +233,7 @@ def _failure_category(scene: str, reason: str) -> str:
 
 
 def _field_value(props: dict[str, Any], field_name: str) -> Any:
-    for key, value in props.items():
-        if key.lower() == field_name:
-            return value
-    return None
+    return get_case_insensitive_property(props, field_name)
 
 
 def _int_value(value: Any) -> int | None:

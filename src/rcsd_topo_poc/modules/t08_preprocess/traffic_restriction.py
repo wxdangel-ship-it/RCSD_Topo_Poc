@@ -22,6 +22,7 @@ from rcsd_topo_poc.modules.t08_preprocess.vector_io import (
     write_gpkg,
     write_json,
 )
+from rcsd_topo_poc.utils.field_names import normalize_field_name
 
 
 ProgressCallback = Callable[[str], None]
@@ -304,11 +305,11 @@ def _resolve_table_name(conn: sqlite3.Connection, *, path: Path, layer_name: str
         raise ValueError(f"GPKG contains no user table: {path}")
     if layer_name:
         for table_name in user_tables:
-            if table_name.lower() == layer_name.lower():
+            if normalize_field_name(table_name) == normalize_field_name(layer_name):
                 return table_name
         raise ValueError(f"Layer/table '{layer_name}' not found in {path}")
     for table_name in user_tables:
-        if table_name.lower() == path.stem.lower():
+        if normalize_field_name(table_name) == normalize_field_name(path.stem):
             return table_name
     if len(user_tables) == 1:
         return user_tables[0]
@@ -332,14 +333,14 @@ def _resolve_geometry_table_info(
         return None
     if layer_name:
         for table_name, column_name, srs_id in rows:
-            if str(table_name).lower() == layer_name.lower():
+            if normalize_field_name(table_name) == normalize_field_name(layer_name):
                 return str(table_name), str(column_name), int(srs_id)
         return None
     if len(rows) == 1:
         table_name, column_name, srs_id = rows[0]
         return str(table_name), str(column_name), int(srs_id)
     for table_name, column_name, srs_id in rows:
-        if str(table_name).lower() == path.stem.lower():
+        if normalize_field_name(table_name) == normalize_field_name(path.stem):
             return str(table_name), str(column_name), int(srs_id)
     return None
 
@@ -373,7 +374,7 @@ def _geometry_columns(conn: sqlite3.Connection, *, table_name: str) -> set[str]:
         ).fetchall()
     except sqlite3.Error:
         return set()
-    return {str(row[0]).lower() for row in rows}
+    return {normalize_field_name(row[0]) for row in rows}
 
 
 def _table_columns(conn: sqlite3.Connection, *, table_name: str, geometry_columns: set[str]) -> list[str]:
@@ -382,9 +383,9 @@ def _table_columns(conn: sqlite3.Connection, *, table_name: str, geometry_column
     for row in rows:
         name = str(row[1])
         is_pk = int(row[5] or 0) > 0
-        if name.lower() in geometry_columns:
+        if normalize_field_name(name) in geometry_columns:
             continue
-        if is_pk and name.lower() in {"fid", "ogc_fid"}:
+        if is_pk and normalize_field_name(name) in {"fid", "ogc_fid"}:
             continue
         columns.append(name)
     if not columns:

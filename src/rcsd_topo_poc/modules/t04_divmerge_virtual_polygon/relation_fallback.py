@@ -7,6 +7,7 @@ from typing import Any, Iterable, Mapping
 
 from rcsd_topo_poc.modules.t00_utility_toolbox.common import write_json
 from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import write_csv
+from rcsd_topo_poc.utils.field_names import PropertyLookup
 
 from ._runtime_shared import normalize_id
 from .final_publish import RELATION_EVIDENCE_CSV_NAME, RELATION_EVIDENCE_FIELDNAMES, RELATION_EVIDENCE_JSON_NAME
@@ -195,6 +196,7 @@ def _default_relation_row(
     failure_status: Any,
 ) -> dict[str, Any]:
     props = _properties(feature)
+    lookup = PropertyLookup(props)
     x, y = _point_xy(_geometry(feature))
     step7_state = "formal_result_missing"
     reason = "formal_result_missing"
@@ -204,7 +206,7 @@ def _default_relation_row(
     return {
         "target_id": mainnodeid or case_id,
         "case_id": case_id,
-        "junction_type": _junction_type(props.get("kind_2")),
+        "junction_type": _junction_type(lookup.get("kind_2")),
         "scene_type": "",
         "final_state": step7_state,
         "swsd_relation_type": "unknown",
@@ -351,10 +353,11 @@ def _rcsd_group_indexes(features: Iterable[Any]) -> tuple[dict[str, str], dict[s
     point_by_node: dict[str, tuple[Any, Any]] = {}
     for feature in features:
         props = _properties(feature)
-        node_id = normalize_id(props.get("id"))
+        lookup = PropertyLookup(props)
+        node_id = normalize_id(lookup.get("id"))
         if node_id is None:
             continue
-        group_id = normalize_id(props.get("mainnodeid")) or node_id
+        group_id = normalize_id(lookup.get("mainnodeid")) or node_id
         group_by_node[node_id] = group_id
         point = _point_xy(_geometry(feature))
         point_by_node[node_id] = point
@@ -369,7 +372,7 @@ def _rcsd_group_indexes(features: Iterable[Any]) -> tuple[dict[str, str], dict[s
 def _rcsd_node_geometry_index(features: Iterable[Any]) -> dict[str, Any]:
     by_node: dict[str, Any] = {}
     for feature in features:
-        node_id = normalize_id(_properties(feature).get("id"))
+        node_id = normalize_id(PropertyLookup(_properties(feature)).get("id"))
         if node_id is None:
             continue
         geometry = _geometry(feature)
@@ -388,6 +391,7 @@ def _rcsdintersection_singleton_index(
     ambiguous_nodes: set[str] = set()
     for feature in features:
         props = _properties(feature)
+        lookup = PropertyLookup(props)
         node_id = _intersection_singleton_node_id(props)
         if node_id is None:
             continue
@@ -397,7 +401,7 @@ def _rcsdintersection_singleton_index(
         intersection_geometry = _geometry(feature)
         if not _covers_node(intersection_geometry, node_geometry):
             continue
-        intersection_id = normalize_id(props.get("id")) or node_id
+        intersection_id = normalize_id(lookup.get("id")) or node_id
         previous = by_node.get(node_id)
         if previous is not None and previous != intersection_id:
             ambiguous_nodes.add(node_id)
@@ -409,7 +413,7 @@ def _rcsdintersection_singleton_index(
 
 
 def _intersection_singleton_node_id(props: Mapping[str, Any]) -> str | None:
-    node_ids = _intersection_node_ids(props.get("node_ids"))
+    node_ids = _intersection_node_ids(PropertyLookup(props).get("node_ids"))
     return node_ids[0] if len(node_ids) == 1 else None
 
 
@@ -506,14 +510,14 @@ def _point_xy(geometry: Any) -> tuple[Any, Any]:
 
 def _node_level(props: Mapping[str, Any]) -> int:
     try:
-        return int(props.get("grade"))
+        return int(PropertyLookup(props).get("grade"))
     except (TypeError, ValueError):
         return -1
 
 
 def _node_is_highway(props: Mapping[str, Any]) -> int:
     try:
-        return int(props.get("closed_con"))
+        return int(PropertyLookup(props).get("closed_con"))
     except (TypeError, ValueError):
         return -1
 

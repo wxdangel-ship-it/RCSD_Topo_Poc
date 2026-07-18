@@ -27,8 +27,8 @@
 
 ## 4. 回归要求
 
-测试应覆盖 Tool1 输出命名和覆盖保护、Tool2 patch/kind/event road、Tool3 roundabout、缺失端点审计式跳过与 `closed_connect` alias 归一/冲突、Tool4 repair 与 Tool6 消费、Tool5 complex / one-to-many、Tool6 QC、Tool7 restriction、Tool8 arrow、Tool9 RCSD 清理、Tool10 PointZ 严格校验、排序/切段、Z/点数守恒、单点段显式审计排除、单 GPKG 落盘和覆盖保护，以及 Tool11 全量-only、FRCSD 白名单、可选实验子集、哈希、缺失项聚合和请求根覆盖保护。
+测试应覆盖 Tool1 SHP / GeoJSON / FGB / GPKG 转换、输出命名和覆盖保护、Tool2 patch/kind/event road、Tool3 roundabout、缺失端点审计式跳过与 `closed_connect` alias 归一/冲突、Tool4 repair 与 Tool6 消费、Tool5 complex / one-to-many、Tool6 QC、Tool7 restriction、Tool8 arrow、Tool9 RCSD 清理、Tool10 PointZ 严格校验、排序/切段、Z/点数守恒、单点段显式审计排除、单 GPKG 落盘和覆盖保护，以及 Tool11 全量-only、FRCSD 白名单、可选实验子集、哈希、缺失项聚合和请求根覆盖保护。
 
 ## 5. 性能要求
 
-大体量 GPKG 读写优先使用直接 SQLite / 流式路径；Tool11 文件复制必须固定块流式处理，不把文件整体读入内存。性能优化不得省略 CRS/不变性、字段、summary 或 audit。工具脚本应提供进度输出，便于内网全量运行定位瓶颈。
+大体量 FGB 输入必须流式读取；大体量 GPKG 读写优先使用直接 SQLite / 流式路径；Tool11 文件复制必须固定块流式处理，不把文件整体读入内存。性能优化不得省略 CRS/不变性、字段、summary 或 audit。工具脚本应提供进度输出，便于内网全量运行定位瓶颈。

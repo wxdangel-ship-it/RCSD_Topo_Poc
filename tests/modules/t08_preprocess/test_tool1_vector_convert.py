@@ -37,6 +37,32 @@ def _read_geojson_count(path: Path) -> int:
         return len(source)
 
 
+def _write_flatgeobuf(path: Path, *, row_id: str, epsg: int = 4326) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with fiona.open(
+        path,
+        mode="w",
+        driver="FlatGeobuf",
+        schema={"geometry": "LineString", "properties": {"id": "str"}},
+        crs=CRS.from_epsg(epsg),
+    ) as sink:
+        sink.write(
+            {
+                "properties": {"id": row_id},
+                "geometry": {
+                    "type": "LineString",
+                    "coordinates": [[116.35, 39.95], [116.36, 39.96]],
+                },
+            }
+        )
+
+
+def _read_vector_signature(path: Path) -> tuple[str, str]:
+    with fiona.open(path) as source:
+        feature = next(iter(source))
+        return source.schema["geometry"], str(feature["properties"]["id"])
+
+
 def test_write_gpkg_adds_qgis_compatible_feature_count_metadata(tmp_path: Path) -> None:
     gpkg_path = tmp_path / "nodes.gpkg"
     write_gpkg(
@@ -84,6 +110,7 @@ def test_tool1_script_converts_supported_formats_next_to_inputs(tmp_path: Path) 
     shp_b = tmp_path / "input" / "b_roads.shp"
     geojson_path = tmp_path / "input" / "c_roads.geojson"
     gpkg_path = tmp_path / "input" / "d_roads.gpkg"
+    fgb_path = tmp_path / "input" / "e_roads.fgb"
     summary_path = tmp_path / "summary" / "conversion_summary_tool1.json"
     _write_polyline_shapefile(shp_a, row_id="a")
     _write_polyline_shapefile(shp_b, row_id="b")
@@ -97,6 +124,7 @@ def test_tool1_script_converts_supported_formats_next_to_inputs(tmp_path: Path) 
         [{"properties": {"id": "d"}, "geometry": {"type": "LineString", "coordinates": [[116.33, 39.93], [116.34, 39.94]]}}],
         crs_text="EPSG:4326",
     )
+    _write_flatgeobuf(fgb_path, row_id="e")
 
     result = subprocess.run(
         [
@@ -110,6 +138,8 @@ def test_tool1_script_converts_supported_formats_next_to_inputs(tmp_path: Path) 
             str(geojson_path),
             "--input-gpkg",
             str(gpkg_path),
+            "--input-fgb",
+            str(fgb_path),
             "--summary-output",
             str(summary_path),
             "--target-epsg",
@@ -130,30 +160,56 @@ def test_tool1_script_converts_supported_formats_next_to_inputs(tmp_path: Path) 
     assert (tmp_path / "input" / "b_roads.gpkg").is_file()
     assert (tmp_path / "input" / "c_roads.gpkg").is_file()
     assert (tmp_path / "input" / "d_roads.geojson").is_file()
+    assert (tmp_path / "input" / "e_roads.gpkg").is_file()
     epsg_a, count_a = _read_gpkg(tmp_path / "input" / "a_roads.gpkg")
     epsg_b, count_b = _read_gpkg(tmp_path / "input" / "b_roads.gpkg")
     epsg_c, count_c = _read_gpkg(tmp_path / "input" / "c_roads.gpkg")
+    epsg_e, count_e = _read_gpkg(tmp_path / "input" / "e_roads.gpkg")
     assert epsg_a == 3857
     assert epsg_b == 3857
     assert epsg_c == 3857
+    assert epsg_e == 3857
     assert count_a == 1
     assert count_b == 1
     assert count_c == 1
+    assert count_e == 1
+    assert _read_vector_signature(tmp_path / "input" / "e_roads.gpkg") == ("LineString", "e")
     assert _read_geojson_count(tmp_path / "input" / "d_roads.geojson") == 1
 
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
-    assert summary["input_count"] == 4
-    assert summary["converted_count"] == 4
+    assert summary["input_count"] == 5
+    assert summary["converted_count"] == 5
     assert summary["failed_count"] == 0
-    assert summary["total_feature_count"] == 4
+    assert summary["total_feature_count"] == 5
     assert summary["elapsed_seconds"] >= 0
     assert summary["features_per_second"] is not None
     assert summary["output_rule"] == "same_directory_same_stem_different_extension"
+    assert summary["supported_conversions"] == [
+        "shp_to_gpkg",
+        "geojson_to_gpkg",
+        "fgb_to_gpkg",
+        "gpkg_to_geojson",
+    ]
     conversions = {row["conversion"] for row in summary["file_results"]}
-    assert conversions == {"shp_to_gpkg", "geojson_to_gpkg", "gpkg_to_geojson"}
+    assert conversions == {"shp_to_gpkg", "geojson_to_gpkg", "fgb_to_gpkg", "gpkg_to_geojson"}
     assert all(row["source_feature_count"] == 1 for row in summary["file_results"])
     assert all(row["features_per_second"] is not None for row in summary["file_results"])
     assert all(Path(row["output_path"]).parent == Path(row["input_path"]).parent for row in summary["file_results"])
+
+
+def test_tool1_fgb_preserves_source_crs_by_default(tmp_path: Path) -> None:
+    fgb_path = tmp_path / "roads.fgb"
+    _write_flatgeobuf(fgb_path, row_id="fgb")
+
+    summary = run_t08_tool1_conversions(input_fgb_paths=[fgb_path])
+
+    output_path = tmp_path / "roads.gpkg"
+    assert _read_gpkg(output_path) == (4326, 1)
+    assert _read_vector_signature(output_path) == ("LineString", "fgb")
+    assert summary["converted_count"] == 1
+    assert summary["file_results"][0]["conversion"] == "fgb_to_gpkg"
+    assert summary["file_results"][0]["input_crs"] == "EPSG:4326"
+    assert summary["file_results"][0]["output_crs"] == "EPSG:4326"
 
 
 def test_tool1_rejects_same_run_input_output_collision(tmp_path: Path) -> None:

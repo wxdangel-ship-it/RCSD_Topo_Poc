@@ -4,9 +4,9 @@
 
 ## Tool1
 
-Tool1 使用参数化 SHP / GeoJSON / GPKG 列表作为输入，逐个流式读取、可选重投影，并将输出写回输入目录下同 stem、不同格式后缀的目标格式文件：SHP / GeoJSON 输出 GPKG，GPKG 输出 GeoJSON。命令脚本会输出单文件开始、定量要素转换进度、结束与失败信息。
+Tool1 使用参数化 SHP / GeoJSON / FGB / GPKG 列表作为输入，逐个流式读取、可选重投影，并将输出写回输入目录下同 stem、不同格式后缀的目标格式文件：SHP / GeoJSON / FGB 输出 GPKG，GPKG 输出 GeoJSON。命令脚本会输出单文件开始、定量要素转换进度、结束与失败信息。
 
-GPKG 输出参考 T00 Tool7 的实现方式，采用直接 SQLite GeoPackage 写出路径生成标准 `gpkg_spatial_ref_sys / gpkg_contents / gpkg_geometry_columns` 元数据和几何 BLOB，避免 Fiona 逐要素 sink 写出的主要性能瓶颈。GeoJSON 输出采用流式 JSON 写出，避免反向转换继续经过 Fiona sink。
+GPKG 输出参考 T00 Tool7 的实现方式，采用直接 SQLite GeoPackage 写出路径生成标准 `gpkg_spatial_ref_sys / gpkg_contents / gpkg_geometry_columns` 元数据和几何 BLOB，避免 Fiona 逐要素 sink 写出的主要性能瓶颈。FGB 通过 Fiona / GDAL FlatGeobuf 驱动流式读取；GeoJSON 输出采用流式 JSON 写出，避免反向转换继续经过 Fiona sink。
 
 ## Tool2
 

@@ -8,6 +8,7 @@
 - 当前主职责：组织端到端业务流程、Case / Segment 级证据包、Case replay、feedback、visual check 和 innernet full pipeline manifest。
 - 项目级主业务链：`T08 -> T01 -> T07 -> T03 -> T04 -> T05 -> T06 -> T09`。
 - T10 v1 Case runner 范围：`T01 -> T07 Step1/2 -> T03 -> T04 -> T05 -> T06 -> T11 -> T09`；T11 只发布人工 relation 候选审计，不回写 T09 输入。
+- F-RCSD 质量检查专用链：`T01 -> T07 Step1/2 -> T03 -> T04 -> T05 -> T06 -> T11 -> T12 -> T09`；固定跳过 T08、启用 T12，T09 仍消费 T06 输出。
 - T07 Step3：可选兼容 relation 补锚，不是 Case runner 默认阶段；innernet full pipeline 仅在显式配置兼容 relation 输入时运行。
 - T08：独立前置预处理、质检与修复模块，不由 T10 v1 callable 或 Case runner 调用；innernet full pipeline 总控可把 T08 作为独立前置阶段串入。
 
@@ -35,6 +36,7 @@ bash scripts/t10_pack_innernet_cases.sh 991176 74155468
 bash scripts/t10_pack_innernet_segments.sh 1534342_62397379
 bash scripts/t10_run_e2e_cases.sh --package-dir outputs/_work/t10_case_evidence/<package_id>
 bash scripts/t10_run_innernet_full_pipeline.sh
+bash scripts/t10_run_frcsd_quality_pipeline.sh
 ```
 
 模块 callable 入口和参数以 `INTERFACE_CONTRACT.md` 与 `docs/repository-metadata/entrypoint-registry.md` 为准。
@@ -52,4 +54,4 @@ bash scripts/t10_run_innernet_full_pipeline.sh
 
 ## 5. 边界提示
 
-T10 只编排、记录和组织证据，不改写 T01-T09 / T11 算法事实。失败阶段的部分输出不得提升为正式 handoff；feedback 不得绕过 T03/T04/T05/T06 的正式审计。
+T10 只编排、记录和组织证据，不改写 T01-T09 / T11 / T12 算法事实。失败阶段的部分输出不得提升为正式 handoff；feedback 不得绕过 T03/T04/T05/T06 的正式审计。

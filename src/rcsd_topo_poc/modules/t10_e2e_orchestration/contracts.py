@@ -18,6 +18,12 @@ T10_V1_CHAIN = (
     "t09_swsd_field_rule_restoration",
 )
 
+T10_V1_CHAIN_WITH_T12 = (
+    *T10_V1_CHAIN[:7],
+    "t12_frcsd_quality_audit",
+    *T10_V1_CHAIN[7:],
+)
+
 T10_T08_POLICY = (
     "T08 remains an independent pre-processing and quality repair module. "
     "T10 v1 consumes prepared external inputs but does not invoke T08."
@@ -51,6 +57,20 @@ EXTERNAL_INPUT_REQUIREMENTS: tuple[ArtifactRequirement, ...] = (
     ArtifactRequirement("rcsd_intersection", "external", "RCSDIntersection input for T07/T05 and case evidence.", True),
     ArtifactRequirement("rcsdroad", "external", "Original RCSDRoad input.", True),
     ArtifactRequirement("rcsdnode", "external", "Original RCSDNode input.", True),
+    ArtifactRequirement(
+        "frcsd_1v1_roads",
+        "external",
+        "Original 1V1 FRCSD Road target for optional T12 audit.",
+        external=True,
+        required=False,
+    ),
+    ArtifactRequirement(
+        "frcsd_1v1_nodes",
+        "external",
+        "Original 1V1 FRCSD Node target for optional T12 audit.",
+        external=True,
+        required=False,
+    ),
     ArtifactRequirement("sw_restriction_tool7", "external", "T08 Tool7 explicit SWSD restriction output for T09.", True),
     ArtifactRequirement("sw_arrow_tool8", "external", "T08 Tool8 explicit SWSD lane-arrow output for T09.", True),
 )
@@ -82,6 +102,9 @@ HANDOFF_REQUIREMENTS: tuple[ArtifactRequirement, ...] = (
         "t06_segment_fusion_precheck",
         "T06 Step3 SWSD-to-FRCSD segment relation index.",
     ),
+    ArtifactRequirement("t12_quality_candidates", "t12_frcsd_quality_audit", "T12 candidate CSV."),
+    ArtifactRequirement("t12_confirmed_quality_issues", "t12_frcsd_quality_audit", "T12 reviewed confirmed-issue CSV."),
+    ArtifactRequirement("t12_quality_summary", "t12_frcsd_quality_audit", "T12 quality-audit summary JSON."),
     ArtifactRequirement("t11_relation_repair_candidates", "t11_manual_relation_review", "T11 relation repair candidates CSV."),
     ArtifactRequirement("t11_relation_repair_summary", "t11_manual_relation_review", "T11 candidate extraction summary JSON."),
     ArtifactRequirement("t09_restored_field_rules", "t09_swsd_field_rule_restoration", "T09 restored field rules output."),
@@ -98,6 +121,7 @@ DIRECTORY_ONLY_HANDOFF_KEYS = frozenset(
         "t07_dir",
         "t09_dir",
         "t11_dir",
+        "t12_dir",
     }
 )
 
@@ -148,6 +172,25 @@ WORKFLOW_STEPS: tuple[WorkflowStepSpec, ...] = (
         "t06_segment_fusion_precheck",
         consumes=("t01_segment", "t01_roads", "final_swsd_nodes", "t05_intersection_match_all", "t05_rcsdroad_out", "t05_rcsdnode_out"),
         produces=("t06_frcsd_road", "t06_frcsd_node", "t06_swsd_frcsd_segment_relation"),
+    ),
+    WorkflowStepSpec(
+        "t12",
+        "t12_frcsd_quality_audit",
+        consumes=(
+            "t01_segment",
+            "t01_roads",
+            "final_swsd_nodes",
+            "frcsd_1v1_roads",
+            "frcsd_1v1_nodes",
+            "rcsd_intersection",
+            "t05_intersection_match_all",
+        ),
+        produces=(
+            "t12_quality_candidates",
+            "t12_confirmed_quality_issues",
+            "t12_quality_summary",
+        ),
+        notes="Optional audit-only stage after T06 Step3; it never changes T06/T11/T09 handoffs.",
     ),
     WorkflowStepSpec(
         "t11",

@@ -22,10 +22,11 @@ T08 -> T01 -> T07 -> T03 -> T04 -> T05 -> T06 -> T09
 | 路口关系 | T07 / T03 / T04 / T05 | 构建并发布 SWSD-RCSD 语义路口关系。T07 处理已有路口面锚定并保留可选兼容 relation 补锚，T03 处理交叉 / T 型，T04 处理分歧 / 合流 / 复杂路口，T05 统一发布 relation。 |
 | Segment 替换 | T06 | 基于 T01 Segment 与 T05 relation 判断可替换性，处理 RCSD 数据质量和 SWSD/RCSD 工艺差异，输出 F-RCSD Road / Node。 |
 | 人工审计 | T11 | 在 T10 编排中于 T06 后、T09 前抽取 relation repair candidates 与人工模板；只读审计，不改变 T06 到 T09 的业务数据依赖。 |
+| F-RCSD 质检 | T12 | 对原始 1V1 匹配生成的 F-RCSD 做 SWSD 可达性等价假设检查，输出候选、人工复核、确认和排除证据；不修改 T06 或目标路网。 |
 | 通行恢复 | T09 | 基于 SWSD restriction / Laneinfo 与 T06 F-RCSD 承载关系恢复路口级通行规则。 |
-| 编排证据 | T10 | 组织 Case package、Case replay、full pipeline manifest、T06 funnel、T11 candidate audit、feedback 和 visual check；不替代 T01-T09 / T11 算法。 |
+| 编排证据 | T10 | 组织 Case package、Case replay、full pipeline manifest、T06 funnel、可选 T12 quality audit、T11 candidate audit、feedback 和 visual check；不替代 T01-T09 / T11 / T12 算法。 |
 
-T10 v1 Case runner 编排 `T01 -> T07 Step1/2 -> T03 -> T04 -> T05 -> T06 -> T11 -> T09`。T11 是 audit-only 阶段，T09 业务输入仍直接来自 T06。T08 是独立前置预处理、质检和修复模块，不由 Case runner 调用；内网全量总控可把 T08 作为独立阶段串入全量链路。T07 Step3 是可选兼容 relation 补锚，不是 T10 默认主链阶段。
+T10 v1 Case runner 默认编排 `T01 -> T07 Step1/2 -> T03 -> T04 -> T05 -> T06 -> T11 -> T09`；显式启用 T12 时执行 `T06 -> T11 -> T12 -> T09`。T12 与 T11 都是 audit-only，T09 业务输入仍直接来自 T06。T10 另提供固定跳过 T08、启用 T12 的 F-RCSD 质量检查专用入口。T08 是独立前置预处理、质检和修复模块，不由 Case runner 调用；内网全量总控可把 T08 作为独立阶段串入全量链路。T07 Step3 是可选兼容 relation 补锚，不是 T10 默认主链阶段。
 
 ## 3. 核心业务需求
 
@@ -35,10 +36,11 @@ T10 v1 Case runner 编排 `T01 -> T07 Step1/2 -> T03 -> T04 -> T05 -> T06 -> T11
 4. T06 不能只按“有 1:1 relation”机械替换 Segment，必须处理 RCSD 端点、方向、道路切分、提前右转、内部短连接、surface 证据和 topology 连通等真实数据差异；surface 证据只能在 T04 未 reject、Patch 无冲突、证据可解释且 topology 回退通过时，将 retained-junction 距离 gate 降级为风险释放。
 5. T11 必须在 T10 工作流中于 T06 后抽取人工 relation 修复候选，且不得把候选解释为人工确认或 T09 业务输入。
 6. T09 必须在 F-RCSD 承载关系上恢复 SWSD 现场通行规则，并保留可追溯的 restriction、Laneinfo 和风险审计链。
+7. T12 必须把“SWSD 与原始 1V1 F-RCSD 的通行性应等价”作为待验证质量假设；候选必须经人工 review decisions 才能进入 confirmed 正式问题层，不得据此 silent fix。
 
 ## 4. 当前模块生命周期
 
-- Active 正式业务模块：`t01_data_preprocess`、`t03_virtual_junction_anchor`、`t04_divmerge_virtual_polygon`、`t05_junction_surface_fusion`、`t06_segment_fusion_precheck`、`t07_semantic_junction_anchor`、`t08_preprocess`、`t09_swsd_field_rule_restoration`、`t10_e2e_orchestration`、`t11_manual_relation_review`
+- Active 正式业务模块：`t01_data_preprocess`、`t03_virtual_junction_anchor`、`t04_divmerge_virtual_polygon`、`t05_junction_surface_fusion`、`t06_segment_fusion_precheck`、`t07_semantic_junction_anchor`、`t08_preprocess`、`t09_swsd_field_rule_restoration`、`t10_e2e_orchestration`、`t11_manual_relation_review`、`t12_frcsd_quality_audit`
 - Active POC / 成果模块：`p01_arm_build`、`p02_wuhan_local_experiment`
 - Retired 模块：`t02_junction_anchor`
 - Support Retained 模块：`t00_utility_toolbox`
@@ -66,4 +68,5 @@ T10 v1 Case runner 编排 `T01 -> T07 Step1/2 -> T03 -> T04 -> T05 -> T06 -> T11
 - 产品化 T07/T03/T04/T05 relation 的成功、fallback、review-only、blocked 和 upstream-needed 状态。
 - 将 T06 problem registry 与 T10 feedback 形成稳定闭环，让可自动消费的问题进入 T05，其它问题进入人工复核或上游模块任务。
 - 建立 T06 Step3 后的批量 QA 指标，覆盖 source 同源性、端点完整性、节点映射、提前右转挂接、surface closure、F-RCSD 连通和 T09 carrier 可用性。
+- 用 T12 持续验证原始 1V1 F-RCSD 与 SWSD 的可达性等价假设，冻结可复核的误报排除证据和正式问题清单。
 - 结合 RCSD Laneinfo 与轨迹通行证据继续增强 T09。

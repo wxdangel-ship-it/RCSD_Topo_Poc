@@ -4,6 +4,9 @@
 
 - T10 v1 Case runner 固定为 `T01 -> T07 Step1/2 -> T03 -> T04 -> T05 -> T06 -> T11 -> T09`。
 - T11 为 audit-only 必经阶段；T11 失败或必要产物缺失时，T09 不得运行。
+- T12 默认关闭；显式启用后为 audit-only 阶段，T12 失败时后续阶段阻断，但其输出不得进入 T06/T11/T09 的业务 handoff。
+- 启用 T12 时阶段顺序必须为 `T06 -> T11 -> T12 -> T09`；专用 F-RCSD profile 必须固定跳过 T08，manifest 不得把未运行的 T08 登记为有效 stage。
+- T12 必须验证 CRS、方向拓扑、几何语义、输入/参数/输出/环境审计和阶段性能，不允许 silent fix。
 - T07 Step3 不得作为 T05 后默认必经阶段；只有显式提供兼容 relation 输入时，才允许作为独立兼容补锚阶段运行。
 - Case runner 不调用 T08。
 - Full pipeline 总控可把 T08 作为独立前置阶段串入。
@@ -25,7 +28,7 @@
 
 ## 4. 回归要求
 
-测试应覆盖 Case package、Segment package、multi-case / multi-segment layout、text bundle 分片解包、Case runner 阶段状态、T06 funnel、T11 stage、visual check、feedback iteration regression guard、manifest stage order、resume 和 finalize-existing。
+测试应覆盖 Case package、Segment package、multi-case / multi-segment layout、text bundle 分片解包、Case runner 阶段状态、T06 funnel、T11 stage、T12 默认关闭与显式启用、visual check、feedback iteration regression guard、manifest stage order、resume 和 finalize-existing。
 
 ## 5. 性能要求
 

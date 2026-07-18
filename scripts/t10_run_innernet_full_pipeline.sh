@@ -12,7 +12,7 @@ Purpose:
     outputs/_work/t10_innernet_full_pipeline/<RUN_ID>/
 
 Main stages:
-  T08 -> T01 -> T07 Step1/2 -> T03 -> T04 -> T05 -> T06 Step1/2 -> T06 Step3 -> T11 -> T09
+  T08 -> T01 -> T07 Step1/2 -> T03 -> T04 -> T05 -> T06 Step1/2 -> T06 Step3 -> T11 -> [T12] -> T09
 
 Common env:
   TESTDATA_ROOT        Default: /mnt/d/TestData/POC_Data
@@ -23,6 +23,10 @@ Common env:
   RUN_T08_TOOL8        1, 0 or auto. Default: auto
   RUN_T08_TOOL9        1, 0 or auto. Default: 0
   RUN_T07_STEP3        1, 0 or auto. Default: 0. Optional legacy relation-backfill compatibility stage.
+  RUN_T12              1 or 0. Default: 0. Optional audit-only FRCSD quality stage.
+  T12_REVIEW_DECISIONS Optional external review-decision CSV for T12.
+  T12_CASE_MANIFEST    Optional T10 Case manifest for explicit crop-edge exclusion.
+                       Leave empty for full-city data.
   T07_STEP3_INTERSECTION_MATCH_ALL_PATH
                        Optional Step3 compatible relation input. Required when RUN_T07_STEP3=1.
   T07_STEP3_RCSDNODE_PATH
@@ -40,6 +44,7 @@ Input override env:
   SWSD_INPUT_ROADS   Prepared SWSD roads input for T01
   DRIVEZONE_PATH, DIVSTRIPZONE_PATH, RCSD_INTERSECTION_PATH
   RCSDROAD_PATH, RCSDNODE_PATH
+  FRCSD_1V1_ROADS_PATH, FRCSD_1V1_NODES_PATH (required only when RUN_T12=1)
   SW_CONDITION_GPKG, SW_LANE_GPKG, SW_NODE_GPKG, SW_ROAD_GPKG
   ROAD_SURFACE_GPKG
 USAGE
@@ -84,8 +89,16 @@ PIPELINE_STARTED_EPOCH="$(date +%s)"
 RESUME_FROM_STAGE="${RESUME_FROM_STAGE:-}"
 RUN_STAGES="${RUN_STAGES:-}"
 RUN_T07_STEP3="${RUN_T07_STEP3:-0}"
+RUN_T08="${RUN_T08:-1}"
+RUN_T12="${RUN_T12:-0}"
+T12_REVIEW_DECISIONS="${T12_REVIEW_DECISIONS:-}"
+T12_CASE_MANIFEST="${T12_CASE_MANIFEST:-}"
 T07_STEP3_INTERSECTION_MATCH_ALL_PATH="${T07_STEP3_INTERSECTION_MATCH_ALL_PATH:-}"
 T07_STEP3_RCSDNODE_PATH="${T07_STEP3_RCSDNODE_PATH:-}"
+if [[ "$RUN_T12" != "0" && "$RUN_T12" != "1" ]]; then
+  echo "[BLOCK] RUN_T12 must be 0 or 1: $RUN_T12" >&2
+  exit 2
+fi
 RESUME_MODE=0
 if [[ -n "$RESUME_RUN_ROOT" || -n "$RESUME_FROM_STAGE" || -n "$RUN_STAGES" ]]; then
   RESUME_MODE=1
@@ -170,10 +183,11 @@ normalize_stage_id() {
     t06|t06_step12) printf '%s\n' "t06_step12" ;;
     t06_step3) printf '%s\n' "t06_step3" ;;
     t11|t11_candidates) printf '%s\n' "t11" ;;
+    t12|t12_quality) printf '%s\n' "t12" ;;
     t09) printf '%s\n' "t09" ;;
     *)
       echo "[BLOCK] Unknown T10 full-pipeline stage: $1" >&2
-      echo "[TIP] Supported stages: t08_preprocess,t01,t07_step12,t03,t04,t05,t07_step3,t06_step12,t06_step3,t11,t09" >&2
+      echo "[TIP] Supported stages: t08_preprocess,t01,t07_step12,t03,t04,t05,t07_step3,t06_step12,t06_step3,t11,t12,t09" >&2
       exit 2
       ;;
   esac
@@ -190,7 +204,8 @@ stage_index() {
     t06_step12) printf '%s\n' 6 ;;
     t06_step3) printf '%s\n' 7 ;;
     t11) printf '%s\n' 8 ;;
-    t09) printf '%s\n' 9 ;;
+    t12) printf '%s\n' 9 ;;
+    t09) printf '%s\n' 10 ;;
     *) printf '%s\n' 99 ;;
   esac
 }
@@ -229,15 +244,21 @@ init_resume_plan() {
     REQUESTED_STAGES_TEXT=""
     local ordered
     if [[ "$start_stage" == "t07_step3" ]]; then
-      ordered=(t07_step3 t06_step12 t06_step3 t11 t09)
+      ordered=(t07_step3 t06_step12 t06_step3 t11 t12 t09)
       start_index=0
     else
-      ordered=(t08_preprocess t01 t07_step12 t03 t04 t05 t06_step12 t06_step3 t11 t09)
+      ordered=(t08_preprocess t01 t07_step12 t03 t04 t05 t06_step12 t06_step3 t11 t12 t09)
       start_index="$(stage_index "$start_stage")"
     fi
     for index in "${!ordered[@]}"; do
       if (( index >= start_index )); then
         stage="${ordered[$index]}"
+        if [[ "$stage" == "t08_preprocess" && "$RUN_T08" != "1" ]]; then
+          continue
+        fi
+        if [[ "$stage" == "t12" && "$RUN_T12" != "1" ]]; then
+          continue
+        fi
         REQUESTED_STAGES_CSV+="$stage,"
         if [[ -n "$REQUESTED_STAGES_TEXT" ]]; then
           REQUESTED_STAGES_TEXT+=","
@@ -259,6 +280,20 @@ should_run_stage() {
     return 0
   fi
   [[ "$REQUESTED_STAGES_CSV" == *",$1,"* ]]
+}
+
+should_run_t12() {
+  if [[ "$RESUME_MODE" == "1" && "$REQUESTED_STAGES_CSV" != *",t12,"* ]]; then
+    return 1
+  fi
+  if [[ "$RUN_T12" != "1" ]]; then
+    if [[ "$RESUME_MODE" == "1" && "$REQUESTED_STAGES_CSV" == *",t12,"* ]]; then
+      echo "[BLOCK] Running or resuming t12 requires RUN_T12=1." >&2
+      exit 2
+    fi
+    return 1
+  fi
+  return 0
 }
 
 should_run_t07_step3() {
@@ -302,8 +337,9 @@ payload = {
     "created_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     "status": "running",
     "passed": False,
+    "t12_enabled": os.environ.get("RUN_T12") == "1",
     "pipeline": [
-        "T08",
+        *(("T08",) if os.getenv("RUN_T08")=="1" else ()),
         "T01",
         "T07 Step1/2",
         "T03",
@@ -312,6 +348,7 @@ payload = {
         "T06 Step1/2",
         "T06 Step3",
         "T11",
+        *(("T12",) if os.getenv("RUN_T12")=="1" else ()),
         "T09",
     ],
     "inputs": {},
@@ -401,6 +438,10 @@ if section == "outputs" and value in (None, ""):
         "t06_frcsd_node": ("t06_step3", "frcsd_node"),
         "t06_segment_relation": ("t06_step3", "segment_relation"),
         "t06_surface_topology_audit": ("t06_step3", "surface_topology_audit"),
+        "t12_run_root": ("t12", "run_root"),
+        "t12_candidates_csv": ("t12", "candidates_csv"),
+        "t12_confirmed_csv": ("t12", "confirmed_csv"),
+        "t12_summary_json": ("t12", "summary_json"),
         "t11_run_root": ("t11", "run_root"),
         "t11_candidates_csv": ("t11", "candidates_csv"),
         "t11_summary_json": ("t11", "summary_json"),
@@ -466,7 +507,9 @@ if isinstance(existing, dict):
 stages[stage_id] = record
 order = payload.setdefault("stage_order", [])
 if stage_id not in order:
-    if stage_id == "t11" and "t09" in order:
+    if stage_id == "t12" and "t09" in order:
+        order.insert(order.index("t09"), stage_id)
+    elif stage_id == "t11" and "t09" in order:
         order.insert(order.index("t09"), stage_id)
     else:
         order.append(stage_id)
@@ -519,6 +562,16 @@ def _existing_t11_output(flat_key: str, stage_key: str, filename: str) -> str:
     return value
 
 
+def _existing_t12_output(flat_key: str, stage_key: str, filename: str) -> str:
+    value = outputs.get(flat_key) or (stages.get("t12") or {}).get("outputs", {}).get(stage_key) or ""
+    if not value:
+        matches = sorted(run_root.glob(f"t12_frcsd_quality_audit/*/{filename}"))
+        value = str(matches[-1]) if matches else ""
+    if value and Path(value).is_file():
+        outputs[flat_key] = value
+    return value
+
+
 t06_frcsd_road = _existing_output(
     "t06_frcsd_road",
     "t06_step3",
@@ -530,6 +583,21 @@ t06_frcsd_node = _existing_output(
     "t06_step3",
     "frcsd_node",
     "t06_segment_fusion_precheck/t06_innernet_precheck/step3_segment_replacement/t06_frcsd_node.gpkg",
+)
+t12_candidates_csv = _existing_t12_output(
+    "t12_candidates_csv",
+    "candidates_csv",
+    "t12_frcsd_quality_candidates.csv",
+)
+t12_confirmed_csv = _existing_t12_output(
+    "t12_confirmed_csv",
+    "confirmed_csv",
+    "t12_frcsd_confirmed_quality_issues.csv",
+)
+t12_summary_json = _existing_t12_output(
+    "t12_summary_json",
+    "summary_json",
+    "t12_frcsd_quality_audit_summary.json",
 )
 t11_candidates_csv = _existing_t11_output(
     "t11_candidates_csv",
@@ -558,6 +626,17 @@ missing_final_outputs = [
     }.items()
     if not value or not Path(value).is_file()
 ]
+t12_enabled = bool(payload.get("t12_enabled") or stages.get("t12"))
+if t12_enabled:
+    for key, value in {
+        "t12_candidates_csv": t12_candidates_csv,
+        "t12_confirmed_csv": t12_confirmed_csv,
+        "t12_summary_json": t12_summary_json,
+    }.items():
+        if not value or not Path(value).is_file():
+            missing_final_outputs.append(key)
+    if (stages.get("t12") or {}).get("status") != "passed":
+        missing_final_outputs.append("t12_stage")
 if (stages.get("t11") or {}).get("status") != "passed":
     missing_final_outputs.append("t11_stage")
 passed = status == "passed" and exit_code == 0 and not missing_final_outputs
@@ -590,6 +669,10 @@ summary = {
     "missing_final_outputs": missing_final_outputs,
     "t06_frcsd_road": t06_frcsd_road,
     "t06_frcsd_node": t06_frcsd_node,
+    "t12_enabled": t12_enabled,
+    "t12_candidates_csv": t12_candidates_csv,
+    "t12_confirmed_csv": t12_confirmed_csv,
+    "t12_summary_json": t12_summary_json,
     "t11_candidates_csv": t11_candidates_csv,
     "t11_summary_json": t11_summary_json,
     "t09_frcsd_restriction": t09_frcsd_restriction,
@@ -708,7 +791,7 @@ print(
 PY
 }
 
-export REPO_DIR RUN_ID RUN_ROOT
+export REPO_DIR RUN_ID RUN_ROOT RUN_T08 RUN_T12
 FINALIZE_EXISTING="${FINALIZE_EXISTING:-0}"
 if [[ "$FINALIZE_EXISTING" == "1" ]]; then
   finalize_existing_run
@@ -731,6 +814,8 @@ DIVSTRIPZONE_PATH="${DIVSTRIPZONE_PATH:-$(first_existing "$TESTDATA_ROOT/patch_a
 RCSD_INTERSECTION_PATH="${RCSD_INTERSECTION_PATH:-$(first_existing "$TESTDATA_ROOT/patch_all/RCSDIntersection.gpkg" "$TESTDATA_ROOT/RCSDIntersection.gpkg")}"
 RCSDROAD_PATH="${RCSDROAD_PATH:-$RC4_ROOT/RCSDRoad.gpkg}"
 RCSDNODE_PATH="${RCSDNODE_PATH:-$RC4_ROOT/RCSDNode.gpkg}"
+FRCSD_1V1_ROADS_PATH="${FRCSD_1V1_ROADS_PATH:-}"
+FRCSD_1V1_NODES_PATH="${FRCSD_1V1_NODES_PATH:-}"
 SWSD_INPUT_NODES="${SWSD_INPUT_NODES:-$FIRST_LAYER_ROOT/nodes.gpkg}"
 SWSD_INPUT_ROADS="${SWSD_INPUT_ROADS:-$FIRST_LAYER_ROOT/roads.gpkg}"
 
@@ -746,6 +831,10 @@ if [[ "$RESUME_MODE" == "1" ]]; then
   RCSD_INTERSECTION_PATH="$(manifest_get inputs rcsd_intersection "$RCSD_INTERSECTION_PATH")"
   RCSDROAD_PATH="$(manifest_get inputs rcsdroad "$RCSDROAD_PATH")"
   RCSDNODE_PATH="$(manifest_get inputs rcsdnode "$RCSDNODE_PATH")"
+  FRCSD_1V1_ROADS_PATH="$(manifest_get inputs frcsd_1v1_roads "$FRCSD_1V1_ROADS_PATH")"
+  FRCSD_1V1_NODES_PATH="$(manifest_get inputs frcsd_1v1_nodes "$FRCSD_1V1_NODES_PATH")"
+  T12_REVIEW_DECISIONS="$(manifest_get inputs t12_review_decisions "$T12_REVIEW_DECISIONS")"
+  T12_CASE_MANIFEST="$(manifest_get inputs t12_case_manifest "$T12_CASE_MANIFEST")"
   SWSD_INPUT_NODES="$(manifest_get inputs swsd_input_nodes "$SWSD_INPUT_NODES")"
   SWSD_INPUT_ROADS="$(manifest_get inputs swsd_input_roads "$SWSD_INPUT_ROADS")"
 else
@@ -767,9 +856,22 @@ else
   manifest_set inputs rcsdnode "$RCSDNODE_PATH"
   manifest_set inputs swsd_input_nodes "$SWSD_INPUT_NODES"
   manifest_set inputs swsd_input_roads "$SWSD_INPUT_ROADS"
+  if [[ "$RUN_T12" == "1" ]]; then
+    require_file FRCSD_1V1_ROADS_PATH "$FRCSD_1V1_ROADS_PATH"
+    require_file FRCSD_1V1_NODES_PATH "$FRCSD_1V1_NODES_PATH"
+    if [[ -n "$T12_REVIEW_DECISIONS" ]]; then
+      require_file T12_REVIEW_DECISIONS "$T12_REVIEW_DECISIONS"
+    fi
+    if [[ -n "$T12_CASE_MANIFEST" ]]; then
+      require_file T12_CASE_MANIFEST "$T12_CASE_MANIFEST"
+    fi
+    manifest_set inputs frcsd_1v1_roads "$FRCSD_1V1_ROADS_PATH"
+    manifest_set inputs frcsd_1v1_nodes "$FRCSD_1V1_NODES_PATH"
+    manifest_set inputs t12_review_decisions "$T12_REVIEW_DECISIONS"
+    manifest_set inputs t12_case_manifest "$T12_CASE_MANIFEST"
+  fi
 fi
 
-RUN_T08="${RUN_T08:-1}"
 RUN_T08_TOOL7="${RUN_T08_TOOL7:-auto}"
 RUN_T08_TOOL8="${RUN_T08_TOOL8:-auto}"
 RUN_T08_TOOL9="${RUN_T08_TOOL9:-0}"
@@ -897,24 +999,20 @@ if [[ "$RESUME_MODE" != "1" ]] || should_run_stage t08_preprocess; then
   manifest_set outputs rcsdnode_after_t08 "$RCSDNODE_FOR_DOWNSTREAM"
   manifest_set outputs sw_restriction_tool7 "$SW_RESTRICTION_TOOL7"
   manifest_set outputs sw_arrow_tool8 "$SW_ARROW_TOOL8"
-  T08_STAGE_STATUS="skipped"
-  T08_STAGE_LOG=""
   if [[ "$RUN_T08" == "1" ]] && should_run_stage t08_preprocess; then
-    T08_STAGE_STATUS="passed"
-    T08_STAGE_LOG="$LOG_ROOT/t08_tool6_final.log"
+    manifest_stage_record t08_preprocess T08 passed "$LOG_ROOT/t08_tool6_final.log" \
+      "inputs.swsd_nodes=$SWSD_INPUT_NODES" \
+      "inputs.swsd_roads=$SWSD_INPUT_ROADS" \
+      "inputs.rcsdroad=$RCSDROAD_PATH" \
+      "inputs.rcsdnode=$RCSDNODE_PATH" \
+      "outputs.swsd_nodes_for_t01=$SWSD_NODES_FOR_T01" \
+      "outputs.swsd_roads_for_t01=$SWSD_ROADS_FOR_T01" \
+      "outputs.rcsdroad_for_downstream=$RCSDROAD_FOR_DOWNSTREAM" \
+      "outputs.rcsdnode_for_downstream=$RCSDNODE_FOR_DOWNSTREAM" \
+      "outputs.sw_restriction_tool7=$SW_RESTRICTION_TOOL7" \
+      "outputs.sw_arrow_tool8=$SW_ARROW_TOOL8" \
+      "execution_context.run_t08=$RUN_T08"
   fi
-  manifest_stage_record t08_preprocess T08 "$T08_STAGE_STATUS" "$T08_STAGE_LOG" \
-    "inputs.swsd_nodes=$SWSD_INPUT_NODES" \
-    "inputs.swsd_roads=$SWSD_INPUT_ROADS" \
-    "inputs.rcsdroad=$RCSDROAD_PATH" \
-    "inputs.rcsdnode=$RCSDNODE_PATH" \
-    "outputs.swsd_nodes_for_t01=$SWSD_NODES_FOR_T01" \
-    "outputs.swsd_roads_for_t01=$SWSD_ROADS_FOR_T01" \
-    "outputs.rcsdroad_for_downstream=$RCSDROAD_FOR_DOWNSTREAM" \
-    "outputs.rcsdnode_for_downstream=$RCSDNODE_FOR_DOWNSTREAM" \
-    "outputs.sw_restriction_tool7=$SW_RESTRICTION_TOOL7" \
-    "outputs.sw_arrow_tool8=$SW_ARROW_TOOL8" \
-    "execution_context.run_t08=$RUN_T08"
 fi
 
 T01_ROOT="$RUN_ROOT/t01_full_data"
@@ -1294,6 +1392,72 @@ if should_run_stage t11; then
     "execution_context.run_root=$T11_RUN_ROOT"
 fi
 
+T12_OUT_ROOT="$RUN_ROOT/t12_frcsd_quality_audit"
+T12_RUN_ID="${T12_RUN_ID:-t12_full}"
+T12_RUN_ROOT="$(manifest_get outputs t12_run_root "$T12_OUT_ROOT/$T12_RUN_ID")"
+T12_CANDIDATES_CSV="$(manifest_get outputs t12_candidates_csv "$T12_RUN_ROOT/t12_frcsd_quality_candidates.csv")"
+T12_CONFIRMED_CSV="$(manifest_get outputs t12_confirmed_csv "$T12_RUN_ROOT/t12_frcsd_confirmed_quality_issues.csv")"
+T12_SUMMARY_JSON="$(manifest_get outputs t12_summary_json "$T12_RUN_ROOT/t12_frcsd_quality_audit_summary.json")"
+if should_run_t12; then
+  T05_ANCHOR_AUDIT="$T05_PHASE2_ROOT/intersection_match_all_audit.csv"
+  require_file FRCSD_1V1_ROADS_PATH "$FRCSD_1V1_ROADS_PATH"
+  require_file FRCSD_1V1_NODES_PATH "$FRCSD_1V1_NODES_PATH"
+  require_file T05_ANCHOR_AUDIT "$T05_ANCHOR_AUDIT"
+  if [[ -n "$T12_REVIEW_DECISIONS" ]]; then
+    require_file T12_REVIEW_DECISIONS "$T12_REVIEW_DECISIONS"
+  fi
+  if [[ -n "$T12_CASE_MANIFEST" ]]; then
+    require_file T12_CASE_MANIFEST "$T12_CASE_MANIFEST"
+  fi
+  T12_ARGS=(
+    "$PYTHON_BIN" scripts/t12_run_frcsd_quality_audit.py
+    --run-id "$T12_RUN_ID"
+    --out-root "$T12_OUT_ROOT"
+    --swsd-segment "$T01_SEGMENT"
+    --swsd-roads "$T01_ROADS"
+    --swsd-nodes "$FINAL_SWSD_NODES"
+    --frcsd-roads "$FRCSD_1V1_ROADS_PATH"
+    --frcsd-nodes "$FRCSD_1V1_NODES_PATH"
+    --t05-anchor-audit "$T05_ANCHOR_AUDIT"
+    --rcsd-intersection "$RCSD_INTERSECTION_PATH"
+    --t06-run-root "$T06_RUN_ROOT"
+    --drivezone "$DRIVEZONE_PATH"
+    --progress
+  )
+  if [[ -n "$T12_REVIEW_DECISIONS" ]]; then
+    T12_ARGS+=(--review-decisions "$T12_REVIEW_DECISIONS")
+  fi
+  if [[ -n "$T12_CASE_MANIFEST" ]]; then
+    T12_ARGS+=(--case-manifest "$T12_CASE_MANIFEST")
+  fi
+  run_logged t12 "${T12_ARGS[@]}"
+  require_file T12_CANDIDATES_CSV "$T12_CANDIDATES_CSV"
+  require_file T12_CONFIRMED_CSV "$T12_CONFIRMED_CSV"
+  require_file T12_SUMMARY_JSON "$T12_SUMMARY_JSON"
+  manifest_set outputs t12_run_root "$T12_RUN_ROOT"
+  manifest_set outputs t12_candidates_csv "$T12_CANDIDATES_CSV"
+  manifest_set outputs t12_confirmed_csv "$T12_CONFIRMED_CSV"
+  manifest_set outputs t12_summary_json "$T12_SUMMARY_JSON"
+  manifest_stage_record t12 T12 passed "$LOG_ROOT/t12.log" \
+    "inputs.swsd_segment=$T01_SEGMENT" \
+    "inputs.swsd_roads=$T01_ROADS" \
+    "inputs.swsd_nodes=$FINAL_SWSD_NODES" \
+    "inputs.frcsd_1v1_roads=$FRCSD_1V1_ROADS_PATH" \
+    "inputs.frcsd_1v1_nodes=$FRCSD_1V1_NODES_PATH" \
+    "inputs.t05_anchor_audit=$T05_ANCHOR_AUDIT" \
+    "inputs.rcsd_intersection=$RCSD_INTERSECTION_PATH" \
+    "inputs.t06_run_root=$T06_RUN_ROOT" \
+    "inputs.drivezone=$DRIVEZONE_PATH" \
+    "inputs.review_decisions=$T12_REVIEW_DECISIONS" \
+    "inputs.case_manifest=$T12_CASE_MANIFEST" \
+    "outputs.run_root=$T12_RUN_ROOT" \
+    "outputs.candidates_csv=$T12_CANDIDATES_CSV" \
+    "outputs.confirmed_csv=$T12_CONFIRMED_CSV" \
+    "outputs.summary_json=$T12_SUMMARY_JSON" \
+    "params.audit_only=true" \
+    "execution_context.run_root=$T12_RUN_ROOT"
+fi
+
 T09_OUT_ROOT="$RUN_ROOT/t09_swsd_field_rule_restoration"
 if should_run_stage t09; then
   run_logged t09 \
@@ -1402,5 +1566,9 @@ echo "[DONE] manifest=$MANIFEST_PATH"
 echo "[DONE] summary=$SUMMARY_PATH"
 echo "[DONE] final_frcsd_road=$T06_FRCSD_ROAD"
 echo "[DONE] final_frcsd_node=$T06_FRCSD_NODE"
+if [[ "$RUN_T12" == "1" ]]; then
+  echo "[DONE] t12_summary=$T12_SUMMARY_JSON"
+  echo "[DONE] t12_confirmed=$T12_CONFIRMED_CSV"
+fi
 echo "[DONE] t11_candidates=$T11_CANDIDATES_CSV"
 echo "[DONE] final_restriction=$T09_RESTRICTION"

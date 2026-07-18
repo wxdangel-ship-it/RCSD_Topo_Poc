@@ -51,9 +51,15 @@ T11 在 T10 正式工作流中位于 T06 与 T09 之间，读取当前 Case/full
 
 T09 在 T06 输出的 F-RCSD 承载关系上恢复 SWSD 现场通行规则。当前 T09 主要依赖 SWSD restriction / Laneinfo，后续需要结合 RCSD Laneinfo 和轨迹通行证据继续增强。
 
+### 3.6A F-RCSD 质量审计层
+
+T12 面向通过 1V1 匹配技术融合生成的原始 F-RCSD，不把它解释为 T06 Segment 替换结果。T12 以“SWSD 与 1V1 F-RCSD 的拓扑通行性应等价”为待验证质量假设，复用 T06 的 ID、方向、canonical node、carrier graph 和局部 portal 证据语义，检查已锚定 Segment 两端在目标承载网是否存在可解释通行路径。`RCSDIntersection` 是 T07/T10 标准输入和人工确定的现实路口证据；T05/T06 只提供交叉解释证据，不替代 T12 对原始目标网的判断。
+
+T12 必须分离 candidate、confirmed、excluded 和 manual review：算法候选不是正式质量问题，只有外部 review decisions 确认的记录才进入 confirmed 层。排除原因必须可追溯，任何阶段都不得修改输入几何、自动补路或 silent fix。
+
 ### 3.7 编排与证据层
 
-T10 负责组织端到端 Case package、Case replay、full pipeline manifest、T06 funnel、T11 candidate audit、visual check 和 feedback package。T10 不定义或改写 T01-T09 / T11 的算法规则，不把 T06 feedback 直接作为 Step3 替换白名单。T10 v1 Case runner 固定在 T06 后、T09 前执行 T11，但不改变 T06 到 T09 的业务 handoff；Case runner 不调用 T08，内网全量总控可把 T08 作为独立前置阶段串入。
+T10 负责组织端到端 Case package、Case replay、full pipeline manifest、T06 funnel、可选 T12 quality audit、T11 candidate audit、visual check 和 feedback package。T10 不定义或改写 T01-T09 / T11 / T12 的算法规则，不把 T06 feedback 直接作为 Step3 替换白名单。T10 v1 Case runner 默认在 T06 后、T09 前执行 T11；显式启用并提供原始 1V1 F-RCSD 时在 T11 后、T09 前执行 T12。两者都不改变 T06 到 T09 的业务 handoff。T10 提供固定 `RUN_T08=0 / RUN_T12=1` 的 F-RCSD 质量检查专用流水线；普通 Case runner 不调用 T08，通用内网全量总控仍可把 T08 作为独立前置阶段串入。
 
 ## 4. 模块责任边界
 
@@ -71,6 +77,7 @@ T10 负责组织端到端 Case package、Case replay、full pipeline manifest、
 | T09 | F-RCSD 上的通行规则恢复。 |
 | T10 | 端到端编排与 Case 证据组织，不替代 T01-T09 / T11 算法。 |
 | T11 | T06 后、T09 前的人工 relation 修复候选审计；不回写业务产物。 |
+| T12 | 原始 1V1 F-RCSD 质量审计；验证 SWSD 可达性等价假设，发布经人工复核确认的问题与排除证据，不执行修复。 |
 | P01 | 异构路口通行能力 POC，不作为 T09 正式替代契约。 |
 | P02 | 武汉局部人工锚定实验编排与证据收口；复用 T08/T01/T05/T06，不替代这些模块的正式业务契约。 |
 
@@ -87,7 +94,7 @@ T10 负责组织端到端 Case package、Case replay、full pipeline manifest、
 ## 6. 非目标
 
 - 项目级需求不展开模块内部完整参数表、字段值域和实现步骤。
-- T10 不修复上游算法，不替代 T01-T09 / T11 的模块契约。
+- T10 不修复上游算法，不替代 T01-T09 / T11 / T12 的模块契约。
 - T06 不用 problem registry 或 surface fallback 绕过 replacement plan。
 - P01 不替代 T09 正式通行规则恢复契约。
 - P02 不伪造缺失的 T07/T03/T04 道路面锚定成果，不把局部实验结论直接提升为全量口径。
@@ -97,6 +104,6 @@ T10 负责组织端到端 Case package、Case replay、full pipeline manifest、
 
 1. Relation 质量产品化：T07/T03/T04/T05 继续稳定输出成功、失败、fallback、review-only、blocked 和 upstream-needed 状态，减少 T06 重复解释上游问题。
 2. T06 问题回流闭环：problem registry 中可自动消费的问题进入 T10 feedback 和 T05，可疑或超边界问题进入人工复核或上游任务。
-3. F-RCSD 自动 QA：T06 Step3 后批量检查正式替换道路同源性、road-node integrity、Segment 内连通、junction node map、提前右转挂接和 T09 carrier 可用性。
+3. F-RCSD 自动 QA：T06 Step3 结果继续由 T06 正式审计；原始 1V1 F-RCSD 由 T12 检查 road-node integrity、方向可达性、局部 portal 替代路径、DriveZone 证据与人工复核发布。
 4. 通行能力增强：T09 后续引入 RCSD Laneinfo 和轨迹证据；P01 Arm / RoadNextRoad 经验可作为正式化前参考。
 5. 文档层级收敛：根目录只保留简洁入口和简版需求，详细需求、架构策略、治理盘点和模块契约下沉到对应目录。

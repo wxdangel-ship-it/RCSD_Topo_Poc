@@ -9,7 +9,7 @@ Usage:
 Environment variables:
   OUT_ROOT                 Default: outputs/_work/t10_e2e_case_runs
   RUN_ID                   Optional explicit run id
-  STOP_AFTER               Optional stage: t01/t07/t03/t04/t05/t06_step12/t06_step3/t11/t09_step12/t09_step3
+  STOP_AFTER               Optional stage: t01/t07/t03/t04/t05/t06_step12/t06_step3/t11/t12/t09_step12/t09_step3
   CONTINUE_ON_ERROR        1 or 0. Default: 1
   EXIT_ZERO                1 or 0. Default: 0
   T10_T03_WORKERS          Default: detected CPU count, capped at 16
@@ -17,6 +17,8 @@ Environment variables:
   T10_T05_READONLY_WORKERS Default: 1
   T10_FEEDBACK_ITERATIONS  Default: 0. When >0, rerun T10 with prior pass endpoint feedback.
   T10_PAIR_ANCHOR_ENDPOINT_CLUSTERS Optional CSV to feed pair-anchor endpoint clusters into T05.
+  RUN_T12                  1 enables audit-only T12 after T11. Default: 0.
+  T12_REVIEW_DECISIONS     Optional review CSV applied when RUN_T12=1.
   T10_SCRATCH_ROOT         Optional persistent WSL/Linux scratch root; RUN_ID is required.
   T10_KEEP_SCRATCH         1 keeps a successful scratch run; default 0 removes it after publish.
 USAGE
@@ -82,6 +84,8 @@ CONTINUE_ON_ERROR="${CONTINUE_ON_ERROR:-1}"
 EXIT_ZERO="${EXIT_ZERO:-0}"
 T10_FEEDBACK_ITERATIONS="${T10_FEEDBACK_ITERATIONS:-0}"
 T10_PAIR_ANCHOR_ENDPOINT_CLUSTERS="${T10_PAIR_ANCHOR_ENDPOINT_CLUSTERS:-}"
+RUN_T12="${RUN_T12:-0}"
+T12_REVIEW_DECISIONS="${T12_REVIEW_DECISIONS:-}"
 T10_SCRATCH_ROOT="${T10_SCRATCH_ROOT:-}"
 T10_KEEP_SCRATCH="${T10_KEEP_SCRATCH:-0}"
 
@@ -120,6 +124,18 @@ if [[ "$EXIT_ZERO" != "0" && "$EXIT_ZERO" != "1" ]]; then
   echo "[BLOCK] EXIT_ZERO must be 0 or 1: $EXIT_ZERO" >&2
   exit 2
 fi
+if [[ "$RUN_T12" != "0" && "$RUN_T12" != "1" ]]; then
+  echo "[BLOCK] RUN_T12 must be 0 or 1: $RUN_T12" >&2
+  exit 2
+fi
+if [[ -n "$T12_REVIEW_DECISIONS" && "$RUN_T12" != "1" ]]; then
+  echo "[BLOCK] T12_REVIEW_DECISIONS requires RUN_T12=1." >&2
+  exit 2
+fi
+if [[ -n "$T12_REVIEW_DECISIONS" && ! -f "$T12_REVIEW_DECISIONS" ]]; then
+  echo "[BLOCK] T12_REVIEW_DECISIONS does not exist: $T12_REVIEW_DECISIONS" >&2
+  exit 2
+fi
 if ! [[ "$T10_FEEDBACK_ITERATIONS" =~ ^[0-9]+$ ]]; then
   echo "[BLOCK] T10_FEEDBACK_ITERATIONS must be a non-negative integer: $T10_FEEDBACK_ITERATIONS" >&2
   exit 2
@@ -150,6 +166,12 @@ fi
 if [[ -n "$T10_PAIR_ANCHOR_ENDPOINT_CLUSTERS" ]]; then
   ARGS+=(--t10-pair-anchor-endpoint-clusters "$T10_PAIR_ANCHOR_ENDPOINT_CLUSTERS")
 fi
+if [[ "$RUN_T12" == "1" ]]; then
+  ARGS+=(--run-t12)
+fi
+if [[ -n "$T12_REVIEW_DECISIONS" ]]; then
+  ARGS+=(--t12-review-decisions "$T12_REVIEW_DECISIONS")
+fi
 for case_id in "${CASE_IDS[@]}"; do
   ARGS+=(--case-id "$case_id")
 done
@@ -165,6 +187,8 @@ echo "[RUN] STOP_AFTER=${STOP_AFTER:-<full>}"
 echo "[RUN] CONTINUE_ON_ERROR=$CONTINUE_ON_ERROR EXIT_ZERO=$EXIT_ZERO"
 echo "[RUN] T10_FEEDBACK_ITERATIONS=$T10_FEEDBACK_ITERATIONS"
 echo "[RUN] T10_PAIR_ANCHOR_ENDPOINT_CLUSTERS=${T10_PAIR_ANCHOR_ENDPOINT_CLUSTERS:-<none>}"
+echo "[RUN] RUN_T12=$RUN_T12"
+echo "[RUN] T12_REVIEW_DECISIONS=${T12_REVIEW_DECISIONS:-<none>}"
 echo "[RUN] T10_SCRATCH_ROOT=${T10_SCRATCH_ROOT:-<disabled>}"
 if ((${#CASE_IDS[@]})); then
   echo "[RUN] CASE_IDS=${CASE_IDS[*]}"

@@ -2,7 +2,7 @@
 
 ## 1. 模块定位
 
-T10 是端到端业务流程编排与 Case 级证据组织模块。它不定义 T01-T09 / T11 的算法规则，而是把外部输入、模块间 handoff、Case package、Case replay、反馈迭代、全量运行 manifest 和可视化审计索引组织成可追溯的端到端证据链。
+T10 是端到端业务流程编排与 Case 级证据组织模块。它不定义 T01-T09 / T11 / T12 的算法规则，而是把外部输入、模块间 handoff、Case package、Case replay、反馈迭代、全量运行 manifest 和可视化审计索引组织成可追溯的端到端证据链。
 
 项目级主链仍是：
 
@@ -16,9 +16,15 @@ T10 v1 Case runner 编排：
 T01 -> T07 Step1/2 -> T03 -> T04 -> T05 -> T06 -> T11 -> T09
 ```
 
+显式启用 F-RCSD 质检时，T12 作为 audit-only 可选阶段位于 T11 后、T09 前：
+
+```text
+T01 -> T07 Step1/2 -> T03 -> T04 -> T05 -> T06 -> T11 -> [T12] -> T09
+```
+
 T08 是独立前置预处理、质检和修复模块，不由 T10 Case runner 调用；内网全量总控可把 T08 作为独立阶段串入全量链路。
 T07 Step3 是 T07 模块保留的可选兼容 relation 补锚能力，不属于 T10 v1 Case runner 默认主链；全量总控只有在显式配置兼容 relation 输入时才运行该阶段。
-T10 必须保持连续 nodes handoff：T07 Step2 nodes 进入 T03，T03 downstream nodes 进入 T04，T04 downstream nodes 作为 `final_swsd_nodes` 进入 T05 / T06 / T11 / T09。T11 位于 T06 与 T09 之间，但只读取审计证据，不改变 T09 对 T06 F-RCSD 的直接业务依赖。
+T10 必须保持连续 nodes handoff：T07 Step2 nodes 进入 T03，T03 downstream nodes 进入 T04，T04 downstream nodes 作为 `final_swsd_nodes` 进入 T05 / T06 / T11 / T12 / T09。T12 读取原始 1V1 F-RCSD，不读取或改写 T06 F-RCSD，也不消费 T11 输出。T12 与 T11 都不改变 T09 对 T06 F-RCSD 的直接业务依赖。
 
 ## 2. 业务目标
 
@@ -31,6 +37,8 @@ T10 必须保持连续 nodes handoff：T07 Step2 nodes 进入 T03，T03 downstre
 - 将 T06 problem registry 中可回流上游的问题整理为 T03/T04/T05/T07/T08/T06 可消费的反馈包。
 - 输出 T06 目视检查索引，帮助人工快速定位 T01/T03/T04/T05/T06/T07 图层和拓扑审计材料。
 - 为内网全量执行提供 manifest、summary、resume 和 finalize-existing 能力。
+- 在显式配置原始 1V1 F-RCSD 输入时，可选运行 T12 并记录候选、复核发布和排除证据；默认关闭以保持既有流程业务效果。
+- 提供 F-RCSD 质量检查专用流水线，固定跳过 T08、启用 T12，并复用通用 full runner 的 manifest、summary、resume 和失败退出能力。
 
 ## 3. 当前范围
 
@@ -51,7 +59,7 @@ T10 必须保持连续 nodes handoff：T07 Step2 nodes 进入 T03，T03 downstre
 
 ### 3.2 当前非目标
 
-- 不改变 T01-T09 / T11 模块算法。
+- 不改变 T01-T09 / T11 / T12 模块算法。
 - Case runner 不调用 T08。
 - 不把 T06 feedback 直接变成 Step3 替换白名单。
 - 不创建未登记的新 CLI 或模块入口。
@@ -62,7 +70,7 @@ T10 必须保持连续 nodes handoff：T07 Step2 nodes 进入 T03，T03 downstre
 | 方向 | 模块 / 数据 | 关系 |
 |---|---|---|
 | 上游 | T08 / 原始外部输入 | 为 Case package 和全量链路提供准备好的外部输入。 |
-| 上游 | T01-T09 / T11 | 提供可编排的脚本、callable 和正式输出。 |
+| 上游 | T01-T09 / T11 / T12 | 提供可编排的脚本、callable 和正式输出。 |
 | 下游 | 人工 Case 分析 | 消费 Case package、funnel、visual check、summary 和日志。 |
 | 下游 | T03/T04/T05/T07/T08/T06 后续迭代 | 消费 T10 从 T06 problem registry 提炼出的上游反馈。 |
 
@@ -78,6 +86,7 @@ T10 必须保持连续 nodes handoff：T07 Step2 nodes 进入 T03，T03 downstre
 | 既有 T10 run root | Segment package 反查 T01 Segment、T06 problem registry、replacement plan 和 relation 证据的来源。 |
 | T06 problem registry / relation audit | 生成上游反馈包和 feedback iteration 输入。 |
 | T11 relation repair candidates / summary | T06 后、T09 前的人工 relation 候选审计证据；不作为 T09 输入。 |
+| 原始 1V1 F-RCSD Road/Node 与可选 T12 review decisions | T12 可选质检的目标承载网与人工复核决定；不得以 T06 Step3 F-RCSD 替代。 |
 | 既有 full pipeline run root | resume 或 finalize-existing 的恢复对象。 |
 
 ## 6. 输出
@@ -94,6 +103,7 @@ T10 必须保持连续 nodes handoff：T07 Step2 nodes 进入 T03，T03 downstre
 | `t10_upstream_*` | T06/T05 问题回流包。 |
 | `t10_t06_visual_check_summary.*` | T06 目视叠加图层索引和快速审计指标。 |
 | `t10_innernet_full_pipeline_manifest / summary` | 内网全量总控运行状态和 handoff。 |
+| `cases/<case_id>/t12/*` | T12 candidates、confirmed、excluded、manual review、evidence 与 summary；只在显式启用时存在。 |
 
 ## 7. 关键业务步骤
 
@@ -104,14 +114,16 @@ T10 必须保持连续 nodes handoff：T07 Step2 nodes 进入 T03，T03 downstre
 | Segment packaging | 按 SWSD SegmentID 从既有 T10 run root 反查 T01/T06 证据，以 T01 Segment geometry `200m` buffer 组织局部证据包。 |
 | Case replay | 从 Case package启动 `T01 -> T06 -> T11 -> T09` 关键链路，每阶段显式记录输入输出和状态；Segment geometry buffer 内 T07/T03/T04 合法无候选时登记空 handoff，保持后续链路可执行。 |
 | T11 candidate audit | 在 T06 Step3 后抽取 relation repair candidates 与人工模板；只读上游证据，不回写 T05/T06/T09。 |
+| T12 F-RCSD quality audit | 显式启用时，以 SWSD、原始 1V1 F-RCSD、标准 RCSDIntersection 及 T05/T06 交叉证据生成候选；只有 review decisions 确认的记录进入正式问题层。 |
 | T06 funnel | 聚合 T06 Step1/2/3 数量流转、拒绝原因、replacement plan 和 problem registry 状态。 |
 | T06 feedback | 将可回流上游的问题拆成 Segment、relation、side-group endpoint 和 pair-anchor endpoint cluster 等反馈视图。 |
 | Visual check | 索引 T01/T03/T04/T05/T06/T07 关键 GPKP 图层，辅助人工叠加检查 CRS、提右重复和端点缺失。 |
-| Full pipeline | 内网全量串联 `T08 -> T06 -> T11 -> T09`，记录阶段级 manifest、summary 和最终完成态。 |
+| Full pipeline | 内网全量默认串联 `T08 -> T06 -> T11 -> T09`；显式启用时串联 `T08 -> T06 -> T11 -> T12 -> T09`。F-RCSD 专用入口固定为 `T01 -> T07 -> T03 -> T04 -> T05 -> T06 -> T11 -> T12 -> T09`，不运行 T08，并记录阶段级 manifest、summary 和最终完成态。 |
 
 ## 8. 什么是对
 
-- T10 只编排和记录，不改写 T01-T09 / T11 的算法事实。
+- T10 只编排和记录，不改写 T01-T09 / T11 / T12 的算法事实。
+- T12 默认关闭；开启后也不得改变 T06、T11 或 T09 的输入路径、业务产物与判定。
 - 每个 handoff 都有明确文件路径、状态和日志。
 - Case package 优先使用局部切片，manifest-only 时才回退源路径。
 - Segment package 必须记录 `scope_type=swsd_segment`、`swsd_segment_id`、`buffer_m=200.0`、T10 run root、T01 Segment source 和匹配到的 T06 evidence rows。

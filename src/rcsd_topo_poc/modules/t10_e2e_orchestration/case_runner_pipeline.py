@@ -153,6 +153,8 @@ def run_t10_e2e_cases_from_package(
     feedback_iterations: int = 0,
     t10_side_group_endpoint_candidates: str | Path | None = None,
     t10_pair_anchor_endpoint_clusters: str | Path | None = None,
+    run_t12: bool = False,
+    t12_review_decisions: str | Path | None = None,
 ) -> T10E2ECaseRunArtifacts:
     if feedback_iterations < 0:
         raise ValueError("feedback_iterations must be >= 0.")
@@ -169,6 +171,8 @@ def run_t10_e2e_cases_from_package(
             feedback_iterations=feedback_iterations,
             t10_side_group_endpoint_candidates=t10_side_group_endpoint_candidates,
             t10_pair_anchor_endpoint_clusters=t10_pair_anchor_endpoint_clusters,
+            run_t12=run_t12,
+            t12_review_decisions=t12_review_decisions,
         )
 
     package_root = Path(package_dir).expanduser().resolve()
@@ -186,7 +190,8 @@ def run_t10_e2e_cases_from_package(
 
     repo_root = _repo_root()
     python_bin = _python_bin(repo_root)
-    stage_limit = _stage_limit(stop_after)
+    stage_order = _facade._t10_stage_order(run_t12)
+    stage_limit = _stage_limit(stop_after, stage_order)
     case_manifests: list[Path] = []
     funnel_paths: list[Path] = []
     case_results: list[dict[str, Any]] = []
@@ -200,8 +205,10 @@ def run_t10_e2e_cases_from_package(
             python_bin=python_bin,
             stage_limit=stage_limit,
             continue_on_error=continue_on_error,
+            stage_order=stage_order,
             side_group_endpoint_candidate_path=_path_from(t10_side_group_endpoint_candidates),
             pair_anchor_endpoint_cluster_path=_path_from(t10_pair_anchor_endpoint_clusters),
+            t12_review_decisions_path=_path_from(t12_review_decisions),
         )
         case_manifests.append(Path(case_result["case_run_manifest_path"]))
         if case_result.get("t06_funnel_json"):
@@ -229,8 +236,11 @@ def run_t10_e2e_cases_from_package(
         "run_root": str(run_root),
         "repo_root": str(repo_root),
         "python_bin": str(python_bin),
-        "chain": list(_facade.T10_V1_CHAIN),
-        "stage_order": list(_facade.T10_E2E_STAGE_ORDER[:stage_limit]),
+        "chain": list(
+            _facade.T10_V1_CHAIN_WITH_T12 if run_t12 else _facade.T10_V1_CHAIN
+        ),
+        "stage_order": list(stage_order[:stage_limit]),
+        "t12_enabled": run_t12,
         "t08_policy": _facade.T10_T08_POLICY,
         "case_count": len(case_results),
         "cases": case_results,
@@ -282,6 +292,7 @@ def run_t10_e2e_cases_from_package(
         "skipped_case_count": sum(1 for item in case_results if item["overall_status"] == "skipped"),
         "passed": run_status == "passed",
         "exit_on_incomplete": exit_on_incomplete,
+        "t12_enabled": run_t12,
         "upstream_feedback_segment_count": upstream_feedback.segment_count,
         "upstream_feedback_relation_count": upstream_feedback.relation_count,
         "upstream_feedback_summary_json": str(upstream_feedback.summary_json),
@@ -331,6 +342,8 @@ def _run_t10_e2e_feedback_iterations_from_package(
     feedback_iterations: int,
     t10_side_group_endpoint_candidates: str | Path | None,
     t10_pair_anchor_endpoint_clusters: str | Path | None,
+    run_t12: bool,
+    t12_review_decisions: str | Path | None,
 ) -> T10E2ECaseRunArtifacts:
     effective_run_id = run_id or _default_run_id()
     run_root = Path(out_root).expanduser().resolve() / effective_run_id
@@ -357,6 +370,8 @@ def _run_t10_e2e_feedback_iterations_from_package(
             feedback_iterations=0,
             t10_side_group_endpoint_candidates=current_side_group_candidates,
             t10_pair_anchor_endpoint_clusters=current_pair_anchor_clusters,
+            run_t12=run_t12,
+            t12_review_decisions=t12_review_decisions,
         )
         summary = _read_json(artifacts.summary_json)
         record = {
@@ -565,6 +580,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         exit_on_incomplete=not args.exit_zero,
         feedback_iterations=args.feedback_iterations,
         t10_pair_anchor_endpoint_clusters=args.t10_pair_anchor_endpoint_clusters,
+        run_t12=args.run_t12,
+        t12_review_decisions=args.t12_review_decisions,
     )
     summary = _read_json(artifacts.summary_json)
     print(json.dumps(summary, ensure_ascii=False, indent=2), flush=True)
@@ -584,6 +601,8 @@ def _run_one_case(
     continue_on_error: bool,
     side_group_endpoint_candidate_path: Path | None = None,
     pair_anchor_endpoint_cluster_path: Path | None = None,
+    stage_order: Sequence[str] | None = None,
+    t12_review_decisions_path: Path | None = None,
 ) -> dict[str, Any]:
     case_manifest_path = case_dir / "t10_case_evidence_manifest.json"
     case_manifest = _read_json(case_manifest_path)
@@ -595,7 +614,8 @@ def _run_one_case(
     stage_records: list[dict[str, Any]] = []
     handoffs: dict[str, str] = {}
     blocked = False
-    for stage_id in _facade.T10_E2E_STAGE_ORDER[:stage_limit]:
+    active_stage_order = tuple(stage_order or _facade.T10_E2E_STAGE_ORDER)
+    for stage_id in active_stage_order[:stage_limit]:
         stage_dir = case_run_dir / stage_id
         if blocked:
             record = _blocked_record(stage_id, stage_dir, "Previous stage did not produce required handoff.")
@@ -610,6 +630,8 @@ def _run_one_case(
                     python_bin=python_bin,
                     external_inputs=external_inputs,
                     handoffs=handoffs,
+                    case_manifest_path=case_manifest_path,
+                    t12_review_decisions_path=t12_review_decisions_path,
                     side_group_endpoint_candidate_path=side_group_endpoint_candidate_path,
                     pair_anchor_endpoint_cluster_path=pair_anchor_endpoint_cluster_path,
                 )
@@ -634,7 +656,7 @@ def _run_one_case(
         "package_root": str(package_root),
         "case_run_dir": str(case_run_dir),
         "produced_at_utc": _now_text(),
-        "stage_order": list(_facade.T10_E2E_STAGE_ORDER[:stage_limit]),
+        "stage_order": list(active_stage_order[:stage_limit]),
         "stage_records": stage_records,
         "external_inputs": {key: str(value) for key, value in external_inputs.items()},
         "handoffs": handoffs,
@@ -683,6 +705,8 @@ def _run_stage(
     python_bin: Path | str,
     external_inputs: Mapping[str, Path],
     handoffs: Mapping[str, str],
+    case_manifest_path: Path | None = None,
+    t12_review_decisions_path: Path | None = None,
     side_group_endpoint_candidate_path: Path | None = None,
     pair_anchor_endpoint_cluster_path: Path | None = None,
 ) -> tuple[dict[str, Any], dict[str, str]]:
@@ -711,6 +735,17 @@ def _run_stage(
         return _run_t06_step12(case_id, stage_dir, repo_root, python_bin, handoffs)
     if stage_id == "t06_step3":
         return _run_t06_step3(case_id, stage_dir, repo_root, python_bin, handoffs)
+    if stage_id == "t12":
+        return _facade._run_t12(
+            case_id,
+            stage_dir,
+            repo_root,
+            python_bin,
+            external_inputs,
+            handoffs,
+            case_manifest_path=case_manifest_path,
+            review_decisions_path=t12_review_decisions_path,
+        )
     if stage_id == "t11":
         return _facade._run_t11(case_id, case_run_dir, stage_dir, repo_root, python_bin, handoffs)
     if stage_id == "t09_step12":

@@ -107,11 +107,14 @@ def test_innernet_t11_input_discovery_prefers_fixed_full_pipeline_paths(tmp_path
     assert inputs["t04_anchor_audit"] == expected_t04_anchor
 
 
-def test_innernet_full_pipeline_declares_t11_between_t06_and_t09() -> None:
+def test_innernet_full_pipeline_keeps_t11_before_optional_t12_and_t09() -> None:
     repo_root = Path(__file__).resolve().parents[3]
     script = (repo_root / "scripts" / "t10_run_innernet_full_pipeline.sh").read_text(encoding="utf-8")
 
-    assert "ordered=(t08_preprocess t01 t07_step12 t03 t04 t05 t06_step12 t06_step3 t11 t09)" in script
+    assert (
+        "ordered=(t08_preprocess t01 t07_step12 t03 t04 t05 "
+        "t06_step12 t06_step3 t11 t12 t09)"
+    ) in script
     assert 't11|t11_candidates) printf \'%s\\n\' "t11" ;;' in script
     t11_region = script.split('T11_OUT_ROOT="$RUN_ROOT/t11_manual_relation_review"', 1)[1].split(
         'T09_OUT_ROOT="$RUN_ROOT/t09_swsd_field_rule_restoration"', 1

@@ -6,9 +6,9 @@
 
 ## 2. 当前登记摘要
 
-- 当前真实执行入口共 `101` 个。
+- 当前真实执行入口共 `107` 个。
 - 分布概览：
-  - repo 级入口文件：`71`（`Makefile` 1 + `scripts/` 69 + `.venv/bin/python -m rcsd_topo_poc` 1）
+  - repo 级入口文件：`77`（`Makefile` 1 + `scripts/` 75 + `.venv/bin/python -m rcsd_topo_poc` 1）
   - QGIS 插件加载入口：`1`
   - 模块级 `python -m` 专项入口：`1`
   - CLI 稳定子命令：`28`
@@ -128,8 +128,10 @@
 | `t09_export_step3_input_text_bundle_innernet.sh` | `scripts/t09_export_step3_input_text_bundle_innernet.sh` | repo 级 | T09 内网 Step3 输入单文件文本证据包导出脚本；按中心点与 `SIZE_M` / `RADIUS_M` 空间窗口切片 SWSD nodes / roads / Segment、T08 Tool7 / Tool8 输出和 T06 Step3 FRCSD Road / Node，生成 base85 文本 bundle，超过 250KB 自动分片并可立即解包校验 | `active` | 否 |
 | `t10_pack_innernet_cases.sh` | `scripts/t10_pack_innernet_cases.sh` | repo 级 | T10 内网多 Case 证据包正式打包入口；以 SWSD semantic junction id 列表为 CaseID，读取 T10 v1 外部输入 slot，生成 `cases/<case_id>/` 结构的文件证据包并导出可自动分片的文本 bundle，可选立即解包校验 | `active` | 否 |
 | `t10_pack_innernet_segments.sh` | `scripts/t10_pack_innernet_segments.sh` | repo 级 | T10 内网多 Segment 证据包正式打包入口；以 SWSD SegmentID 列表为输入，读取既有 `T10_RUN_ROOT` 反查 T01 Segment 与 T06 证据，按 T01 Segment geometry `200m` buffer 生成 `<SegmentID>/` 一级目录结构的文件证据包并导出可自动分片的文本 bundle，可选立即解包校验 | `active` | 否 |
-| `t10_run_e2e_cases.sh` | `scripts/t10_run_e2e_cases.sh` | repo 级 | T10 Case 级端到端执行入口；从 Case package 读取局部输入切片，串联 `T01 -> T07 Step1/2 -> T03 -> T04 -> T05 -> T06 -> T11 -> T09` 的既有入口或 callable；T11 为 audit-only 必经阶段，输出 candidates/summary，不改变 T09 对 T06 的业务 handoff；同时输出阶段审计与 T06 数据漏斗，并支持 feedback iteration no-regression guard | `active` | 否 |
-| `t10_run_innernet_full_pipeline.sh` | `scripts/t10_run_innernet_full_pipeline.sh` | repo 级 | T10 内网全量端到端总控脚本；默认串联 `T08 -> T01 -> T07 Step1/2 -> T03 -> T04 -> T05 -> T06 Step1/2 -> T06 Step3 -> T11 -> T09`，所有阶段写入同一 run root 与 manifest；T07 Step3 仍为显式可选兼容阶段；支持 `FINALIZE_EXISTING` 及 `RESUME_RUN_ROOT / RESUME_FROM_STAGE / RUN_STAGES`，新完成口径要求 passed 的 T11 stage 与 candidates/summary | `active` | 否 |
+| `t10_run_e2e_cases.sh` | `scripts/t10_run_e2e_cases.sh` | repo 级 | T10 Case 级端到端执行入口；默认串联 `T01 -> T07 Step1/2 -> T03 -> T04 -> T05 -> T06 -> T11 -> T09`；显式 `--run-t12` 时在 T11 后、T09 前运行 audit-only T12，但不改变 T06/T11/T09 业务 handoff；同时输出阶段审计与 T06 数据漏斗，并支持 feedback iteration no-regression guard | `active` | 否 |
+| `t10_run_innernet_full_pipeline.sh` | `scripts/t10_run_innernet_full_pipeline.sh` | repo 级 | T10 内网全量端到端总控脚本；默认串联 `T08 -> T01 -> T07 Step1/2 -> T03 -> T04 -> T05 -> T06 Step1/2 -> T06 Step3 -> T11 -> T09`，显式 `RUN_T12=1` 时在 T11 后、T09 前运行 T12；所有实际运行阶段写入同一 run root 与 manifest，支持 finalize/resume/stage selection，默认流程业务效果不变 | `active` | 否 |
+| `t10_run_frcsd_quality_pipeline.sh` | `scripts/t10_run_frcsd_quality_pipeline.sh` | repo 级 | T10 原始 1V1 F-RCSD 质量检查专用流水线；固定 `RUN_T08=0 / RUN_T12=1`，按 `T01 -> T07 -> T03 -> T04 -> T05 -> T06 -> T11 -> T12 -> T09` 复用通用 full runner，要求显式原始 1V1 F-RCSD Road/Node，沿用 manifest、summary、resume 和失败退出，不复制模块算法 | `active` | 否 |
+| `t12_run_frcsd_quality_audit.py` | `scripts/t12_run_frcsd_quality_audit.py` | repo 级 | T12 原始 1V1 F-RCSD 质量审计正式入口；读取 SWSD、原始 1V1 F-RCSD、RCSDIntersection、T05/T06 交叉证据和可选 DriveZone/review decisions，输出 candidate/confirmed/excluded/manual review/evidence/summary 分层结果；不修改输入或执行修复 | `active` | 否 |
 | `t11_extract_relation_repair_candidates.py` | `scripts/t11_extract_relation_repair_candidates.py` | repo 级 | T11 人工 relation 修复候选抽取入口；由 T10 Case/full runner 在 T06 后、T09 前以 audit-only 阶段调用；兼容单个 `--t10-case-root`，并支持 `--t10-suite-root / --case-ids / --workers` 批量并行处理相互隔离的 Case；输出候选 CSV/GPKG/XLSX、人工模板与 summary JSON，不修改 T05/T06/T09 输入成果 | `active` | 否 |
 | `t11_run_manual_rerun.py` | `scripts/t11_run_manual_rerun.py` | repo 级 | T11 人工 Excel 结果消费与重跑入口；读取三张 Segment 审计 Excel，抽取可执行人工 relation 并合并为 T05 `--t11-manual-relation` CSV，随后串联既有 T05、T06 Step1/2 与 T06 Step3 脚本，输出人工导入 summary 与修复前后指标对比，不修改输入 Case root 或 baseline | `active` | 否 |
 | `t11_manual_relation_review.innernet_loss_metrics` | `src/rcsd_topo_poc/modules/t11_manual_relation_review/innernet_loss_metrics.py` | 模块级 `python -m` | T11 内网人工重跑损失度量抽取入口；只读指定 T11 manual rerun / T05 / T06 run root，按收益降序输出人工 relation 漏锚、`5_replaceable_scope_unreplaced` road/Segment 聚合和建议打包清单，并默认限制单个输出文件不超过 240KB | `active` | 否 |

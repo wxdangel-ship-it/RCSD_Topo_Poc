@@ -34,9 +34,9 @@ T08 的预处理、质检与修复能力作为 T10 外部输入准备前提。T1
 
 ## 5. Case Runner 策略
 
-T10 Case runner 从 Case package 启动，优先使用 package 内局部切片，按 `T01 -> T07 Step1/2 -> T03 -> T04 -> T05 -> T06 -> T11 -> T09` 调用既有脚本或模块 callable。
+T10 Case runner 从 Case package 启动，优先使用 package 内局部切片，默认按 `T01 -> T07 Step1/2 -> T03 -> T04 -> T05 -> T06 -> T11 -> T09` 调用既有脚本或模块 callable；显式 `--run-t12` 时在 T11 后、T09 前运行 T12。
 
-runner 不修改 T01-T09 / T11 算法，也不把目录型结果隐式传给下游。T11 CLI 使用 Case root 聚合输入时，T10 stage record 同时记录关键 T06 文件，T11 summary 记录全部实际发现路径。每个阶段都记录显式输入、输出、命令、stdout log、耗时和状态。
+runner 不修改 T01-T09 / T11 / T12 算法，也不把目录型结果隐式传给下游。T12 必须收到 `frcsd_1v1_roads / frcsd_1v1_nodes` 显式 slot；T11 CLI 使用 Case root 聚合输入时，T10 stage record 同时记录关键 T06 文件，T11 summary 记录全部实际发现路径。每个阶段都记录显式输入、输出、命令、stdout log、耗时和状态。
 
 节点状态 handoff 必须连续传递：`t07_nodes` 只表示 T07 Step2 既有路口面锚定结果；T03 运行后发布 `t03_nodes`，T04 必须消费它；T04 运行后发布 `t04_nodes / final_swsd_nodes`，T05 / T06 / T11 / T09 必须消费该事实。Relation handoff 则由 T07/T03/T04 evidence 进入 T05，最终由 T05 `intersection_match_all` 统一发布。
 
@@ -45,6 +45,8 @@ T07 Step3 保留为可选兼容 relation 补锚能力，只有在明确提供早
 T03 / T04 当前仍基于输入切片自动发现候选 Case，T10 不在本层强行改写候选发现规则，只把发现结果和失败状态作为审计事实记录。
 
 T06 Step3 成功后，T10 先调用既有 T11 入口生成 relation repair candidate audit；T11 不回写或替代 T06 handoff。随后 T10 通过 T09 既有模块 callable 执行 Step1/2 与 Step3 F-RCSD restriction 投影，T09 输入仍直接来自 T06。
+
+显式启用 T12 时，T10 在 T11 完成后对原始 1V1 F-RCSD 运行 T12，再进入 T09。T12 输出只进入自身 stage record，不消费 T11 输出、不替换 T06 handoff；因此 T11 与 T09 的既有业务输入保持不变。`scripts/t10_run_frcsd_quality_pipeline.sh` 只固定 profile 并 `exec` 通用 full runner，不复制模块算法或编排实现。
 
 ## 6. T06 漏斗策略
 

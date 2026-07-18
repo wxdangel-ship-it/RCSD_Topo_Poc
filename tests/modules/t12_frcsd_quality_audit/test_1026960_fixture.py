@@ -1,0 +1,50 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+import pandas as pd
+
+
+EXPECTED_CONFIRMED = {
+    "1001432_1019757",
+    "1019779_1026330",
+    "1039319_1049250",
+    "504597284_603597212",
+    "612408195_991266",
+    "84975803_1023802",
+    "953923_953936",
+    "991145_991164",
+    "997356_1029576",
+    "998051_501667982",
+}
+
+
+def test_1026960_review_fixture_is_complete_and_frozen() -> None:
+    fixture = (
+        Path(__file__).resolve().parents[2]
+        / "fixtures"
+        / "t12"
+        / "1026960_review_decisions.csv"
+    )
+    frame = pd.read_csv(fixture, dtype=str).fillna("")
+
+    assert len(frame) == 35
+    assert frame["candidate_id"].is_unique
+    assert set(
+        frame.loc[
+            frame["review_status"] == "confirmed_frcsd_quality_issue",
+            "candidate_id",
+        ]
+    ) == EXPECTED_CONFIRMED
+    assert (frame["review_status"] == "excluded_false_positive").sum() == 25
+    assert (frame["review_status"] == "manual_review_required").sum() == 0
+
+
+def test_focus_ids_are_not_hardcoded_in_production_source() -> None:
+    source_root = Path(__file__).resolve().parents[3] / "src"
+    production_text = "\n".join(
+        path.read_text(encoding="utf-8") for path in source_root.rglob("*.py")
+    )
+
+    assert "1001716_1010487" not in production_text
+    assert "1039488_1039490" not in production_text

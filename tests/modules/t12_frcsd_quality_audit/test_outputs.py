@@ -1,0 +1,12 @@
+from __future__ import annotations
+
+from rcsd_topo_poc.modules.t12_frcsd_quality_audit.outputs import _candidate_fields
+
+
+def test_candidate_contract_has_review_layers_without_probability_fields() -> None:
+    fields = set(_candidate_fields())
+
+    assert {"candidate_status", "review_status", "issue_type"} <= fields
+    assert "drivezone_in_road_ratio" in fields
+    assert "confidence" not in fields
+    assert "probability" not in fields

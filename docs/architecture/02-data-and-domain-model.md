@@ -8,9 +8,9 @@
 
 | 对象 | 项目级含义 | 主要消费者 |
 |---|---|---|
-| SWSD | 现场道路、节点、Laneinfo、restriction 等源侧语义数据 | T08、T01、T03、T04、T05、T06、T11、T09 |
+| SWSD | 现场道路、节点、Laneinfo、restriction 等源侧语义数据 | T08、T01、T03、T04、T05、T06、T11、T12、T09 |
 | RCSD | 场景路网侧 Road / Node / RoadNextRoad 等承载数据 | T08、T03、T04、T05、T06、T11、T09 |
-| F-RCSD | 经 T06 Segment 替换后形成的融合承载数据 | T11（审计）、T09、P01、P02（局部实验审计） |
+| F-RCSD | 融合后的承载数据；当前仓库生产链中的 F-RCSD 由 T06 Segment 替换生成，T12 质检对象则是外部 1V1 匹配技术生成的原始 F-RCSD，两者 Source 语义一致但生成路径不得混同 | T11（T06 结果审计）、T12（原始 1V1 F-RCSD 质检）、T09、P01、P02（局部实验审计） |
 | Semantic Junction | SWSD 语义路口代表对象，承载路口级关联、锚定与通行建模语义 | T07、T03、T04、T05、T09 |
 | Segment | 以 SWSD Road / Node 组织出的可替换道路连续单元 | T01、T06、T11、T09 |
 | Virtual Anchor | 在无现成 RCSD 路口面或需补充表达时构建的虚拟锚定成果 | T03、T04、T05 |
@@ -43,6 +43,7 @@ SWSD / RCSD raw data
 | `Laneinfo.Arrow_Dir` / T08 `arrow` | SWSD 车道箭头语义；字母型箭头码大小写不敏感，`A/a` 表示 `straight`，数字 `0` 与字母 `o/O` 语义不同。 |
 | `restriction` | SWSD 限行 / 禁转语义输入，T09 用于路口通行规则还原。 |
 | T05 `T11_MANUAL` relation audit | 人工审计后由 T05 正式发布的正向 relation 来源。T06 Step1 只在 `source_modules/source_module` 包含 `T11_MANUAL`、`relation_status/status=0`、`base_id>0` 且 `graph_consumable=1` 时，用它释放对应 `is_anchor=fail3/fail4` 的旧锚定失败门禁；该语义不改变节点事实，也不是 T06 Step2/Step3 替换白名单。 |
+| T12 quality hypothesis | SWSD 与原始 1V1 F-RCSD 在通行性上应等价。该语义只用于生成待复核质量候选，未经过数据验证和人工 review decisions 时不得提升为修复规则。 |
 
 ## 字段治理规则
 

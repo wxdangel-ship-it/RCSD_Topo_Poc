@@ -13,10 +13,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from .contracts import T10_MODULE_ID, T10_T08_POLICY, T10_V1_CHAIN
+from .contracts import (
+    T10_MODULE_ID,
+    T10_T08_POLICY,
+    T10_V1_CHAIN,
+    T10_V1_CHAIN_WITH_T12,
+)
 from .segment_noop_handoffs import try_segment_no_candidate_handoff as _seg_noop
 from .upstream_feedback import write_t10_upstream_feedback
 from .case_runner_t11 import run_t11_stage as _run_t11
+from .case_runner_t12 import run_t12_stage as _run_t12
 
 
 T10_E2E_STAGE_ORDER = (
@@ -32,6 +38,20 @@ T10_E2E_STAGE_ORDER = (
     "t09_step3",
 )
 
+T10_E2E_STAGE_ORDER_WITH_T12 = (
+    "t01",
+    "t07",
+    "t03",
+    "t04",
+    "t05",
+    "t06_step12",
+    "t06_step3",
+    "t11",
+    "t12",
+    "t09_step12",
+    "t09_step3",
+)
+
 T10_E2E_STAGE_MODULES = {
     "t01": "t01_data_preprocess",
     "t07": "t07_semantic_junction_anchor",
@@ -41,6 +61,7 @@ T10_E2E_STAGE_MODULES = {
     "t07_step3": "t07_semantic_junction_anchor",
     "t06_step12": "t06_segment_fusion_precheck",
     "t06_step3": "t06_segment_fusion_precheck",
+    "t12": "t12_frcsd_quality_audit",
     "t11": "t11_manual_relation_review",
     "t09_step12": "t09_swsd_field_rule_restoration",
     "t09_step3": "t09_swsd_field_rule_restoration",
@@ -532,13 +553,21 @@ def _external_input_paths(*, case_manifest: Mapping[str, Any], case_dir: Path) -
     return paths
 
 
-def _stage_limit(stop_after: str | None) -> int:
+def _t10_stage_order(run_t12: bool) -> tuple[str, ...]:
+    return T10_E2E_STAGE_ORDER_WITH_T12 if run_t12 else T10_E2E_STAGE_ORDER
+
+
+def _stage_limit(
+    stop_after: str | None,
+    stage_order: Sequence[str] | None = None,
+) -> int:
+    active_order = tuple(stage_order or T10_E2E_STAGE_ORDER)
     if not stop_after:
-        return len(T10_E2E_STAGE_ORDER)
+        return len(active_order)
     normalized = str(stop_after).strip()
-    if normalized not in T10_E2E_STAGE_ORDER:
-        raise ValueError(f"stop_after must be one of {', '.join(T10_E2E_STAGE_ORDER)}.")
-    return T10_E2E_STAGE_ORDER.index(normalized) + 1
+    if normalized not in active_order:
+        raise ValueError(f"stop_after must be one of {', '.join(active_order)}.")
+    return active_order.index(normalized) + 1
 
 
 def _compare_feedback_iteration_outputs(
@@ -1067,7 +1096,18 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument("--out-root", default="outputs/_work/t10_e2e_case_runs", help="T10 E2E output root.")
     parser.add_argument("--run-id", default=None)
     parser.add_argument("--case-id", dest="case_ids", action="append", default=None, help="CaseID to run. Repeatable.")
-    parser.add_argument("--stop-after", choices=T10_E2E_STAGE_ORDER, default=None)
+    parser.add_argument("--stop-after", choices=T10_E2E_STAGE_ORDER_WITH_T12, default=None)
+    parser.add_argument(
+        "--run-t12",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Insert audit-only T12 after T11 and before T09. Disabled by default.",
+    )
+    parser.add_argument(
+        "--t12-review-decisions",
+        default=None,
+        help="Optional T12 review-decision CSV applied to every selected Case.",
+    )
     parser.add_argument("--continue-on-error", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--exit-zero", action="store_true", help="Return 0 even when some cases are blocked or failed.")
     parser.add_argument(

@@ -24,6 +24,8 @@ Segment package 的 `t10_case_evidence_manifest.json` 必须额外记录 `scope.
 
 T11 stage 必须记录当前 Case root、关键 T06 Step3 文件、实际 `run_root`、candidates CSV/GPKG、人工模板与 summary。T11 summary 中的 discovered inputs 是完整文件级输入审计；T11 失败时 T09 必须 blocked。
 
+T12 stage 只在显式启用时存在，必须记录原始 1V1 F-RCSD、SWSD、RCSDIntersection、T05 audit、T06 交叉证据、参数、CRS、运行环境、耗时和全部发布路径。候选、confirmed、excluded、manual review 必须分层；没有 review decisions 时不得把候选发布为正式质量问题。
+
 ## 4. T06 证据
 
 `t10_t06_funnel.*` 读取 T06 Step1 / Step2 / Step3 summary 和输出，解释数量流转；其 Step1 分母必须来自 `final_swsd_nodes`，不能回退到 T07 Step2 nodes。`t10_t06_visual_check_summary.*` 默认索引 T01 Segment/Road、T07 Step2、T03/T04/T05 surface、T06 replacement plan / problem registry、F-RCSD、relation、topology connectivity audit 和 surface topology audit；只有显式运行 T07 Step3 时，才额外记录 Step3 补锚图层。
@@ -34,4 +36,4 @@ T10 upstream feedback 从 T06 problem registry、repair candidates、relation au
 
 ## 6. Full Pipeline 证据
 
-`t10_innernet_full_pipeline_manifest.json` 记录 `stage_order / stages / inputs / outputs / execution_context`，其中 `t11` 固定位于 `t06_step3` 与 `t09` 之间。`t10_innernet_full_pipeline_summary.json` 是轻量完成判定文件，内网监控应优先读取其中 `status / passed / finished_at_utc / duration_seconds / t11_candidates_csv / t11_summary_json`。
+`t10_innernet_full_pipeline_manifest.json` 记录 `stage_order / stages / inputs / outputs / execution_context`，其中 `t11` 固定位于 `t06_step3` 后；启用 T12 时顺序固定为 `t06_step3 -> t11 -> t12 -> t09`。当 profile 固定 `RUN_T08=0` 时，manifest 不登记未运行的 T08 stage。`t10_innernet_full_pipeline_summary.json` 是轻量完成判定文件，内网监控应优先读取其中 `status / passed / finished_at_utc / duration_seconds` 及已启用审计阶段的必要产物。

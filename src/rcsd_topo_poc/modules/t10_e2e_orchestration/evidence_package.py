@@ -17,6 +17,13 @@ T10_MATERIALIZATION_COPY_FULL = "copy_full"
 T10_MATERIALIZATION_SPATIAL_SLICE = "spatial_slice"
 
 
+def _external_slot_required(slot: str) -> bool:
+    for requirement in EXTERNAL_INPUT_REQUIREMENTS:
+        if requirement.slot == slot:
+            return requirement.required
+    return True
+
+
 @dataclass(frozen=True)
 class T10CaseEvidencePackageArtifacts:
     package_dir: Path
@@ -77,7 +84,11 @@ def build_case_evidence_package(
             )
             for requirement in EXTERNAL_INPUT_REQUIREMENTS
         ]
-    missing_external = [entry["slot"] for entry in included_inputs if not entry["source_path"]]
+    missing_external = [
+        entry["slot"]
+        for entry in included_inputs
+        if not entry["source_path"] and _external_slot_required(entry["slot"])
+    ]
     materialized_count = sum(1 for entry in included_inputs if entry.get("package_path"))
     scope_payload = {
         "swsd_semantic_junction_id": str(semantic_junction_id),
@@ -270,7 +281,11 @@ def _case_payload_and_summary(
             )
             for requirement in EXTERNAL_INPUT_REQUIREMENTS
         ]
-    missing_external = [entry["slot"] for entry in included_inputs if not entry["source_path"]]
+    missing_external = [
+        entry["slot"]
+        for entry in included_inputs
+        if not entry["source_path"] and _external_slot_required(entry["slot"])
+    ]
     materialized_count = sum(1 for entry in included_inputs if entry.get("package_path"))
     scope_payload = {
         "case_id": str(semantic_junction_id),

@@ -1,0 +1,427 @@
+from __future__ import annotations
+
+from collections import Counter
+from typing import Any, Mapping
+
+import geopandas as gpd
+
+from rcsd_topo_poc.modules.t06_segment_fusion_precheck.graph_builders import (
+    NodeCanonicalizer,
+)
+
+from .anchor_portals import (
+    AnchorRecord,
+    build_anchor_map,
+    merge_anchor_groups,
+    portal_candidates,
+    validate_t07_truth_anchors,
+)
+from .carrier_graph import (
+    GraphBundle,
+    build_graph,
+    build_node_context,
+    directional_swsd_carrier,
+    field_name,
+    normalize_id,
+    parse_ids,
+    path_metrics,
+    required_swsd_directions,
+    shortest_path_between_sets,
+)
+from .inputs import LoadedInputs
+from .models import AuditConfig, EvidenceLayers
+
+
+def audit_frcsd_candidates(
+    loaded: LoadedInputs,
+    config: AuditConfig,
+) -> tuple[list[dict[str, Any]], EvidenceLayers, dict[str, Any]]:
+    anchors = build_anchor_map(loaded.t05_anchor_audit)
+    swsd_canonicalizer, _, swsd_raw_points = build_node_context(loaded.swsd_nodes)
+    frcsd_canonicalizer, frcsd_groups, frcsd_raw_points = build_node_context(
+        loaded.frcsd_nodes
+    )
+    truth_audit = validate_t07_truth_anchors(
+        anchors,
+        loaded.rcsd_intersections,
+        loaded.frcsd_nodes,
+        tolerance_m=config.portal_radius_m,
+    )
+    full_graph = build_graph(loaded.frcsd_roads, frcsd_canonicalizer)
+    segment_id_field = field_name(loaded.segments, "id")
+    segment_pair_field = field_name(loaded.segments, "pair_nodes")
+    segment_roads_field = field_name(loaded.segments, "roads")
+    swsd_road_id_field = field_name(loaded.swsd_roads, "id")
+    swsd_road_ids = loaded.swsd_roads[swsd_road_id_field].map(normalize_id)
+    full_nodes = _all_graph_nodes(full_graph)
+    canonical_points = _canonical_points(
+        frcsd_canonicalizer,
+        frcsd_raw_points,
+    )
+    drivezone_union = (
+        loaded.drivezone.geometry.union_all()
+        if loaded.drivezone is not None and not loaded.drivezone.empty
+        else None
+    )
+    candidates: list[dict[str, Any]] = []
+    layers = EvidenceLayers()
+    counters: Counter[str] = Counter()
+    for _, segment in loaded.segments.iterrows():
+        counters["segment_total"] += 1
+        segment_id = normalize_id(segment[segment_id_field])
+        pair_nodes = parse_ids(segment[segment_pair_field])
+        if len(pair_nodes) != 2 or pair_nodes[0] == pair_nodes[1]:
+            counters["invalid_pair_count"] += 1
+            continue
+        if any(node_id not in anchors for node_id in pair_nodes):
+            counters["missing_anchor_count"] += 1
+            continue
+        geometry = segment.geometry
+        if geometry is None or geometry.is_empty or geometry.length <= 0:
+            counters["invalid_segment_geometry_count"] += 1
+            continue
+        road_ids = set(parse_ids(segment[segment_roads_field]))
+        segment_roads = loaded.swsd_roads.loc[swsd_road_ids.isin(road_ids)].copy()
+        required_directions = required_swsd_directions(
+            segment_roads,
+            pair_nodes,
+            swsd_canonicalizer,
+        )
+        if not required_directions:
+            counters["invalid_swsd_direction_count"] += 1
+            continue
+        anchor_pair = [anchors[node_id] for node_id in pair_nodes]
+        base_nodes = [
+            frcsd_canonicalizer.canonicalize(anchor.base_id)
+            for anchor in anchor_pair
+        ]
+        if any(node_id not in canonical_points for node_id in base_nodes):
+            counters["anchor_missing_in_raw_frcsd_count"] += 1
+            continue
+        counters["audited_both_anchor_segment_count"] += 1
+        local_roads = loaded.frcsd_roads.loc[
+            loaded.frcsd_roads.geometry.intersects(
+                geometry.buffer(config.local_corridor_m)
+            )
+        ].copy()
+        local_graph = build_graph(local_roads, frcsd_canonicalizer)
+        coarse_full_missing = _missing_directions(
+            required_directions,
+            full_graph,
+            base_nodes,
+        )
+        coarse_local_missing = _missing_directions(
+            required_directions,
+            local_graph,
+            base_nodes,
+        )
+        if not coarse_full_missing and not coarse_local_missing:
+            counters["coarse_equivalent_count"] += 1
+            continue
+        if not _is_fully_inner(geometry, loaded.crop_inner_geometry):
+            counters["crop_edge_excluded_count"] += 1
+            continue
+        candidate = _enrich_candidate(
+            segment_id=segment_id,
+            segment_geometry=geometry,
+            pair_nodes=pair_nodes,
+            segment_roads=segment_roads,
+            required_directions=required_directions,
+            anchors=anchor_pair,
+            base_nodes=base_nodes,
+            swsd_canonicalizer=swsd_canonicalizer,
+            swsd_raw_points=swsd_raw_points,
+            frcsd_canonicalizer=frcsd_canonicalizer,
+            frcsd_groups=frcsd_groups,
+            frcsd_raw_points=frcsd_raw_points,
+            frcsd_nodes=loaded.frcsd_nodes,
+            full_graph=full_graph,
+            local_graph=local_graph,
+            t06_cross_evidence=loaded.t06_cross_evidence.get(segment_id, {}),
+            config=config,
+            layers=layers,
+        )
+        candidate["coarse_full_missing_directions"] = coarse_full_missing
+        candidate["coarse_local_missing_directions"] = coarse_local_missing
+        candidate["drivezone_in_road_ratio"] = (
+            float(geometry.intersection(drivezone_union).length / geometry.length)
+            if drivezone_union is not None
+            else None
+        )
+        candidate["geometry"] = geometry
+        candidates.append(candidate)
+        layers.candidate_segments.append(
+            {
+                "candidate_id": segment_id,
+                "segment_id": segment_id,
+                "candidate_status": "candidate_pending_review",
+                "suggested_issue_type": candidate["suggested_issue_type"],
+                "failed_directions": "|".join(candidate["failed_directions"]),
+                "portal_equivalent": candidate[
+                    "automatic_all_directions_equivalent"
+                ],
+                "drivezone_in_road_ratio": candidate["drivezone_in_road_ratio"],
+                "geometry": geometry,
+            }
+        )
+    candidates.sort(key=lambda row: row["segment_id"])
+    counters["candidate_count"] = len(candidates)
+    counters["audited_segment_count"] = counters[
+        "audited_both_anchor_segment_count"
+    ]
+    counters["portal_equivalent_candidate_count"] = sum(
+        bool(row["automatic_all_directions_equivalent"]) for row in candidates
+    )
+    return candidates, layers, {
+        "counts": dict(counters),
+        "t07_truth_audit": truth_audit,
+        "full_graph_node_count": len(full_nodes),
+        "full_graph_edge_count": len(full_graph.edges),
+        "drivezone_reference_provided": drivezone_union is not None,
+        "drivezone_affects_verdict": False,
+    }
+
+
+def _enrich_candidate(
+    *,
+    segment_id: str,
+    segment_geometry: Any,
+    pair_nodes: list[str],
+    segment_roads: gpd.GeoDataFrame,
+    required_directions: list[str],
+    anchors: list[AnchorRecord],
+    base_nodes: list[str],
+    swsd_canonicalizer: NodeCanonicalizer,
+    swsd_raw_points: Mapping[str, Any],
+    frcsd_canonicalizer: NodeCanonicalizer,
+    frcsd_groups: Mapping[str, tuple[str, ...]],
+    frcsd_raw_points: Mapping[str, Any],
+    frcsd_nodes: gpd.GeoDataFrame,
+    full_graph: GraphBundle,
+    local_graph: GraphBundle,
+    t06_cross_evidence: Mapping[str, Any],
+    config: AuditConfig,
+    layers: EvidenceLayers,
+) -> dict[str, Any]:
+    direction_evidence: list[dict[str, Any]] = []
+    failed_directions: list[str] = []
+    issue_types: set[str] = set()
+    for direction in required_directions:
+        carrier = directional_swsd_carrier(
+            direction,
+            pair_nodes,
+            segment_roads,
+            swsd_canonicalizer,
+            swsd_raw_points,
+        )
+        source_index, target_index = (0, 1) if direction == "pair0_to_pair1" else (1, 0)
+        starts = portal_candidates(
+            anchor=anchors[source_index],
+            portal_point=carrier["source_point"],
+            frcsd_nodes=frcsd_nodes,
+            canonicalizer=frcsd_canonicalizer,
+            canonical_groups=frcsd_groups,
+            raw_node_points=frcsd_raw_points,
+            eligible_canonical_ids=local_graph.outgoing_nodes,
+            radius_m=config.portal_radius_m,
+            direction_role="start",
+        )
+        ends = portal_candidates(
+            anchor=anchors[target_index],
+            portal_point=carrier["target_point"],
+            frcsd_nodes=frcsd_nodes,
+            canonicalizer=frcsd_canonicalizer,
+            canonical_groups=frcsd_groups,
+            raw_node_points=frcsd_raw_points,
+            eligible_canonical_ids=local_graph.incoming_nodes,
+            radius_m=config.portal_radius_m,
+            direction_role="end",
+        )
+        start_ids = {row["canonical_id"] for row in starts}
+        end_ids = {row["canonical_id"] for row in ends}
+        paths = {
+            "local_directed": shortest_path_between_sets(
+                local_graph.directed, start_ids, end_ids
+            ),
+            "full_directed": shortest_path_between_sets(
+                full_graph.directed, start_ids, end_ids
+            ),
+            "local_undirected": shortest_path_between_sets(
+                local_graph.undirected, start_ids, end_ids
+            ),
+            "full_undirected": shortest_path_between_sets(
+                full_graph.undirected, start_ids, end_ids
+            ),
+        }
+        metrics = {
+            name: path_metrics(
+                path,
+                local_graph.edges if name.startswith("local_") else full_graph.edges,
+                segment_geometry,
+                carrier["length_m"],
+                config,
+            )
+            for name, path in paths.items()
+        }
+        local_ok = bool(metrics["local_directed"]["accepted_equivalent_carrier"])
+        if not local_ok:
+            failed_directions.append(direction)
+            if metrics["local_undirected"]["accepted_equivalent_carrier"]:
+                issue_types.add("directed_carrier_missing")
+            else:
+                issue_types.add("required_local_connectivity_missing")
+        for portal in starts + ends:
+            point = frcsd_raw_points.get(portal["raw_id"])
+            layers.anchor_portals.append(
+                {
+                    "candidate_id": segment_id,
+                    "direction": direction,
+                    **portal,
+                    "geometry": point,
+                }
+            )
+        _append_path_layers(
+            layers=layers,
+            candidate_id=segment_id,
+            direction=direction,
+            carrier=carrier,
+            segment_roads=segment_roads,
+            swsd_road_id_field=field_name(segment_roads, "id"),
+            paths=paths,
+            metrics=metrics,
+            local_graph=local_graph,
+            full_graph=full_graph,
+        )
+        direction_evidence.append(
+            {
+                "direction": direction,
+                "source_swsd_portal": carrier["source_swsd_portal"],
+                "target_swsd_portal": carrier["target_swsd_portal"],
+                "swsd_road_ids": carrier["road_ids"],
+                "swsd_length_m": carrier["length_m"],
+                "start_portal_candidates": starts,
+                "end_portal_candidates": ends,
+                **metrics,
+            }
+        )
+    if "required_local_connectivity_missing" in issue_types:
+        suggested_issue_type = "required_local_connectivity_missing"
+    elif "directed_carrier_missing" in issue_types:
+        suggested_issue_type = "directed_carrier_missing"
+    else:
+        suggested_issue_type = ""
+    return {
+        "candidate_id": segment_id,
+        "segment_id": segment_id,
+        "candidate_status": "candidate_pending_review",
+        "review_status": "manual_review_required",
+        "review_reason": "",
+        "suggested_issue_type": suggested_issue_type,
+        "required_directions": required_directions,
+        "failed_directions": failed_directions,
+        "anchor_modules": [anchor.source_module for anchor in anchors],
+        "base_nodes": base_nodes,
+        "anchor_groups": [
+            list(merge_anchor_groups(anchor, frcsd_canonicalizer, frcsd_groups))
+            for anchor in anchors
+        ],
+        "automatic_all_directions_equivalent": not failed_directions,
+        "directions": direction_evidence,
+        "t06_cross_evidence": dict(t06_cross_evidence),
+    }
+
+
+def _append_path_layers(
+    *,
+    layers: EvidenceLayers,
+    candidate_id: str,
+    direction: str,
+    carrier: Mapping[str, Any],
+    segment_roads: gpd.GeoDataFrame,
+    swsd_road_id_field: str,
+    paths: Mapping[str, Any],
+    metrics: Mapping[str, Mapping[str, Any]],
+    local_graph: GraphBundle,
+    full_graph: GraphBundle,
+) -> None:
+    by_id = {
+        normalize_id(row[swsd_road_id_field]): row
+        for _, row in segment_roads.iterrows()
+    }
+    for sequence, road_id in enumerate(carrier["road_ids"], start=1):
+        row = by_id[road_id]
+        layers.swsd_required_carriers.append(
+            {
+                "candidate_id": candidate_id,
+                "direction": direction,
+                "sequence": sequence,
+                "road_id": road_id,
+                "geometry": row.geometry,
+            }
+        )
+    for path_kind, path in paths.items():
+        if path is None:
+            continue
+        graph = local_graph if path_kind.startswith("local_") else full_graph
+        for sequence, road_id in enumerate(path.road_ids, start=1):
+            edge = graph.edges[road_id]
+            layers.frcsd_carrier_paths.append(
+                {
+                    "candidate_id": candidate_id,
+                    "direction": direction,
+                    "path_kind": path_kind,
+                    "sequence": sequence,
+                    "road_id": road_id,
+                    "road_direction": edge.direction,
+                    "source": edge.source,
+                    "accepted_equivalent_carrier": metrics[path_kind][
+                        "accepted_equivalent_carrier"
+                    ],
+                    "path_length_m": metrics[path_kind]["length_m"],
+                    "path_length_ratio": metrics[path_kind]["length_ratio"],
+                    "max_corridor_distance_m": metrics[path_kind][
+                        "max_corridor_distance_m"
+                    ],
+                    "geometry": edge.geometry,
+                }
+            )
+
+
+def _missing_directions(
+    required: list[str],
+    graph: GraphBundle,
+    base_nodes: list[str],
+) -> list[str]:
+    paths = {
+        "pair0_to_pair1": shortest_path_between_sets(
+            graph.directed, [base_nodes[0]], [base_nodes[1]]
+        ),
+        "pair1_to_pair0": shortest_path_between_sets(
+            graph.directed, [base_nodes[1]], [base_nodes[0]]
+        ),
+    }
+    return [direction for direction in required if paths[direction] is None]
+
+
+def _is_fully_inner(geometry: Any, inner: Any | None) -> bool:
+    if inner is None:
+        return True
+    length = float(geometry.length)
+    return length > 0 and float(geometry.intersection(inner).length / length) >= 0.999999
+
+
+def _canonical_points(
+    canonicalizer: NodeCanonicalizer,
+    raw_points: Mapping[str, Any],
+) -> dict[str, Any]:
+    output: dict[str, Any] = {}
+    for raw_id, point in raw_points.items():
+        output.setdefault(canonicalizer.canonicalize(raw_id), point)
+    return output
+
+
+def _all_graph_nodes(graph: GraphBundle) -> set[str]:
+    nodes = set(graph.directed) | set(graph.incoming)
+    for edge in graph.edges.values():
+        nodes.update((edge.start, edge.end))
+    return nodes

@@ -44,6 +44,7 @@ from rcsd_topo_poc.modules.t01_data_preprocess.working_layers import (
     set_road_segmentid,
     set_road_sgrade,
 )
+from rcsd_topo_poc.utils.field_names import PropertyLookup
 
 
 DEFAULT_RUN_ID_PREFIX = "t01_s2_refresh_node_road_"
@@ -63,10 +64,11 @@ class NodeFeatureRecord:
 
 
 def _resolve_working_mainnodeid(properties: dict[str, Any]) -> Optional[str]:
-    working_mainnodeid = _normalize_mainnodeid(properties.get("working_mainnodeid"))
+    lookup = PropertyLookup(properties)
+    working_mainnodeid = _normalize_mainnodeid(lookup.get("working_mainnodeid"))
     if working_mainnodeid is not None:
         return working_mainnodeid
-    return _normalize_mainnodeid(properties.get("mainnodeid"))
+    return _normalize_mainnodeid(lookup.get("mainnodeid"))
 
 
 @dataclass(frozen=True)
@@ -335,7 +337,8 @@ def _load_nodes(
 
     for feature in result.features:
         props = canonicalize_road_working_properties(dict(feature.properties))
-        node_id = _normalize_id(props.get("id"))
+        lookup = PropertyLookup(props)
+        node_id = _normalize_id(lookup.get("id"))
         if node_id is None:
             raise ValueError("Node feature is missing required field 'id'.")
 
@@ -345,8 +348,8 @@ def _load_nodes(
             node_id=node_id,
             mainnodeid=mainnodeid,
             semantic_node_id=semantic_node_id,
-            grade=_coerce_int(props.get("grade")),
-            kind=_coerce_int(props.get("kind")),
+            grade=_coerce_int(lookup.get("grade")),
+            kind=_coerce_int(lookup.get("kind")),
             properties=props,
             geometry=feature.geometry,
         )
@@ -403,10 +406,11 @@ def _load_roads(
 
     for feature in result.features:
         props = dict(feature.properties)
-        road_id = _normalize_id(props.get("id"))
-        snodeid = _normalize_id(props.get("snodeid"))
-        enodeid = _normalize_id(props.get("enodeid"))
-        direction = _coerce_int(props.get("direction"))
+        lookup = PropertyLookup(props)
+        road_id = _normalize_id(lookup.get("id"))
+        snodeid = _normalize_id(lookup.get("snodeid"))
+        enodeid = _normalize_id(lookup.get("enodeid"))
+        direction = _coerce_int(lookup.get("direction"))
         if road_id is None or snodeid is None or enodeid is None or direction is None:
             raise ValueError("Road feature is missing one of required fields: id/snodeid/enodeid/direction.")
 
@@ -415,8 +419,8 @@ def _load_roads(
             snodeid=snodeid,
             enodeid=enodeid,
             direction=direction,
-            formway=_coerce_int(props.get("formway")),
-            road_kind=_coerce_int(props.get("road_kind")),
+            formway=_coerce_int(lookup.get("formway")),
+            road_kind=_coerce_int(lookup.get("road_kind")),
             properties=props,
             geometry=feature.geometry,
         )

@@ -18,6 +18,11 @@ from rcsd_topo_poc.modules.p01_arm_build.models import (
     VectorLayer,
     to_plain,
 )
+from rcsd_topo_poc.utils.field_names import (
+    get_case_insensitive_property,
+    normalize_field_name,
+    normalize_property_keys,
+)
 
 
 def normalise_id(value: Any) -> str:
@@ -30,15 +35,11 @@ def normalise_id(value: Any) -> str:
 
 
 def _normalise_properties(properties: Any) -> dict[str, Any]:
-    return {str(k).lower(): v for k, v in dict(properties or {}).items()}
+    return normalize_property_keys(dict(properties or {}))
 
 
 def _first_present(properties: dict[str, Any], names: Iterable[str]) -> Any:
-    for name in names:
-        key = name.lower()
-        if key in properties:
-            return properties[key]
-    return None
+    return get_case_insensitive_property(properties, names)
 
 
 def _layer_info(path: Path, feature_count: int, schema_properties: tuple[str, ...], src: Any) -> VectorLayer:
@@ -54,7 +55,7 @@ def _layer_info(path: Path, feature_count: int, schema_properties: tuple[str, ..
 def read_nodes(path: Path) -> tuple[dict[str, NodeRecord], VectorLayer]:
     nodes: dict[str, NodeRecord] = {}
     with fiona.open(path) as src:
-        schema_properties = tuple(str(k).lower() for k in src.schema.get("properties", {}).keys())
+        schema_properties = tuple(normalize_field_name(k) for k in src.schema.get("properties", {}).keys())
         feature_count = 0
         for feature in src:
             feature_count += 1
@@ -79,7 +80,7 @@ def read_nodes(path: Path) -> tuple[dict[str, NodeRecord], VectorLayer]:
 def read_roads(path: Path) -> tuple[dict[str, RoadRecord], VectorLayer]:
     roads: dict[str, RoadRecord] = {}
     with fiona.open(path) as src:
-        schema_properties = tuple(str(k).lower() for k in src.schema.get("properties", {}).keys())
+        schema_properties = tuple(normalize_field_name(k) for k in src.schema.get("properties", {}).keys())
         feature_count = 0
         for feature in src:
             feature_count += 1

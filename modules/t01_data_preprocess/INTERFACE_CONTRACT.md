@@ -23,6 +23,7 @@
   - 双向 `Step1-Step5C` 构段继续使用 `road_kind != 1`
   - `formway != 128`
   - `Step5` 后单向补段允许 `road_kind = 1` 进入候选；该字段在 SWSD 中代表封闭式道路，多数场景为高速 / 高速相关道路
+- 本节字段名均为 canonical logical field name。外部 GPKG / GeoJSON / Shapefile 字段名按 `casefold` 识别；working-layer 初始化在 copy-on-write 副本中统一发布 lowercase canonical 字段名，原始输入文件不修改。同一记录存在仅大小写不同但非空值冲突的字段时必须显式失败。
 
 ## 2.1 官方 runner / 诊断契约
 - 运行前先在 repo root 执行：

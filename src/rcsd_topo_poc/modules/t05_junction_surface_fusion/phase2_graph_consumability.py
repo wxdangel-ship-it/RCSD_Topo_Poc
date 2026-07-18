@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 from typing import Any
 
+from rcsd_topo_poc.utils.field_names import get_case_insensitive_property
+
 from .phase2_ids import normalize_target_id
 from .phase2_models import STATUS_SUCCESS
 
@@ -177,10 +179,7 @@ def _audit_context_by_target(audit_rows: list[dict[str, Any]]) -> dict[str, dict
 
 
 def _field_value(properties: dict[str, Any], field_name: str) -> Any:
-    for key, value in properties.items():
-        if str(key).lower() == field_name.lower():
-            return value
-    return None
+    return get_case_insensitive_property(properties, field_name)
 
 
 def _int_value(value: Any) -> int | None:

@@ -5,6 +5,8 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any, Callable
 
+from rcsd_topo_poc.utils.field_names import get_case_insensitive_property
+
 from .phase2_anchor_funnel import FAILURE_REASON_FIELDS, SOURCE_FUNNEL_FIELDS, build_junction_anchor_funnel
 from .phase2_io import write_csv, write_gpkg, write_json, write_relation_geojson_crs84
 from .phase2_graph_consumability import (
@@ -572,10 +574,7 @@ def _feature_id(feature: dict[str, Any]) -> int:
 
 
 def _field_value(feature: dict[str, Any], field_name: str) -> Any:
-    for key, value in (feature.get("properties") or {}).items():
-        if key.lower() == field_name:
-            return value
-    return None
+    return get_case_insensitive_property(feature.get("properties") or {}, field_name)
 
 
 def _is_int(value: Any) -> bool:

@@ -29,6 +29,7 @@ from rcsd_topo_poc.modules.t01_data_preprocess.working_layers import (
     initialize_working_layers,
     is_allowed_road_kind,
 )
+from rcsd_topo_poc.utils.field_names import PropertyLookup
 
 
 REQUIRED_ROAD_FIELDS = ("id", "snodeid", "enodeid", "direction", "formway")
@@ -112,10 +113,11 @@ def _normalize_mainnodeid(value: Any) -> Optional[str]:
 
 
 def _resolve_working_mainnodeid(props: dict[str, Any]) -> Optional[str]:
-    working_mainnodeid = _normalize_mainnodeid(props.get("working_mainnodeid"))
+    lookup = PropertyLookup(props)
+    working_mainnodeid = _normalize_mainnodeid(lookup.get("working_mainnodeid"))
     if working_mainnodeid is not None:
         return working_mainnodeid
-    return _normalize_mainnodeid(props.get("mainnodeid"))
+    return _normalize_mainnodeid(lookup.get("mainnodeid"))
 
 
 def _sort_key(value: str) -> Tuple[int, Union[int, str]]:
@@ -246,7 +248,8 @@ def _validate_required_fields(
     issues: list[str] = []
     for index, feature in enumerate(features):
         properties = feature["properties"]
-        missing = [field for field in required_fields if field not in properties]
+        lookup = PropertyLookup(properties)
+        missing = [field for field in required_fields if not lookup.has(field)]
         if missing:
             issues.append(
                 f"{layer_label} feature[{index}] missing required fields: {', '.join(sorted(missing))}"
@@ -258,6 +261,7 @@ def _prepare_nodes(raw_features: list[dict[str, Any]], audit_events: list[dict[s
     nodes: dict[str, NodeRecord] = {}
     for index, feature in enumerate(raw_features):
         props = feature["properties"]
+        lookup = PropertyLookup(props)
         geometry = feature["geometry"]
         if geometry.geom_type != "Point":
             audit_events.append(
@@ -270,7 +274,7 @@ def _prepare_nodes(raw_features: list[dict[str, Any]], audit_events: list[dict[s
             )
             continue
 
-        node_id = _normalize_id(props.get("id"))
+        node_id = _normalize_id(lookup.get("id"))
         if node_id is None:
             audit_events.append(
                 {
@@ -283,11 +287,11 @@ def _prepare_nodes(raw_features: list[dict[str, Any]], audit_events: list[dict[s
             continue
 
         try:
-            raw_kind = _coerce_int(props.get("kind"))
-            raw_grade = _coerce_int(props.get("grade"))
-            kind_2 = _coerce_int(props.get("kind_2"))
-            grade_2 = _coerce_int(props.get("grade_2"))
-            closed_con = _coerce_int(props.get("closed_con"))
+            raw_kind = _coerce_int(lookup.get("kind"))
+            raw_grade = _coerce_int(lookup.get("grade"))
+            kind_2 = _coerce_int(lookup.get("kind_2"))
+            grade_2 = _coerce_int(lookup.get("grade_2"))
+            closed_con = _coerce_int(lookup.get("closed_con"))
         except ValueError as exc:
             audit_events.append(
                 {
@@ -441,6 +445,7 @@ def _prepare_roads(raw_features: list[dict[str, Any]], audit_events: list[dict[s
     roads: dict[str, RoadRecord] = {}
     for index, feature in enumerate(raw_features):
         props = feature["properties"]
+        lookup = PropertyLookup(props)
         geometry = feature["geometry"]
         if geometry.geom_type not in {"LineString", "MultiLineString"}:
             audit_events.append(
@@ -453,9 +458,9 @@ def _prepare_roads(raw_features: list[dict[str, Any]], audit_events: list[dict[s
             )
             continue
 
-        road_id = _normalize_id(props.get("id"))
-        snodeid = _normalize_id(props.get("snodeid"))
-        enodeid = _normalize_id(props.get("enodeid"))
+        road_id = _normalize_id(lookup.get("id"))
+        snodeid = _normalize_id(lookup.get("snodeid"))
+        enodeid = _normalize_id(lookup.get("enodeid"))
         if road_id is None or snodeid is None or enodeid is None:
             audit_events.append(
                 {
@@ -468,9 +473,9 @@ def _prepare_roads(raw_features: list[dict[str, Any]], audit_events: list[dict[s
             continue
 
         try:
-            direction = _coerce_int(props.get("direction"))
-            formway = _coerce_int(props.get("formway"))
-            road_kind = _coerce_int(props.get("road_kind"))
+            direction = _coerce_int(lookup.get("direction"))
+            formway = _coerce_int(lookup.get("formway"))
+            road_kind = _coerce_int(lookup.get("road_kind"))
         except ValueError as exc:
             audit_events.append(
                 {

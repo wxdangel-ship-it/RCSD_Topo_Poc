@@ -113,6 +113,8 @@ full-input 执行面使用 full-layer source：
 - `id`
 - `mainnodeid`
 
+必要字段名称均为 canonical logical field name；外部图层字段名按 `casefold` 匹配。因此 `snodeId / enodeId / mainNodeId` 等仅大小写不同的 1V1 FRCSD 字段满足同一必要字段契约。字段名归一化不得改写原属性或增加契约外别名；同一要素若存在仅大小写不同但非空值冲突的字段，必须在包含图层标签和 feature index 的错误中显式失败。
+
 `RCSDNode.mainnodeid` 的 T04 使用语义：
 
 - 非 `0` / 非空 `mainnodeid` 表示该 RCSDNode 属于一个多节点 RCSD 路口候选组。

@@ -10,12 +10,38 @@ from rcsd_topo_poc.modules.t00_utility_toolbox.json_point_to_gpkg_export import 
     ALL_LAYER_NAME,
     RECOMMENDED_LAYER_NAME,
     JsonPointToGpkgConfig,
+    _build_feature_properties,
+    _extract_spot_lon_lat,
+    _is_recommended_spot,
     run_json_point_to_gpkg_export,
 )
 
 
 def _decode_gpkg_geometry(blob: bytes):
     return from_wkb(blob[8:])
+
+
+def test_tool10_external_json_fields_are_case_insensitive() -> None:
+    payload = {
+        "TID": "request-1",
+        "DATA": {
+            "LOCATION": {"SpotID": "center-1", "CityAdcode": "420100"},
+            "CARD": {"SelectedShowID": "show-1"},
+            "HadRecommend": True,
+        },
+    }
+    spot = {"ID": "spot-1", "LON": "114.3", "LAT": "30.5", "IsRecommend": True}
+
+    properties = _build_feature_properties(payload, spot)
+
+    assert _extract_spot_lon_lat(spot) == (114.3, 30.5)
+    assert _is_recommended_spot(spot) is True
+    assert properties["spot_id"] == "spot-1"
+    assert properties["req_tid"] == "request-1"
+    assert properties["cen_id"] == "center-1"
+    assert properties["city_adcode"] == "420100"
+    assert properties["selected_show_id"] == "show-1"
+    assert properties["had_recommend"] == 1
 
 
 def test_tool10_exports_all_and_recommended_pickup_layers(tmp_path: Path) -> None:

@@ -29,6 +29,7 @@ from rcsd_topo_poc.modules.t00_utility_toolbox.common import (
     write_json,
 )
 from rcsd_topo_poc.modules.t08_preprocess.vector_io import write_gpkg as write_gpkg_sqlite
+from rcsd_topo_poc.utils.field_names import PropertyLookup, normalize_field_name
 
 
 ALLOWED_KIND2 = {"4", "8", "16", "64", "128", "2048"}
@@ -262,7 +263,7 @@ def _resolve_gpkg_table_info(path: Path, layer_name: str | None) -> tuple[str, s
         return None
     if layer_name:
         for table_name, column_name, srs_id in rows:
-            if str(table_name).lower() == layer_name.lower():
+            if normalize_field_name(table_name) == normalize_field_name(layer_name):
                 return str(table_name), str(column_name), int(srs_id)
         return None
     if len(rows) == 1:
@@ -331,13 +332,13 @@ def _read_gpkg_layer_sqlite(
         with sqlite3.connect(str(path)) as conn:
             table_columns = conn.execute(f"PRAGMA table_info({_quote_identifier(table_name)})").fetchall()
             property_columns = []
-            geometry_lower = geometry_column.lower()
+            geometry_lower = normalize_field_name(geometry_column)
             for row in table_columns:
                 column_name = str(row[1])
                 is_pk = int(row[5] or 0) > 0
-                if column_name.lower() == geometry_lower:
+                if normalize_field_name(column_name) == geometry_lower:
                     continue
-                if is_pk and column_name.lower() in {"fid", "ogc_fid"}:
+                if is_pk and normalize_field_name(column_name) in {"fid", "ogc_fid"}:
                     continue
                 property_columns.append(column_name)
             select_columns = [*property_columns, geometry_column]
@@ -510,12 +511,13 @@ def _build_node_index(features: list[LoadedFeature], audit_rows: list[dict[str, 
         for field in ("has_evd", "is_anchor", "anchor_reason"):
             feature.properties.setdefault(field, None)
 
+        lookup = PropertyLookup(feature.properties)
         missing = []
         for field in ("id", "mainnodeid", "kind_2"):
-            if field not in feature.properties:
+            if not lookup.has(field):
                 missing.append(field)
-        node_id = _normalize_id(feature.properties.get("id"))
-        mainnodeid = _normalize_id(feature.properties.get("mainnodeid"))
+        node_id = _normalize_id(lookup.get("id"))
+        mainnodeid = _normalize_id(lookup.get("mainnodeid"))
         if node_id is None:
             missing.append("id_value")
         if feature.geometry is None or feature.geometry.is_empty:
@@ -623,10 +625,11 @@ def _write_nodes(path: Path, features: list[LoadedFeature]) -> None:
 
 
 def _first_text_property(properties: dict[str, Any], field_names: tuple[str, ...]) -> tuple[str | None, str | None]:
+    lookup = PropertyLookup(properties)
     for field_name in field_names:
-        value = _normalize_id(properties.get(field_name))
+        value = _normalize_id(lookup.get(field_name))
         if value is not None:
-            return value, field_name
+            return value, lookup.resolve_name(field_name) or field_name
     return None, None
 
 
@@ -735,9 +738,10 @@ def _write_relation_evidence_json(
             representative_props = representative_feature.properties
             swsd_point_x, swsd_point_y = _point_xy(representative.geometry)
 
-        target_id = _normalize_id(representative_props.get("mainnodeid")) or representative_node_id or junction_id
-        representative_has_evd = _normalize_id(representative_props.get("has_evd"))
-        final_state = _normalize_id(representative_props.get("is_anchor"))
+        representative_lookup = PropertyLookup(representative_props)
+        target_id = _normalize_id(representative_lookup.get("mainnodeid")) or representative_node_id or junction_id
+        representative_has_evd = _normalize_id(representative_lookup.get("has_evd"))
+        final_state = _normalize_id(representative_lookup.get("is_anchor"))
         relation_state = _normalize_id(result.get("relation_state")) or (
             _stage2_relation_state(
                 participates=bool(result.get("participates")),
@@ -775,8 +779,8 @@ def _write_relation_evidence_json(
                 "status_suggested": status_suggested,
                 "base_id_candidate": base_id_candidate,
                 "reason": relation_state,
-                "level": _value_or_minus_one(representative_props.get("grade")),
-                "is_highway": _value_or_minus_one(representative_props.get("closed_con")),
+                "level": _value_or_minus_one(representative_lookup.get("grade")),
+                "is_highway": _value_or_minus_one(representative_lookup.get("closed_con")),
                 "swsd_point_x": swsd_point_x,
                 "swsd_point_y": swsd_point_y,
                 "rcsd_point_x": rcsd_point_x,
@@ -814,7 +818,8 @@ def _surface_candidate_row(
     base_id_candidate_override: str | None = None,
 ) -> dict[str, Any]:
     representative_props = representative_feature.properties
-    kind_2 = _normalize_id(representative_props.get("kind_2"))
+    representative_lookup = PropertyLookup(representative_props)
+    kind_2 = _normalize_id(representative_lookup.get("kind_2"))
     patch_id, patch_id_field = _first_text_property(intersection_record.properties, PATCH_ID_FIELDS)
     rcsd_point_x, rcsd_point_y = _point_xy(intersection_record.geometry)
     swsd_point_x, swsd_point_y = _point_xy(representative_feature.geometry)
@@ -831,16 +836,16 @@ def _surface_candidate_row(
         "matched_rcsdintersection_ids": _pipe_join_text(matched_intersection_ids),
         "junction_type": _junction_type_from_kind_2(kind_2),
         "kind_2": kind_2 or "",
-        "grade_2": _value_or_minus_one(representative_props.get("grade_2")),
+        "grade_2": _value_or_minus_one(representative_lookup.get("grade_2")),
         "patch_id": patch_id or "",
         "patch_id_source": f"RCSDIntersection.{patch_id_field}" if patch_id_field else "unresolved",
         "final_state": "accepted" if status_suggested == 0 else "review_required",
-        "anchor_reason": _normalize_id(representative_props.get("anchor_reason")) or "",
+        "anchor_reason": _normalize_id(representative_lookup.get("anchor_reason")) or "",
         "base_id_candidate": base_id_candidate,
         "relation_state": relation_state,
         "status_suggested": status_suggested,
-        "level": _value_or_minus_one(representative_props.get("grade")),
-        "is_highway": _value_or_minus_one(representative_props.get("closed_con")),
+        "level": _value_or_minus_one(representative_lookup.get("grade")),
+        "is_highway": _value_or_minus_one(representative_lookup.get("closed_con")),
         "swsd_point_x": swsd_point_x,
         "swsd_point_y": swsd_point_y,
         "rcsd_point_x": rcsd_point_x,
@@ -866,10 +871,11 @@ def _write_surface_candidate_gpkg(
         if group.representative is None:
             continue
         representative_feature = nodes_features[group.representative.output_index]
-        final_state = _normalize_id(representative_feature.properties.get("is_anchor"))
+        representative_lookup = PropertyLookup(representative_feature.properties)
+        final_state = _normalize_id(representative_lookup.get("is_anchor"))
         if final_state not in {"yes", "fail1"}:
             continue
-        target_id = _normalize_id(representative_feature.properties.get("mainnodeid")) or group.representative.node_id or junction_id
+        target_id = _normalize_id(representative_lookup.get("mainnodeid")) or group.representative.node_id or junction_id
         matched_intersection_ids = list(result.get("intersection_ids") or [])
         if final_state == "fail1" and len(matched_intersection_ids) <= 1:
             continue
@@ -993,7 +999,7 @@ def run_t07_step1_has_evd(
             continue
 
         representative_props = nodes_layer_data.features[group.representative.output_index].properties
-        kind_2 = _normalize_id(representative_props.get("kind_2"))
+        kind_2 = _normalize_id(PropertyLookup(representative_props).get("kind_2"))
         if kind_2 not in ALLOWED_KIND2:
             representative_props["has_evd"] = None
             representative_props["is_anchor"] = None
@@ -1078,8 +1084,9 @@ def _hits_step1_evidence_surface(geometry: BaseGeometry, prepared_surface: Any, 
 
 
 def _intersection_identity(properties: dict[str, Any], feature_index: int) -> str:
+    lookup = PropertyLookup(properties)
     for field in INTERSECTION_ID_FIELDS:
-        value = _normalize_id(properties.get(field))
+        value = _normalize_id(lookup.get(field))
         if value is not None:
             return value
     return f"feature_{feature_index}"
@@ -1090,11 +1097,12 @@ def _read_intersections(layer: LoadedLayer) -> list[IntersectionRecord]:
     for feature in layer.features:
         if feature.geometry is None or feature.geometry.is_empty:
             continue
+        lookup = PropertyLookup(feature.properties)
         records.append(
             IntersectionRecord(
                 feature_index=feature.feature_index,
                 intersection_id=_intersection_identity(feature.properties, feature.feature_index),
-                base_id_candidate=_normalize_id(feature.properties.get("id")),
+                base_id_candidate=_normalize_id(lookup.get("id")),
                 properties=dict(feature.properties),
                 geometry=feature.geometry,
             )
@@ -1105,10 +1113,11 @@ def _read_intersections(layer: LoadedLayer) -> list[IntersectionRecord]:
 
 
 def _rcsd_semantic_id(properties: dict[str, Any]) -> str | None:
-    mainnodeid = _normalize_id(properties.get("mainnodeid"))
+    lookup = PropertyLookup(properties)
+    mainnodeid = _normalize_id(lookup.get("mainnodeid"))
     if mainnodeid is not None:
         return mainnodeid
-    return _normalize_id(properties.get("id"))
+    return _normalize_id(lookup.get("id"))
 
 
 def _read_rcsd_semantic_node_records(layer: LoadedLayer) -> list[RCSDSemanticNodeRecord]:
@@ -1116,7 +1125,7 @@ def _read_rcsd_semantic_node_records(layer: LoadedLayer) -> list[RCSDSemanticNod
     for feature in layer.features:
         if feature.geometry is None or feature.geometry.is_empty:
             continue
-        node_id = _normalize_id(feature.properties.get("id"))
+        node_id = _normalize_id(PropertyLookup(feature.properties).get("id"))
         semantic_id = _rcsd_semantic_id(feature.properties)
         if node_id is None or semantic_id is None:
             continue

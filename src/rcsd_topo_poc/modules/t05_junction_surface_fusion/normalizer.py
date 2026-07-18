@@ -10,6 +10,7 @@ from shapely.ops import unary_union
 from shapely.validation import make_valid
 
 from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import LayerFeature
+from rcsd_topo_poc.utils.field_names import get_case_insensitive_property
 
 from .models import (
     JUNCTION_TYPE_BY_SOURCE_KIND,
@@ -293,13 +294,7 @@ def _skip_row(source: str, source_feature_id: str, source_case_id: str | None, r
 
 
 def _field(props: dict[str, Any], key: str) -> Any:
-    if key in props:
-        return props[key]
-    lower_key = key.lower()
-    for existing, value in props.items():
-        if str(existing).lower() == lower_key:
-            return value
-    return None
+    return get_case_insensitive_property(props, key)
 
 
 def _first_field(props: dict[str, Any], keys: Iterable[str]) -> Any:

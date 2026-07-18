@@ -46,6 +46,10 @@ SWSD / RCSD raw data
 
 ## 字段治理规则
 
+- 外部 GPKG / GeoJSON / Shapefile / CSV / JSON 记录的字段名按 `str(field_name).casefold()` 解析；模块契约中的字段名是 canonical logical name，因此 `snodeid`、`snodeId`、`SNODEID` 只在名称层等价，字段值语义不变。
+- 字段名归一化只用于外部字段查找，不得修改原输入或向原属性就地插入 lowercase alias；普通 copy-on-write 输出继续保留原字段名，模块正式输出 schema 继续使用各自契约中的 canonical 名称。T01 working layer、T06 内部 feature 和 P01 内部模型按各自契约在独立副本中发布 lowercase canonical keys，属于显式 canonicalization，不得回写输入文件。
+- 同一记录存在多个仅大小写不同的原字段时，相同非空值或单一非空值可归并读取；不同非空值必须以字段冲突显式失败，不得按遍历顺序 silent fix。
+- 大小写归一化不得自动扩展业务别名；`startNodeId` 是否等价于 `snodeid` 仍必须由项目或模块契约正式声明。模块自产 handoff / audit 字典继续使用精确 canonical key，避免掩盖模块间契约拼写错误。
 - 未在项目或模块源事实中正式启用的字段，不得进入 Step1 / Step2 强规则。
 - 字段正式启用时，必须说明可用语义、适用范围和未确认边界，并同步写入对应模块契约。
 - 禁止基于局部样本、人工真值或单次冒烟结果反推字段含义并固化为强规则。

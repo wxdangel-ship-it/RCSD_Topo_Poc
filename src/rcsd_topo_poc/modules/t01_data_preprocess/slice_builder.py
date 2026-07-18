@@ -27,6 +27,7 @@ from rcsd_topo_poc.modules.t01_data_preprocess.id_normalization import (
     normalize_mainnodeid as _shared_normalize_mainnodeid,
     normalize_scalar as _shared_normalize_scalar,
 )
+from rcsd_topo_poc.utils.field_names import PropertyLookup
 
 
 REQUIRED_ROAD_FIELDS = ("id", "snodeid", "enodeid", "direction")
@@ -140,10 +141,11 @@ def _normalize_mainnodeid(value: Any) -> Optional[str]:
 
 
 def _resolve_working_mainnodeid(properties: Dict[str, Any]) -> Optional[str]:
-    working_mainnodeid = _normalize_mainnodeid(properties.get("working_mainnodeid"))
+    lookup = PropertyLookup(properties)
+    working_mainnodeid = _normalize_mainnodeid(lookup.get("working_mainnodeid"))
     if working_mainnodeid is not None:
         return working_mainnodeid
-    return _normalize_mainnodeid(properties.get("mainnodeid"))
+    return _normalize_mainnodeid(lookup.get("mainnodeid"))
 
 
 def _sort_key(value: str) -> Tuple[int, Union[int, str]]:
@@ -162,7 +164,8 @@ def _validate_required_fields(
     issues: List[str] = []
     for index, feature in enumerate(features):
         properties = feature["properties"]
-        missing = [field for field in required_fields if field not in properties]
+        lookup = PropertyLookup(properties)
+        missing = [field for field in required_fields if not lookup.has(field)]
         if missing:
             issues.append(
                 f"{layer_label} feature[{index}] missing required fields: {', '.join(sorted(missing))}"
@@ -175,10 +178,11 @@ def _prepare_nodes(raw_features: List[Dict[str, Any]]) -> Dict[str, SliceNode]:
     for index, feature in enumerate(raw_features):
         geometry = feature["geometry"]
         properties = feature["properties"]
+        lookup = PropertyLookup(properties)
         if geometry.geom_type != "Point":
             raise ValueError(f"node feature[{index}] expected Point but got {geometry.geom_type}")
 
-        node_id = _normalize_id(properties.get("id"))
+        node_id = _normalize_id(lookup.get("id"))
         if node_id is None:
             raise ValueError(f"node feature[{index}] has null/empty id after normalization")
 
@@ -203,7 +207,8 @@ def _load_shapefile_nodes_fast(
 
     reader = shapefile.Reader(str(node_path))
     field_names = [field[0] for field in reader.fields[1:]]
-    missing = [field for field in REQUIRED_NODE_FIELDS if field not in field_names]
+    field_lookup = PropertyLookup({field_name: None for field_name in field_names})
+    missing = [field for field in REQUIRED_NODE_FIELDS if not field_lookup.has(field)]
     if missing:
         raise ValueError(f"node layer missing required fields: {', '.join(sorted(missing))}")
 
@@ -214,7 +219,8 @@ def _load_shapefile_nodes_fast(
             raise ValueError(f"node feature[{index}] expected Point but got {shape_obj.shapeTypeName}")
 
         properties = dict(zip(field_names, list(shape_record.record)))
-        node_id = _normalize_id(properties.get("id"))
+        lookup = PropertyLookup(properties)
+        node_id = _normalize_id(lookup.get("id"))
         if node_id is None:
             raise ValueError(f"node feature[{index}] has null/empty id after normalization")
 
@@ -237,18 +243,19 @@ def _prepare_roads(raw_features: List[Dict[str, Any]]) -> List[SliceRoad]:
     for index, feature in enumerate(raw_features):
         geometry = feature["geometry"]
         properties = feature["properties"]
+        lookup = PropertyLookup(properties)
         if geometry.geom_type not in {"LineString", "MultiLineString"}:
             raise ValueError(f"road feature[{index}] expected LineString/MultiLineString but got {geometry.geom_type}")
 
-        road_id = _normalize_id(properties.get("id"))
+        road_id = _normalize_id(lookup.get("id"))
         if road_id is None:
             raise ValueError(f"road feature[{index}] has null/empty id after normalization")
 
         roads.append(
             SliceRoad(
                 road_id=road_id,
-                snodeid=_normalize_id(properties.get("snodeid")),
-                enodeid=_normalize_id(properties.get("enodeid")),
+                snodeid=_normalize_id(lookup.get("snodeid")),
+                enodeid=_normalize_id(lookup.get("enodeid")),
                 geometry=geometry,
                 properties=dict(properties),
             )
@@ -299,22 +306,24 @@ def _load_shapefile_road_headers(
     source_crs, _ = _resolve_shapefile_crs(road_path, crs_override)
     reader = shapefile.Reader(str(road_path))
     field_names = [field[0] for field in reader.fields[1:]]
-    missing = [field for field in REQUIRED_ROAD_FIELDS if field not in field_names]
+    field_lookup = PropertyLookup({field_name: None for field_name in field_names})
+    missing = [field for field in REQUIRED_ROAD_FIELDS if not field_lookup.has(field)]
     if missing:
         raise ValueError(f"road layer missing required fields: {', '.join(sorted(missing))}")
 
     headers: List[SliceRoadHeader] = []
     for index, record in enumerate(reader.iterRecords()):
         properties = dict(zip(field_names, list(record)))
-        road_id = _normalize_id(properties.get("id"))
+        lookup = PropertyLookup(properties)
+        road_id = _normalize_id(lookup.get("id"))
         if road_id is None:
             raise ValueError(f"road feature[{index}] has null/empty id after normalization")
         headers.append(
             SliceRoadHeader(
                 record_index=index,
                 road_id=road_id,
-                snodeid=_normalize_id(properties.get("snodeid")),
-                enodeid=_normalize_id(properties.get("enodeid")),
+                snodeid=_normalize_id(lookup.get("snodeid")),
+                enodeid=_normalize_id(lookup.get("enodeid")),
                 properties=properties,
             )
         )

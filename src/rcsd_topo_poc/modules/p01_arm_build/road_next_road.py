@@ -9,17 +9,11 @@ import ijson
 
 from rcsd_topo_poc.modules.p01_arm_build.io import normalise_id
 from rcsd_topo_poc.modules.p01_arm_build.models import RawRoadNextRoad
+from rcsd_topo_poc.utils.field_names import get_case_insensitive_property
 
 
 def _first_present(properties: dict[str, Any], names: tuple[str, ...]) -> Any:
-    lower = {str(key).lower(): value for key, value in properties.items()}
-    for name in names:
-        if name in properties:
-            return properties[name]
-        value = lower.get(name.lower())
-        if value is not None:
-            return value
-    return None
+    return get_case_insensitive_property(properties, names)
 
 
 def _records_from_payload(payload: Any) -> list[dict[str, Any]]:

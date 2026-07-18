@@ -18,6 +18,7 @@ from shapely.ops import transform as shapely_transform
 from rcsd_topo_poc.modules.t00_utility_toolbox.common import TARGET_CRS, prefer_vector_input_path, write_json
 from rcsd_topo_poc.modules.t05_junction_surface_fusion.phase2_models import RELATION_OUTPUT_CRS_NAME
 from rcsd_topo_poc.modules.t08_preprocess.vector_io import ensure_gpkg_ogr_feature_count_metadata, write_gpkg
+from rcsd_topo_poc.utils.field_names import PropertyLookup, resolve_case_insensitive_field_name
 
 from .runner import (
     RELATION_EVIDENCE_FIELDNAMES,
@@ -301,10 +302,11 @@ def _build_rcsd_semantic_id_set(rcsdnode_properties: list[dict[str, Any]]) -> se
 
 
 def _rcsd_semantic_id(props: dict[str, Any]) -> str | None:
-    mainnodeid = _normalize_id(props.get("mainnodeid"))
+    lookup = PropertyLookup(props)
+    mainnodeid = _normalize_id(lookup.get("mainnodeid"))
     if mainnodeid is not None and not _is_zero_id(mainnodeid):
         return mainnodeid
-    node_id = _normalize_id(props.get("id"))
+    node_id = _normalize_id(lookup.get("id"))
     if node_id is not None and not _is_zero_id(node_id):
         return node_id
     return None
@@ -314,8 +316,9 @@ def _rcsdnode_records(features: list[Any]) -> list[RCSDNodeRecord]:
     records: list[RCSDNodeRecord] = []
     for feature in features:
         props = dict(feature.properties)
+        lookup = PropertyLookup(props)
         semantic_id = _rcsd_semantic_id(props)
-        node_id = _normalize_id(props.get("id"))
+        node_id = _normalize_id(lookup.get("id"))
         if semantic_id is None or node_id is None or feature.geometry is None:
             continue
         records.append(
@@ -347,11 +350,12 @@ def _read_step2_surface_features(path: Path) -> list[Any]:
 
 
 def _surface_target_id(props: dict[str, Any]) -> str | None:
-    return _normalize_id(props.get("target_id") or props.get("mainnodeid"))
+    lookup = PropertyLookup(props)
+    return _normalize_id(lookup.get("target_id") or lookup.get("mainnodeid"))
 
 
 def _surface_kind2(props: dict[str, Any]) -> str | None:
-    return _normalize_id(props.get("kind_2"))
+    return _normalize_id(PropertyLookup(props).get("kind_2"))
 
 
 def _line_between_geometries(start_geometry: Any, end_geometry: Any) -> LineString:
@@ -365,11 +369,7 @@ def _quote_identifier(name: str) -> str:
 
 
 def _field_name_case_insensitive(field_names: list[str], target: str) -> str | None:
-    target_lower = target.lower()
-    for field_name in field_names:
-        if field_name.lower() == target_lower:
-            return field_name
-    return None
+    return resolve_case_insensitive_field_name({field_name: None for field_name in field_names}, target)
 
 
 def _read_gpkg_property_rows(path: Path, layer_name: str | None) -> list[dict[str, Any]]:

@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from rcsd_topo_poc.modules.t08_preprocess.vector_io import read_vector
+from rcsd_topo_poc.utils.field_names import get_case_insensitive_property
 
 from .contracts import EXTERNAL_INPUT_REQUIREMENTS, HANDOFF_REQUIREMENTS, T10_MODULE_ID, T10_T08_POLICY, T10_VERSION
 from .evidence_package import (
@@ -609,10 +610,7 @@ def _mapping(value: Any) -> Mapping[str, Any]:
 
 
 def _field(row: Mapping[str, Any], field_name: str) -> Any:
-    for key, value in row.items():
-        if str(key).lower() == field_name.lower():
-            return value
-    return None
+    return get_case_insensitive_property(row, field_name)
 
 
 def _normalize_id(value: Any) -> str | None:

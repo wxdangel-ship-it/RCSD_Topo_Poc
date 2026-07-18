@@ -15,6 +15,7 @@ from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import (
     read_vector_layer,
 )
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.id_utils import normalize_id
+from rcsd_topo_poc.utils.field_names import PropertyLookup
 
 
 ALLOWED_KIND_2_VALUES = frozenset({4, 2048})
@@ -74,19 +75,19 @@ def coerce_int(value: object) -> int | None:
 
 
 def feature_id(feature: LayerFeature) -> str | None:
-    return normalize_text(feature.properties.get("id"))
+    return normalize_text(PropertyLookup(feature.properties).get("id"))
 
 
 def feature_mainnodeid(feature: LayerFeature) -> str | None:
-    return normalize_text(feature.properties.get("mainnodeid"))
+    return normalize_text(PropertyLookup(feature.properties).get("mainnodeid"))
 
 
 def feature_snodeid(feature: LayerFeature) -> str | None:
-    return normalize_text(feature.properties.get("snodeid"))
+    return normalize_text(PropertyLookup(feature.properties).get("snodeid"))
 
 
 def feature_enodeid(feature: LayerFeature) -> str | None:
-    return normalize_text(feature.properties.get("enodeid"))
+    return normalize_text(PropertyLookup(feature.properties).get("enodeid"))
 
 
 def has_geometry(feature: LayerFeature) -> bool:
@@ -219,8 +220,12 @@ def _build_road_adjacency(
 ) -> dict[str, tuple[LayerFeature, ...]]:
     adjacency: dict[str, list[LayerFeature]] = defaultdict(list)
     for feature in roads:
+        lookup = PropertyLookup(feature.properties)
         seen_node_ids: set[str] = set()
-        for node_id in (feature_snodeid(feature), feature_enodeid(feature)):
+        for node_id in (
+            normalize_text(lookup.get("snodeid")),
+            normalize_text(lookup.get("enodeid")),
+        ):
             if node_id is None or node_id in seen_node_ids:
                 continue
             seen_node_ids.add(node_id)
@@ -282,11 +287,12 @@ def load_shared_layers(
 
 
 def is_auto_candidate(feature: LayerFeature) -> bool:
-    node_id = feature_id(feature)
-    mainnodeid = feature_mainnodeid(feature)
-    kind_2 = coerce_int(feature.properties.get("kind_2"))
-    has_evd = normalize_text(feature.properties.get("has_evd"))
-    is_anchor = normalize_text(feature.properties.get("is_anchor"))
+    lookup = PropertyLookup(feature.properties)
+    node_id = normalize_text(lookup.get("id"))
+    mainnodeid = normalize_text(lookup.get("mainnodeid"))
+    kind_2 = coerce_int(lookup.get("kind_2"))
+    has_evd = normalize_text(lookup.get("has_evd"))
+    is_anchor = normalize_text(lookup.get("is_anchor"))
     is_representative = (mainnodeid is not None and node_id == mainnodeid) or (
         mainnodeid is None and node_id is not None
     )

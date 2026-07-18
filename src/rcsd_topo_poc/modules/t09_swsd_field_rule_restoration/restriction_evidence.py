@@ -7,6 +7,8 @@ from typing import Any
 
 from shapely.geometry.base import BaseGeometry
 
+from rcsd_topo_poc.utils.field_names import get_case_insensitive_property, normalize_field_name
+
 from rcsd_topo_poc.modules.t09_swsd_field_rule_restoration.geometry_match import (
     DirectedGeometryMatch,
     MAX_DIRECTION_DELTA_DEG,
@@ -1095,7 +1097,7 @@ def restriction_condition_identity(restriction: RestrictionInput) -> str:
     condition_payload = {
         str(key): _json_safe(value)
         for key, value in source.items()
-        if str(key).strip().lower() not in _CONDITION_IDENTITY_EXCLUDED_FIELDS
+        if normalize_field_name(str(key).strip()) not in _CONDITION_IDENTITY_EXCLUDED_FIELDS
     }
     condition_type = restriction.condition_type or _case_get(
         restriction.properties,
@@ -1115,12 +1117,7 @@ def restriction_condition_identity(restriction: RestrictionInput) -> str:
 
 
 def _case_get(properties: dict[str, Any], candidates: tuple[str, ...]) -> Any:
-    lower_map = {str(key).lower(): key for key in properties}
-    for candidate in candidates:
-        key = lower_map.get(candidate.lower())
-        if key is not None:
-            return properties.get(key)
-    return None
+    return get_case_insensitive_property(properties, candidates)
 
 
 def _json_safe(value: Any) -> Any:

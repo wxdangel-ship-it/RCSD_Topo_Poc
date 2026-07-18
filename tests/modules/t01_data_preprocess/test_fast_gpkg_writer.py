@@ -128,3 +128,18 @@ def test_fast_gpkg_large_record_set_keeps_disk_backed_path(tmp_path: Path) -> No
     with fiona.open(output_path) as source:
         assert len(source) == len(features)
         assert source.crs.to_epsg() == 3857
+
+
+def test_fast_gpkg_writer_merges_case_variant_fields_across_records(tmp_path: Path) -> None:
+    output_path = tmp_path / "case_variant_fields.gpkg"
+    features = [
+        {"properties": {"ID": "r1", "formWay": 1}, "geometry": LineString([(0.0, 0.0), (1.0, 0.0)])},
+        {"properties": {"id": "r2", "formway": 2}, "geometry": LineString([(1.0, 0.0), (2.0, 0.0)])},
+    ]
+
+    write_vector(output_path, features)
+
+    with fiona.open(output_path) as source:
+        assert tuple(source.schema["properties"]) == ("ID", "formWay")
+        rows = [dict(feature["properties"]) for feature in source]
+    assert rows == [{"ID": "r1", "formWay": 1}, {"ID": "r2", "formWay": 2}]

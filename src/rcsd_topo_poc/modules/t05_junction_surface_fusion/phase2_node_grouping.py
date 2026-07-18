@@ -4,6 +4,11 @@ from typing import Any
 
 from shapely.geometry.base import BaseGeometry
 
+from rcsd_topo_poc.utils.field_names import (
+    get_case_insensitive_property,
+    resolve_case_insensitive_field_name,
+)
+
 
 def choose_primary_node_id(
     node_ids: list[int],
@@ -77,17 +82,11 @@ def _distance_to_reference(feature: dict[str, Any] | None, reference_point: Base
 
 
 def _mainnodeid_field(properties: dict[str, Any]) -> str:
-    for key in properties:
-        if key.lower() == "mainnodeid":
-            return key
-    return "mainnodeid"
+    return resolve_case_insensitive_field_name(properties, "mainnodeid") or "mainnodeid"
 
 
 def _field_value(properties: dict[str, Any], field_name: str) -> Any:
-    for key, value in properties.items():
-        if key.lower() == field_name.lower():
-            return value
-    return None
+    return get_case_insensitive_property(properties, field_name)
 
 
 def _int_value(value: Any) -> int | None:

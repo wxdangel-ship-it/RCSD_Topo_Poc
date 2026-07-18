@@ -15,6 +15,7 @@ from shapely.geometry.base import BaseGeometry
 from shapely.ops import unary_union
 
 from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import LayerFeature, read_vector_layer, write_geojson
+from rcsd_topo_poc.utils.field_names import PropertyLookup
 
 from .phase2_io import read_table
 
@@ -303,8 +304,9 @@ def _build_case_package(
     ]
     for road in rcsdroad:
         props = road.properties or {}
-        node_ids.update(_split_values(props.get("snodeid")))
-        node_ids.update(_split_values(props.get("enodeid")))
+        lookup = PropertyLookup(props)
+        node_ids.update(_split_values(lookup.get("snodeid")))
+        node_ids.update(_split_values(lookup.get("enodeid")))
 
     rcsdnode = [
         feature
@@ -585,18 +587,20 @@ def _row_matches_target(row: dict[str, Any], target_id: str) -> bool:
 
 def _surface_matches_target(feature: LayerFeature, target_id: str) -> bool:
     props = feature.properties or {}
-    if _normalize_id(props.get("mainnodeid")) == target_id:
+    lookup = PropertyLookup(props)
+    if _normalize_id(lookup.get("mainnodeid")) == target_id:
         return True
-    if _normalize_id(props.get("target_id")) == target_id:
+    if _normalize_id(lookup.get("target_id")) == target_id:
         return True
-    if str(props.get("surface_id") or "") == f"JAS:{target_id}":
+    if str(lookup.get("surface_id") or "") == f"JAS:{target_id}":
         return True
-    return target_id in _split_values(props.get("source_case_ids"))
+    return target_id in _split_values(lookup.get("source_case_ids"))
 
 
 def _node_matches_target(feature: LayerFeature, target_id: str) -> bool:
     props = feature.properties or {}
-    return _normalize_id(props.get("id")) == target_id or _normalize_id(props.get("mainnodeid")) == target_id
+    lookup = PropertyLookup(props)
+    return _normalize_id(lookup.get("id")) == target_id or _normalize_id(lookup.get("mainnodeid")) == target_id
 
 
 def _context_geometry(*, surfaces: list[LayerFeature], swsd_nodes: list[LayerFeature], context_buffer_m: float) -> BaseGeometry | None:
@@ -614,7 +618,7 @@ def _feature_intersects(feature: LayerFeature, context_geometry: BaseGeometry | 
 
 
 def _feature_id(feature: LayerFeature) -> str | None:
-    return _normalize_id((feature.properties or {}).get("id"))
+    return _normalize_id(PropertyLookup(feature.properties or {}).get("id"))
 
 
 def _local_test_config(*, target_id: str, id_seed: dict[str, int | None]) -> dict[str, Any]:

@@ -17,6 +17,13 @@ from shapely.geometry import mapping, shape
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import transform as shapely_transform
 
+from rcsd_topo_poc.utils.field_names import (
+    PropertyLookup,
+    get_case_insensitive_property,
+    normalize_field_name,
+    resolve_case_insensitive_field_name,
+)
+
 
 PROCESS_CRS_TEXT = "EPSG:3857"
 GPKG_SUFFIX = ".gpkg"
@@ -310,29 +317,6 @@ def resolve_field_name(features: list[VectorFeature], candidates: Iterable[str],
     raise ValueError(f"Required field {list(candidates)} not found in {label}")
 
 
-def resolve_case_insensitive_field_name(properties: dict[str, Any], candidates: Iterable[str]) -> str | None:
-    lower_map = {str(key).lower(): str(key) for key in properties.keys()}
-    for candidate in candidates:
-        resolved = lower_map.get(candidate.lower())
-        if resolved is not None:
-            return resolved
-    return None
-
-
-def get_case_insensitive_property(
-    properties: dict[str, Any],
-    candidates: Iterable[str],
-    *,
-    preferred: str | None = None,
-) -> Any:
-    if preferred is not None and preferred in properties:
-        return properties.get(preferred)
-    resolved = resolve_case_insensitive_field_name(properties, candidates)
-    if resolved is None:
-        return None
-    return properties.get(resolved)
-
-
 def write_json(path: str | Path, payload: Any) -> None:
     output_path = Path(path).expanduser().resolve()
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -387,13 +371,13 @@ def unique_field_names(*groups: Iterable[str], extra: Iterable[str] = ()) -> lis
     for group in groups:
         for name in group:
             text = str(name)
-            lower = text.lower()
+            lower = normalize_field_name(text)
             if lower not in lower_seen:
                 lower_seen.add(lower)
                 names.append(text)
     for name in extra:
         text = str(name)
-        lower = text.lower()
+        lower = normalize_field_name(text)
         if lower not in lower_seen:
             lower_seen.add(lower)
             names.append(text)
@@ -515,13 +499,13 @@ def _gpkg_table_columns(
     if not rows:
         return None
     columns: list[str] = []
-    geometry_lower = geometry_column.lower()
+    geometry_lower = normalize_field_name(geometry_column)
     for row in rows:
         name = str(row[1])
         is_pk = int(row[5] or 0) > 0
-        if name.lower() == geometry_lower:
+        if normalize_field_name(name) == geometry_lower:
             continue
-        if is_pk and name.lower() in {GPKG_FID_COLUMN, "ogc_fid"}:
+        if is_pk and normalize_field_name(name) in {GPKG_FID_COLUMN, "ogc_fid"}:
             continue
         columns.append(name)
     return columns
@@ -600,15 +584,8 @@ def _transform_geometry_prepared(geometry: BaseGeometry, transform_func: Any) ->
 
 
 def _prepare_record(feature: dict[str, Any]) -> dict[str, Any]:
-    properties: dict[str, Any] = {}
-    lower_seen: set[str] = set()
-    for key, value in (feature.get("properties") or {}).items():
-        text = str(key)
-        lower = text.lower()
-        if lower in lower_seen:
-            continue
-        lower_seen.add(lower)
-        properties[text] = _vector_property_value(value)
+    lookup = PropertyLookup(feature.get("properties") or {})
+    properties = {name: _vector_property_value(value) for name, value in lookup.resolved_items()}
     return {
         "properties": properties,
         "geometry": feature.get("geometry"),
@@ -621,7 +598,7 @@ def _build_schema(records: list[dict[str, Any]], *, empty_fields: Iterable[str],
     lower_to_field: dict[str, str] = {}
     for record in records:
         for key, value in record["properties"].items():
-            lower = str(key).lower()
+            lower = normalize_field_name(key)
             resolved_key = lower_to_field.get(lower)
             if resolved_key is None:
                 lower_to_field[lower] = key
@@ -631,7 +608,7 @@ def _build_schema(records: list[dict[str, Any]], *, empty_fields: Iterable[str],
                 field_types[resolved_key] = _vector_property_type(value)
     for key in empty_fields:
         text = str(key)
-        lower = text.lower()
+        lower = normalize_field_name(text)
         if lower not in lower_to_field:
             lower_to_field[lower] = text
             field_order.append(text)
@@ -648,13 +625,7 @@ def _vector_property_value(value: Any) -> Any:
 
 
 def _get_property_case_insensitive(properties: dict[str, Any], name: str) -> Any:
-    if name in properties:
-        return properties.get(name)
-    target = name.lower()
-    for key, value in properties.items():
-        if str(key).lower() == target:
-            return value
-    return None
+    return get_case_insensitive_property(properties, (name,))
 
 
 def _vector_property_type(value: Any) -> str:
@@ -752,16 +723,16 @@ def _sqlite_type_from_schema_type(schema_type: Any) -> str:
 
 def _resolve_field_mapping_from_names(field_names: Iterable[str]) -> dict[str, str]:
     field_mapping: dict[str, str] = {}
-    used_lower = {GPKG_FID_COLUMN.lower(), GPKG_GEOMETRY_COLUMN.lower()}
+    used_lower = {normalize_field_name(GPKG_FID_COLUMN), normalize_field_name(GPKG_GEOMETRY_COLUMN)}
     for original_name in field_names:
         base_name = str(original_name).strip() or "field"
         candidate = base_name
         suffix_index = 1
-        while candidate.lower() in used_lower:
+        while normalize_field_name(candidate) in used_lower:
             suffix_index += 1
             candidate = f"{base_name}_{suffix_index}"
         field_mapping[str(original_name)] = candidate
-        used_lower.add(candidate.lower())
+        used_lower.add(normalize_field_name(candidate))
     return field_mapping
 
 

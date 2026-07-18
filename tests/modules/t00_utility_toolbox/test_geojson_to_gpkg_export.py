@@ -148,3 +148,33 @@ def test_tool7_renames_reserved_output_field_names(tmp_path: Path) -> None:
     assert result["field_name_mapping"]["fid"] in columns
     assert result["field_name_mapping"]["geom"] in columns
     assert row == (7, "text-geom", "a")
+
+
+def test_tool7_merges_case_variant_fields_across_features(tmp_path: Path) -> None:
+    export_dir = tmp_path / "geojson_case_fields"
+    _write_feature_collection(
+        export_dir / "roads.geojson",
+        [
+            {
+                "type": "Feature",
+                "properties": {"ID": "r1", "formWay": 1},
+                "geometry": {"type": "Point", "coordinates": [0.0, 0.0]},
+            },
+            {
+                "type": "Feature",
+                "properties": {"id": "r2", "formway": 2},
+                "geometry": {"type": "Point", "coordinates": [1.0, 1.0]},
+            },
+        ],
+        crs_name="EPSG:3857",
+    )
+
+    summary = run_geojson_to_gpkg_directory_export(
+        GeoJsonToGpkgDirectoryConfig(directory_path=export_dir, run_id="test_tool7_case_fields")
+    )
+
+    result = summary["file_results"][0]
+    assert result["field_name_mapping"] == {"ID": "ID", "formWay": "formWay"}
+    with sqlite3.connect(export_dir / "roads.gpkg") as conn:
+        rows = conn.execute('SELECT "ID", "formWay" FROM "roads" ORDER BY fid').fetchall()
+    assert rows == [("r1", 1), ("r2", 2)]

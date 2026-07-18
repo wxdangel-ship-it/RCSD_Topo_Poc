@@ -13,6 +13,7 @@ from shapely.geometry.base import BaseGeometry
 from shapely.ops import transform as shapely_transform
 
 from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import LayerReadResult, read_vector_layer
+from rcsd_topo_poc.utils.field_names import PropertyLookup, normalize_field_name
 
 from .phase2_models import PROCESS_CRS_TEXT
 
@@ -164,11 +165,12 @@ def _write_gpkg_records(
         batch: list[dict[str, Any]] = []
         batch_limit = max(1, int(batch_size))
         for record in records:
+            property_lookup = PropertyLookup(record["properties"])
             batch.append(
                 {
                     "type": "Feature",
                     "properties": {
-                        key: record["properties"].get(key)
+                        key: property_lookup.get(key)
                         for key in schema_property_names
                     },
                     "geometry": _geometry_payload(record["geometry"]),
@@ -183,10 +185,11 @@ def _write_gpkg_records(
 
 
 def _prepare_fiona_record(feature: dict[str, Any]) -> dict[str, Any]:
+    lookup = PropertyLookup(feature.get("properties") or {})
     return {
         "properties": {
-            str(key): _vector_property_value(value)
-            for key, value in (feature.get("properties") or {}).items()
+            name: _vector_property_value(value)
+            for name, value in lookup.resolved_items()
         },
         "geometry": feature.get("geometry"),
     }
@@ -195,12 +198,17 @@ def _prepare_fiona_record(feature: dict[str, Any]) -> dict[str, Any]:
 def _build_fiona_schema(records: list[dict[str, Any]], *, geometry_type: str) -> dict[str, Any]:
     field_order: list[str] = []
     field_types: dict[str, str] = {}
+    logical_to_field: dict[str, str] = {}
     for record in records:
         for key, value in record["properties"].items():
-            if key not in field_order:
-                field_order.append(key)
-            if key not in field_types and value is not None:
-                field_types[key] = _vector_property_type(value)
+            logical_name = normalize_field_name(key)
+            field_name = logical_to_field.get(logical_name)
+            if field_name is None:
+                logical_to_field[logical_name] = key
+                field_name = key
+                field_order.append(field_name)
+            if field_name not in field_types and value is not None:
+                field_types[field_name] = _vector_property_type(value)
     for key in field_order:
         field_types.setdefault(key, "str")
     return {

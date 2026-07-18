@@ -15,6 +15,8 @@ from shapely import to_wkb
 from shapely.geometry import shape
 from shapely.geometry.base import BaseGeometry
 
+from rcsd_topo_poc.utils.field_names import PropertyLookup, normalize_field_name
+
 
 GPKG_APPLICATION_ID = 0x47504B47
 GPKG_USER_VERSION = 10300
@@ -45,15 +47,8 @@ def write_gpkg_fast(
 
 
 def _prepare_record(feature: dict[str, Any]) -> dict[str, Any]:
-    properties: dict[str, Any] = {}
-    lower_seen: set[str] = set()
-    for key, value in (feature.get("properties") or {}).items():
-        text = str(key)
-        lower = text.lower()
-        if lower in lower_seen:
-            continue
-        lower_seen.add(lower)
-        properties[text] = _property_value(value)
+    lookup = PropertyLookup(feature.get("properties") or {})
+    properties = {name: _property_value(value) for name, value in lookup.resolved_items()}
     return {"properties": properties, "geometry": feature.get("geometry")}
 
 
@@ -63,7 +58,7 @@ def _build_schema(records: list[dict[str, Any]]) -> dict[str, str]:
     values_by_field: dict[str, list[Any]] = {}
     for record in records:
         for key, value in record["properties"].items():
-            lower = key.lower()
+            lower = normalize_field_name(key)
             field_name = lower_to_field.get(lower)
             if field_name is None:
                 lower_to_field[lower] = key
@@ -97,10 +92,8 @@ def _write_records(
         geometry_types.add(geometry.geom_type.upper())
         bounds_values.append(tuple(float(value) for value in geometry.bounds))
         z_dimensions.add(bool(getattr(geometry, "has_z", False)))
-        row_values = [
-            _sqlite_value(record["properties"].get(original_name))
-            for original_name in field_mapping
-        ]
+        property_lookup = PropertyLookup(record["properties"])
+        row_values = [_sqlite_value(property_lookup.get(original_name)) for original_name in field_mapping]
         row_values.append(_build_gpkg_geometry_blob(geometry, srs_id))
         batch.append(row_values)
 
@@ -317,16 +310,16 @@ def _quote_sql_literal(value: str) -> str:
 
 def _field_mapping(field_names: Iterable[str]) -> dict[str, str]:
     mapping: dict[str, str] = {}
-    used_lower = {GPKG_FID_COLUMN.lower(), GPKG_GEOMETRY_COLUMN.lower()}
+    used_lower = {normalize_field_name(GPKG_FID_COLUMN), normalize_field_name(GPKG_GEOMETRY_COLUMN)}
     for original_name in field_names:
         base_name = str(original_name).strip() or "field"
         candidate = base_name
         suffix_index = 1
-        while candidate.lower() in used_lower:
+        while normalize_field_name(candidate) in used_lower:
             suffix_index += 1
             candidate = f"{base_name}_{suffix_index}"
         mapping[str(original_name)] = candidate
-        used_lower.add(candidate.lower())
+        used_lower.add(normalize_field_name(candidate))
     return mapping
 
 

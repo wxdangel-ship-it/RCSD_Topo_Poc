@@ -9,6 +9,7 @@ from shapely.geometry.base import BaseGeometry
 from shapely.ops import nearest_points, unary_union
 
 from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon._runtime_shared import LoadedFeature, normalize_id
+from rcsd_topo_poc.utils.field_names import PropertyLookup
 from rcsd_topo_poc.modules.t04_divmerge_virtual_polygon._runtime_step4_geometry_core import (
     PAIR_LOCAL_BRANCH_MAX_LENGTH_M,
     _explode_component_geometries,
@@ -245,7 +246,7 @@ def _build_candidate_pool(prepared: _PreparedUnitInputs) -> list[dict[str, Any]]
         )
 
     for feature in prepared.pair_local_scope_divstrip_features:
-        upper_id = str(feature.properties.get("id") or feature.feature_index)
+        upper_id = str(PropertyLookup(feature.properties).get("id") or feature.feature_index)
         clipped_geometry = _clip_geometry_to_scope(
             feature.geometry,
             scope_geometry=pair_region,

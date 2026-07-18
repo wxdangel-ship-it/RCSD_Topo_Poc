@@ -355,21 +355,14 @@ def _try_read_roads_light_gpkg(
 
 
 def _resolve_required_column(columns: list[str], candidates: list[str], label: str) -> str:
-    lower_map = {column.lower(): column for column in columns}
-    for candidate in candidates:
-        resolved = lower_map.get(candidate.lower())
-        if resolved is not None:
-            return resolved
+    resolved = resolve_case_insensitive_field_name({column: None for column in columns}, candidates)
+    if resolved is not None:
+        return resolved
     raise ValueError(f"Required field {candidates} not found in {label}")
 
 
 def _resolve_optional_column(columns: list[str], candidates: list[str]) -> str | None:
-    lower_map = {column.lower(): column for column in columns}
-    for candidate in candidates:
-        resolved = lower_map.get(candidate.lower())
-        if resolved is not None:
-            return resolved
-    return None
+    return resolve_case_insensitive_field_name({column: None for column in columns}, candidates)
 
 
 def _parse_roads(

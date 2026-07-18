@@ -23,6 +23,7 @@ from rcsd_topo_poc.modules.p01_arm_build.io import load_dataset, normalise_id
 from rcsd_topo_poc.modules.p01_arm_build.models import DATASETS, DatasetInput, LoadedDataset, NodeRecord, RoadRecord
 from rcsd_topo_poc.modules.p01_arm_build.topology import build_node_groups, resolve_junction_members, semantic_group_id
 from rcsd_topo_poc.modules.t00_utility_toolbox.common import write_vector
+from rcsd_topo_poc.utils.field_names import get_case_insensitive_property
 
 
 P01_TEXT_BUNDLE_VERSION = "1"
@@ -286,14 +287,7 @@ def _road_feature(road: RoadRecord, *, origin_x: float, origin_y: float) -> dict
 
 
 def _first_present_payload(properties: dict[str, Any], names: tuple[str, ...]) -> Any:
-    lower = {str(key).lower(): value for key, value in properties.items()}
-    for name in names:
-        if name in properties:
-            return properties[name]
-        value = lower.get(name.lower())
-        if value is not None:
-            return value
-    return None
+    return get_case_insensitive_property(properties, names)
 
 
 def _relation_properties(record: Any) -> dict[str, Any]:

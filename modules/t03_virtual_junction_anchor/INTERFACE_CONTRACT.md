@@ -63,6 +63,8 @@ internal full-input 从共享图层中发现候选 case 并构建局部上下文
 - `roads / rcsdroad` 至少需要：`id`、`snodeid`、`enodeid`、`direction`
 - `rcsdroad.formway` 是可选字段；若存在且可解析，Step4 调头口判定必须优先采用该字段
 - `rcsdnode` 至少需要：`id`、`mainnodeid`
+- 上述名称均为 canonical logical field name；外部图层字段名按 `casefold` 匹配，因此 1V1 FRCSD 的 `snodeId / enodeId / formWay / mainNodeId` 与对应 logical name 等价。
+- 大小写匹配不得改写原属性，也不得创造契约外语义别名；同一要素若存在仅大小写不同但非空值冲突的字段，T03 必须显式失败，不得继续形成缺端点或歧义拓扑。
 
 ## 3. 状态和值域
 

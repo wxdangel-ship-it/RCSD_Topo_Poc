@@ -23,6 +23,7 @@ from rcsd_topo_poc.modules.t00_utility_toolbox.common import (
     remove_existing_output,
     write_json,
 )
+from rcsd_topo_poc.utils.field_names import PropertyLookup
 
 
 RUN_ID_PREFIX = "t00_tool10_json_point_export"
@@ -282,8 +283,9 @@ def _nested_get(payload: dict[str, Any], path: tuple[str, ...]) -> Any:
 
 
 def _extract_spot_lon_lat(spot: dict[str, Any]) -> tuple[float, float]:
-    lon_value = spot.get("lon")
-    lat_value = spot.get("lat")
+    lookup = PropertyLookup(spot)
+    lon_value = lookup.get("lon")
+    lat_value = lookup.get("lat")
     if lon_value is None or lat_value is None:
         raise ValueError("spot lon/lat not found")
 
@@ -297,50 +299,60 @@ def _extract_spot_lon_lat(spot: dict[str, Any]) -> tuple[float, float]:
 
 
 def _is_recommended_spot(spot: dict[str, Any]) -> bool:
-    return _as_bool_flag(spot.get("isRecommend")) == 1
+    return _as_bool_flag(PropertyLookup(spot).get("isRecommend")) == 1
 
 
 def _build_feature_properties(payload: dict[str, Any], spot: dict[str, Any]) -> dict[str, Any]:
-    data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
-    center = data.get("location") if isinstance(data.get("location"), dict) else {}
-    card = data.get("card") if isinstance(data.get("card"), dict) else {}
-    other_args = payload.get("other_args") if isinstance(payload.get("other_args"), dict) else {}
+    payload_lookup = PropertyLookup(payload)
+    data_value = payload_lookup.get("data")
+    data = data_value if isinstance(data_value, dict) else {}
+    data_lookup = PropertyLookup(data)
+    center_value = data_lookup.get("location")
+    center = center_value if isinstance(center_value, dict) else {}
+    card_value = data_lookup.get("card")
+    card = card_value if isinstance(card_value, dict) else {}
+    other_args_value = payload_lookup.get("other_args")
+    other_args = other_args_value if isinstance(other_args_value, dict) else {}
+    spot_lookup = PropertyLookup(spot)
+    center_lookup = PropertyLookup(center)
+    card_lookup = PropertyLookup(card)
+    other_args_lookup = PropertyLookup(other_args)
 
     return {
         "source_crs": "raw_lonlat_unconfirmed",
-        "spot_id": _scalar(spot.get("id")) or _scalar(spot.get("spotId")),
-        "name": _scalar(spot.get("name")),
-        "distance": _scalar(spot.get("distance")),
-        "walk_distance": _scalar(spot.get("walkDistance")),
-        "is_recommend": _as_bool_flag(spot.get("isRecommend")),
-        "type": _scalar(spot.get("type")),
-        "link_id": _scalar(spot.get("linkId")),
-        "link_coors": _scalar(spot.get("linkCoors")),
-        "location": _scalar(spot.get("location")),
-        "origin_id": _scalar(spot.get("originId")),
-        "is_nparking": _as_bool_flag(spot.get("isNparking")),
-        "req_tid": _scalar(payload.get("tid")),
-        "req_gd_id": _scalar(payload.get("gd_id")),
-        "req_lon": _scalar(payload.get("lon")),
-        "req_lat": _scalar(payload.get("lat")),
-        "req_success": _as_bool_flag(payload.get("success")),
-        "req_db": _scalar(other_args.get("db")),
-        "req_table_name": _scalar(other_args.get("table_name")),
-        "cen_id": _scalar(center.get("id")) or _scalar(center.get("spotId")),
-        "cen_name": _scalar(center.get("name")),
-        "cen_lon": _scalar(center.get("lon")),
-        "cen_lat": _scalar(center.get("lat")),
-        "cen_type": _scalar(center.get("type")),
-        "adcode": _scalar(center.get("adcode")),
-        "city_adcode": _scalar(center.get("cityAdcode")),
-        "province_adcode": _scalar(center.get("provinceAdcode")),
-        "district_adcode": _scalar(center.get("districtAdcode")),
-        "selected_show_id": _scalar(card.get("selectedShowId")),
-        "card_style": _scalar(card.get("cardStyle")),
-        "card_title": _scalar(card.get("title")),
-        "had_recommend": _as_bool_flag(data.get("hadRecommend")),
-        "had_spot_image": _as_bool_flag(data.get("hadSpotImage")),
-        "crawl_time": _scalar(payload.get("crawl_time")),
+        "spot_id": _scalar(spot_lookup.get(("id", "spotId"))),
+        "name": _scalar(spot_lookup.get("name")),
+        "distance": _scalar(spot_lookup.get("distance")),
+        "walk_distance": _scalar(spot_lookup.get("walkDistance")),
+        "is_recommend": _as_bool_flag(spot_lookup.get("isRecommend")),
+        "type": _scalar(spot_lookup.get("type")),
+        "link_id": _scalar(spot_lookup.get("linkId")),
+        "link_coors": _scalar(spot_lookup.get("linkCoors")),
+        "location": _scalar(spot_lookup.get("location")),
+        "origin_id": _scalar(spot_lookup.get("originId")),
+        "is_nparking": _as_bool_flag(spot_lookup.get("isNparking")),
+        "req_tid": _scalar(payload_lookup.get("tid")),
+        "req_gd_id": _scalar(payload_lookup.get("gd_id")),
+        "req_lon": _scalar(payload_lookup.get("lon")),
+        "req_lat": _scalar(payload_lookup.get("lat")),
+        "req_success": _as_bool_flag(payload_lookup.get("success")),
+        "req_db": _scalar(other_args_lookup.get("db")),
+        "req_table_name": _scalar(other_args_lookup.get("table_name")),
+        "cen_id": _scalar(center_lookup.get(("id", "spotId"))),
+        "cen_name": _scalar(center_lookup.get("name")),
+        "cen_lon": _scalar(center_lookup.get("lon")),
+        "cen_lat": _scalar(center_lookup.get("lat")),
+        "cen_type": _scalar(center_lookup.get("type")),
+        "adcode": _scalar(center_lookup.get("adcode")),
+        "city_adcode": _scalar(center_lookup.get("cityAdcode")),
+        "province_adcode": _scalar(center_lookup.get("provinceAdcode")),
+        "district_adcode": _scalar(center_lookup.get("districtAdcode")),
+        "selected_show_id": _scalar(card_lookup.get("selectedShowId")),
+        "card_style": _scalar(card_lookup.get("cardStyle")),
+        "card_title": _scalar(card_lookup.get("title")),
+        "had_recommend": _as_bool_flag(data_lookup.get("hadRecommend")),
+        "had_spot_image": _as_bool_flag(data_lookup.get("hadSpotImage")),
+        "crawl_time": _scalar(payload_lookup.get("crawl_time")),
     }
 
 
@@ -660,8 +672,9 @@ def run_json_point_to_gpkg_export(config: JsonPointToGpkgConfig) -> dict[str, An
         stop_due_to_limit = False
         for record_index, payload in enumerate(_iter_records(input_path, input_format), start=1):
             input_record_count = record_index
-            data = payload.get("data") if isinstance(payload.get("data"), dict) else {}
-            raw_spots = data.get("spots")
+            data_value = PropertyLookup(payload).get("data")
+            data = data_value if isinstance(data_value, dict) else {}
+            raw_spots = PropertyLookup(data).get("spots")
             if not isinstance(raw_spots, list) or len(raw_spots) == 0:
                 records_without_spots_count += 1
                 if _should_report_progress(record_index, config.progress_interval):

@@ -16,6 +16,7 @@ from pyproj import CRS, Transformer
 from shapely.geometry import LineString
 
 from rcsd_topo_poc.modules.t08_preprocess.vector_io import write_gpkg, write_json
+from rcsd_topo_poc.utils.field_names import PropertyLookup, get_case_insensitive_property, normalize_field_name
 
 
 TRAJECTORY_FILE_NAME = "raw_dat_pose.geojson"
@@ -527,26 +528,26 @@ def _extract_order(
     timestamp_s: float | None,
     timestamp_key: str | None,
 ) -> tuple[int, str]:
-    lower_map = {str(key).lower(): value for key, value in properties.items()}
+    lookup = PropertyLookup(properties)
     for field in ORDER_FIELDS:
-        if field not in lower_map:
+        if not lookup.has(field):
             continue
-        numeric = _finite_number(lower_map[field])
+        numeric = _finite_number(lookup.get(field))
         if numeric is not None:
-            return int(round(numeric)), field
+            return int(round(numeric)), normalize_field_name(field)
     if timestamp_s is not None and math.isfinite(timestamp_s):
         return int(round(timestamp_s * 1000.0)), timestamp_key or "timestamp"
     return int(fallback_index), "feature_index"
 
 
 def _extract_timestamp(properties: dict[str, Any]) -> tuple[float | None, str | None, str | None, bool]:
-    lower_map = {str(key).lower(): value for key, value in properties.items()}
+    lookup = PropertyLookup(properties)
     seen_key: str | None = None
     seen_raw: str | None = None
-    for field in dict.fromkeys(name.lower() for name in TIMESTAMP_FIELDS):
-        if field not in lower_map:
+    for field in dict.fromkeys(normalize_field_name(name) for name in TIMESTAMP_FIELDS):
+        if not lookup.has(field):
             continue
-        value = lower_map[field]
+        value = lookup.get(field)
         seen_key = field
         seen_raw = None if value is None else str(value)
         parsed = _parse_timestamp_seconds(value)
@@ -594,11 +595,7 @@ def _finite_coordinate(value: Any, *, label: str, path: Path, feature_index: int
 
 
 def _case_insensitive_value(properties: dict[str, Any], name: str) -> Any:
-    target = name.lower()
-    for key, value in properties.items():
-        if str(key).lower() == target:
-            return value
-    return None
+    return get_case_insensitive_property(properties, name)
 
 
 def _positive_finite(value: Any, *, label: str) -> float:

@@ -4,6 +4,11 @@ from typing import Any
 
 from shapely.ops import substring
 
+from rcsd_topo_poc.utils.field_names import (
+    get_case_insensitive_property,
+    resolve_case_insensitive_field_name,
+)
+
 from .phase2_models import RoadSplitResult, SplitPoint
 from .phase2_node_grouping import generated_node_kind
 
@@ -129,7 +134,7 @@ def _new_node_feature(
     props[_field_name(props, "mainnodeid")] = None
     props[_field_name(props, "target_id")] = target_id
     kind_value, kind_source = generated_node_kind(swsd_properties)
-    if any(key.lower() == "kind" for key in template) or kind_value is not None:
+    if resolve_case_insensitive_field_name(template, "kind") is not None or kind_value is not None:
         props[_field_name(props, "kind")] = kind_value
     props[_field_name(props, "kind_source")] = kind_source
     return {"properties": props, "geometry": geometry}
@@ -151,14 +156,8 @@ def _new_road_feature(
 
 
 def _property_value(properties: dict[str, Any], target: str) -> Any:
-    for key, value in properties.items():
-        if key.lower() == target:
-            return value
-    return None
+    return get_case_insensitive_property(properties, target)
 
 
 def _field_name(properties: dict[str, Any], target: str) -> str:
-    for key in properties:
-        if key.lower() == target:
-            return key
-    return target
+    return resolve_case_insensitive_field_name(properties, target) or target

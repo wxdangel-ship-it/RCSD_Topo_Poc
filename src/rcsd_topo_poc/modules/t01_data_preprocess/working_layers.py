@@ -23,6 +23,7 @@ from rcsd_topo_poc.modules.t01_data_preprocess.refresh_node_retyping import (
     evaluate_mainnode_bootstrap_retype,
     summarize_mainnode_retype_topology,
 )
+from rcsd_topo_poc.utils.field_names import normalize_property_keys
 
 
 WORKING_NODE_FIELDS = ("grade_2", "kind_2", "working_mainnodeid")
@@ -198,7 +199,7 @@ def _emit_progress(
 
 
 def _initialize_node_properties(props: dict[str, Any]) -> dict[str, Any]:
-    initialized = dict(props)
+    initialized = normalize_property_keys(props)
     node_id_value = _normalize_id_property_value(initialized.get("id"))
     if node_id_value is not None:
         initialized["id"] = node_id_value
@@ -220,7 +221,7 @@ def _initialize_node_properties(props: dict[str, Any]) -> dict[str, Any]:
 
 
 def _initialize_road_properties(props: dict[str, Any]) -> dict[str, Any]:
-    initialized = dict(props)
+    initialized = normalize_property_keys(props)
     for field_name in ("id", "snodeid", "enodeid"):
         normalized_id_value = _normalize_id_property_value(initialized.get(field_name))
         if normalized_id_value is not None:

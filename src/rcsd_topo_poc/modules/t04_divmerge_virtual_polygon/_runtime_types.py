@@ -28,6 +28,7 @@ from rcsd_topo_poc.modules.t00_utility_toolbox.common import (
     prefer_vector_input_path,
     transform_geometry_to_target,
 )
+from rcsd_topo_poc.utils.field_names import FieldNameConflictError, PropertyLookup
 
 from ._runtime_shared import (
     LoadedFeature,
@@ -264,17 +265,33 @@ def _linearize(geometry: BaseGeometry) -> LineString:
     )
 
 
+def _feature_property_lookup(
+    properties: dict[str, Any],
+    *,
+    label: str,
+    feature_index: int,
+) -> PropertyLookup:
+    try:
+        return PropertyLookup(properties)
+    except FieldNameConflictError as exc:
+        raise VirtualIntersectionPocError(
+            REASON_MISSING_REQUIRED_FIELD,
+            f"{label} feature[{feature_index}] has conflicting field names: {exc}",
+        ) from exc
+
+
 def _parse_nodes(layer: LoadedLayer, *, require_anchor_fields: bool) -> list[ParsedNode]:
     parsed: list[ParsedNode] = []
     for feature in layer.features:
         props = feature.properties
+        lookup = _feature_property_lookup(props, label="node", feature_index=feature.feature_index)
         missing_fields = []
         for field_name in ("id", "mainnodeid", "kind_2", "grade_2"):
-            if field_name not in props:
+            if not lookup.has(field_name):
                 missing_fields.append(field_name)
         if require_anchor_fields:
             for field_name in ("has_evd", "is_anchor"):
-                if field_name not in props:
+                if not lookup.has(field_name):
                     missing_fields.append(field_name)
         if missing_fields:
             raise VirtualIntersectionPocError(
@@ -292,13 +309,13 @@ def _parse_nodes(layer: LoadedLayer, *, require_anchor_fields: bool) -> list[Par
                 feature_index=feature.feature_index,
                 properties=props,
                 geometry=Point(float(centroid.x), float(centroid.y)),
-                node_id=_normalize_id(props.get("id")) or "",
-                mainnodeid=_normalize_id(props.get("mainnodeid")),
-                has_evd=_normalize_id(props.get("has_evd")),
-                is_anchor=_normalize_id(props.get("is_anchor")),
-                kind_2=_coerce_int(props.get("kind_2")),
-                grade_2=_coerce_int(props.get("grade_2")),
-                kind=props.get("kind"),
+                node_id=_normalize_id(lookup.get("id")) or "",
+                mainnodeid=_normalize_id(lookup.get("mainnodeid")),
+                has_evd=_normalize_id(lookup.get("has_evd")),
+                is_anchor=_normalize_id(lookup.get("is_anchor")),
+                kind_2=_coerce_int(lookup.get("kind_2")),
+                grade_2=_coerce_int(lookup.get("grade_2")),
+                kind=lookup.get("kind"),
             )
         )
     return parsed
@@ -308,9 +325,10 @@ def _parse_rc_nodes(layer: LoadedLayer) -> list[ParsedNode]:
     parsed: list[ParsedNode] = []
     for feature in layer.features:
         props = feature.properties
+        lookup = _feature_property_lookup(props, label="RCSDNode", feature_index=feature.feature_index)
         missing_fields = []
         for field_name in ("id", "mainnodeid"):
-            if field_name not in props:
+            if not lookup.has(field_name):
                 missing_fields.append(field_name)
         if missing_fields:
             raise VirtualIntersectionPocError(
@@ -328,13 +346,13 @@ def _parse_rc_nodes(layer: LoadedLayer) -> list[ParsedNode]:
                 feature_index=feature.feature_index,
                 properties=props,
                 geometry=Point(float(centroid.x), float(centroid.y)),
-                node_id=_normalize_id(props.get("id")) or "",
-                mainnodeid=_normalize_id(props.get("mainnodeid")),
+                node_id=_normalize_id(lookup.get("id")) or "",
+                mainnodeid=_normalize_id(lookup.get("mainnodeid")),
                 has_evd=None,
                 is_anchor=None,
                 kind_2=None,
                 grade_2=None,
-                kind=props.get("kind"),
+                kind=lookup.get("kind"),
             )
         )
     return parsed
@@ -344,14 +362,15 @@ def _parse_roads(layer: LoadedLayer, *, label: str) -> list[ParsedRoad]:
     parsed: list[ParsedRoad] = []
     for feature in layer.features:
         props = feature.properties
+        lookup = _feature_property_lookup(props, label=label, feature_index=feature.feature_index)
         missing_fields = []
         for field_name in ("id", "snodeid", "enodeid", "direction"):
-            if field_name not in props:
+            if not lookup.has(field_name):
                 missing_fields.append(field_name)
-        road_id = _normalize_id(props.get("id"))
-        snodeid = _normalize_id(props.get("snodeid"))
-        enodeid = _normalize_id(props.get("enodeid"))
-        direction = _coerce_int(props.get("direction"))
+        road_id = _normalize_id(lookup.get("id"))
+        snodeid = _normalize_id(lookup.get("snodeid"))
+        enodeid = _normalize_id(lookup.get("enodeid"))
+        direction = _coerce_int(lookup.get("direction"))
         if road_id is None:
             missing_fields.append("id_value")
         if snodeid is None:
@@ -395,8 +414,9 @@ def _normalize_single_patch_id(value: Any) -> str | None:
 def _patch_ids_from_properties(properties: dict[str, Any]) -> tuple[str, ...]:
     patch_ids: list[str] = []
     seen: set[str] = set()
+    lookup = PropertyLookup(properties)
     for field_name in PATCH_ID_FIELD_NAMES:
-        value = properties.get(field_name)
+        value = lookup.get(field_name)
         if value is None:
             continue
         text = str(value)
@@ -414,9 +434,10 @@ def _patch_ids_from_properties(properties: dict[str, Any]) -> tuple[str, ...]:
 
 
 def _patch_id_from_properties(properties: dict[str, Any]) -> str | None:
+    lookup = PropertyLookup(properties)
     for field_name in PATCH_ID_FIELD_NAMES:
-        if field_name in properties:
-            return _normalize_single_patch_id(properties.get(field_name))
+        if lookup.has(field_name):
+            return _normalize_single_patch_id(lookup.get(field_name))
     return None
 
 

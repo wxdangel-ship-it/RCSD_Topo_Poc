@@ -11,6 +11,7 @@ from pyproj import CRS
 
 from rcsd_topo_poc.modules.t08_preprocess.output_naming import ensure_tool_output_name
 from rcsd_topo_poc.modules.t08_preprocess.vector_io import (
+    ensure_fgb_path,
     ensure_geojson_path,
     ensure_gpkg_path,
     ensure_shp_path,
@@ -44,6 +45,7 @@ def run_t08_tool1_conversions(
     *,
     input_shp_paths: list[str | Path] | None = None,
     input_geojson_paths: list[str | Path] | None = None,
+    input_fgb_paths: list[str | Path] | None = None,
     input_gpkg_paths: list[str | Path] | None = None,
     summary_output: str | Path | None = None,
     target_epsg: int | None = None,
@@ -54,6 +56,7 @@ def run_t08_tool1_conversions(
     input_specs = _build_input_specs(
         input_shp_paths=input_shp_paths or [],
         input_geojson_paths=input_geojson_paths or [],
+        input_fgb_paths=input_fgb_paths or [],
         input_gpkg_paths=input_gpkg_paths or [],
     )
     if not input_specs:
@@ -132,7 +135,7 @@ def run_t08_tool1_conversions(
         "summary_output": summary_path,
         "target_epsg": target_epsg,
         "default_crs_text": default_crs_text,
-        "supported_conversions": ["shp_to_gpkg", "geojson_to_gpkg", "gpkg_to_geojson"],
+        "supported_conversions": ["shp_to_gpkg", "geojson_to_gpkg", "fgb_to_gpkg", "gpkg_to_geojson"],
         "file_results": file_results,
         "failed_results": failed_results,
     }
@@ -173,6 +176,7 @@ def _build_input_specs(
     *,
     input_shp_paths: list[str | Path],
     input_geojson_paths: list[str | Path],
+    input_fgb_paths: list[str | Path],
     input_gpkg_paths: list[str | Path],
 ) -> list[dict[str, Any]]:
     specs: list[dict[str, Any]] = []
@@ -192,6 +196,15 @@ def _build_input_specs(
                 "input_path": input_path,
                 "output_path": input_path.with_suffix(".gpkg"),
                 "conversion": "geojson_to_gpkg",
+            }
+        )
+    for raw_path in input_fgb_paths:
+        input_path = ensure_fgb_path(raw_path, label="--input-fgb")
+        specs.append(
+            {
+                "input_path": input_path,
+                "output_path": input_path.with_suffix(".gpkg"),
+                "conversion": "fgb_to_gpkg",
             }
         )
     for raw_path in input_gpkg_paths:

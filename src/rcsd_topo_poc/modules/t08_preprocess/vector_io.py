@@ -20,6 +20,7 @@ from shapely.ops import transform as shapely_transform
 
 PROCESS_CRS_TEXT = "EPSG:3857"
 GPKG_SUFFIX = ".gpkg"
+FGB_SUFFIX = ".fgb"
 GEOJSON_SUFFIXES = frozenset({".geojson", ".json"})
 GPKG_APPLICATION_ID = 0x47504B47
 GPKG_USER_VERSION = 10300
@@ -58,6 +59,13 @@ def ensure_shp_path(path: str | Path, *, label: str) -> Path:
     resolved = Path(path).expanduser().resolve()
     if resolved.suffix.lower() != ".shp":
         raise ValueError(f"{label} must be a .shp path: {resolved}")
+    return resolved
+
+
+def ensure_fgb_path(path: str | Path, *, label: str) -> Path:
+    resolved = Path(path).expanduser().resolve()
+    if resolved.suffix.lower() != FGB_SUFFIX:
+        raise ValueError(f"{label} must be a .fgb path: {resolved}")
     return resolved
 
 

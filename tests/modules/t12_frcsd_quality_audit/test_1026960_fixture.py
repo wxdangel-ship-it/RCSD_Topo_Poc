@@ -38,13 +38,30 @@ def test_1026960_review_fixture_is_complete_and_frozen() -> None:
     ) == EXPECTED_CONFIRMED
     assert (frame["review_status"] == "excluded_false_positive").sum() == 25
     assert (frame["review_status"] == "manual_review_required").sum() == 0
+    confirmed = frame[frame["review_status"] == "confirmed_frcsd_quality_issue"]
+    assert confirmed["issue_type"].value_counts().to_dict() == {
+        "directed_carrier_missing": 8,
+        "required_local_connectivity_missing": 2,
+    }
 
 
 def test_focus_ids_are_not_hardcoded_in_production_source() -> None:
-    source_root = Path(__file__).resolve().parents[3] / "src"
+    source_root = (
+        Path(__file__).resolve().parents[3]
+        / "src"
+        / "rcsd_topo_poc"
+        / "modules"
+        / "t12_frcsd_quality_audit"
+    )
     production_text = "\n".join(
         path.read_text(encoding="utf-8") for path in source_root.rglob("*.py")
     )
 
-    assert "1001716_1010487" not in production_text
-    assert "1039488_1039490" not in production_text
+    forbidden = set(EXPECTED_CONFIRMED) | {
+        "1026960",
+        "1001716_1010487",
+        "1039488_1039490",
+    }
+    assert forbidden.isdisjoint(production_text.split())
+    for object_id in forbidden:
+        assert object_id not in production_text

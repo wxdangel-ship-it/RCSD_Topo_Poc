@@ -11,8 +11,23 @@ from rcsd_topo_poc.modules.t12_frcsd_quality_audit.review_publish import (
 )
 
 
-def _candidate(candidate_id: str) -> dict[str, object]:
-    return {"candidate_id": candidate_id, "segment_id": candidate_id}
+def _candidate(
+    candidate_id: str,
+    *,
+    equivalent: bool = False,
+    anchor_confidence: str = "t07_standard_surface",
+) -> dict[str, object]:
+    return {
+        "candidate_id": candidate_id,
+        "segment_id": candidate_id,
+        "candidate_status": "candidate_pending_decision",
+        "automatic_all_directions_equivalent": equivalent,
+        "failed_directions": [] if equivalent else ["pair0_to_pair1"],
+        "suggested_issue_type": (
+            "" if equivalent else "directed_carrier_missing"
+        ),
+        "anchor_confidence": anchor_confidence,
+    }
 
 
 def _write_decisions(path: Path, rows: list[dict[str, str]]) -> Path:
@@ -36,7 +51,32 @@ def _decision(candidate_id: str, status: str) -> dict[str, str]:
     }
 
 
-def test_review_states_are_mutually_exclusive_and_missing_is_manual(tmp_path: Path) -> None:
+def test_automatic_decisions_are_published_without_review() -> None:
+    reviewed, confirmed, exclusions, manual = apply_review_decisions(
+        [
+            _candidate("confirmed"),
+            _candidate("equivalent", equivalent=True),
+            _candidate("insufficient", anchor_confidence="insufficient"),
+        ],
+        run_id="run",
+        review_decisions_path=None,
+    )
+
+    assert len(reviewed) == 3
+    assert [row["candidate_id"] for row in confirmed] == ["confirmed"]
+    assert [row["candidate_id"] for row in exclusions] == [
+        "equivalent",
+        "insufficient",
+    ]
+    assert manual == []
+    assert confirmed[0]["decision_source"] == "automatic_high_confidence"
+    assert exclusions[0]["decision_rule"] == "equivalent_raw_carrier"
+    assert exclusions[1]["decision_rule"] == "insufficient_anchor_confidence"
+
+
+def test_review_states_override_automatic_decisions_and_missing_keeps_automatic(
+    tmp_path: Path,
+) -> None:
     decisions = _write_decisions(
         tmp_path / "review.csv",
         [
@@ -46,15 +86,28 @@ def test_review_states_are_mutually_exclusive_and_missing_is_manual(tmp_path: Pa
     )
 
     reviewed, confirmed, exclusions, manual = apply_review_decisions(
-        [_candidate("confirmed"), _candidate("excluded"), _candidate("manual")],
+        [
+            _candidate("confirmed", equivalent=True),
+            _candidate("excluded"),
+            _candidate("automatic"),
+        ],
         run_id="run",
         review_decisions_path=decisions,
     )
 
     assert len(reviewed) == 3
-    assert [row["candidate_id"] for row in confirmed] == ["confirmed"]
+    assert [row["candidate_id"] for row in confirmed] == [
+        "confirmed",
+        "automatic",
+    ]
     assert [row["candidate_id"] for row in exclusions] == ["excluded"]
-    assert [row["candidate_id"] for row in manual] == ["manual"]
+    assert [row["candidate_id"] for row in manual] == []
+    assert next(
+        row for row in reviewed if row["candidate_id"] == "automatic"
+    )["decision_source"] == "automatic_high_confidence"
+    assert next(
+        row for row in reviewed if row["candidate_id"] == "confirmed"
+    )["decision_source"] == "external_review_override"
 
 
 @pytest.mark.parametrize(

@@ -212,34 +212,29 @@ def _run_t12(
 
 def _validate_result(payload: dict[str, Any], reviewed: bool) -> dict[str, Any]:
     summary = json.loads(Path(payload["summary_json"]).read_text(encoding="utf-8"))
-    expected = (
-        {
-            "candidate_count": 35,
-            "confirmed_quality_issue_count": 10,
-            "review_exclusion_count": 25,
-            "manual_review_required_count": 0,
-        }
-        if reviewed
-        else {
-            "candidate_count": 35,
-            "confirmed_quality_issue_count": 0,
-            "review_exclusion_count": 0,
-            "manual_review_required_count": 35,
-        }
-    )
+    expected = {
+        "candidate_count": 35,
+        "confirmed_quality_issue_count": 10,
+        "review_exclusion_count": 25,
+        "manual_review_required_count": 0,
+    }
     actual = {key: int(summary["counts"][key]) for key in expected}
     if actual != expected:
         raise RuntimeError(f"unexpected T12 counts: expected={expected}, actual={actual}")
-    if reviewed:
-        with (Path(payload["run_root"]) / "t12_frcsd_confirmed_quality_issues.csv").open(
-            "r", encoding="utf-8-sig", newline=""
-        ) as stream:
-            confirmed = {row["candidate_id"] for row in csv.DictReader(stream)}
-        if confirmed != EXPECTED_CONFIRMED:
-            raise RuntimeError(
-                f"confirmed IDs differ: missing={sorted(EXPECTED_CONFIRMED-confirmed)}, "
-                f"extra={sorted(confirmed-EXPECTED_CONFIRMED)}"
-            )
+    with (Path(payload["run_root"]) / "t12_frcsd_confirmed_quality_issues.csv").open(
+        "r", encoding="utf-8-sig", newline=""
+    ) as stream:
+        confirmed_rows = list(csv.DictReader(stream))
+    confirmed = {row["candidate_id"] for row in confirmed_rows}
+    if confirmed != EXPECTED_CONFIRMED:
+        raise RuntimeError(
+            f"confirmed IDs differ: missing={sorted(EXPECTED_CONFIRMED-confirmed)}, "
+            f"extra={sorted(confirmed-EXPECTED_CONFIRMED)}"
+        )
+    if not reviewed and {
+        row.get("decision_source", "") for row in confirmed_rows
+    } != {"automatic_high_confidence"}:
+        raise RuntimeError("no-review confirmed rows must be automatic_high_confidence")
     return summary
 
 

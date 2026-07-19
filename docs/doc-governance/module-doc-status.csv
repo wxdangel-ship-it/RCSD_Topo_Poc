@@ -11,6 +11,6 @@ t07_semantic_junction_anchor,modules/t07_semantic_junction_anchor,active,standar
 t08_preprocess,modules/t08_preprocess,active,standard-01-06-module-surface,keep-in-sync-with-tool1-tool9-implementation,independent-preprocess-qc-repair-toolchain
 t09_swsd_field_rule_restoration,modules/t09_swsd_field_rule_restoration,active,standard-01-06-module-surface,keep-in-sync-with-step1-step2-step3-implementation,restriction-led-field-rule-restoration-and-frcsd-projection
 t10_e2e_orchestration,modules/t10_e2e_orchestration,active,standard-01-06-module-surface,keep-in-sync-with-orchestration-contract,case-runner-feedback-visual-check-full-pipeline
-t12_frcsd_quality_audit,modules/t12_frcsd_quality_audit,active,standard-01-06-module-surface,keep-in-sync-with-quality-audit-contract,raw-1v1-frcsd-candidate-review-confirmed-excluded-audit
+t12_frcsd_quality_audit,modules/t12_frcsd_quality_audit,active,standard-01-06-module-surface,keep-in-sync-with-quality-audit-contract,raw-1v1-frcsd-automatic-high-confidence-audit
 p01_arm_build,modules/p01_arm_build,active,formal-module-surface,keep-in-sync-with-p01-v1-a1-a2-final-implementation,excluded-from-current-module-01-06-remediation
 p02_wuhan_local_experiment,modules/p02_wuhan_local_experiment,active-poc,standard-01-06-module-surface,keep-in-sync-with-wuhan-local-experiment-contract,t08-t01-t05-t06-orchestration-and-manual-relation-lineage

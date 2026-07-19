@@ -71,7 +71,7 @@ def run_t12_frcsd_quality_audit(
             active_config,
         )
         stage_elapsed["candidate_audit"] = time.perf_counter() - stage_start
-        _progress(progress, "apply_review")
+        _progress(progress, "apply_automatic_decision_and_optional_review")
         stage_start = time.perf_counter()
         reviewed, confirmed, exclusions, manual = apply_review_decisions(
             candidates,
@@ -80,7 +80,7 @@ def run_t12_frcsd_quality_audit(
                 Path(review_decisions_path) if review_decisions_path else None
             ),
         )
-        stage_elapsed["review_publish"] = time.perf_counter() - stage_start
+        stage_elapsed["decision_publish"] = time.perf_counter() - stage_start
         _progress(progress, "write_outputs")
         runtime = {
             "platform": platform.platform(),

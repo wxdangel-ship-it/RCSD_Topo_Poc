@@ -43,7 +43,7 @@ SWSD / RCSD raw data
 | `Laneinfo.Arrow_Dir` / T08 `arrow` | SWSD 车道箭头语义；字母型箭头码大小写不敏感，`A/a` 表示 `straight`，数字 `0` 与字母 `o/O` 语义不同。 |
 | `restriction` | SWSD 限行 / 禁转语义输入，T09 用于路口通行规则还原。 |
 | T05 `T11_MANUAL` relation audit | 人工审计后由 T05 正式发布的正向 relation 来源。T06 Step1 只在 `source_modules/source_module` 包含 `T11_MANUAL`、`relation_status/status=0`、`base_id>0` 且 `graph_consumable=1` 时，用它释放对应 `is_anchor=fail3/fail4` 的旧锚定失败门禁；该语义不改变节点事实，也不是 T06 Step2/Step3 替换白名单。 |
-| T12 quality hypothesis | SWSD 与原始 1V1 F-RCSD 在通行性上应等价。该语义只用于生成待复核质量候选，未经过数据验证和人工 review decisions 时不得提升为修复规则。 |
+| T12 quality hypothesis | SWSD 与原始 1V1 F-RCSD 在通行性上应等价。该语义用于 raw endpoint topology、标准路口 portal 和锚点可信度联合质检；通过自动高置信门禁的记录可进入正式问题层，但任何质量结论都不得直接提升为修复规则。 |
 
 ## 字段治理规则
 

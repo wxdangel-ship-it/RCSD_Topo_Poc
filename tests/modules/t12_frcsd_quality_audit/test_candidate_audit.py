@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 import geopandas as gpd
 import pandas as pd
 import pytest
@@ -147,7 +149,9 @@ def test_candidate_issue_type_uses_direction_and_local_connectivity(
     assert len(candidates) == 1
     assert candidates[0]["suggested_issue_type"] == expected_issue
     assert candidates[0]["failed_directions"] == ["pair0_to_pair1"]
+    assert candidates[0]["anchor_confidence"] == "t07_standard_surface"
     assert audit["t07_truth_audit"]["status"] == "pass"
+    assert audit["t07_surface_audit"]["status"] == "pass"
 
 
 def test_drivezone_is_evidence_only_and_does_not_change_verdict() -> None:
@@ -179,3 +183,34 @@ def test_crop_edge_candidate_is_excluded_not_silently_repaired() -> None:
 
     assert candidates == []
     assert audit["counts"]["crop_edge_excluded_count"] == 1
+
+
+def test_candidate_verdict_uses_raw_endpoints_not_mainnode_alias() -> None:
+    loaded = _loaded(reverse_main=False, drivezone=False)
+    loaded.swsd_roads["direction"] = [1]
+    loaded.frcsd_nodes["mainNodeId"] = ["a", "b", "a", "b"]
+    loaded.frcsd_nodes["subNodeId"] = ["a|x", "b|y", "", ""]
+    loaded = replace(
+        loaded,
+        frcsd_roads=gpd.GeoDataFrame(
+            [
+                {
+                    "id": "alias_only_path",
+                    "snodeid": "x",
+                    "enodeid": "y",
+                    "direction": 2,
+                    "source": 1,
+                    "geometry": LineString([(0, -10), (100, -10)]),
+                }
+            ],
+            crs="EPSG:3857",
+        ),
+    )
+
+    candidates, _, _ = audit_frcsd_candidates(loaded, AuditConfig())
+
+    assert len(candidates) == 1
+    assert candidates[0]["suggested_issue_type"] == (
+        "required_local_connectivity_missing"
+    )
+    assert candidates[0]["automatic_all_directions_equivalent"] is False

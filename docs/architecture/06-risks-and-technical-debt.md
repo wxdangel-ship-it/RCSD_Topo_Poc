@@ -13,7 +13,7 @@
 | 提前右转与保留 SWSD carrier 混源 | 提高通行 carrier 保留率的同时可能模糊正式替换道路来源 | `frcsd_road_ids` 描述最终可消费 carrier，可包含 `source=2` 保留 SWSD；必须通过 `replaced+retained_swsd`、`frcsd_road_source_values / source_mix` 和风险标记暴露混源边界 |
 | T10 feedback 自动回灌过度 | 上游反馈若直接驱动替换，可能绕过 T03/T04/T05/T06 正式审计 | T10 feedback 只回灌可消费 endpoint candidate 或形成上游任务，不作为 T06 Step3 替换白名单 |
 | 原始 1V1 F-RCSD 与 T06 F-RCSD 混用 | 相同 Source 语义但生成路径不同，混用会污染质检结论 | T12 只接受显式 `frcsd_1v1_roads / frcsd_1v1_nodes`，不得回退到 T06 Step3 输出 |
-| T12 候选被误当正式问题 | 自动可达性检查仍可能受路口归组、局部 portal 或数据覆盖影响 | candidate、confirmed、excluded、manual review 分层；只有人工确认项进入正式问题层 |
+| T12 候选被误当正式问题 | 自动可达性检查仍可能受 canonical 节点折叠、路口归组、局部 portal 或数据覆盖影响 | canonical 图只作候选；raw endpoint 图、RCSDIntersection 标准面、锚点可信度和方向/几何共同门禁；外部 review 只作可选 QA 覆盖 |
 | T09 通行证据缺口 | T09 已具备模块文档面，但 RCSD Laneinfo 与轨迹通行证据仍不足 | 后续专项补充 RCSD Laneinfo / 轨迹证据，并同步 T09 契约 |
 | T02 历史入口仍在 | Retired 生命周期与真实脚本入口容易混淆 | 后续入口治理中同步 retired / historical 口径 |
 

@@ -101,6 +101,58 @@ def validate_t07_truth_anchors(
     }
 
 
+def associate_t07_surfaces(
+    anchors: Mapping[str, AnchorRecord],
+    swsd_raw_points: Mapping[str, Any],
+    rcsd_intersections: gpd.GeoDataFrame,
+    *,
+    tolerance_m: float,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Associate each T07 SWSD semantic junction with one standard surface."""
+    intersection_id_field = field_name(rcsd_intersections, "id")
+    surfaces: dict[str, Any] = {}
+    surface_ids: dict[str, str] = {}
+    missing: list[str] = []
+    ambiguous: list[str] = []
+    for anchor in sorted(anchors.values(), key=lambda item: item.target_id):
+        if anchor.source_module != "T07":
+            continue
+        point = swsd_raw_points.get(anchor.target_id)
+        if point is None or point.is_empty:
+            missing.append(anchor.target_id)
+            continue
+        positions = list(rcsd_intersections.sindex.query(point.buffer(tolerance_m)))
+        covered: list[tuple[str, Any]] = []
+        for position in positions:
+            row = rcsd_intersections.iloc[position]
+            geometry = row.geometry
+            if geometry is not None and not geometry.is_empty and geometry.covers(point):
+                covered.append(
+                    (normalize_id(row[intersection_id_field]), geometry)
+                )
+        covered.sort(key=lambda item: item[0])
+        if len(covered) == 1:
+            surface_ids[anchor.target_id] = covered[0][0]
+            surfaces[anchor.target_id] = covered[0][1]
+        elif len(covered) > 1:
+            ambiguous.append(anchor.target_id)
+        else:
+            missing.append(anchor.target_id)
+    t07_count = sum(
+        anchor.source_module == "T07" for anchor in anchors.values()
+    )
+    return surfaces, {
+        "truth_relation": "swsd_semantic_junction_covered_by_rcsdintersection",
+        "tolerance_m": tolerance_m,
+        "t07_anchor_count": t07_count,
+        "unique_surface_count": len(surfaces),
+        "surface_ids": surface_ids,
+        "missing_target_ids": sorted(missing),
+        "ambiguous_target_ids": sorted(ambiguous),
+        "status": "pass" if not missing and not ambiguous else "warning",
+    }
+
+
 def merge_anchor_groups(
     anchor: AnchorRecord,
     canonicalizer: NodeCanonicalizer,
@@ -163,6 +215,73 @@ def portal_candidates(
     )
 
 
+def raw_portal_candidates(
+    *,
+    anchor: AnchorRecord,
+    portal_point: Any,
+    frcsd_nodes: gpd.GeoDataFrame,
+    raw_node_points: Mapping[str, Any],
+    eligible_raw_ids: Iterable[str],
+    radius_m: float,
+    direction_role: str,
+    truth_surface: Any | None,
+) -> list[dict[str, Any]]:
+    """Build physical endpoint portals without canonical alias expansion."""
+    eligible = set(eligible_raw_ids)
+    best: dict[str, dict[str, Any]] = {}
+    group_source = (
+        "truth_group" if anchor.source_module == "T07" else "grouped_relation"
+    )
+    for raw_id in anchor.grouped_node_ids:
+        _consider_raw_portal(
+            best,
+            raw_id=raw_id,
+            portal_point=portal_point,
+            raw_node_points=raw_node_points,
+            eligible=eligible,
+            source=group_source,
+            direction_role=direction_role,
+            enforce_radius=False,
+            radius_m=radius_m,
+        )
+    node_id_field = field_name(frcsd_nodes, "id")
+    if anchor.source_module == "T07" and truth_surface is not None:
+        positions = list(frcsd_nodes.sindex.query(truth_surface))
+        for position in positions:
+            row = frcsd_nodes.iloc[position]
+            if truth_surface.covers(row.geometry):
+                _consider_raw_portal(
+                    best,
+                    raw_id=normalize_id(row[node_id_field]),
+                    portal_point=portal_point,
+                    raw_node_points=raw_node_points,
+                    eligible=eligible,
+                    source="rcsdintersection_surface",
+                    direction_role=direction_role,
+                    enforce_radius=False,
+                    radius_m=radius_m,
+                )
+    elif anchor.source_module != "T07":
+        positions = list(frcsd_nodes.sindex.query(portal_point.buffer(radius_m)))
+        for position in positions:
+            row = frcsd_nodes.iloc[position]
+            _consider_raw_portal(
+                best,
+                raw_id=normalize_id(row[node_id_field]),
+                portal_point=portal_point,
+                raw_node_points=raw_node_points,
+                eligible=eligible,
+                source="spatial_portal",
+                direction_role=direction_role,
+                enforce_radius=True,
+                radius_m=radius_m,
+            )
+    return sorted(
+        best.values(),
+        key=lambda row: (row["distance_m"], row["raw_id"]),
+    )
+
+
 def _consider_portal(
     best: dict[str, dict[str, Any]],
     *,
@@ -198,6 +317,36 @@ def _consider_portal(
         current["raw_id"],
     ):
         best[canonical_id] = candidate
+
+
+def _consider_raw_portal(
+    best: dict[str, dict[str, Any]],
+    *,
+    raw_id: str,
+    portal_point: Any,
+    raw_node_points: Mapping[str, Any],
+    eligible: set[str],
+    source: str,
+    direction_role: str,
+    enforce_radius: bool,
+    radius_m: float,
+) -> None:
+    point = raw_node_points.get(raw_id)
+    if not raw_id or raw_id not in eligible or point is None or point.is_empty:
+        return
+    distance_m = float(point.distance(portal_point))
+    if enforce_radius and distance_m > radius_m:
+        return
+    candidate = {
+        "canonical_id": raw_id,
+        "raw_id": raw_id,
+        "distance_m": distance_m,
+        "source": source,
+        "direction_role": direction_role,
+    }
+    current = best.get(raw_id)
+    if current is None or distance_m < current["distance_m"]:
+        best[raw_id] = candidate
 
 
 def _optional_field(frame: pd.DataFrame, name: str) -> str:

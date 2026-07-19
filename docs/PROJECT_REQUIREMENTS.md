@@ -55,7 +55,7 @@ T09 在 T06 输出的 F-RCSD 承载关系上恢复 SWSD 现场通行规则。当
 
 T12 面向通过 1V1 匹配技术融合生成的原始 F-RCSD，不把它解释为 T06 Segment 替换结果。T12 以“SWSD 与 1V1 F-RCSD 的拓扑通行性应等价”为待验证质量假设，复用 T06 的 ID、方向、canonical node、carrier graph 和局部 portal 证据语义，检查已锚定 Segment 两端在目标承载网是否存在可解释通行路径。`RCSDIntersection` 是 T07/T10 标准输入和人工确定的现实路口证据；T05/T06 只提供交叉解释证据，不替代 T12 对原始目标网的判断。
 
-T12 必须分离 candidate、confirmed、excluded 和 manual review：算法候选不是正式质量问题，只有外部 review decisions 确认的记录才进入 confirmed 层。排除原因必须可追溯，任何阶段都不得修改输入几何、自动补路或 silent fix。
+T12 必须分离 candidate、confirmed、excluded 和 optional review override。candidate 不是正式质量问题；只有在原始 FRCSD Road endpoint 图上证明 SWSD 必需方向缺少等价 carrier，并通过 `RCSDIntersection` 标准路口 portal、锚点可信度、方向和几何门禁的记录，才能自动进入 confirmed 层。canonical `mainNodeId/subNodeId` 图只用于宽召回和交叉解释，不得通过零成本节点折叠补出正式 carrier。外部 review decisions 只作可选 QA 覆盖，不再是 confirmed 的前置条件。排除原因必须可追溯，任何阶段都不得修改输入几何、自动补路或 silent fix。
 
 ### 3.7 编排与证据层
 
@@ -77,7 +77,7 @@ T10 负责组织端到端 Case package、Case replay、full pipeline manifest、
 | T09 | F-RCSD 上的通行规则恢复。 |
 | T10 | 端到端编排与 Case 证据组织，不替代 T01-T09 / T11 算法。 |
 | T11 | T06 后、T09 前的人工 relation 修复候选审计；不回写业务产物。 |
-| T12 | 原始 1V1 F-RCSD 质量审计；验证 SWSD 可达性等价假设，发布经人工复核确认的问题与排除证据，不执行修复。 |
+| T12 | 原始 1V1 F-RCSD 质量审计；验证 SWSD 可达性等价假设，以 raw endpoint topology、标准路口 portal 和锚点可信度自动发布高置信问题与排除证据，人工 review 仅作可选 QA 覆盖，不执行修复。 |
 | P01 | 异构路口通行能力 POC，不作为 T09 正式替代契约。 |
 | P02 | 武汉局部人工锚定实验编排与证据收口；复用 T08/T01/T05/T06，不替代这些模块的正式业务契约。 |
 
@@ -104,6 +104,6 @@ T10 负责组织端到端 Case package、Case replay、full pipeline manifest、
 
 1. Relation 质量产品化：T07/T03/T04/T05 继续稳定输出成功、失败、fallback、review-only、blocked 和 upstream-needed 状态，减少 T06 重复解释上游问题。
 2. T06 问题回流闭环：problem registry 中可自动消费的问题进入 T10 feedback 和 T05，可疑或超边界问题进入人工复核或上游任务。
-3. F-RCSD 自动 QA：T06 Step3 结果继续由 T06 正式审计；原始 1V1 F-RCSD 由 T12 检查 road-node integrity、方向可达性、局部 portal 替代路径、DriveZone 证据与人工复核发布。
+3. F-RCSD 自动 QA：T06 Step3 结果继续由 T06 正式审计；原始 1V1 F-RCSD 由 T12 检查 road-node integrity、raw endpoint 方向可达性、标准路口 portal、局部替代路径和 DriveZone 证据，并自动发布高置信问题；人工 review 仅作可选 QA 覆盖。
 4. 通行能力增强：T09 后续引入 RCSD Laneinfo 和轨迹证据；P01 Arm / RoadNextRoad 经验可作为正式化前参考。
 5. 文档层级收敛：根目录只保留简洁入口和简版需求，详细需求、架构策略、治理盘点和模块契约下沉到对应目录。

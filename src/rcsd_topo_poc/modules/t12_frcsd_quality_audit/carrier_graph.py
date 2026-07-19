@@ -136,6 +136,25 @@ def build_node_context(
     )
 
 
+def build_raw_node_context(
+    nodes: gpd.GeoDataFrame,
+) -> tuple[NodeCanonicalizer, dict[str, tuple[str, ...]], dict[str, Any]]:
+    """Build an identity node context for physical Road endpoint auditing."""
+    node_id_field = field_name(nodes, "id")
+    raw_points: dict[str, Any] = {}
+    for _, row in nodes.iterrows():
+        raw_id = normalize_id(row[node_id_field])
+        geometry = row.geometry
+        if raw_id and geometry is not None and not geometry.is_empty:
+            raw_points[raw_id] = geometry
+    canonicalizer = NodeCanonicalizer(
+        aliases={},
+        semantic_node_ids=frozenset(),
+    )
+    groups = {raw_id: (raw_id,) for raw_id in sorted(raw_points)}
+    return canonicalizer, groups, raw_points
+
+
 def build_graph(
     roads: gpd.GeoDataFrame,
     canonicalizer: NodeCanonicalizer,

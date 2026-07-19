@@ -11,15 +11,16 @@ from rcsd_topo_poc.modules.t06_segment_fusion_precheck.graph_builders import (
 
 from .anchor_portals import (
     AnchorRecord,
+    associate_t07_surfaces,
     build_anchor_map,
-    merge_anchor_groups,
-    portal_candidates,
+    raw_portal_candidates,
     validate_t07_truth_anchors,
 )
 from .carrier_graph import (
     GraphBundle,
     build_graph,
     build_node_context,
+    build_raw_node_context,
     directional_swsd_carrier,
     field_name,
     normalize_id,
@@ -38,7 +39,10 @@ def audit_frcsd_candidates(
 ) -> tuple[list[dict[str, Any]], EvidenceLayers, dict[str, Any]]:
     anchors = build_anchor_map(loaded.t05_anchor_audit)
     swsd_canonicalizer, _, swsd_raw_points = build_node_context(loaded.swsd_nodes)
-    frcsd_canonicalizer, frcsd_groups, frcsd_raw_points = build_node_context(
+    frcsd_canonicalizer, _, frcsd_raw_points = build_node_context(
+        loaded.frcsd_nodes
+    )
+    raw_canonicalizer, _, raw_frcsd_points = build_raw_node_context(
         loaded.frcsd_nodes
     )
     truth_audit = validate_t07_truth_anchors(
@@ -47,7 +51,14 @@ def audit_frcsd_candidates(
         loaded.frcsd_nodes,
         tolerance_m=config.portal_radius_m,
     )
+    t07_surfaces, t07_surface_audit = associate_t07_surfaces(
+        anchors,
+        swsd_raw_points,
+        loaded.rcsd_intersections,
+        tolerance_m=config.portal_radius_m,
+    )
     full_graph = build_graph(loaded.frcsd_roads, frcsd_canonicalizer)
+    raw_full_graph = build_graph(loaded.frcsd_roads, raw_canonicalizer)
     segment_id_field = field_name(loaded.segments, "id")
     segment_pair_field = field_name(loaded.segments, "pair_nodes")
     segment_roads_field = field_name(loaded.segments, "roads")
@@ -121,6 +132,7 @@ def audit_frcsd_candidates(
         if not _is_fully_inner(geometry, loaded.crop_inner_geometry):
             counters["crop_edge_excluded_count"] += 1
             continue
+        raw_local_graph = build_graph(local_roads, raw_canonicalizer)
         candidate = _enrich_candidate(
             segment_id=segment_id,
             segment_geometry=geometry,
@@ -132,11 +144,13 @@ def audit_frcsd_candidates(
             swsd_canonicalizer=swsd_canonicalizer,
             swsd_raw_points=swsd_raw_points,
             frcsd_canonicalizer=frcsd_canonicalizer,
-            frcsd_groups=frcsd_groups,
-            frcsd_raw_points=frcsd_raw_points,
+            frcsd_raw_points=raw_frcsd_points,
             frcsd_nodes=loaded.frcsd_nodes,
-            full_graph=full_graph,
-            local_graph=local_graph,
+            full_graph=raw_full_graph,
+            local_graph=raw_local_graph,
+            semantic_full_graph=full_graph,
+            semantic_local_graph=local_graph,
+            t07_surfaces=t07_surfaces,
             t06_cross_evidence=loaded.t06_cross_evidence.get(segment_id, {}),
             config=config,
             layers=layers,
@@ -154,7 +168,7 @@ def audit_frcsd_candidates(
             {
                 "candidate_id": segment_id,
                 "segment_id": segment_id,
-                "candidate_status": "candidate_pending_review",
+                "candidate_status": "candidate_pending_decision",
                 "suggested_issue_type": candidate["suggested_issue_type"],
                 "failed_directions": "|".join(candidate["failed_directions"]),
                 "portal_equivalent": candidate[
@@ -175,8 +189,11 @@ def audit_frcsd_candidates(
     return candidates, layers, {
         "counts": dict(counters),
         "t07_truth_audit": truth_audit,
-        "full_graph_node_count": len(full_nodes),
-        "full_graph_edge_count": len(full_graph.edges),
+        "t07_surface_audit": t07_surface_audit,
+        "candidate_graph_node_count": len(full_nodes),
+        "candidate_graph_edge_count": len(full_graph.edges),
+        "verdict_graph_node_count": len(_all_graph_nodes(raw_full_graph)),
+        "verdict_graph_edge_count": len(raw_full_graph.edges),
         "drivezone_reference_provided": drivezone_union is not None,
         "drivezone_affects_verdict": False,
     }
@@ -194,11 +211,13 @@ def _enrich_candidate(
     swsd_canonicalizer: NodeCanonicalizer,
     swsd_raw_points: Mapping[str, Any],
     frcsd_canonicalizer: NodeCanonicalizer,
-    frcsd_groups: Mapping[str, tuple[str, ...]],
     frcsd_raw_points: Mapping[str, Any],
     frcsd_nodes: gpd.GeoDataFrame,
     full_graph: GraphBundle,
     local_graph: GraphBundle,
+    semantic_full_graph: GraphBundle,
+    semantic_local_graph: GraphBundle,
+    t07_surfaces: Mapping[str, Any],
     t06_cross_evidence: Mapping[str, Any],
     config: AuditConfig,
     layers: EvidenceLayers,
@@ -215,27 +234,25 @@ def _enrich_candidate(
             swsd_raw_points,
         )
         source_index, target_index = (0, 1) if direction == "pair0_to_pair1" else (1, 0)
-        starts = portal_candidates(
+        starts = raw_portal_candidates(
             anchor=anchors[source_index],
             portal_point=carrier["source_point"],
             frcsd_nodes=frcsd_nodes,
-            canonicalizer=frcsd_canonicalizer,
-            canonical_groups=frcsd_groups,
             raw_node_points=frcsd_raw_points,
-            eligible_canonical_ids=local_graph.outgoing_nodes,
+            eligible_raw_ids=local_graph.undirected,
             radius_m=config.portal_radius_m,
             direction_role="start",
+            truth_surface=t07_surfaces.get(pair_nodes[source_index]),
         )
-        ends = portal_candidates(
+        ends = raw_portal_candidates(
             anchor=anchors[target_index],
             portal_point=carrier["target_point"],
             frcsd_nodes=frcsd_nodes,
-            canonicalizer=frcsd_canonicalizer,
-            canonical_groups=frcsd_groups,
             raw_node_points=frcsd_raw_points,
-            eligible_canonical_ids=local_graph.incoming_nodes,
+            eligible_raw_ids=local_graph.undirected,
             radius_m=config.portal_radius_m,
             direction_role="end",
+            truth_surface=t07_surfaces.get(pair_nodes[target_index]),
         )
         start_ids = {row["canonical_id"] for row in starts}
         end_ids = {row["canonical_id"] for row in ends}
@@ -263,10 +280,59 @@ def _enrich_candidate(
             )
             for name, path in paths.items()
         }
+        semantic_start_ids = {
+            frcsd_canonicalizer.canonicalize(row["raw_id"]) for row in starts
+        }
+        semantic_end_ids = {
+            frcsd_canonicalizer.canonicalize(row["raw_id"]) for row in ends
+        }
+        semantic_paths = {
+            "semantic_local_directed": shortest_path_between_sets(
+                semantic_local_graph.directed,
+                semantic_start_ids,
+                semantic_end_ids,
+            ),
+            "semantic_full_directed": shortest_path_between_sets(
+                semantic_full_graph.directed,
+                semantic_start_ids,
+                semantic_end_ids,
+            ),
+            "semantic_local_undirected": shortest_path_between_sets(
+                semantic_local_graph.undirected,
+                semantic_start_ids,
+                semantic_end_ids,
+            ),
+            "semantic_full_undirected": shortest_path_between_sets(
+                semantic_full_graph.undirected,
+                semantic_start_ids,
+                semantic_end_ids,
+            ),
+        }
+        semantic_metrics = {
+            name: path_metrics(
+                path,
+                (
+                    semantic_local_graph.edges
+                    if name.startswith("semantic_local_")
+                    else semantic_full_graph.edges
+                ),
+                segment_geometry,
+                carrier["length_m"],
+                config,
+            )
+            for name, path in semantic_paths.items()
+        }
         local_ok = bool(metrics["local_directed"]["accepted_equivalent_carrier"])
         if not local_ok:
             failed_directions.append(direction)
-            if metrics["local_undirected"]["accepted_equivalent_carrier"]:
+            if (
+                not semantic_metrics["semantic_local_directed"][
+                    "accepted_equivalent_carrier"
+                ]
+                and semantic_metrics["semantic_local_undirected"][
+                    "accepted_equivalent_carrier"
+                ]
+            ):
                 issue_types.add("directed_carrier_missing")
             else:
                 issue_types.add("required_local_connectivity_missing")
@@ -302,33 +368,63 @@ def _enrich_candidate(
                 "start_portal_candidates": starts,
                 "end_portal_candidates": ends,
                 **metrics,
+                **semantic_metrics,
             }
         )
-    if "required_local_connectivity_missing" in issue_types:
-        suggested_issue_type = "required_local_connectivity_missing"
-    elif "directed_carrier_missing" in issue_types:
+    if "directed_carrier_missing" in issue_types:
         suggested_issue_type = "directed_carrier_missing"
+    elif "required_local_connectivity_missing" in issue_types:
+        suggested_issue_type = "required_local_connectivity_missing"
     else:
         suggested_issue_type = ""
     return {
         "candidate_id": segment_id,
         "segment_id": segment_id,
-        "candidate_status": "candidate_pending_review",
-        "review_status": "manual_review_required",
+        "candidate_status": "candidate_pending_decision",
+        "review_status": "",
         "review_reason": "",
         "suggested_issue_type": suggested_issue_type,
         "required_directions": required_directions,
         "failed_directions": failed_directions,
         "anchor_modules": [anchor.source_module for anchor in anchors],
         "base_nodes": base_nodes,
-        "anchor_groups": [
-            list(merge_anchor_groups(anchor, frcsd_canonicalizer, frcsd_groups))
-            for anchor in anchors
+        "anchor_groups": [list(anchor.grouped_node_ids) for anchor in anchors],
+        "anchor_confidence": _anchor_confidence(
+            pair_nodes,
+            anchors,
+            t07_surfaces,
+        ),
+        "t07_surface_statuses": [
+            (
+                "unique_surface"
+                if anchor.source_module == "T07" and pair_nodes[index] in t07_surfaces
+                else "missing_or_ambiguous_surface"
+                if anchor.source_module == "T07"
+                else "not_applicable"
+            )
+            for index, anchor in enumerate(anchors)
         ],
         "automatic_all_directions_equivalent": not failed_directions,
         "directions": direction_evidence,
         "t06_cross_evidence": dict(t06_cross_evidence),
     }
+
+
+def _anchor_confidence(
+    pair_nodes: list[str],
+    anchors: list[AnchorRecord],
+    t07_surfaces: Mapping[str, Any],
+) -> str:
+    t07_indexes = [
+        index
+        for index, anchor in enumerate(anchors)
+        if anchor.source_module == "T07"
+    ]
+    if t07_indexes and all(pair_nodes[index] in t07_surfaces for index in t07_indexes):
+        return "t07_standard_surface"
+    if [anchor.source_module for anchor in anchors] == ["T03", "T03"]:
+        return "t03_pair"
+    return "insufficient"
 
 
 def _append_path_layers(

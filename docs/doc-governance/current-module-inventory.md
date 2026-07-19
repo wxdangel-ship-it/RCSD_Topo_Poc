@@ -30,7 +30,7 @@
 | `t09_swsd_field_rule_restoration` | Active | 基于 SWSD Laneinfo、restriction 与 T06 F-RCSD 混合承载关系，还原现场路口级通行规则。当前缺少 RCSD Laneinfo 与轨迹通行证据，需后续迭代完善。 |
 | `t10_e2e_orchestration` | Active | 端到端业务流程编排与 Case 级证据组织模块。v1 Case runner 编排 T01 / T07 Step1/2 / T03 / T04 / T05 / T06 / T11 / T09，T08 保持独立前置预处理、质检与修复定位；T11 是 audit-only 必经阶段，不改变 T09 对 T06 的业务 handoff；当前已支持空间切片 Case 包、Case 级 replay、T06 上游反馈包、反馈迭代防回退与内网全量总控。 |
 | `t11_manual_relation_review` | Active | 人工 relation 修复候选抽取模块。作为 T10 中 `T06 -> T11 -> T09` 的 audit-only 阶段，从 Case/full run root 聚合 T05 relation graph consumability 与 T06 Step2 problem registry / rejected / replacement plan 证据，输出人工可审计候选和填写模板；候选不等于人工确认，也不作为 T06 白名单或 T09 输入。 |
-| `t12_frcsd_quality_audit` | Active | 原始 1V1 F-RCSD 质量审计模块。以 SWSD 与 1V1 F-RCSD 的通行性等价为待验证假设，结合 RCSDIntersection、T05/T06 交叉证据和局部 portal 路径识别候选；只有人工复核确认项进入正式问题层，不执行修复。 |
+| `t12_frcsd_quality_audit` | Active | 原始 1V1 F-RCSD 质量审计模块。以 SWSD 与 1V1 F-RCSD 的通行性等价为待验证假设，用 canonical 图宽召回候选，并以 raw endpoint topology、RCSDIntersection 标准路口 portal 和锚点可信度自动发布高置信正式问题；人工复核仅作可选 QA 覆盖，不执行修复。 |
 | `p01_arm_build` | Active POC / 成果模块 | 当前仓库中用户历史 `P10` 口径统一改称为 `P01`。P01 面向异构路口通行能力 / RoadNextRoad POC，不作为 T09 正式契约。 |
 | `p02_wuhan_local_experiment` | Active POC / 成果模块 | 武汉局部人工锚定实验模块。按 Tool1→Tool3→Tool6→Tool4→Tool5 预处理 SWSD，在 Tool5 后转换 T11 格式人工关系，再复用 T01/T05/T06 完成局部 Segment 融合验证；正式内网单 Case 入口同时生成相对路径 QGIS 工程。 |
 
@@ -41,7 +41,7 @@
 - Segment 替换：T06 基于 T01 Segment 与 T05 relation 构建 RCSDSegment，并在 RCSD 数据质量、方向性、端点、提右和 surface 证据存在差异时执行受控诊断、补强、replacement plan 执行和最终拓扑审计，输出 F-RCSD 承载关系。
 - 通行恢复：T09 基于 SWSD 通行规则证据和 T06 F-RCSD 承载关系还原融合后路口通行能力。
 - 端到端编排：T10 v1 以文件级 handoff 方式组织 Case package、空间切片、Case 级 replay、T06 反馈闭环和内网全量总控；Case runner 不调用 T08，全量总控可把 T08 作为独立前置阶段串联；两类 runner 均在 T06 后、T09 前强制执行 T11，且可显式在 T06 与 T11 之间插入 T12，默认关闭。
-- F-RCSD 质检：T12 直接审查原始 1V1 F-RCSD，不消费 T06 Step3 F-RCSD；candidate、confirmed、excluded、manual review 分层发布，保留 CRS、拓扑、几何、输入参数、运行环境和性能审计。
+- F-RCSD 质检：T12 直接审查原始 1V1 F-RCSD，不消费 T06 Step3 F-RCSD；candidate、automatic decision、confirmed、excluded、optional review override 分层发布，保留 CRS、raw/canonical 拓扑、几何、输入参数、运行环境和性能审计。
 - 人工审计输入：T11 从 T10 Case/full run 结果中抽取 relation 修复候选，当前阶段不阻断 T09 对 T06 正式业务 handoff；候选供人工判断后续是否回到 T05 重新生成正式 relation，经 T05 发布为可消费 `T11_MANUAL` relation 后，可在 T06 Step1 释放对应 `fail3/fail4` 旧锚定失败门禁，最终替换仍由 T06 Step2/Step3 审计决定。
 - POC 验证：P01 承载异构路口通行能力 POC，不替代 T09；P02 承载武汉局部人工锚定实验，不替代 T08/T01/T05/T06。
 

@@ -33,19 +33,17 @@ def apply_review_decisions(
     manual: list[dict[str, Any]] = []
     for candidate in candidates:
         row = deepcopy(candidate)
+        automatic = _automatic_decision(candidate)
+        row.update(automatic)
+        row["automatic_review_status"] = automatic["review_status"]
+        row["automatic_issue_type"] = automatic["issue_type"]
+        row["automatic_decision_rule"] = automatic["decision_rule"]
         decision = decisions.get(candidate["candidate_id"])
-        if decision is None:
-            row.update(
-                {
-                    "review_status": "manual_review_required",
-                    "review_reason": "No review decision was provided for this candidate.",
-                    "issue_type": "",
-                    "review_source": "",
-                    "reviewed_at_utc": "",
-                }
-            )
-        else:
+        if decision is not None:
             row.update(decision)
+            row["decision_source"] = "external_review_override"
+            row["decision_rule"] = "external_review_override"
+        row["candidate_status"] = "candidate_decided"
         reviewed.append(row)
         if row["review_status"] == "confirmed_frcsd_quality_issue":
             confirmed.append(row)
@@ -54,6 +52,55 @@ def apply_review_decisions(
         else:
             manual.append(row)
     return reviewed, confirmed, exclusions, manual
+
+
+def _automatic_decision(candidate: dict[str, Any]) -> dict[str, Any]:
+    equivalent = bool(candidate.get("automatic_all_directions_equivalent"))
+    anchor_confidence = str(candidate.get("anchor_confidence") or "insufficient")
+    if equivalent:
+        return {
+            "review_status": "excluded_false_positive",
+            "issue_type": "",
+            "review_reason": (
+                "All SWSD-required directions have an equivalent raw local "
+                "directed FRCSD carrier."
+            ),
+            "review_source": "t12_automatic_high_confidence",
+            "reviewed_at_utc": "",
+            "decision_source": "automatic_high_confidence",
+            "decision_rule": "equivalent_raw_carrier",
+        }
+    if anchor_confidence == "insufficient":
+        return {
+            "review_status": "excluded_false_positive",
+            "issue_type": "",
+            "review_reason": (
+                "Raw carrier evidence is not attributable to FRCSD with the "
+                "required T07 standard-surface or dual-T03 anchor confidence."
+            ),
+            "review_source": "t12_automatic_high_confidence",
+            "reviewed_at_utc": "",
+            "decision_source": "automatic_high_confidence",
+            "decision_rule": "insufficient_anchor_confidence",
+        }
+    issue_type = str(candidate.get("suggested_issue_type") or "")
+    if issue_type not in ISSUE_TYPES:
+        raise T12ContractError(
+            "automatic confirmed candidate has no valid issue_type: "
+            f"{candidate.get('candidate_id', '')}"
+        )
+    return {
+        "review_status": "confirmed_frcsd_quality_issue",
+        "issue_type": issue_type,
+        "review_reason": (
+            "A SWSD-required direction lacks an equivalent raw local FRCSD "
+            f"carrier with {anchor_confidence} anchor evidence."
+        ),
+        "review_source": "t12_automatic_high_confidence",
+        "reviewed_at_utc": "",
+        "decision_source": "automatic_high_confidence",
+        "decision_rule": "raw_carrier_missing_trusted_anchor",
+    }
 
 
 def _load_decisions(

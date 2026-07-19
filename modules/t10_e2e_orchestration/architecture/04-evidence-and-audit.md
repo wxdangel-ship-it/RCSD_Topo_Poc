@@ -24,7 +24,7 @@ Segment package 的 `t10_case_evidence_manifest.json` 必须额外记录 `scope.
 
 T11 stage 必须记录当前 Case root、关键 T06 Step3 文件、实际 `run_root`、candidates CSV/GPKG、人工模板与 summary。T11 summary 中的 discovered inputs 是完整文件级输入审计；T11 失败时 T09 必须 blocked。
 
-T12 stage 只在显式启用时存在，必须记录原始 1V1 F-RCSD、SWSD、RCSDIntersection、T05 audit、T06 交叉证据、参数、CRS、运行环境、耗时和全部发布路径。候选、confirmed、excluded、manual review 必须分层；没有 review decisions 时不得把候选发布为正式质量问题。
+T12 stage 只在显式启用时存在，必须记录原始 1V1 F-RCSD、SWSD、RCSDIntersection、T05 audit、T06 交叉证据、参数、CRS、运行环境、耗时和全部发布路径。候选、confirmed、excluded、manual review 必须分层；没有 review decisions 时由自动高置信规则发布 confirmed/excluded，默认 manual 为 0，外部 review decisions 仅作为可选决定覆盖。
 
 ## 4. T06 证据
 

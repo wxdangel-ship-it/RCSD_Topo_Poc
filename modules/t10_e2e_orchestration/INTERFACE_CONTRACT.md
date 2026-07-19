@@ -157,7 +157,7 @@ T10 Case runner 输入：
 - `run_id`：可选。未指定时自动生成。
 - `stop_after`：可选阶段名，用于受控截断执行。允许值为 `t01 / t07 / t03 / t04 / t05 / t06_step12 / t06_step3 / t11 / t12 / t09_step12 / t09_step3`。
 - `run_t12` / `--run-t12`：显式启用 T12，默认 `false`。
-- `t12_review_decisions` / `--t12-review-decisions`：可选复核决定 CSV；未提供时，候选只能进入 manual review 层。
+- `t12_review_decisions` / `--t12-review-decisions`：可选外部决定覆盖 CSV；未提供时，T12 使用自动高置信规则发布 confirmed/excluded，默认 manual 为 0。
 - `continue_on_error`：是否在某个 Case 阶段失败后继续记录后续 Case 或后续阶段阻断状态。
 
 Case runner 必须优先消费 Case package 中 `external_inputs/<slot>/<slot>_slice.gpkg`。当 package 仅为 manifest-only 时，才回退到 manifest 记录的 source path。`frcsd_1v1_roads / frcsd_1v1_nodes` 是仅在启用 T12 时要求的可选 slot，必须指向原始 1V1 F-RCSD，不得回退到 T06 Step3 输出。Segment package 同样使用该 package layout，因此无需修改 T01-T09 / T11 / T12 算法；但当 `case_id=segment_*` 且 Segment geometry `200m` buffer 范围内 T07/T03/T04 合法无候选时，runner 必须把该阶段登记为 `segment_no_candidate_handoff=true` 的显式空 handoff，继续后续链路，不得回退到人工半径或复制全量无关候选。
@@ -557,7 +557,7 @@ Segment 入口不得暴露 `RADIUS_M`；若调用环境中存在同名变量，S
 - `RUN_T08`：是否运行 T08 前置阶段，默认 `1`。
 - `RUN_T12`：是否在 T11 后、T09 前运行 T12，默认 `0`。
 - `T12_RUN_ID`：T12 子运行 ID，默认 `t12_full`；当 `T12_REVIEW_DECISIONS` 已绑定特定 run id 时必须显式一致。resume 未显式设置时复用总 manifest 的 `params.t12_run_id` 与既有 T12 输出；显式设置新值时必须使用 `<run_root>/t12_frcsd_quality_audit/<T12_RUN_ID>` 新目录并覆盖登记新的 T12 输出路径，禁止复用旧 run root 或覆盖旧审计结果。
-- `T12_REVIEW_DECISIONS`：可选外部复核决定 CSV；resume 时显式环境值优先，未设置才复用总 manifest 原值，实际值必须回写总 manifest 与 T12 stage 审计。候选运行完成后补充复核结论时，必须同时显式设置新的 `T12_RUN_ID`。
+- `T12_REVIEW_DECISIONS`：可选外部决定覆盖 CSV；未提供时使用 T12 自动高置信决定，resume 时显式环境值优先，未设置才复用总 manifest 原值，实际值必须回写总 manifest 与 T12 stage 审计。需要补充外部覆盖决定时，必须同时显式设置新的 `T12_RUN_ID`。
 - `T12_PROCESSING_CRS`：可选；T12 输入 CRS 不一致时必须显式指定 projected metre CRS，并透传为 T12 `--processing-crs`。空值不得触发自动 CRS 推断；resume 时显式环境值优先，否则复用总 manifest 已记录值。实际值必须进入总 manifest `params.t12_processing_crs` 与 T12 stage `params.processing_crs`。
 - `RUN_T08_TOOL7` / `RUN_T08_TOOL8`：可选值 `1 / 0 / auto`，默认 `auto`，仅当原始 SW 输入齐全时自动生成 Tool7/Tool8 输出。
 - `RUN_T08_TOOL9`：可选值 `1 / 0 / auto`，默认 `0`，用于显式启用 RCSD 清理前置输出。
@@ -570,7 +570,7 @@ Segment 入口不得暴露 `RADIUS_M`；若调用环境中存在同名变量，S
 
 该全量 runner 只消费并串联既有模块脚本或 callable，不新增 T01-T09 / T11 / T12 的算法接口。
 
-`scripts/t10_run_frcsd_quality_pipeline.sh` 是 F-RCSD 质量检查专用薄入口：强制 `RUN_T08=0 / RUN_T12=1`，新运行默认写入 `outputs/_work/t10_frcsd_quality_pipeline/<run_id>/`，并直接 `exec` 通用 full runner。新运行必须显式提供 `FRCSD_1V1_ROADS_PATH / FRCSD_1V1_NODES_PATH`；混合 CRS 输入通过可选 `T12_PROCESSING_CRS` 显式指定 projected metre CRS；与固定 profile 冲突的 `RUN_T08 / RUN_T12` 必须在调用 full runner 前阻断。有效 stage order 固定为 `t01 / t07_step12 / t03 / t04 / t05 / t06_step12 / t06_step3 / t11 / t12 / t09`。候选阶段不提供复核决定时 confirmed 为空且候选进入 manual；后续可对同一 T10 run root 设置 `RUN_STAGES=t12`、新的 `T12_RUN_ID` 和匹配的 `T12_REVIEW_DECISIONS`，仅续跑 T12 发布 confirmed，T09 无需重跑。它沿用通用 full runner 的输入、manifest、summary、resume、finalize-existing、失败退出和进度合同，不复制任何模块算法。
+`scripts/t10_run_frcsd_quality_pipeline.sh` 是 F-RCSD 质量检查专用薄入口：强制 `RUN_T08=0 / RUN_T12=1`，新运行默认写入 `outputs/_work/t10_frcsd_quality_pipeline/<run_id>/`，并直接 `exec` 通用 full runner。新运行必须显式提供 `FRCSD_1V1_ROADS_PATH / FRCSD_1V1_NODES_PATH`；混合 CRS 输入通过可选 `T12_PROCESSING_CRS` 显式指定 projected metre CRS；与固定 profile 冲突的 `RUN_T08 / RUN_T12` 必须在调用 full runner 前阻断。有效 stage order 固定为 `t01 / t07_step12 / t03 / t04 / t05 / t06_step12 / t06_step3 / t11 / t12 / t09`。首次不提供 `T12_REVIEW_DECISIONS` 时，T12 也必须按自动高置信规则发布 confirmed/excluded，默认 manual 为 0；外部决定仅作为可选覆盖，后续可对同一 T10 run root 设置 `RUN_STAGES=t12`、新的 `T12_RUN_ID` 和匹配的 `T12_REVIEW_DECISIONS`，仅续跑 T12 生成独立覆盖审计，T09 无需重跑。它沿用通用 full runner 的输入、manifest、summary、resume、finalize-existing、失败退出和进度合同，不复制任何模块算法。
 
 当前仍无 repo CLI、`Makefile` 目标、模块 `run.py` 或模块 `__main__.py`。
 

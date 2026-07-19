@@ -31,6 +31,10 @@ from .carrier_graph import (
 )
 from .inputs import LoadedInputs
 from .models import AuditConfig, EvidenceLayers
+from .semantic_carrier import (
+    STANDARD_SURFACE_TOLERANCE_M,
+    evaluate_portal_constrained_semantic_carrier,
+)
 
 
 def audit_frcsd_candidates(
@@ -171,9 +175,13 @@ def audit_frcsd_candidates(
                 "candidate_status": "candidate_pending_decision",
                 "suggested_issue_type": candidate["suggested_issue_type"],
                 "failed_directions": "|".join(candidate["failed_directions"]),
+                "raw_failed_directions": "|".join(
+                    candidate["raw_failed_directions"]
+                ),
                 "portal_equivalent": candidate[
                     "automatic_all_directions_equivalent"
                 ],
+                "equivalence_basis": candidate["automatic_equivalence_basis"],
                 "drivezone_in_road_ratio": candidate["drivezone_in_road_ratio"],
                 "geometry": geometry,
             }
@@ -186,6 +194,15 @@ def audit_frcsd_candidates(
     counters["portal_equivalent_candidate_count"] = sum(
         bool(row["automatic_all_directions_equivalent"]) for row in candidates
     )
+    counters["raw_equivalent_candidate_count"] = sum(
+        row["automatic_equivalence_basis"] == "raw_carrier"
+        for row in candidates
+    )
+    counters["semantic_equivalent_candidate_count"] = sum(
+        row["automatic_equivalence_basis"]
+        == "portal_constrained_semantic_carrier"
+        for row in candidates
+    )
     return candidates, layers, {
         "counts": dict(counters),
         "t07_truth_audit": truth_audit,
@@ -196,6 +213,18 @@ def audit_frcsd_candidates(
         "verdict_graph_edge_count": len(raw_full_graph.edges),
         "drivezone_reference_provided": drivezone_union is not None,
         "drivezone_affects_verdict": False,
+        "semantic_carrier_policy": {
+            "role": "raw_failure_exclusion_only",
+            "physical_road_required": True,
+            "standard_surface_tolerance_m": STANDARD_SURFACE_TOLERANCE_M,
+            "non_t07_endpoint_max_gap_m": config.portal_radius_m,
+            "internal_alias_max_gap_m": config.portal_radius_m,
+            "path_thresholds": {
+                "max_length_ratio": config.path_max_length_ratio,
+                "max_additive_m": config.path_max_additive_m,
+                "max_corridor_distance_m": config.path_max_corridor_distance_m,
+            },
+        },
     }
 
 
@@ -223,6 +252,7 @@ def _enrich_candidate(
     layers: EvidenceLayers,
 ) -> dict[str, Any]:
     direction_evidence: list[dict[str, Any]] = []
+    raw_failed_directions: list[str] = []
     failed_directions: list[str] = []
     issue_types: set[str] = set()
     for direction in required_directions:
@@ -323,19 +353,35 @@ def _enrich_candidate(
             for name, path in semantic_paths.items()
         }
         local_ok = bool(metrics["local_directed"]["accepted_equivalent_carrier"])
+        semantic_carrier = evaluate_portal_constrained_semantic_carrier(
+            path=semantic_paths["semantic_local_directed"],
+            metrics=semantic_metrics["semantic_local_directed"],
+            graph=semantic_local_graph,
+            start_portals=starts,
+            end_portals=ends,
+            source_anchor=anchors[source_index],
+            target_anchor=anchors[target_index],
+            source_truth_surface=t07_surfaces.get(pair_nodes[source_index]),
+            target_truth_surface=t07_surfaces.get(pair_nodes[target_index]),
+            canonicalizer=frcsd_canonicalizer,
+            raw_node_points=frcsd_raw_points,
+            portal_radius_m=config.portal_radius_m,
+        )
         if not local_ok:
-            failed_directions.append(direction)
-            if (
-                not semantic_metrics["semantic_local_directed"][
-                    "accepted_equivalent_carrier"
-                ]
-                and semantic_metrics["semantic_local_undirected"][
-                    "accepted_equivalent_carrier"
-                ]
-            ):
-                issue_types.add("directed_carrier_missing")
-            else:
-                issue_types.add("required_local_connectivity_missing")
+            raw_failed_directions.append(direction)
+            if not semantic_carrier["accepted_equivalent_carrier"]:
+                failed_directions.append(direction)
+                if (
+                    not semantic_metrics["semantic_local_directed"][
+                        "accepted_equivalent_carrier"
+                    ]
+                    and semantic_metrics["semantic_local_undirected"][
+                        "accepted_equivalent_carrier"
+                    ]
+                ):
+                    issue_types.add("directed_carrier_missing")
+                else:
+                    issue_types.add("required_local_connectivity_missing")
         for portal in starts + ends:
             point = frcsd_raw_points.get(portal["raw_id"])
             layers.anchor_portals.append(
@@ -353,10 +399,12 @@ def _enrich_candidate(
             carrier=carrier,
             segment_roads=segment_roads,
             swsd_road_id_field=field_name(segment_roads, "id"),
-            paths=paths,
-            metrics=metrics,
+            paths={**paths, **semantic_paths},
+            metrics={**metrics, **semantic_metrics},
             local_graph=local_graph,
             full_graph=full_graph,
+            semantic_local_graph=semantic_local_graph,
+            semantic_full_graph=semantic_full_graph,
         )
         direction_evidence.append(
             {
@@ -369,6 +417,17 @@ def _enrich_candidate(
                 "end_portal_candidates": ends,
                 **metrics,
                 **semantic_metrics,
+                "portal_constrained_semantic_directed": semantic_carrier,
+                "formal_equivalent_carrier": bool(
+                    local_ok or semantic_carrier["accepted_equivalent_carrier"]
+                ),
+                "equivalence_basis": (
+                    "raw_carrier"
+                    if local_ok
+                    else "portal_constrained_semantic_carrier"
+                    if semantic_carrier["accepted_equivalent_carrier"]
+                    else ""
+                ),
             }
         )
     if "directed_carrier_missing" in issue_types:
@@ -385,6 +444,7 @@ def _enrich_candidate(
         "review_reason": "",
         "suggested_issue_type": suggested_issue_type,
         "required_directions": required_directions,
+        "raw_failed_directions": raw_failed_directions,
         "failed_directions": failed_directions,
         "anchor_modules": [anchor.source_module for anchor in anchors],
         "base_nodes": base_nodes,
@@ -405,6 +465,16 @@ def _enrich_candidate(
             for index, anchor in enumerate(anchors)
         ],
         "automatic_all_directions_equivalent": not failed_directions,
+        "automatic_equivalence_basis": (
+            "raw_carrier"
+            if not raw_failed_directions
+            else "portal_constrained_semantic_carrier"
+            if not failed_directions
+            else ""
+        ),
+        "portal_constrained_semantic_all_raw_failures_equivalent": bool(
+            raw_failed_directions and not failed_directions
+        ),
         "directions": direction_evidence,
         "t06_cross_evidence": dict(t06_cross_evidence),
     }
@@ -439,6 +509,8 @@ def _append_path_layers(
     metrics: Mapping[str, Mapping[str, Any]],
     local_graph: GraphBundle,
     full_graph: GraphBundle,
+    semantic_local_graph: GraphBundle,
+    semantic_full_graph: GraphBundle,
 ) -> None:
     by_id = {
         normalize_id(row[swsd_road_id_field]): row
@@ -458,7 +530,14 @@ def _append_path_layers(
     for path_kind, path in paths.items():
         if path is None:
             continue
-        graph = local_graph if path_kind.startswith("local_") else full_graph
+        if path_kind.startswith("semantic_local_"):
+            graph = semantic_local_graph
+        elif path_kind.startswith("semantic_full_"):
+            graph = semantic_full_graph
+        elif path_kind.startswith("local_"):
+            graph = local_graph
+        else:
+            graph = full_graph
         for sequence, road_id in enumerate(path.road_ids, start=1):
             edge = graph.edges[road_id]
             layers.frcsd_carrier_paths.append(

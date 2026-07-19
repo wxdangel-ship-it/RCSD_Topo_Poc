@@ -3,10 +3,10 @@
 ## 1. 证据分层
 
 - candidate：canonical 图发现的宽召回疑点。
-- decision：raw endpoint carrier、标准路口 portal、锚点可信度、自动确认或排除理由。
+- decision：raw endpoint carrier、portal-constrained semantic carrier 的端点/内部 alias 门禁、标准路口 portal、锚点可信度、自动确认或排除理由。
 - review-only：可选外部 QA 覆盖、来源和时间。
 - formal：confirmed CSV/GPKG 与 summary 中的确认计数。
-- internal：raw/canonical carrier/portal GPKG、T06/DriveZone 交叉证据和运行日志。
+- internal：raw/canonical/portal-constrained semantic carrier/portal GPKG、T06/DriveZone 交叉证据和运行日志。
 
 ## 2. Formal 成果
 

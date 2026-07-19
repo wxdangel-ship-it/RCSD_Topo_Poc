@@ -16,12 +16,14 @@ def _candidate(
     *,
     equivalent: bool = False,
     anchor_confidence: str = "t07_standard_surface",
+    equivalence_basis: str = "raw_carrier",
 ) -> dict[str, object]:
     return {
         "candidate_id": candidate_id,
         "segment_id": candidate_id,
         "candidate_status": "candidate_pending_decision",
         "automatic_all_directions_equivalent": equivalent,
+        "automatic_equivalence_basis": equivalence_basis if equivalent else "",
         "failed_directions": [] if equivalent else ["pair0_to_pair1"],
         "suggested_issue_type": (
             "" if equivalent else "directed_carrier_missing"
@@ -72,6 +74,28 @@ def test_automatic_decisions_are_published_without_review() -> None:
     assert confirmed[0]["decision_source"] == "automatic_high_confidence"
     assert exclusions[0]["decision_rule"] == "equivalent_raw_carrier"
     assert exclusions[1]["decision_rule"] == "insufficient_anchor_confidence"
+
+
+def test_portal_constrained_semantic_equivalence_has_distinct_audit_rule() -> None:
+    reviewed, confirmed, exclusions, manual = apply_review_decisions(
+        [
+            _candidate(
+                "semantic-equivalent",
+                equivalent=True,
+                equivalence_basis="portal_constrained_semantic_carrier",
+            )
+        ],
+        run_id="run",
+        review_decisions_path=None,
+    )
+
+    assert confirmed == []
+    assert manual == []
+    assert reviewed == exclusions
+    assert exclusions[0]["decision_rule"] == (
+        "equivalent_portal_constrained_semantic_carrier"
+    )
+    assert "portal-constrained semantic" in exclusions[0]["review_reason"]
 
 
 def test_review_states_override_automatic_decisions_and_missing_keeps_automatic(

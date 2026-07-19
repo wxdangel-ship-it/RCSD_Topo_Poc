@@ -58,17 +58,29 @@ def _automatic_decision(candidate: dict[str, Any]) -> dict[str, Any]:
     equivalent = bool(candidate.get("automatic_all_directions_equivalent"))
     anchor_confidence = str(candidate.get("anchor_confidence") or "insufficient")
     if equivalent:
+        equivalence_basis = str(
+            candidate.get("automatic_equivalence_basis") or "raw_carrier"
+        )
+        if equivalence_basis == "portal_constrained_semantic_carrier":
+            reason = (
+                "All SWSD-required directions have an equivalent "
+                "portal-constrained semantic local directed FRCSD carrier."
+            )
+            rule = "equivalent_portal_constrained_semantic_carrier"
+        else:
+            reason = (
+                "All SWSD-required directions have an equivalent raw local "
+                "directed FRCSD carrier."
+            )
+            rule = "equivalent_raw_carrier"
         return {
             "review_status": "excluded_false_positive",
             "issue_type": "",
-            "review_reason": (
-                "All SWSD-required directions have an equivalent raw local "
-                "directed FRCSD carrier."
-            ),
+            "review_reason": reason,
             "review_source": "t12_automatic_high_confidence",
             "reviewed_at_utc": "",
             "decision_source": "automatic_high_confidence",
-            "decision_rule": "equivalent_raw_carrier",
+            "decision_rule": rule,
         }
     if anchor_confidence == "insufficient":
         return {
@@ -93,8 +105,9 @@ def _automatic_decision(candidate: dict[str, Any]) -> dict[str, Any]:
         "review_status": "confirmed_frcsd_quality_issue",
         "issue_type": issue_type,
         "review_reason": (
-            "A SWSD-required direction lacks an equivalent raw local FRCSD "
-            f"carrier with {anchor_confidence} anchor evidence."
+            "A SWSD-required direction lacks an equivalent trusted local "
+            "FRCSD carrier after raw and portal-constrained semantic checks "
+            f"with {anchor_confidence} anchor evidence."
         ),
         "review_source": "t12_automatic_high_confidence",
         "reviewed_at_utc": "",

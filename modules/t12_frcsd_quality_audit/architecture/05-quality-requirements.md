@@ -3,7 +3,7 @@
 ## 1. 业务正确性
 
 - SWSD 必需方向、FRCSD direction 和 portal 角色必须可解释。
-- 复合路口 canonical 节点组与 raw endpoint 物理通行必须分层；canonical 零长度可达不得替代正式 raw carrier。
+- 复合路口 canonical 节点组与 raw endpoint 物理通行必须分层；canonical 零长度可达、无物理 Road 路径、标准面外 T07 alias 或超出 portal radius 的内部 alias 不得替代 carrier。受信 semantic carrier 只能排除 raw 假断裂，不能单独确认问题。
 - DriveZone 与 T06 只作证据，不能静默改变 verdict。
 
 ## 2. GIS 与拓扑

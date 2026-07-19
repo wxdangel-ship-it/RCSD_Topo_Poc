@@ -4,7 +4,7 @@
 
 - T04 或 T03/T04 混合 anchor 可能存在端点不确定性；在没有 T07 标准面或双 T03 正式锚点信用时自动排除，不归因 FRCSD。
 - 大裁剪边缘可能制造假断路；Case manifest 存在时使用 500m 内区审计。
-- FRCSD main/subnode 的 canonical 折叠可能制造假通路；正式 verdict 必须使用 raw endpoint 图。T05 grouped node 或 RCSDIntersection 覆盖不完整会降低召回，必须留审计统计。
+- FRCSD main/subnode 的 canonical 折叠可能制造假通路，也可能把同一现实路口拆成 raw 假断裂。raw endpoint 图继续作为主证据；semantic carrier 只有在包含物理 Road、T07 alias 位于同一唯一标准面、非 T07 端点和内部 alias 间距受 portal radius 约束时才能排除 raw failure，且不能单独确认问题。T05 grouped node 或 RCSDIntersection 覆盖不完整会降低召回，必须留审计统计。
 
 ## 2. 参数推广风险
 

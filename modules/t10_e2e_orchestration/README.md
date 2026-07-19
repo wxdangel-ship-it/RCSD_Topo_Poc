@@ -41,7 +41,7 @@ bash scripts/t10_run_frcsd_quality_pipeline.sh
 
 当 T12 输入存在不同 CRS 时，full runner 与 F-RCSD 专用入口只在调用方显式设置 `T12_PROCESSING_CRS=<projected metre CRS>` 后执行坐标转换；未设置时保持 T12 的 CRS mismatch 硬阻断，不自动推断目标 CRS。
 
-F-RCSD 质检分为候选与复核发布两阶段：首次不提供 `T12_REVIEW_DECISIONS` 时 confirmed 为空、候选进入 manual；复核后对同一 T10 run root 设置 `RUN_STAGES=t12`，并显式提供新的 `T12_RUN_ID` 与匹配的复核 CSV，仅续跑 T12。新的 T12 输出目录和 manifest 登记不会覆盖候选阶段审计，audit-only T12 也不要求重跑 T09。
+F-RCSD 质检默认由 T12 自动高置信规则发布 confirmed/excluded：首次不提供 `T12_REVIEW_DECISIONS` 时也会形成最终质量问题，默认 manual 为 0。`T12_REVIEW_DECISIONS` 仅是可选外部决定覆盖；需要覆盖时，对同一 T10 run root 设置 `RUN_STAGES=t12`，并显式提供新的 `T12_RUN_ID` 与匹配的复核 CSV，仅续跑 T12。新的 T12 输出目录和 manifest 登记不会覆盖自动决定阶段审计，audit-only T12 也不要求重跑 T09。
 
 模块 callable 入口和参数以 `INTERFACE_CONTRACT.md` 与 `docs/repository-metadata/entrypoint-registry.md` 为准。
 

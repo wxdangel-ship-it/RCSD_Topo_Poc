@@ -86,7 +86,7 @@ T10 必须保持连续 nodes handoff：T07 Step2 nodes 进入 T03，T03 downstre
 | 既有 T10 run root | Segment package 反查 T01 Segment、T06 problem registry、replacement plan 和 relation 证据的来源。 |
 | T06 problem registry / relation audit | 生成上游反馈包和 feedback iteration 输入。 |
 | T11 relation repair candidates / summary | T06 后、T09 前的人工 relation 候选审计证据；不作为 T09 输入。 |
-| 原始 1V1 F-RCSD Road/Node 与可选 T12 review decisions | T12 可选质检的目标承载网与人工复核决定；不得以 T06 Step3 F-RCSD 替代。 |
+| 原始 1V1 F-RCSD Road/Node 与可选 T12 review decisions | T12 自动质检的目标承载网与可选外部决定覆盖；不得以 T06 Step3 F-RCSD 替代。 |
 | 既有 full pipeline run root | resume 或 finalize-existing 的恢复对象。 |
 
 ## 6. 输出

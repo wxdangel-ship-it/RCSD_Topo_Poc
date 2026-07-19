@@ -55,6 +55,8 @@ def test_frcsd_quality_profile_help_and_preflight_blocks() -> None:
     assert help_result.returncode == 0
     assert "T01 -> T07 -> T03 -> T04 -> T05 -> T06 -> T11 -> T12 -> T09" in help_result.stdout
     assert "T12_PROCESSING_CRS" in help_result.stdout
+    assert "T12_RUN_ID" in help_result.stdout
+    assert "T12_REVIEW_DECISIONS" in help_result.stdout
 
     base_env = os.environ.copy()
     for key in (

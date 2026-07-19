@@ -24,6 +24,7 @@ Common env:
   RUN_T08_TOOL9        1, 0 or auto. Default: 0
   RUN_T07_STEP3        1, 0 or auto. Default: 0. Optional legacy relation-backfill compatibility stage.
   RUN_T12              1 or 0. Default: 0. Optional audit-only FRCSD quality stage.
+  T12_RUN_ID           Default: t12_full. Set a new value when publishing reviewed results on resume.
   T12_REVIEW_DECISIONS Optional external review-decision CSV for T12.
   T12_CASE_MANIFEST    Optional T10 Case manifest for explicit crop-edge exclusion.
                        Leave empty for full-city data.
@@ -92,6 +93,11 @@ RUN_STAGES="${RUN_STAGES:-}"
 RUN_T07_STEP3="${RUN_T07_STEP3:-0}"
 RUN_T08="${RUN_T08:-1}"
 RUN_T12="${RUN_T12:-0}"
+T12_RUN_ID_WAS_EXPLICIT=0
+if [[ -n "${T12_RUN_ID:-}" ]]; then
+  T12_RUN_ID_WAS_EXPLICIT=1
+fi
+T12_RUN_ID="${T12_RUN_ID:-t12_full}"
 T12_REVIEW_DECISIONS="${T12_REVIEW_DECISIONS:-}"
 T12_CASE_MANIFEST="${T12_CASE_MANIFEST:-}"
 T12_PROCESSING_CRS="${T12_PROCESSING_CRS:-}"
@@ -835,8 +841,23 @@ if [[ "$RESUME_MODE" == "1" ]]; then
   RCSDNODE_PATH="$(manifest_get inputs rcsdnode "$RCSDNODE_PATH")"
   FRCSD_1V1_ROADS_PATH="$(manifest_get inputs frcsd_1v1_roads "$FRCSD_1V1_ROADS_PATH")"
   FRCSD_1V1_NODES_PATH="$(manifest_get inputs frcsd_1v1_nodes "$FRCSD_1V1_NODES_PATH")"
-  T12_REVIEW_DECISIONS="$(manifest_get inputs t12_review_decisions "$T12_REVIEW_DECISIONS")"
-  T12_CASE_MANIFEST="$(manifest_get inputs t12_case_manifest "$T12_CASE_MANIFEST")"
+  if [[ "$T12_RUN_ID_WAS_EXPLICIT" != "1" ]]; then
+    T12_MANIFEST_RUN_ID="$(manifest_get params t12_run_id "")"
+    if [[ -n "$T12_MANIFEST_RUN_ID" ]]; then
+      T12_RUN_ID="$T12_MANIFEST_RUN_ID"
+    else
+      T12_LEGACY_RUN_ROOT="$(manifest_get outputs t12_run_root "")"
+      if [[ -n "$T12_LEGACY_RUN_ROOT" ]]; then
+        T12_RUN_ID="$(basename "$T12_LEGACY_RUN_ROOT")"
+      fi
+    fi
+  fi
+  if [[ -z "$T12_REVIEW_DECISIONS" ]]; then
+    T12_REVIEW_DECISIONS="$(manifest_get inputs t12_review_decisions "")"
+  fi
+  if [[ -z "$T12_CASE_MANIFEST" ]]; then
+    T12_CASE_MANIFEST="$(manifest_get inputs t12_case_manifest "")"
+  fi
   if [[ -z "$T12_PROCESSING_CRS" ]]; then
     T12_PROCESSING_CRS="$(manifest_get params t12_processing_crs "")"
   fi
@@ -877,6 +898,7 @@ else
   fi
 fi
 if [[ "$RUN_T12" == "1" ]]; then
+  manifest_set params t12_run_id "$T12_RUN_ID"
   manifest_set params t12_processing_crs "$T12_PROCESSING_CRS"
 fi
 
@@ -1401,11 +1423,24 @@ if should_run_stage t11; then
 fi
 
 T12_OUT_ROOT="$RUN_ROOT/t12_frcsd_quality_audit"
-T12_RUN_ID="${T12_RUN_ID:-t12_full}"
-T12_RUN_ROOT="$(manifest_get outputs t12_run_root "$T12_OUT_ROOT/$T12_RUN_ID")"
-T12_CANDIDATES_CSV="$(manifest_get outputs t12_candidates_csv "$T12_RUN_ROOT/t12_frcsd_quality_candidates.csv")"
-T12_CONFIRMED_CSV="$(manifest_get outputs t12_confirmed_csv "$T12_RUN_ROOT/t12_frcsd_confirmed_quality_issues.csv")"
-T12_SUMMARY_JSON="$(manifest_get outputs t12_summary_json "$T12_RUN_ROOT/t12_frcsd_quality_audit_summary.json")"
+T12_MANIFEST_RUN_ROOT="$(manifest_get outputs t12_run_root "")"
+T12_USE_MANIFEST_OUTPUTS=0
+if [[ "$T12_RUN_ID_WAS_EXPLICIT" != "1" && -n "$T12_MANIFEST_RUN_ROOT" ]]; then
+  if [[ "$(basename "$T12_MANIFEST_RUN_ROOT")" == "$T12_RUN_ID" ]]; then
+    T12_USE_MANIFEST_OUTPUTS=1
+  fi
+fi
+if [[ "$T12_USE_MANIFEST_OUTPUTS" == "1" ]]; then
+  T12_RUN_ROOT="$(manifest_get outputs t12_run_root "$T12_OUT_ROOT/$T12_RUN_ID")"
+  T12_CANDIDATES_CSV="$(manifest_get outputs t12_candidates_csv "$T12_RUN_ROOT/t12_frcsd_quality_candidates.csv")"
+  T12_CONFIRMED_CSV="$(manifest_get outputs t12_confirmed_csv "$T12_RUN_ROOT/t12_frcsd_confirmed_quality_issues.csv")"
+  T12_SUMMARY_JSON="$(manifest_get outputs t12_summary_json "$T12_RUN_ROOT/t12_frcsd_quality_audit_summary.json")"
+else
+  T12_RUN_ROOT="$T12_OUT_ROOT/$T12_RUN_ID"
+  T12_CANDIDATES_CSV="$T12_RUN_ROOT/t12_frcsd_quality_candidates.csv"
+  T12_CONFIRMED_CSV="$T12_RUN_ROOT/t12_frcsd_confirmed_quality_issues.csv"
+  T12_SUMMARY_JSON="$T12_RUN_ROOT/t12_frcsd_quality_audit_summary.json"
+fi
 if should_run_t12; then
   T05_ANCHOR_AUDIT="$T05_PHASE2_ROOT/intersection_match_all_audit.csv"
   require_file FRCSD_1V1_ROADS_PATH "$FRCSD_1V1_ROADS_PATH"
@@ -1417,6 +1452,8 @@ if should_run_t12; then
   if [[ -n "$T12_CASE_MANIFEST" ]]; then
     require_file T12_CASE_MANIFEST "$T12_CASE_MANIFEST"
   fi
+  manifest_set inputs t12_review_decisions "$T12_REVIEW_DECISIONS"
+  manifest_set inputs t12_case_manifest "$T12_CASE_MANIFEST"
   T12_ARGS=(
     "$PYTHON_BIN" scripts/t12_run_frcsd_quality_audit.py
     --run-id "$T12_RUN_ID"
@@ -1466,6 +1503,7 @@ if should_run_t12; then
     "outputs.confirmed_csv=$T12_CONFIRMED_CSV" \
     "outputs.summary_json=$T12_SUMMARY_JSON" \
     "params.audit_only=true" \
+    "params.run_id=$T12_RUN_ID" \
     "params.processing_crs=$T12_PROCESSING_CRS" \
     "execution_context.run_root=$T12_RUN_ROOT"
 fi

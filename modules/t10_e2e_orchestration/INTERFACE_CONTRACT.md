@@ -556,7 +556,8 @@ Segment 入口不得暴露 `RADIUS_M`；若调用环境中存在同名变量，S
 - `RUN_STAGES`：可选，逗号分隔的精确执行阶段集合；设置后只执行列出的阶段。
 - `RUN_T08`：是否运行 T08 前置阶段，默认 `1`。
 - `RUN_T12`：是否在 T11 后、T09 前运行 T12，默认 `0`。
-- `T12_RUN_ID`：T12 子运行 ID，默认 `t12_full`；当 `T12_REVIEW_DECISIONS` 已绑定特定 run id 时必须显式一致。
+- `T12_RUN_ID`：T12 子运行 ID，默认 `t12_full`；当 `T12_REVIEW_DECISIONS` 已绑定特定 run id 时必须显式一致。resume 未显式设置时复用总 manifest 的 `params.t12_run_id` 与既有 T12 输出；显式设置新值时必须使用 `<run_root>/t12_frcsd_quality_audit/<T12_RUN_ID>` 新目录并覆盖登记新的 T12 输出路径，禁止复用旧 run root 或覆盖旧审计结果。
+- `T12_REVIEW_DECISIONS`：可选外部复核决定 CSV；resume 时显式环境值优先，未设置才复用总 manifest 原值，实际值必须回写总 manifest 与 T12 stage 审计。候选运行完成后补充复核结论时，必须同时显式设置新的 `T12_RUN_ID`。
 - `T12_PROCESSING_CRS`：可选；T12 输入 CRS 不一致时必须显式指定 projected metre CRS，并透传为 T12 `--processing-crs`。空值不得触发自动 CRS 推断；resume 时显式环境值优先，否则复用总 manifest 已记录值。实际值必须进入总 manifest `params.t12_processing_crs` 与 T12 stage `params.processing_crs`。
 - `RUN_T08_TOOL7` / `RUN_T08_TOOL8`：可选值 `1 / 0 / auto`，默认 `auto`，仅当原始 SW 输入齐全时自动生成 Tool7/Tool8 输出。
 - `RUN_T08_TOOL9`：可选值 `1 / 0 / auto`，默认 `0`，用于显式启用 RCSD 清理前置输出。
@@ -569,7 +570,7 @@ Segment 入口不得暴露 `RADIUS_M`；若调用环境中存在同名变量，S
 
 该全量 runner 只消费并串联既有模块脚本或 callable，不新增 T01-T09 / T11 / T12 的算法接口。
 
-`scripts/t10_run_frcsd_quality_pipeline.sh` 是 F-RCSD 质量检查专用薄入口：强制 `RUN_T08=0 / RUN_T12=1`，新运行默认写入 `outputs/_work/t10_frcsd_quality_pipeline/<run_id>/`，并直接 `exec` 通用 full runner。新运行必须显式提供 `FRCSD_1V1_ROADS_PATH / FRCSD_1V1_NODES_PATH`；混合 CRS 输入通过可选 `T12_PROCESSING_CRS` 显式指定 projected metre CRS；与固定 profile 冲突的 `RUN_T08 / RUN_T12` 必须在调用 full runner 前阻断。有效 stage order 固定为 `t01 / t07_step12 / t03 / t04 / t05 / t06_step12 / t06_step3 / t11 / t12 / t09`。它沿用通用 full runner 的输入、manifest、summary、resume、finalize-existing、失败退出和进度合同，不复制任何模块算法。
+`scripts/t10_run_frcsd_quality_pipeline.sh` 是 F-RCSD 质量检查专用薄入口：强制 `RUN_T08=0 / RUN_T12=1`，新运行默认写入 `outputs/_work/t10_frcsd_quality_pipeline/<run_id>/`，并直接 `exec` 通用 full runner。新运行必须显式提供 `FRCSD_1V1_ROADS_PATH / FRCSD_1V1_NODES_PATH`；混合 CRS 输入通过可选 `T12_PROCESSING_CRS` 显式指定 projected metre CRS；与固定 profile 冲突的 `RUN_T08 / RUN_T12` 必须在调用 full runner 前阻断。有效 stage order 固定为 `t01 / t07_step12 / t03 / t04 / t05 / t06_step12 / t06_step3 / t11 / t12 / t09`。候选阶段不提供复核决定时 confirmed 为空且候选进入 manual；后续可对同一 T10 run root 设置 `RUN_STAGES=t12`、新的 `T12_RUN_ID` 和匹配的 `T12_REVIEW_DECISIONS`，仅续跑 T12 发布 confirmed，T09 无需重跑。它沿用通用 full runner 的输入、manifest、summary、resume、finalize-existing、失败退出和进度合同，不复制任何模块算法。
 
 当前仍无 repo CLI、`Makefile` 目标、模块 `run.py` 或模块 `__main__.py`。
 

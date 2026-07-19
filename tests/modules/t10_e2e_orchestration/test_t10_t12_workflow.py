@@ -139,6 +139,9 @@ def test_full_runner_declares_t12_resume_manifest_and_finalize_contract() -> Non
 
     assert 'RUN_T12="${RUN_T12:-0}"' in script
     assert 'T12_RUN_ID="${T12_RUN_ID:-t12_full}"' in script
+    assert 'T12_RUN_ID_WAS_EXPLICIT=0' in script
+    assert 'T12_MANIFEST_RUN_ID="$(manifest_get params t12_run_id "")"' in script
+    assert 'T12_LEGACY_RUN_ROOT="$(manifest_get outputs t12_run_root "")"' in script
     assert 'T12_PROCESSING_CRS="${T12_PROCESSING_CRS:-}"' in script
     assert '*((' + '"T08",) if os.getenv("RUN_T08")=="1" else ()),' in script
     assert '*(("T12",) if os.getenv("RUN_T12")=="1" else ()),' in script
@@ -156,7 +159,25 @@ def test_full_runner_declares_t12_resume_manifest_and_finalize_contract() -> Non
     assert 'T12_ARGS+=(--processing-crs "$T12_PROCESSING_CRS")' in t12_region
     assert '"params.processing_crs=$T12_PROCESSING_CRS"' in t12_region
     assert 'T12_PROCESSING_CRS="$(manifest_get params t12_processing_crs "")"' in script
+    assert 'manifest_set params t12_run_id "$T12_RUN_ID"' in script
     assert 'manifest_set params t12_processing_crs "$T12_PROCESSING_CRS"' in script
+    assert 'T12_USE_MANIFEST_OUTPUTS=0' in t12_region
+    assert '"$(basename "$T12_MANIFEST_RUN_ROOT")" == "$T12_RUN_ID"' in t12_region
+    assert 'T12_RUN_ROOT="$T12_OUT_ROOT/$T12_RUN_ID"' in t12_region
+    assert '"params.run_id=$T12_RUN_ID"' in t12_region
     assert '"t12_enabled": os.environ.get("RUN_T12") == "1"' in script
     assert 'missing_final_outputs.append("t12_stage")' in script
     assert 'T08_STAGE_STATUS="skipped"' not in script
+
+
+def test_full_runner_explicit_review_resume_overrides_manifest_inputs() -> None:
+    repo_root = Path(__file__).resolve().parents[3]
+    script = (repo_root / "scripts" / "t10_run_innernet_full_pipeline.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'if [[ -z "$T12_REVIEW_DECISIONS" ]]; then' in script
+    assert 'T12_REVIEW_DECISIONS="$(manifest_get inputs t12_review_decisions "")"' in script
+    assert 'manifest_set inputs t12_review_decisions "$T12_REVIEW_DECISIONS"' in script
+    assert 'if [[ -z "$T12_CASE_MANIFEST" ]]; then' in script
+    assert 'manifest_set inputs t12_case_manifest "$T12_CASE_MANIFEST"' in script

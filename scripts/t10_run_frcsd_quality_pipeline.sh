@@ -22,6 +22,10 @@ Optional CRS input:
   T12_PROCESSING_CRS    Explicit projected metre CRS for mixed-CRS T12 inputs.
                         Example: EPSG:3857
 
+Optional reviewed publication input:
+  T12_RUN_ID            T12 sub-run ID. Use a new value when resuming reviewed output.
+  T12_REVIEW_DECISIONS  Review-decision CSV whose run_id matches T12_RUN_ID.
+
 Profile invariants:
   RUN_T08=0
   RUN_T12=1

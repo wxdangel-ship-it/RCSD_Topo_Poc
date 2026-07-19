@@ -2,14 +2,15 @@
 
 ## 1. 证据分层
 
-- candidate：算法发现的待复核疑点。
-- review-only：外部复核决定、排除理由和 manual 队列。
+- candidate：canonical 图发现的宽召回疑点。
+- decision：raw endpoint carrier、标准路口 portal、锚点可信度、自动确认或排除理由。
+- review-only：可选外部 QA 覆盖、来源和时间。
 - formal：confirmed CSV/GPKG 与 summary 中的确认计数。
-- internal：carrier/portal GPKG、T06/DriveZone 交叉证据和运行日志。
+- internal：raw/canonical carrier/portal GPKG、T06/DriveZone 交叉证据和运行日志。
 
 ## 2. Formal 成果
 
-`t12_frcsd_confirmed_quality_issues.*` 只含 confirmed。任何自动候选、概率标签或未复核行都不得进入。
+`t12_frcsd_confirmed_quality_issues.*` 只含自动高置信或外部 override confirmed。任何仅 canonical 候选、概率标签或锚点信用不足行都不得进入。
 
 ## 3. 运行审计
 

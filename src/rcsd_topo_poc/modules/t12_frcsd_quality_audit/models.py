@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = "2026-07-18.t12_frcsd_quality_audit.v1"
+SCHEMA_VERSION = "2026-07-19.t12_frcsd_quality_audit.v2"
 
 REVIEW_STATUSES = frozenset(
     {

@@ -3,7 +3,7 @@
 ## 1. 业务正确性
 
 - SWSD 必需方向、FRCSD direction 和 portal 角色必须可解释。
-- 复合路口节点组和零长度可达语义必须一致。
+- 复合路口 canonical 节点组与 raw endpoint 物理通行必须分层；canonical 零长度可达不得替代正式 raw carrier。
 - DriveZone 与 T06 只作证据，不能静默改变 verdict。
 
 ## 2. GIS 与拓扑
@@ -12,10 +12,10 @@
 - 无效几何、缺失 endpoint 和错误批次证据必须阻断。
 - 不执行 geometry repair、snap、endpoint 补点或其它 silent fix。
 
-## 3. Review 与 formal
+## 3. Decision、Review 与 formal
 
-- 无复核时 confirmed=0。
-- confirmed/excluded/manual 三组互斥且计数守恒。
+- 无复核时也必须自动产生 confirmed/excluded，默认 manual=0。
+- confirmed/excluded/manual 三组互斥且计数守恒；manual 只允许由显式外部 override 产生。
 - 禁止高/中概率正式分类。
 
 ## 4. 观测与性能

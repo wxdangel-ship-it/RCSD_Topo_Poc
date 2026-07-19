@@ -87,12 +87,17 @@ def write_outputs(
             "manual_review_required_count": len(manual),
             "by_issue_type": _count_by(confirmed, "issue_type"),
             "by_review_status": _count_by(reviewed, "review_status"),
+            "by_decision_source": _count_by(reviewed, "decision_source"),
+            "by_decision_rule": _count_by(reviewed, "decision_rule"),
         },
         "crs": input_audit["crs"],
         "quality": {
             "invalid_geometry_count": input_audit["invalid_geometry_count"],
             **dict(topology_audit),
             "t07_truth_audit": candidate_audit.get("t07_truth_audit"),
+            "t07_surface_audit": _compact_t07_surface_audit(
+                candidate_audit.get("t07_surface_audit")
+            ),
         },
         "runtime": dict(runtime),
         "outputs": {name: str(path) for name, path in paths.items()},
@@ -197,13 +202,25 @@ def _candidate_fields() -> tuple[str, ...]:
         "failed_directions",
         "anchor_modules",
         "base_nodes",
+        "anchor_confidence",
+        "t07_surface_statuses",
         "portal_equivalent",
         "drivezone_in_road_ratio",
         "local_directed_status",
         "local_undirected_status",
         "full_directed_status",
+        "raw_local_directed_status",
+        "raw_local_undirected_status",
+        "raw_full_directed_status",
+        "semantic_local_directed_status",
+        "semantic_local_undirected_status",
         "t06_reject_reason",
         "t06_root_cause",
+        "decision_source",
+        "decision_rule",
+        "automatic_review_status",
+        "automatic_issue_type",
+        "automatic_decision_rule",
         "review_status",
         "review_reason",
         "review_source",
@@ -225,6 +242,14 @@ def _flatten_candidate(row: Mapping[str, Any]) -> dict[str, Any]:
         f"{item['direction']}:{_path_status(item.get('full_directed') or {})}"
         for item in directions
     ]
+    semantic_local_directed = [
+        f"{item['direction']}:{_path_status(item.get('semantic_local_directed') or {})}"
+        for item in directions
+    ]
+    semantic_local_undirected = [
+        f"{item['direction']}:{_path_status(item.get('semantic_local_undirected') or {})}"
+        for item in directions
+    ]
     t06 = row.get("t06_cross_evidence") or {}
     return {
         "candidate_id": row.get("candidate_id", ""),
@@ -236,14 +261,32 @@ def _flatten_candidate(row: Mapping[str, Any]) -> dict[str, Any]:
         "failed_directions": "|".join(row.get("failed_directions") or []),
         "anchor_modules": "|".join(row.get("anchor_modules") or []),
         "base_nodes": "|".join(row.get("base_nodes") or []),
+        "anchor_confidence": row.get("anchor_confidence", ""),
+        "t07_surface_statuses": "|".join(
+            row.get("t07_surface_statuses") or []
+        ),
         "portal_equivalent": bool(row.get("automatic_all_directions_equivalent")),
         "drivezone_in_road_ratio": row.get("drivezone_in_road_ratio"),
         "local_directed_status": "|".join(local_directed),
         "local_undirected_status": "|".join(local_undirected),
         "full_directed_status": "|".join(full_directed),
+        "raw_local_directed_status": "|".join(local_directed),
+        "raw_local_undirected_status": "|".join(local_undirected),
+        "raw_full_directed_status": "|".join(full_directed),
+        "semantic_local_directed_status": "|".join(
+            semantic_local_directed
+        ),
+        "semantic_local_undirected_status": "|".join(
+            semantic_local_undirected
+        ),
         "t06_reject_reason": t06.get("t06_reject_reason", ""),
         "t06_root_cause": t06.get("t06_root_cause_category", "")
         or t06.get("failure_root_cause_category", ""),
+        "decision_source": row.get("decision_source", ""),
+        "decision_rule": row.get("decision_rule", ""),
+        "automatic_review_status": row.get("automatic_review_status", ""),
+        "automatic_issue_type": row.get("automatic_issue_type", ""),
+        "automatic_decision_rule": row.get("automatic_decision_rule", ""),
         "review_status": row.get("review_status", ""),
         "review_reason": row.get("review_reason", ""),
         "review_source": row.get("review_source", ""),
@@ -264,6 +307,9 @@ def _review_feature_fields(row: Mapping[str, Any]) -> dict[str, Any]:
         "review_status": row.get("review_status", ""),
         "issue_type": row.get("issue_type", ""),
         "review_reason": row.get("review_reason", ""),
+        "decision_source": row.get("decision_source", ""),
+        "decision_rule": row.get("decision_rule", ""),
+        "anchor_confidence": row.get("anchor_confidence", ""),
     }
 
 
@@ -357,6 +403,17 @@ def _count_by(rows: list[dict[str, Any]], field: str) -> dict[str, int]:
     return dict(sorted(output.items()))
 
 
+def _compact_t07_surface_audit(value: Any) -> Any:
+    if not isinstance(value, Mapping):
+        return value
+    compact = dict(value)
+    surface_ids = compact.pop("surface_ids", {})
+    compact["surface_id_count"] = (
+        len(surface_ids) if isinstance(surface_ids, Mapping) else 0
+    )
+    return compact
+
+
 def _report(
     summary: Mapping[str, Any],
     confirmed: list[dict[str, Any]],
@@ -369,32 +426,34 @@ def _report(
         "",
         f"- Run ID：`{summary['run_id']}`",
         f"- 自动候选：{counts['candidate_count']}",
-        f"- 已确认质量问题：{counts['confirmed_quality_issue_count']}",
-        f"- 复核排除：{counts['review_exclusion_count']}",
-        f"- 待人工复核：{counts['manual_review_required_count']}",
+        f"- 最终确认质量问题：{counts['confirmed_quality_issue_count']}",
+        f"- 最终排除：{counts['review_exclusion_count']}",
+        f"- 显式 QA 待定：{counts['manual_review_required_count']}",
         "- Silent fix：否",
         "",
-        "最终问题清单只包含 `confirmed_frcsd_quality_issue`，不使用高/中概率标签。",
+        "最终问题清单只包含自动高置信或外部 QA 覆盖确认的 "
+        "`confirmed_frcsd_quality_issue`，不使用高/中概率标签。",
         "",
         "## 已确认质量问题",
         "",
-        "| Segment | 类型 | 复核理由 |",
-        "|---|---|---|",
+        "| Segment | 类型 | 决定来源 | 证据理由 |",
+        "|---|---|---|---|",
     ]
     for row in confirmed:
         lines.append(
             f"| {row['segment_id']} | {row['issue_type']} | "
+            f"{row['decision_source']} | "
             f"{str(row['review_reason']).replace('|', '/')} |"
         )
     if not confirmed:
-        lines.append("| - | - | 当前无已确认问题 |")
+        lines.append("| - | - | - | 当前无已确认问题 |")
     lines.extend(
         [
             "",
-            "## 复核分层",
+            "## 决定分层",
             "",
             f"- 排除项：{len(exclusions)}",
-            f"- 待复核项：{len(manual)}",
+            f"- 显式 QA 待定项：{len(manual)}",
             "",
         ]
     )

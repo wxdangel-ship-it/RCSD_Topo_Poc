@@ -25,7 +25,7 @@
 | 复核证据 | 能支持目视检查、GIS 叠加、拓扑抽查和问题 case 追踪。 |
 | Case 证据包 | T10 以外部输入全集为主体，模块间中间产物只作为 handoff audit，不作为外部输入证据。 |
 | 全量编排 manifest | T10 内网全量总控记录阶段顺序、显式输入输出、日志路径和最终 handoff；`t11` 固定位于 `t06_step3` 后，启用 T12 时顺序固定为 `t06_step3 -> t11 -> t12 -> t09`。F-RCSD 专用 profile 的 manifest 不登记未运行的 T08 stage。 |
-| T12 质量审计证据 | 显式记录原始 1V1 F-RCSD、SWSD、RCSDIntersection、T05/T06 交叉证据、CRS、参数、运行环境、耗时，以及 candidate/confirmed/excluded/manual review 分层输出。 |
+| T12 质量审计证据 | 显式记录原始 1V1 F-RCSD、SWSD、RCSDIntersection、T05/T06 交叉证据、CRS、参数、运行环境、耗时，以及 canonical 候选、raw endpoint carrier、自动 decision、confirmed/excluded 和可选 review override 分层输出。 |
 
 ## 内外网协作边界
 

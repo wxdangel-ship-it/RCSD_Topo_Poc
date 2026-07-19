@@ -2,9 +2,9 @@
 
 ## 1. 数据质量风险
 
-- T05 非 T07 anchor 可能存在端点不确定性；应进入 review，不自动归因 FRCSD。
+- T04 或 T03/T04 混合 anchor 可能存在端点不确定性；在没有 T07 标准面或双 T03 正式锚点信用时自动排除，不归因 FRCSD。
 - 大裁剪边缘可能制造假断路；Case manifest 存在时使用 500m 内区审计。
-- FRCSD main/subnode 和 T05 grouped node 不完整会增加 portal 误报。
+- FRCSD main/subnode 的 canonical 折叠可能制造假通路；正式 verdict 必须使用 raw endpoint 图。T05 grouped node 或 RCSDIntersection 覆盖不完整会降低召回，必须留审计统计。
 
 ## 2. 参数推广风险
 

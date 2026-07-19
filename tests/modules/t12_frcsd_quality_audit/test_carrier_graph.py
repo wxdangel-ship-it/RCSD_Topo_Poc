@@ -7,6 +7,7 @@ from shapely.geometry import LineString, Point
 from rcsd_topo_poc.modules.t12_frcsd_quality_audit.carrier_graph import (
     build_graph,
     build_node_context,
+    build_raw_node_context,
     path_metrics,
     shortest_path_between_sets,
 )
@@ -45,6 +46,45 @@ def test_camel_case_main_and_subnode_fields_are_canonicalized() -> None:
     assert canonicalizer.canonicalize("main") == "100"
     assert canonicalizer.canonicalize("child") == "100"
     assert groups["100"] == ("child", "main")
+
+
+def test_raw_node_context_does_not_create_zero_cost_mainnode_connection() -> None:
+    nodes = gpd.GeoDataFrame(
+        {
+            "id": ["main", "child", "target"],
+            "mainNodeId": ["100", "100", ""],
+            "subNodeId": ["main|child", "", ""],
+            "geometry": [Point(0, 0), Point(20, 0), Point(100, 0)],
+        },
+        crs="EPSG:3857",
+    )
+    roads = gpd.GeoDataFrame(
+        {
+            "id": ["child_to_target"],
+            "snodeid": ["child"],
+            "enodeid": ["target"],
+            "direction": [2],
+            "geometry": [LineString([(20, 0), (100, 0)])],
+        },
+        crs="EPSG:3857",
+    )
+    canonicalizer, _, _ = build_node_context(nodes)
+    raw_canonicalizer, raw_groups, _ = build_raw_node_context(nodes)
+
+    canonical_graph = build_graph(roads, canonicalizer)
+    raw_graph = build_graph(roads, raw_canonicalizer)
+
+    assert shortest_path_between_sets(
+        canonical_graph.directed, ["100"], ["target"]
+    ) is not None
+    assert shortest_path_between_sets(
+        raw_graph.directed, ["main"], ["target"]
+    ) is None
+    assert raw_groups == {
+        "child": ("child",),
+        "main": ("main",),
+        "target": ("target",),
+    }
 
 
 @pytest.mark.parametrize(

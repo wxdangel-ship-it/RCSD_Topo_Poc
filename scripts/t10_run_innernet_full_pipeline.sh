@@ -27,6 +27,7 @@ Common env:
   T12_REVIEW_DECISIONS Optional external review-decision CSV for T12.
   T12_CASE_MANIFEST    Optional T10 Case manifest for explicit crop-edge exclusion.
                        Leave empty for full-city data.
+  T12_PROCESSING_CRS   Optional explicit projected metre CRS for mixed-CRS T12 inputs.
   T07_STEP3_INTERSECTION_MATCH_ALL_PATH
                        Optional Step3 compatible relation input. Required when RUN_T07_STEP3=1.
   T07_STEP3_RCSDNODE_PATH
@@ -93,6 +94,7 @@ RUN_T08="${RUN_T08:-1}"
 RUN_T12="${RUN_T12:-0}"
 T12_REVIEW_DECISIONS="${T12_REVIEW_DECISIONS:-}"
 T12_CASE_MANIFEST="${T12_CASE_MANIFEST:-}"
+T12_PROCESSING_CRS="${T12_PROCESSING_CRS:-}"
 T07_STEP3_INTERSECTION_MATCH_ALL_PATH="${T07_STEP3_INTERSECTION_MATCH_ALL_PATH:-}"
 T07_STEP3_RCSDNODE_PATH="${T07_STEP3_RCSDNODE_PATH:-}"
 if [[ "$RUN_T12" != "0" && "$RUN_T12" != "1" ]]; then
@@ -835,6 +837,9 @@ if [[ "$RESUME_MODE" == "1" ]]; then
   FRCSD_1V1_NODES_PATH="$(manifest_get inputs frcsd_1v1_nodes "$FRCSD_1V1_NODES_PATH")"
   T12_REVIEW_DECISIONS="$(manifest_get inputs t12_review_decisions "$T12_REVIEW_DECISIONS")"
   T12_CASE_MANIFEST="$(manifest_get inputs t12_case_manifest "$T12_CASE_MANIFEST")"
+  if [[ -z "$T12_PROCESSING_CRS" ]]; then
+    T12_PROCESSING_CRS="$(manifest_get params t12_processing_crs "")"
+  fi
   SWSD_INPUT_NODES="$(manifest_get inputs swsd_input_nodes "$SWSD_INPUT_NODES")"
   SWSD_INPUT_ROADS="$(manifest_get inputs swsd_input_roads "$SWSD_INPUT_ROADS")"
 else
@@ -870,6 +875,9 @@ else
     manifest_set inputs t12_review_decisions "$T12_REVIEW_DECISIONS"
     manifest_set inputs t12_case_manifest "$T12_CASE_MANIFEST"
   fi
+fi
+if [[ "$RUN_T12" == "1" ]]; then
+  manifest_set params t12_processing_crs "$T12_PROCESSING_CRS"
 fi
 
 RUN_T08_TOOL7="${RUN_T08_TOOL7:-auto}"
@@ -1430,6 +1438,9 @@ if should_run_t12; then
   if [[ -n "$T12_CASE_MANIFEST" ]]; then
     T12_ARGS+=(--case-manifest "$T12_CASE_MANIFEST")
   fi
+  if [[ -n "$T12_PROCESSING_CRS" ]]; then
+    T12_ARGS+=(--processing-crs "$T12_PROCESSING_CRS")
+  fi
   run_logged t12 "${T12_ARGS[@]}"
   require_file T12_CANDIDATES_CSV "$T12_CANDIDATES_CSV"
   require_file T12_CONFIRMED_CSV "$T12_CONFIRMED_CSV"
@@ -1455,6 +1466,7 @@ if should_run_t12; then
     "outputs.confirmed_csv=$T12_CONFIRMED_CSV" \
     "outputs.summary_json=$T12_SUMMARY_JSON" \
     "params.audit_only=true" \
+    "params.processing_crs=$T12_PROCESSING_CRS" \
     "execution_context.run_root=$T12_RUN_ROOT"
 fi
 

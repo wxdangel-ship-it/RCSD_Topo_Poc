@@ -139,6 +139,7 @@ def test_full_runner_declares_t12_resume_manifest_and_finalize_contract() -> Non
 
     assert 'RUN_T12="${RUN_T12:-0}"' in script
     assert 'T12_RUN_ID="${T12_RUN_ID:-t12_full}"' in script
+    assert 'T12_PROCESSING_CRS="${T12_PROCESSING_CRS:-}"' in script
     assert '*((' + '"T08",) if os.getenv("RUN_T08")=="1" else ()),' in script
     assert '*(("T12",) if os.getenv("RUN_T12")=="1" else ()),' in script
     assert 't12|t12_quality) printf \'%s\\n\' "t12" ;;' in script
@@ -152,6 +153,10 @@ def test_full_runner_declares_t12_resume_manifest_and_finalize_contract() -> Non
     assert "run_logged t12" in t12_region
     assert "manifest_stage_record t12 T12 passed" in t12_region
     assert '--frcsd-roads "$FRCSD_1V1_ROADS_PATH"' in t12_region
+    assert 'T12_ARGS+=(--processing-crs "$T12_PROCESSING_CRS")' in t12_region
+    assert '"params.processing_crs=$T12_PROCESSING_CRS"' in t12_region
+    assert 'T12_PROCESSING_CRS="$(manifest_get params t12_processing_crs "")"' in script
+    assert 'manifest_set params t12_processing_crs "$T12_PROCESSING_CRS"' in script
     assert '"t12_enabled": os.environ.get("RUN_T12") == "1"' in script
     assert 'missing_final_outputs.append("t12_stage")' in script
     assert 'T08_STAGE_STATUS="skipped"' not in script

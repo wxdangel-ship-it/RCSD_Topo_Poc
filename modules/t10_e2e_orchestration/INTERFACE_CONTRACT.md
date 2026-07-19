@@ -557,6 +557,7 @@ Segment 入口不得暴露 `RADIUS_M`；若调用环境中存在同名变量，S
 - `RUN_T08`：是否运行 T08 前置阶段，默认 `1`。
 - `RUN_T12`：是否在 T11 后、T09 前运行 T12，默认 `0`。
 - `T12_RUN_ID`：T12 子运行 ID，默认 `t12_full`；当 `T12_REVIEW_DECISIONS` 已绑定特定 run id 时必须显式一致。
+- `T12_PROCESSING_CRS`：可选；T12 输入 CRS 不一致时必须显式指定 projected metre CRS，并透传为 T12 `--processing-crs`。空值不得触发自动 CRS 推断；resume 时显式环境值优先，否则复用总 manifest 已记录值。实际值必须进入总 manifest `params.t12_processing_crs` 与 T12 stage `params.processing_crs`。
 - `RUN_T08_TOOL7` / `RUN_T08_TOOL8`：可选值 `1 / 0 / auto`，默认 `auto`，仅当原始 SW 输入齐全时自动生成 Tool7/Tool8 输出。
 - `RUN_T08_TOOL9`：可选值 `1 / 0 / auto`，默认 `0`，用于显式启用 RCSD 清理前置输出。
 - `T03_WORKERS` / `T04_WORKERS` / `T05_READONLY_WORKERS`：全量执行 worker 参数，默认分别为 `8 / 8 / 4`。
@@ -568,7 +569,7 @@ Segment 入口不得暴露 `RADIUS_M`；若调用环境中存在同名变量，S
 
 该全量 runner 只消费并串联既有模块脚本或 callable，不新增 T01-T09 / T11 / T12 的算法接口。
 
-`scripts/t10_run_frcsd_quality_pipeline.sh` 是 F-RCSD 质量检查专用薄入口：强制 `RUN_T08=0 / RUN_T12=1`，新运行默认写入 `outputs/_work/t10_frcsd_quality_pipeline/<run_id>/`，并直接 `exec` 通用 full runner。新运行必须显式提供 `FRCSD_1V1_ROADS_PATH / FRCSD_1V1_NODES_PATH`；与固定 profile 冲突的 `RUN_T08 / RUN_T12` 必须在调用 full runner 前阻断。有效 stage order 固定为 `t01 / t07_step12 / t03 / t04 / t05 / t06_step12 / t06_step3 / t11 / t12 / t09`。它沿用通用 full runner 的输入、manifest、summary、resume、finalize-existing、失败退出和进度合同，不复制任何模块算法。
+`scripts/t10_run_frcsd_quality_pipeline.sh` 是 F-RCSD 质量检查专用薄入口：强制 `RUN_T08=0 / RUN_T12=1`，新运行默认写入 `outputs/_work/t10_frcsd_quality_pipeline/<run_id>/`，并直接 `exec` 通用 full runner。新运行必须显式提供 `FRCSD_1V1_ROADS_PATH / FRCSD_1V1_NODES_PATH`；混合 CRS 输入通过可选 `T12_PROCESSING_CRS` 显式指定 projected metre CRS；与固定 profile 冲突的 `RUN_T08 / RUN_T12` 必须在调用 full runner 前阻断。有效 stage order 固定为 `t01 / t07_step12 / t03 / t04 / t05 / t06_step12 / t06_step3 / t11 / t12 / t09`。它沿用通用 full runner 的输入、manifest、summary、resume、finalize-existing、失败退出和进度合同，不复制任何模块算法。
 
 当前仍无 repo CLI、`Makefile` 目标、模块 `run.py` 或模块 `__main__.py`。
 

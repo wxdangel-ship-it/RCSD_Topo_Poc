@@ -18,6 +18,10 @@ Optional test-case boundary input:
   T12_CASE_MANIFEST     T10 Case manifest used to exclude explicit crop edges.
                         Leave empty for full-city data.
 
+Optional CRS input:
+  T12_PROCESSING_CRS    Explicit projected metre CRS for mixed-CRS T12 inputs.
+                        Example: EPSG:3857
+
 Profile invariants:
   RUN_T08=0
   RUN_T12=1

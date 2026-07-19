@@ -35,6 +35,14 @@ def test_full_pipeline_forwards_optional_t12_case_manifest() -> None:
     assert '"inputs.case_manifest=$T12_CASE_MANIFEST"' in script
 
 
+def test_full_pipeline_forwards_explicit_t12_processing_crs() -> None:
+    script = FULL_PIPELINE_PATH.read_text(encoding="utf-8")
+
+    assert 'T12_PROCESSING_CRS="${T12_PROCESSING_CRS:-}"' in script
+    assert 'T12_ARGS+=(--processing-crs "$T12_PROCESSING_CRS")' in script
+    assert '"params.processing_crs=$T12_PROCESSING_CRS"' in script
+
+
 @pytest.mark.skipif(shutil.which("bash") is None, reason="bash is unavailable")
 def test_frcsd_quality_profile_help_and_preflight_blocks() -> None:
     help_result = subprocess.run(
@@ -46,6 +54,7 @@ def test_frcsd_quality_profile_help_and_preflight_blocks() -> None:
     )
     assert help_result.returncode == 0
     assert "T01 -> T07 -> T03 -> T04 -> T05 -> T06 -> T11 -> T12 -> T09" in help_result.stdout
+    assert "T12_PROCESSING_CRS" in help_result.stdout
 
     base_env = os.environ.copy()
     for key in (

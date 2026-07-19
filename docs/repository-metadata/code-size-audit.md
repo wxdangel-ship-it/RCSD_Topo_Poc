@@ -207,7 +207,7 @@
 | `src/rcsd_topo_poc/modules/t10_e2e_orchestration/case_runner_t11.py` | `3388` worktree bytes | T10 Case runner 的 T11 输入门禁、正式入口调用、run root 与必要输出审计 adapter | 内部模块，不新增正式入口；T11 保持 audit-only |
 | `src/rcsd_topo_poc/modules/t10_e2e_orchestration/case_runner_t12.py` | `5070` worktree bytes | T10 Case runner 的 T12 显式输入门禁、正式入口调用和必要输出审计 adapter | 内部模块；T12 默认关闭且保持 audit-only |
 | `scripts/t10_run_e2e_cases.sh` | `6113` worktree bytes | 既有 T10 Case runner wrapper，`STOP_AFTER` 文档增加 `t11` | 不新增入口，调用方式保持兼容 |
-| `scripts/t10_run_innernet_full_pipeline.sh` | `62094` worktree bytes | 既有内网全量总控增加显式可选 T12 stage、resume、manifest、summary、Case 边界转发与条件完成门禁 | 低于 100KB 硬阈值但已超过 60KiB 软预警线；默认流程不变，T09 仍直接消费 T06 业务输出；后续增长前拆 stage helper |
+| `scripts/t10_run_innernet_full_pipeline.sh` | `62594` worktree bytes | 既有内网全量总控增加显式可选 T12 stage、resume、manifest、summary、Case 边界转发、显式 processing CRS 透传与条件完成门禁 | 低于 100KB 硬阈值但已超过 60KiB 软预警线；默认流程不变，T09 仍直接消费 T06 业务输出；后续增长前拆 stage helper |
 | `scripts/t12_run_frcsd_quality_audit.py` | `3899` worktree bytes | T12 原始 1V1 F-RCSD 质量审计正式入口 | 参数化输入；不修改输入或执行修复 |
 | `tests/modules/t10_e2e_orchestration/test_t10_contracts.py` | `92001 -> 42931` bytes | 保留 manifest、handoff、package、funnel 与 feedback 基础契约回归 | case-runner iteration/visual/finalize 场景进入独立测试文件 |
 | `tests/modules/t10_e2e_orchestration/t10_contract_test_support.py` | `9153` bytes | 新拆出的 T10 契约测试 manifest/vector/feedback fixture helper | 仅供测试复用，不新增正式入口 |

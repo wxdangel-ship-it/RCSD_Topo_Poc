@@ -39,6 +39,8 @@ bash scripts/t10_run_innernet_full_pipeline.sh
 bash scripts/t10_run_frcsd_quality_pipeline.sh
 ```
 
+当 T12 输入存在不同 CRS 时，full runner 与 F-RCSD 专用入口只在调用方显式设置 `T12_PROCESSING_CRS=<projected metre CRS>` 后执行坐标转换；未设置时保持 T12 的 CRS mismatch 硬阻断，不自动推断目标 CRS。
+
 模块 callable 入口和参数以 `INTERFACE_CONTRACT.md` 与 `docs/repository-metadata/entrypoint-registry.md` 为准。
 
 ## 4. 阅读顺序

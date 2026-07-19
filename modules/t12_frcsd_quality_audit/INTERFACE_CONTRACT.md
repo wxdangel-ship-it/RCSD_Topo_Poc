@@ -28,7 +28,7 @@
 ### 2.3 关键字段与方向
 
 - Road：`id/snodeid/enodeid/direction`；`direction 0/1` 双向、`2` snode→enode、`3` enode→snode。
-- Node：`id`；`mainNodeId/subNodeId` 只用于 canonical 候选图与解释，正式 verdict 使用 raw Road endpoint 图。
+- Node：`id`；`mainNodeId/subNodeId` 用于 canonical 候选图，并可在 raw failure 后构造 portal-constrained semantic 排除证据。该证据必须包含物理 Road，T07 alias 端点须位于同一唯一标准路口面，非 T07 alias 端点及内部 alias transition 须在同 canonical group 的同时满足 `portal_radius_m`；它不能单独确认问题。
 - Segment：`id/pair_nodes/roads`。
 - Source 只进入审计证据，不参与 verdict。
 
@@ -40,7 +40,11 @@
 | `review_status` | `confirmed_frcsd_quality_issue / excluded_false_positive / manual_review_required` | 最终兼容状态；默认由自动 decision 产生，显式 review 可覆盖。 |
 | `issue_type` | `directed_carrier_missing / required_local_connectivity_missing` | 仅 confirmed 行允许非空。 |
 | `decision_source` | `automatic_high_confidence / external_review_override` | 最终决定来源。 |
-| `decision_rule` | `raw_carrier_missing_trusted_anchor / equivalent_raw_carrier / insufficient_anchor_confidence / external_review_override` | 可审计决定规则。 |
+| `decision_rule` | `raw_carrier_missing_trusted_anchor / equivalent_raw_carrier / equivalent_portal_constrained_semantic_carrier / insufficient_anchor_confidence / external_review_override` | 可审计决定规则。 |
+| `raw_failed_directions` | SWSD 必需方向子集 | raw local directed 图失败的原始方向，不因 semantic 排除而丢失。 |
+| `failed_directions` | SWSD 必需方向子集 | 完成 portal-constrained semantic 排除后仍未解决的正式失败方向。 |
+| `automatic_equivalence_basis` | 空 / `raw_carrier / portal_constrained_semantic_carrier` | 自动排除时使用的等价 carrier 层。 |
+| `portal_constrained_semantic_status` | 按方向的 `equivalent / rejection_reason` | semantic 路径、端点和内部 alias 门禁结果。 |
 | `anchor_confidence` | `t07_standard_surface / t03_pair / insufficient` | 自动归因锚点信用。 |
 | run `status` | `passed / blocked / failed` | 契约完成、前置阻断或执行失败。 |
 
@@ -73,7 +77,7 @@ run_id,candidate_id,review_status,issue_type,review_reason,review_source,reviewe
 - `t12_frcsd_quality_manual_review_required.csv`
 - `t12_frcsd_quality_report.md`
 
-manifest/summary 至少记录输入绝对路径与 SHA-256、参数、CRS 转换、无效几何、endpoint 拓扑、canonical/raw 图分层、T07 surface 关联、自动 decision、T05/T06 证据关系、对象规模、分阶段耗时、输出路径和 `silent_fix=false`。
+manifest/summary 至少记录输入绝对路径与 SHA-256、参数、CRS 转换、无效几何、endpoint 拓扑、canonical/raw 图分层、portal-constrained semantic carrier、T07 surface 关联、自动 decision、T05/T06 证据关系、对象规模、分阶段耗时、输出路径和 `silent_fix=false`。
 
 `<out-root>/<run-id>` 必须尚不存在；同名运行根在加载输入前以 contract error 阻断，不覆盖或追加既有审计结果。
 

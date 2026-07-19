@@ -185,23 +185,64 @@ def test_crop_edge_candidate_is_excluded_not_silently_repaired() -> None:
     assert audit["counts"]["crop_edge_excluded_count"] == 1
 
 
-def test_candidate_verdict_uses_raw_endpoints_not_mainnode_alias() -> None:
+def test_t07_alias_outside_standard_surface_does_not_override_raw_failure() -> None:
     loaded = _loaded(reverse_main=False, drivezone=False)
-    loaded.swsd_roads["direction"] = [1]
-    loaded.frcsd_nodes["mainNodeId"] = ["a", "b", "a", "b"]
-    loaded.frcsd_nodes["subNodeId"] = ["a|x", "b|y", "", ""]
+    loaded.swsd_roads["direction"] = [2]
     loaded = replace(
         loaded,
+        frcsd_nodes=gpd.GeoDataFrame(
+            {
+                "id": ["a", "b", "p", "q", "s", "e", "r", "t"],
+                "mainNodeId": [
+                    "",
+                    "",
+                    "100",
+                    "200",
+                    "100",
+                    "200",
+                    "",
+                    "",
+                ],
+                "subNodeId": ["", "", "", "", "", "", "", ""],
+                "geometry": [
+                    Point(0, 0),
+                    Point(100, 0),
+                    Point(0, 1),
+                    Point(100, 1),
+                    Point(0, -10),
+                    Point(100, -10),
+                    Point(0, 5),
+                    Point(100, 5),
+                ],
+            },
+            crs="EPSG:3857",
+        ),
         frcsd_roads=gpd.GeoDataFrame(
             [
                 {
                     "id": "alias_only_path",
-                    "snodeid": "x",
-                    "enodeid": "y",
+                    "snodeid": "s",
+                    "enodeid": "e",
                     "direction": 2,
                     "source": 1,
                     "geometry": LineString([(0, -10), (100, -10)]),
-                }
+                },
+                {
+                    "id": "start_portal_spur",
+                    "snodeid": "p",
+                    "enodeid": "r",
+                    "direction": 2,
+                    "source": 1,
+                    "geometry": LineString([(0, 1), (0, 5)]),
+                },
+                {
+                    "id": "end_portal_spur",
+                    "snodeid": "q",
+                    "enodeid": "t",
+                    "direction": 2,
+                    "source": 1,
+                    "geometry": LineString([(100, 1), (100, 5)]),
+                },
             ],
             crs="EPSG:3857",
         ),
@@ -213,4 +254,113 @@ def test_candidate_verdict_uses_raw_endpoints_not_mainnode_alias() -> None:
     assert candidates[0]["suggested_issue_type"] == (
         "required_local_connectivity_missing"
     )
+    assert candidates[0]["raw_failed_directions"] == ["pair0_to_pair1"]
+    assert candidates[0]["failed_directions"] == ["pair0_to_pair1"]
     assert candidates[0]["automatic_all_directions_equivalent"] is False
+    evidence = candidates[0]["directions"][0][
+        "portal_constrained_semantic_directed"
+    ]
+    assert evidence["accepted_equivalent_carrier"] is False
+    assert evidence["start_endpoint_reason"] == "t07_alias_outside_standard_surface"
+    assert evidence["end_endpoint_reason"] == "t07_alias_outside_standard_surface"
+
+
+def _loaded_with_internal_alias(*, alias_gap_m: float) -> LoadedInputs:
+    loaded = _loaded(reverse_main=False, drivezone=False)
+    loaded.swsd_roads["direction"] = [2]
+    loaded = replace(
+        loaded,
+        frcsd_nodes=gpd.GeoDataFrame(
+            {
+                "id": ["a", "b", "s", "e", "x", "y"],
+                "mainNodeId": ["", "", "", "", "100", "100"],
+                "subNodeId": ["", "", "", "", "", ""],
+                "geometry": [
+                    Point(0, 0),
+                    Point(100, 0),
+                    Point(0, 1),
+                    Point(100, 1),
+                    Point(50, 1),
+                    Point(50 + alias_gap_m, 1),
+                ],
+            },
+            crs="EPSG:3857",
+        ),
+        frcsd_roads=gpd.GeoDataFrame(
+            [
+                {
+                    "id": "left",
+                    "snodeid": "s",
+                    "enodeid": "x",
+                    "direction": 2,
+                    "source": 1,
+                    "geometry": LineString([(0, 1), (50, 1)]),
+                },
+                {
+                    "id": "right",
+                    "snodeid": "y",
+                    "enodeid": "e",
+                    "direction": 2,
+                    "source": 1,
+                    "geometry": LineString(
+                        [(50 + alias_gap_m, 1), (100, 1)]
+                    ),
+                },
+            ],
+            crs="EPSG:3857",
+        ),
+    )
+    return loaded
+
+
+def test_portal_constrained_semantic_carrier_excludes_raw_alias_false_positive() -> None:
+    candidates, _, audit = audit_frcsd_candidates(
+        _loaded_with_internal_alias(alias_gap_m=1.0),
+        AuditConfig(),
+    )
+
+    assert len(candidates) == 1
+    candidate = candidates[0]
+    assert candidate["raw_failed_directions"] == ["pair0_to_pair1"]
+    assert candidate["failed_directions"] == []
+    assert candidate["suggested_issue_type"] == ""
+    assert candidate["automatic_all_directions_equivalent"] is True
+    assert candidate["automatic_equivalence_basis"] == (
+        "portal_constrained_semantic_carrier"
+    )
+    evidence = candidate["directions"][0][
+        "portal_constrained_semantic_directed"
+    ]
+    assert evidence["accepted_equivalent_carrier"] is True
+    assert evidence["start_endpoint_reason"] == "exact_raw_portal"
+    assert evidence["end_endpoint_reason"] == "exact_raw_portal"
+    assert evidence["max_internal_alias_gap_m"] == pytest.approx(1.0)
+    assert audit["semantic_carrier_policy"] == {
+        "role": "raw_failure_exclusion_only",
+        "physical_road_required": True,
+        "standard_surface_tolerance_m": 1.0,
+        "non_t07_endpoint_max_gap_m": 50.0,
+        "internal_alias_max_gap_m": 50.0,
+        "path_thresholds": {
+            "max_length_ratio": 1.5,
+            "max_additive_m": 100.0,
+            "max_corridor_distance_m": 50.0,
+        },
+    }
+
+
+def test_semantic_alias_gap_beyond_portal_radius_keeps_quality_issue() -> None:
+    candidates, _, _ = audit_frcsd_candidates(
+        _loaded_with_internal_alias(alias_gap_m=60.0),
+        AuditConfig(),
+    )
+
+    assert len(candidates) == 1
+    candidate = candidates[0]
+    assert candidate["raw_failed_directions"] == ["pair0_to_pair1"]
+    assert candidate["failed_directions"] == ["pair0_to_pair1"]
+    evidence = candidate["directions"][0][
+        "portal_constrained_semantic_directed"
+    ]
+    assert evidence["accepted_equivalent_carrier"] is False
+    assert evidence["internal_aliases_trusted"] is False

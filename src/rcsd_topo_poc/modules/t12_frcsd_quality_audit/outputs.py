@@ -98,6 +98,9 @@ def write_outputs(
             "t07_surface_audit": _compact_t07_surface_audit(
                 candidate_audit.get("t07_surface_audit")
             ),
+            "semantic_carrier_policy": candidate_audit.get(
+                "semantic_carrier_policy"
+            ),
         },
         "runtime": dict(runtime),
         "outputs": {name: str(path) for name, path in paths.items()},
@@ -199,12 +202,15 @@ def _candidate_fields() -> tuple[str, ...]:
         "suggested_issue_type",
         "issue_type",
         "required_directions",
+        "raw_failed_directions",
         "failed_directions",
         "anchor_modules",
         "base_nodes",
         "anchor_confidence",
         "t07_surface_statuses",
         "portal_equivalent",
+        "automatic_equivalence_basis",
+        "portal_constrained_semantic_status",
         "drivezone_in_road_ratio",
         "local_directed_status",
         "local_undirected_status",
@@ -250,6 +256,13 @@ def _flatten_candidate(row: Mapping[str, Any]) -> dict[str, Any]:
         f"{item['direction']}:{_path_status(item.get('semantic_local_undirected') or {})}"
         for item in directions
     ]
+    portal_constrained_semantic = [
+        (
+            f"{item['direction']}:"
+            f"{_semantic_carrier_status(item.get('portal_constrained_semantic_directed') or {})}"
+        )
+        for item in directions
+    ]
     t06 = row.get("t06_cross_evidence") or {}
     return {
         "candidate_id": row.get("candidate_id", ""),
@@ -258,6 +271,9 @@ def _flatten_candidate(row: Mapping[str, Any]) -> dict[str, Any]:
         "suggested_issue_type": row.get("suggested_issue_type", ""),
         "issue_type": row.get("issue_type", ""),
         "required_directions": "|".join(row.get("required_directions") or []),
+        "raw_failed_directions": "|".join(
+            row.get("raw_failed_directions") or []
+        ),
         "failed_directions": "|".join(row.get("failed_directions") or []),
         "anchor_modules": "|".join(row.get("anchor_modules") or []),
         "base_nodes": "|".join(row.get("base_nodes") or []),
@@ -266,6 +282,12 @@ def _flatten_candidate(row: Mapping[str, Any]) -> dict[str, Any]:
             row.get("t07_surface_statuses") or []
         ),
         "portal_equivalent": bool(row.get("automatic_all_directions_equivalent")),
+        "automatic_equivalence_basis": row.get(
+            "automatic_equivalence_basis", ""
+        ),
+        "portal_constrained_semantic_status": "|".join(
+            portal_constrained_semantic
+        ),
         "drivezone_in_road_ratio": row.get("drivezone_in_road_ratio"),
         "local_directed_status": "|".join(local_directed),
         "local_undirected_status": "|".join(local_undirected),
@@ -300,6 +322,13 @@ def _path_status(value: Mapping[str, Any]) -> str:
     if value.get("exists"):
         return "non_equivalent_path"
     return "missing"
+
+
+def _semantic_carrier_status(value: Mapping[str, Any]) -> str:
+    if value.get("accepted_equivalent_carrier"):
+        return "equivalent"
+    reason = str(value.get("rejection_reason") or "")
+    return reason or "not_evaluated"
 
 
 def _review_feature_fields(row: Mapping[str, Any]) -> dict[str, Any]:

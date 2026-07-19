@@ -5,7 +5,7 @@
 ## 1. 当前状态
 
 - 生命周期：`Active`。
-- 主职责：用 SWSD 的必需通行方向检查原始 1V1 FRCSD 的局部/全图 carrier，以 raw endpoint topology、标准路口 portal 和锚点可信度自动发布高置信问题；外部复核仅作可选 QA 覆盖。
+- 主职责：用 SWSD 的必需通行方向检查原始 1V1 FRCSD 的局部/全图 carrier，以 raw endpoint topology 为主、portal-constrained semantic carrier 为误报排除门禁，结合标准路口 portal 和锚点可信度自动发布高置信问题；外部复核仅作可选 QA 覆盖。
 - 上游：T01 SWSD Segment/Road、T04 final SWSD Node、T05 relation 审计、T06 Step2 交叉证据、RCSDIntersection、原始 1V1 FRCSD。
 - 下游：质量复核、FRCSD 数据生产反馈；T10 可将 T12 编排为 audit-only 阶段。
 

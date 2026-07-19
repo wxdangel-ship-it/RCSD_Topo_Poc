@@ -2,7 +2,7 @@
 
 ## 范围
 
-- 主审计日期：2026-06-12；T09 增量审计：2026-07-10；T10 性能与 60KB 治理增量审计：2026-07-11；T01/T06 ownership 增量审计：2026-07-12；T10 增加 T11 工作流增量审计：2026-07-13；T06 性能恢复与 Step3 修复性拆分增量审计：2026-07-14；T06 全量性能恢复增量审计：2026-07-16；T12 F-RCSD 质检、T10 可选接入及专用流水线增量审计：2026-07-18；T12 reviewed resume 增量审计：2026-07-19
+- 主审计日期：2026-06-12；T09 增量审计：2026-07-10；T10 性能与 60KB 治理增量审计：2026-07-11；T01/T06 ownership 增量审计：2026-07-12；T10 增加 T11 工作流增量审计：2026-07-13；T06 性能恢复与 Step3 修复性拆分增量审计：2026-07-14；T06 全量性能恢复增量审计：2026-07-16；T12 F-RCSD 质检、T10 可选接入及专用流水线增量审计：2026-07-18；T12 reviewed resume 与 false-positive hardening 增量审计：2026-07-19
 - 阈值：单文件超过 `100 KB`
 - 口径：按 `code-boundaries-and-entrypoints.md`，审计纳入版本管理的 `src/`、`scripts/`、`tests/`、`tools/` 下源码 / 脚本文件。
 - 本表只记录结构债事实，不代表本轮进入对应模块正文治理。
@@ -13,6 +13,7 @@
 - 2026-07-18 T12 F-RCSD 质检轮次扫描全部 `29` 个新增/修改源码、脚本和测试：均低于 100KB 硬阈值；T12 模块最大文件为 `candidate_audit.py`（`15895` bytes），正式入口 `t12_run_frcsd_quality_audit.py` 为 `3899` bytes；两个 SpecKit 一次性 validation 脚本最大为 `validate_1026960.py`（`11717` bytes），不登记为官方入口。T10 可选接入后最大修改文件为 `t10_run_innernet_full_pipeline.sh`（`61439` bytes，低于 60KiB `61440` bytes），其次为 `case_runner_pipeline.py`（`60207` bytes）；T12 adapter 独立放在 `case_runner_t12.py`（`5070` bytes），未回填 case runner 主流程。T06 源码、契约和入口未修改。仓库级 `>=100KB` 仍仅为本轮未触碰的 Retired T02 历史文件。
 - 2026-07-18 T10 F-RCSD 专用流水线最终联合扫描 `31` 个新增/修改源码、脚本和测试：`>=100KB` 为 `0`；最大为 `t10_run_innernet_full_pipeline.sh`（`62094` bytes），因增加 T11/T12 顺序、resume/manifest 和显式 `T12_CASE_MANIFEST` 转发而超过 60KiB 软预警线，但仍低于 100KB 硬阈值。新增正式入口 `t10_run_frcsd_quality_pipeline.sh` 为 `2351` bytes，入口测试为 `2648` bytes，`case_runner.py` 为 `49048` bytes；T06 源码、契约和入口未修改，仓库级 `>=100KB` 集合不变。后续 full runner 继续增长前应拆分 stage helper，不得回填模块算法。
 - 2026-07-19 T12 reviewed resume 轮次修改 `2` 个既有脚本和 `2` 个入口契约测试：`t10_run_innernet_full_pipeline.sh` 为 `64067` bytes，`t10_run_frcsd_quality_pipeline.sh` 为 `2696` bytes，两个测试分别为 `8104` 与 `3237` bytes，均低于 100KB 硬阈值。full runner 已超过 60KiB 软预警线，本轮仅修复显式新 `T12_RUN_ID` 的 run-root/manifest 选择、失败恢复一致性与复核输入优先级，未增加算法职责；后续增长前仍须拆分 stage helper。
+- 2026-07-19 T12 false-positive hardening 轮次扫描全部 `14` 个新增/修改源码、测试和 SpecKit validation 脚本：`>=100KB` 为 `0`；最大为 `candidate_audit.py`（`23435` bytes），新拆出的 `semantic_carrier.py` 为 `8348` bytes，最大一次性 validation 脚本 `analyze_alias_transitions.py` 为 `15836` bytes。正式入口、CLI 参数和 T10 阶段顺序均未改变；新增 semantic helper 只承接 portal-constrained carrier 的端点与内部 alias 门禁，不回填 candidate 主编排。
 
 ## 结果
 

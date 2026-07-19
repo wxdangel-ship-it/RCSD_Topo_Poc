@@ -8,5 +8,10 @@ def test_candidate_contract_has_review_layers_without_probability_fields() -> No
 
     assert {"candidate_status", "review_status", "issue_type"} <= fields
     assert "drivezone_in_road_ratio" in fields
+    assert {
+        "raw_failed_directions",
+        "portal_constrained_semantic_status",
+        "automatic_equivalence_basis",
+    } <= fields
     assert "confidence" not in fields
     assert "probability" not in fields

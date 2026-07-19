@@ -18,6 +18,20 @@ EXPECTED_CONFIRMED = {
     "998051_501667982",
 }
 
+SUSPECTED_FALSE_POSITIVE_AUDIT_IDS = {
+    "1520811_25466551",
+    "1623512_508276240",
+    "1629816_1643047",
+    "1878482_1881808",
+    "1881810_1898171",
+    "1888260_1921768",
+    "1908169_1921764",
+    "1921739_1921764",
+    "500636195_505415445",
+    "722528_722529",
+    "722569_12927873",
+}
+
 
 def test_1026960_review_fixture_is_complete_and_frozen() -> None:
     fixture = (
@@ -57,7 +71,7 @@ def test_focus_ids_are_not_hardcoded_in_production_source() -> None:
         path.read_text(encoding="utf-8") for path in source_root.rglob("*.py")
     )
 
-    forbidden = set(EXPECTED_CONFIRMED) | {
+    forbidden = set(EXPECTED_CONFIRMED) | SUSPECTED_FALSE_POSITIVE_AUDIT_IDS | {
         "1026960",
         "1001716_1010487",
         "1039488_1039490",

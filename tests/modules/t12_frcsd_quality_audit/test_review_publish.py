@@ -98,6 +98,28 @@ def test_portal_constrained_semantic_equivalence_has_distinct_audit_rule() -> No
     assert "portal-constrained semantic" in exclusions[0]["review_reason"]
 
 
+def test_t07_road_surface_equivalence_has_distinct_audit_rule() -> None:
+    reviewed, confirmed, exclusions, manual = apply_review_decisions(
+        [
+            _candidate(
+                "surface-equivalent",
+                equivalent=True,
+                equivalence_basis="t07_road_surface_carrier",
+            )
+        ],
+        run_id="run",
+        review_decisions_path=None,
+    )
+
+    assert confirmed == []
+    assert manual == []
+    assert reviewed == exclusions
+    assert exclusions[0]["decision_rule"] == (
+        "equivalent_t07_road_surface_carrier"
+    )
+    assert "Road-surface" in exclusions[0]["review_reason"]
+
+
 def test_review_states_override_automatic_decisions_and_missing_keeps_automatic(
     tmp_path: Path,
 ) -> None:

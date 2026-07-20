@@ -55,7 +55,7 @@ T09 在 T06 输出的 F-RCSD 承载关系上恢复 SWSD 现场通行规则。当
 
 T12 面向通过 1V1 匹配技术融合生成的原始 F-RCSD，不把它解释为 T06 Segment 替换结果。T12 以“SWSD 与 1V1 F-RCSD 的拓扑通行性应等价”为待验证质量假设，复用 T06 的 ID、方向、canonical node、carrier graph 和局部 portal 证据语义，检查已锚定 Segment 两端在目标承载网是否存在可解释通行路径。`RCSDIntersection` 是 T07/T10 标准输入和人工确定的现实路口证据；T05/T06 只提供交叉解释证据，不替代 T12 对原始目标网的判断。
 
-T12 必须分离 candidate、confirmed、excluded 和 optional review override。candidate 不是正式质量问题；原始 FRCSD Road endpoint 图证明 SWSD 必需方向缺少等价 carrier 后，还必须检查 portal-constrained semantic carrier。该 semantic carrier 只有在包含物理 Road、满足方向/长度/走廊阈值、T07 alias 位于同一唯一 `RCSDIntersection` 标准面、非 T07 alias 位于同 canonical group 且不超过 portal radius、内部 alias 间距不超过 portal radius 时，才能作为高置信误报排除证据；它不能单独确认问题。完成该排除检查并通过锚点可信度门禁后仍缺失的记录，才能自动进入 confirmed 层。canonical 零长度折叠、无物理 Road 路径和不受信端点不得补出正式 carrier。外部 review decisions 只作可选 QA 覆盖，不再是 confirmed 的前置条件。排除原因必须可追溯，任何阶段都不得修改输入几何、自动补路或 silent fix。
+T12 必须分离 candidate、confirmed、excluded 和 optional review override。candidate 不是正式质量问题；原始 FRCSD Road endpoint 图证明 SWSD 必需方向缺少等价 carrier 后，还必须检查 portal-constrained semantic carrier 和 T07 Road-surface portal carrier。既有 semantic carrier 继续要求物理 Road、方向/长度/走廊、端点 portal 与内部 alias 门禁。Road-surface carrier 只在两端均为正确且唯一的 T07 `RCSDIntersection` 标准面锚定时启用：实际有向 Road 与对应标准面相交，或 Road frontier 可被锚点组一跳物理 Road 明确连接，均可形成 surface access；一跳 support Road 必须从 anchor 向 frontier 有向并与标准面相交或位于 `1m` 拓扑容差内，整条 carrier 至少一端必须存在实际 Road-surface contact，双端仅靠任意一跳邻接不得成立。方向、物理 Road、锚点唯一性和路径长度等价仍是强门禁；Road-surface gap、SWSD portal gap、内部 alias gap 和走廊距离等其它距离指标仅作人工审计风险，不得单独拒绝。两类 carrier 都只能作为高置信误报排除证据，不能单独确认问题。完成两层排除检查并通过锚点可信度门禁后仍缺失的记录，才能自动进入 confirmed 层。canonical 零长度折叠、无物理 Road 路径和任意近邻节点不得补出正式 carrier。外部 review decisions 只作可选 QA 覆盖，不再是 confirmed 的前置条件。排除原因必须可追溯，任何阶段都不得修改输入几何、自动补路或 silent fix。
 
 ### 3.7 编排与证据层
 
@@ -77,7 +77,7 @@ T10 负责组织端到端 Case package、Case replay、full pipeline manifest、
 | T09 | F-RCSD 上的通行规则恢复。 |
 | T10 | 端到端编排与 Case 证据组织，不替代 T01-T09 / T11 算法。 |
 | T11 | T06 后、T09 前的人工 relation 修复候选审计；不回写业务产物。 |
-| T12 | 原始 1V1 F-RCSD 质量审计；验证 SWSD 可达性等价假设，以 raw endpoint topology 为主、portal-constrained semantic carrier 为误报排除门禁，结合标准路口 portal 和锚点可信度自动发布高置信问题与排除证据，人工 review 仅作可选 QA 覆盖，不执行修复。 |
+| T12 | 原始 1V1 F-RCSD 质量审计；验证 SWSD 可达性等价假设，以 raw endpoint topology 为主、portal-constrained semantic carrier 与 T07 Road-surface portal carrier 为误报排除门禁，结合标准路口和锚点可信度自动发布高置信问题与排除证据，人工 review 仅作可选 QA 覆盖，不执行修复。 |
 | P01 | 异构路口通行能力 POC，不作为 T09 正式替代契约。 |
 | P02 | 武汉局部人工锚定实验编排与证据收口；复用 T08/T01/T05/T06，不替代这些模块的正式业务契约。 |
 

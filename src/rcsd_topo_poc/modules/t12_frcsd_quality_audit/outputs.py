@@ -101,6 +101,9 @@ def write_outputs(
             "semantic_carrier_policy": candidate_audit.get(
                 "semantic_carrier_policy"
             ),
+            "t07_road_surface_carrier_policy": candidate_audit.get(
+                "t07_road_surface_carrier_policy"
+            ),
         },
         "runtime": dict(runtime),
         "outputs": {name: str(path) for name, path in paths.items()},
@@ -211,6 +214,12 @@ def _candidate_fields() -> tuple[str, ...]:
         "portal_equivalent",
         "automatic_equivalence_basis",
         "portal_constrained_semantic_status",
+        "t07_road_surface_status",
+        "t07_road_surface_path_road_ids",
+        "t07_road_surface_access",
+        "t07_road_surface_surface_ids",
+        "t07_road_surface_frontiers",
+        "t07_road_surface_distance_audit",
         "drivezone_in_road_ratio",
         "local_directed_status",
         "local_undirected_status",
@@ -263,6 +272,14 @@ def _flatten_candidate(row: Mapping[str, Any]) -> dict[str, Any]:
         )
         for item in directions
     ]
+    t07_road_surface = [
+        (
+            f"{item['direction']}:"
+            f"{_semantic_carrier_status(item.get('t07_road_surface_directed') or {})}"
+        )
+        for item in directions
+    ]
+    surface_details = _surface_carrier_details(directions)
     t06 = row.get("t06_cross_evidence") or {}
     return {
         "candidate_id": row.get("candidate_id", ""),
@@ -288,6 +305,8 @@ def _flatten_candidate(row: Mapping[str, Any]) -> dict[str, Any]:
         "portal_constrained_semantic_status": "|".join(
             portal_constrained_semantic
         ),
+        "t07_road_surface_status": "|".join(t07_road_surface),
+        **surface_details,
         "drivezone_in_road_ratio": row.get("drivezone_in_road_ratio"),
         "local_directed_status": "|".join(local_directed),
         "local_undirected_status": "|".join(local_undirected),
@@ -329,6 +348,74 @@ def _semantic_carrier_status(value: Mapping[str, Any]) -> str:
         return "equivalent"
     reason = str(value.get("rejection_reason") or "")
     return reason or "not_evaluated"
+
+
+def _surface_carrier_details(
+    directions: list[Mapping[str, Any]],
+) -> dict[str, str]:
+    paths: list[str] = []
+    access: list[str] = []
+    surfaces: list[str] = []
+    frontiers: list[str] = []
+    distance_audit: list[dict[str, Any]] = []
+    for item in directions:
+        direction = str(item.get("direction") or "")
+        evidence = item.get("t07_road_surface_directed") or {}
+        if not evidence.get("evaluated"):
+            continue
+        paths.append(
+            f"{direction}:{'>'.join(str(value) for value in evidence.get('road_ids') or [])}"
+        )
+        access.append(
+            f"{direction}:{evidence.get('source_access_kind', '')}>"
+            f"{evidence.get('target_access_kind', '')}"
+        )
+        surfaces.append(
+            f"{direction}:{evidence.get('source_surface_id', '')}>"
+            f"{evidence.get('target_surface_id', '')}"
+        )
+        frontiers.append(
+            f"{direction}:{evidence.get('source_access_frontier_node', '')}"
+            f"[{','.join(str(value) for value in evidence.get('source_access_road_ids') or [])}]>"
+            f"{evidence.get('target_access_frontier_node', '')}"
+            f"[{','.join(str(value) for value in evidence.get('target_access_road_ids') or [])}]"
+        )
+        distance_audit.append(
+            {
+                "direction": direction,
+                "distance_gate_role": evidence.get("distance_gate_role", ""),
+                "source_road_surface_gap_m": evidence.get(
+                    "source_road_surface_gap_m"
+                ),
+                "target_road_surface_gap_m": evidence.get(
+                    "target_road_surface_gap_m"
+                ),
+                "source_road_swsd_portal_gap_m": evidence.get(
+                    "source_road_swsd_portal_gap_m"
+                ),
+                "target_road_swsd_portal_gap_m": evidence.get(
+                    "target_road_swsd_portal_gap_m"
+                ),
+                "max_internal_alias_gap_m": evidence.get(
+                    "max_internal_alias_gap_m"
+                ),
+                "max_corridor_distance_m": evidence.get(
+                    "max_corridor_distance_m"
+                ),
+                "distance_risk_flags": evidence.get("distance_risk_flags") or [],
+            }
+        )
+    return {
+        "t07_road_surface_path_road_ids": "|".join(paths),
+        "t07_road_surface_access": "|".join(access),
+        "t07_road_surface_surface_ids": "|".join(surfaces),
+        "t07_road_surface_frontiers": "|".join(frontiers),
+        "t07_road_surface_distance_audit": json.dumps(
+            distance_audit,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ),
+    }
 
 
 def _review_feature_fields(row: Mapping[str, Any]) -> dict[str, Any]:

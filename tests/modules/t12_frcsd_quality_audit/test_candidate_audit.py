@@ -349,7 +349,7 @@ def test_portal_constrained_semantic_carrier_excludes_raw_alias_false_positive()
     }
 
 
-def test_semantic_alias_gap_beyond_portal_radius_keeps_quality_issue() -> None:
+def test_t07_surface_carrier_keeps_alias_gap_as_audit_only() -> None:
     candidates, _, _ = audit_frcsd_candidates(
         _loaded_with_internal_alias(alias_gap_m=60.0),
         AuditConfig(),
@@ -358,9 +358,18 @@ def test_semantic_alias_gap_beyond_portal_radius_keeps_quality_issue() -> None:
     assert len(candidates) == 1
     candidate = candidates[0]
     assert candidate["raw_failed_directions"] == ["pair0_to_pair1"]
-    assert candidate["failed_directions"] == ["pair0_to_pair1"]
-    evidence = candidate["directions"][0][
+    assert candidate["failed_directions"] == []
+    semantic_evidence = candidate["directions"][0][
         "portal_constrained_semantic_directed"
     ]
-    assert evidence["accepted_equivalent_carrier"] is False
-    assert evidence["internal_aliases_trusted"] is False
+    assert semantic_evidence["accepted_equivalent_carrier"] is False
+    assert semantic_evidence["internal_aliases_trusted"] is False
+    surface_evidence = candidate["directions"][0][
+        "t07_road_surface_directed"
+    ]
+    assert surface_evidence["accepted_equivalent_carrier"] is True
+    assert surface_evidence["max_internal_alias_gap_m"] == pytest.approx(60.0)
+    assert surface_evidence["distance_gate_role"] == "audit_only"
+    assert candidate["automatic_equivalence_basis"] == (
+        "t07_road_surface_carrier"
+    )

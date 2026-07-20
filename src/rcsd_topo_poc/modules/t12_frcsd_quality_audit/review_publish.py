@@ -67,6 +67,13 @@ def _automatic_decision(candidate: dict[str, Any]) -> dict[str, Any]:
                 "portal-constrained semantic local directed FRCSD carrier."
             )
             rule = "equivalent_portal_constrained_semantic_carrier"
+        elif equivalence_basis == "t07_road_surface_carrier":
+            reason = (
+                "All SWSD-required directions have an equivalent T07 "
+                "Road-surface local directed FRCSD carrier; distance gates "
+                "are retained as audit-only evidence."
+            )
+            rule = "equivalent_t07_road_surface_carrier"
         else:
             reason = (
                 "All SWSD-required directions have an equivalent raw local "
@@ -106,7 +113,8 @@ def _automatic_decision(candidate: dict[str, Any]) -> dict[str, Any]:
         "issue_type": issue_type,
         "review_reason": (
             "A SWSD-required direction lacks an equivalent trusted local "
-            "FRCSD carrier after raw and portal-constrained semantic checks "
+            "FRCSD carrier after raw, portal-constrained semantic, and T07 "
+            "Road-surface checks "
             f"with {anchor_confidence} anchor evidence."
         ),
         "review_source": "t12_automatic_high_confidence",

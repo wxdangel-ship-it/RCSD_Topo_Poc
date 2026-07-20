@@ -11,6 +11,12 @@ def test_candidate_contract_has_review_layers_without_probability_fields() -> No
     assert {
         "raw_failed_directions",
         "portal_constrained_semantic_status",
+        "t07_road_surface_status",
+        "t07_road_surface_path_road_ids",
+        "t07_road_surface_access",
+        "t07_road_surface_surface_ids",
+        "t07_road_surface_frontiers",
+        "t07_road_surface_distance_audit",
         "automatic_equivalence_basis",
     } <= fields
     assert "confidence" not in fields

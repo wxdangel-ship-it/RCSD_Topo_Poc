@@ -1,0 +1,13 @@
+{
+  "schema_version": "p05-m0-approved-exclusions-v1",
+  "decisions": [
+    {
+      "family": "T10-Error",
+      "business_id": "1213556_1263661",
+      "decision": "exclude_from_all_training_tasks",
+      "decision_source": "user_confirmation_2026-07-21",
+      "reason": "用户确认先排除该测试用例并继续推进",
+      "effective_run_id": "p05_m0_20260721_06"
+    }
+  ]
+}

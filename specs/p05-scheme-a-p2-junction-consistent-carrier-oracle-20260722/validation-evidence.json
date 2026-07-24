@@ -1,0 +1,65 @@
+{
+  "schema_version": "p05-scheme-a-p2-p0-validation-v1",
+  "status": "completed",
+  "decision": "P05_SCHEME_A_P2_P0_UPSTREAM_CARRIER_NO_GO",
+  "formal_runs": {
+    "candidate_a": "outputs/_work/p05_neural_road_generation/p05_scheme_a_p2_candidate_20260722_01",
+    "candidate_b": "outputs/_work/p05_neural_road_generation/p05_scheme_a_p2_candidate_20260722_02",
+    "oracle_a": "outputs/_work/p05_neural_road_generation/p05_scheme_a_p2_oracle_20260722_05",
+    "oracle_b": "outputs/_work/p05_neural_road_generation/p05_scheme_a_p2_oracle_20260722_06"
+  },
+  "scope": {
+    "case_count": 51,
+    "segment_count": 8863,
+    "movement_candidate_count": 0,
+    "movement_decision_count": 0,
+    "movement_evaluation_count": 0,
+    "truth_derived_candidate_count": 0,
+    "truth_feature_count": 0,
+    "skeleton_mutation_count": 0
+  },
+  "metrics": {
+    "joint_truth_exact_count": 4844,
+    "joint_truth_exact_coverage": 0.5465418030012411,
+    "use_rcsd_truth_count": 2190,
+    "use_rcsd_retained_count": 363,
+    "use_rcsd_truth_retention": 0.16575342465753426,
+    "keep_swsd_wrong_replace_count": 0,
+    "wrong_rcsd_replace_count": 0,
+    "unsafe_advance_right_published_count": 0,
+    "junction_fallback_count": 2812,
+    "segment_fallback_count": 2334,
+    "reality_change_clue_count": 3933,
+    "roadgraph_terminal_counts": {
+      "LEGAL": 49,
+      "EXPECTED_FAIL": 2
+    }
+  },
+  "gates": {
+    "scope_and_isolation": true,
+    "joint_truth": true,
+    "carrier_value": false,
+    "roadgraph_safety": true,
+    "determinism": true,
+    "resources": true,
+    "gis_input_geometry": true
+  },
+  "deterministic_signatures": {
+    "candidate_segments": "1f76e08f4519448454da75ee8d4d3281ba71469fff18029d63a5fc2a65d96003",
+    "candidate_nodes": "04e9e42ac62a61799c4a112015d54eb4eab259d52209a3a522549a2a60722043",
+    "segments": "24383126511251fd30e31fb5cdd297c945470158df815705d3809f2979f3fc41",
+    "junctions": "c3b3d0559810b0d260e8d9fd05e4cbf653e4b7d66e7626a85466af7a51593452",
+    "clues": "e682ca49f1c4c250cfd0a7140bbd57b3b26981bcedb003da9df7821bcf7a3379",
+    "roadgraphs": "25280085af63d1e4170f1f899c19e495fb83ceba98074945bf306be8f6b8d408",
+    "metrics": "3b5a151bbd4a11acacfea67dfea8eeefd1d1ea1d432bfd0fecc6982e9f603dc3"
+  },
+  "qa": {
+    "p05_tests_passed": 145,
+    "qgis_report": "validation-gis-audit.json",
+    "qgis_overlay_status": "NOT_APPLICABLE",
+    "core_source_test_file_count": 122,
+    "files_ge_60_kib": 0,
+    "files_ge_100_kb": 0,
+    "new_formal_entrypoint_count": 0
+  }
+}

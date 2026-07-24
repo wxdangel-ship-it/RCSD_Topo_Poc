@@ -1,0 +1,83 @@
+{
+  "adjudications": [
+    {
+      "allowed_targets": [
+        "USE_RCSD"
+      ],
+      "case_key": "T10:609214532",
+      "clue_target": false,
+      "fallback_scope": "NONE",
+      "group_id": "SCHEME_A_P1:SEGMENT:T10:609214532:505101583_506183080",
+      "object_id": "505101583_506183080",
+      "preferred_target": "USE_RCSD",
+      "rationale": "用户逐对象目视审计确认USE_RCSD正确，且不存在需要上报的现实冲突。",
+      "rcsd_candidate_role": "FINAL_ALLOWED",
+      "target_weight": 1.0
+    },
+    {
+      "allowed_targets": [
+        "KEEP_SWSD"
+      ],
+      "case_key": "T10:706247",
+      "clue_target": true,
+      "fallback_scope": "JUNCTION",
+      "group_id": "SCHEME_A_P1:SEGMENT:T10:706247:706317_706319",
+      "object_id": "706317_706319",
+      "preferred_target": "KEEP_SWSD",
+      "rationale": "SWSD比RCSD多一段附属道路，存在路口级冲突且策略替换效果不佳；按方案A执行Junction fallback。",
+      "rcsd_candidate_role": "CANDIDATE_ONLY_NOT_PUBLISHABLE",
+      "target_weight": 1.0
+    },
+    {
+      "allowed_targets": [
+        "KEEP_SWSD",
+        "USE_RCSD"
+      ],
+      "case_key": "T10:706247",
+      "clue_target": false,
+      "fallback_scope": "NONE",
+      "group_id": "SCHEME_A_P1:SEGMENT:T10:706247:706346_706349",
+      "object_id": "706346_706349",
+      "preferred_target": "USE_RCSD",
+      "rationale": "SWSD比RCSD多一段附属道路；逻辑上允许替换并接受附属道路损失，同时保守KEEP_SWSD也属于合法结果。",
+      "rcsd_candidate_role": "FINAL_ALLOWED",
+      "target_weight": 1.0
+    },
+    {
+      "allowed_targets": [
+        "KEEP_SWSD"
+      ],
+      "case_key": "T10:609214532",
+      "clue_target": false,
+      "fallback_scope": "SEGMENT",
+      "group_id": "SCHEME_A_P1:SEGMENT:T10:609214532:513242335_523239407",
+      "object_id": "513242335_523239407",
+      "preferred_target": "KEEP_SWSD",
+      "rationale": "RCSD未生成数据，保留SWSD属于正常安全fallback；该数据缺失不构成当前道路结构冲突。",
+      "rcsd_candidate_role": "UNAVAILABLE",
+      "target_weight": 1.0
+    },
+    {
+      "allowed_targets": [
+        "KEEP_SWSD"
+      ],
+      "case_key": "T10:609214532",
+      "clue_target": false,
+      "fallback_scope": "SEGMENT",
+      "group_id": "SCHEME_A_P1:SEGMENT:T10:609214532:606102026_609617028",
+      "object_id": "606102026_609617028",
+      "preferred_target": "KEEP_SWSD",
+      "rationale": "RCSD数据缺失时保留SWSD，且用户确认该现象不代表与当前道路结构冲突。",
+      "rcsd_candidate_role": "UNAVAILABLE",
+      "target_weight": 1.0
+    }
+  ],
+  "expected_seeds": [
+    311,
+    313,
+    317
+  ],
+  "schema_version": "p05-scheme-a-p2-p3-p10-human-adjudication-v1",
+  "truth_precedence": "OBJECT_MANUAL_OVERRIDES_CASE",
+  "user_confirmation_date": "2026-07-24"
+}

@@ -10,7 +10,7 @@ T07 主链消费 SWSD `nodes.gpkg`、DriveZone、RCSDIntersection 和可选 RCSD
 |---|---|
 | semantic junction | 按 `mainnodeid` 聚合的 SWSD 语义路口；空 `mainnodeid` 退化为 singleton。 |
 | representative node | 语义路口代表 node，多节点组必须 `id == mainnodeid`。 |
-| evidence area | `DriveZone ∪ RCSDIntersection` 形成的 Step1 证据面。 |
+| evidence area | `DriveZone` 形成的 Step1 证据面；`RCSDIntersection` 不参与 Step1 `has_evd` 正向判定。 |
 | RCSDIntersection anchor surface | Step2 可消费 existing surface 锚定结果。 |
 | compatible relation backfill | Step3 显式消费兼容 relation 成功关系，对 `is_anchor=no` 候选补锚。 |
 | relation evidence | T07 向 T05 发布的 handoff 关系证据。 |
@@ -25,7 +25,7 @@ T07 主链消费 SWSD `nodes.gpkg`、DriveZone、RCSDIntersection 和可选 RCSD
 
 ## 4. 数据流
 
-1. Step1 按 semantic junction 组装代表 node，判断全组 node 是否命中 evidence area 或 1.5m 容差。
+1. Step1 按 semantic junction 组装代表 node，判断全组 node 是否命中 `DriveZone` evidence area 或 1.5m 容差；`RCSDIntersection` 只在 Step2 参与锚定。
 2. Step2 只对 `has_evd=yes` 的代表 node 判定 `is_anchor`。
 3. Step2 输出 nodes、surface handoff、relation evidence、node error 和 summary。
 4. Step3 先从 Step2 surface 中推导 1V1 RCSDNode relation，再从显式提供的兼容 relation 文件中补锚候选。

@@ -8,7 +8,9 @@
 |---|---|
 | `ARTIFACT_PROTOCOL_RETIRED.md` | 已退役的早期文本粘贴回传协议说明 |
 | `2026-06-27-t06-1885118-funnel-audit-conclusion.md` | T06 case `1885118` 第一层漏斗人工目视审计结论归档 |
-| `2026-07-22-p04-p05-junction-segment-road-node-business-ontology.md` | P04/P05 共用的 Junction—Segment—Road/Node 业务认知基线；不替代正式 source-of-truth，也不构成实现授权 |
+| `2026-07-21-p05-pto-candidate-scoring-constrained-optimization.md` | P05-PTO 候选评分—约束优化 RoadGraph 备选架构及其与当前 P05-R2 的差异归档 |
+| `2026-07-21-p05-jsg-pto-junction-segment-semantic-graph.md` | 已确认但暂缓启动的 P05-JSG-PTO 路口—路段语义图、双层 PTO、编译与分级生长方案归档 |
+| `2026-07-22-p04-p05-junction-segment-road-node-business-ontology.md` | 用户逐项确认的 P04/P05 Junction—Segment—Road/Node 统一业务认知；方案 A source-of-truth 同步依据，本归档自身不构成 T01–T12 修改授权 |
 
 ## 边界
 

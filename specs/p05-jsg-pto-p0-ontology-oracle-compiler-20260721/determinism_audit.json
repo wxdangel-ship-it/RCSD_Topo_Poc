@@ -1,0 +1,22 @@
+{
+  "schema_version": "p05-jsg-p0-determinism-audit-v1",
+  "run_a": {
+    "run_id": "p05_jsg_p0_20260721_04",
+    "run_root": "outputs/_work/p05_neural_road_generation/p05_jsg_p0_20260721_04",
+    "run_manifest_sha256": "4bb22c9cef4fba73dff56df462767e51e123c3c804eb1af4fcf06c8acbce6d68"
+  },
+  "run_b": {
+    "run_id": "p05_jsg_p0_20260721_05",
+    "run_root": "outputs/_work/p05_neural_road_generation/p05_jsg_p0_20260721_05",
+    "run_manifest_sha256": "4cf129cee1513ef04a5573c6b9fe8a7f21e2b6b99e1e8b13a3693bdce07e7a25"
+  },
+  "case_count": 51,
+  "selected_case_field_diff_count": 0,
+  "semantic_signature": "5e219870648fe8bcf338b7c7822607dd2f7e7cdc0af2af97652ccb71414e3040",
+  "compiled_graph_signature": "a9c7ccbea064ed1aff44c8bab1b5c2286d576de40a8597b2c843cf6351deeeb7",
+  "provenance_signature": "794f0790ae8514a8a4bab11dd01fd863ec5e9ef814294f71dac2e3da2115069e",
+  "signatures_equal": true,
+  "carrier_reference_count_per_run": 261534,
+  "carrier_missing_reference_count_per_run": 0,
+  "gate_pass": true
+}

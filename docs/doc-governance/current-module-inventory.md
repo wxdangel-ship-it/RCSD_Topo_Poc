@@ -9,7 +9,7 @@
 ## 当前生命周期结论
 
 - `Active`：`t01_data_preprocess`、`t03_virtual_junction_anchor`、`t04_divmerge_virtual_polygon`、`t05_junction_surface_fusion`、`t06_segment_fusion_precheck`、`t07_semantic_junction_anchor`、`t08_preprocess`、`t09_swsd_field_rule_restoration`、`t10_e2e_orchestration`、`t11_manual_relation_review`、`t12_frcsd_quality_audit`
-- `Active POC / 成果模块`：`p01_arm_build`、`p02_wuhan_local_experiment`、`p04_road_direct_generation`
+- `Active POC / 成果模块`：`p01_arm_build`、`p02_wuhan_local_experiment`、`p04_road_direct_generation`、`p05_neural_road_generation`
 - `Retired`：`t02_junction_anchor`
 - `Support Retained`：`t00_utility_toolbox`
 - `Template`：`modules/_template/`
@@ -34,6 +34,7 @@
 | `p01_arm_build` | Active POC / 成果模块 | 当前仓库中用户历史 `P10` 口径统一改称为 `P01`。P01 面向异构路口通行能力 / RoadNextRoad POC，不作为 T09 正式契约。 |
 | `p02_wuhan_local_experiment` | Active POC / 成果模块 | 武汉局部人工锚定实验模块。按 Tool1→Tool3→Tool6→Tool4→Tool5 预处理 SWSD，在 Tool5 后转换 T11 格式人工关系，再复用 T01/T05/T06 完成局部 Segment 融合验证；正式内网单 Case 入口同时生成相对路径 QGIS 工程。 |
 | `p04_road_direct_generation` | Active POC / 成果模块 | 当前执行独立 Segment-first Road 直出：以 T01 Segment 为顶层业务单元，复用 T07/T03/T04/T08 accepted surface 建立 JunctionUnit，并以 Patch Vector、Patch Road 与 LaneTopo 实例化 Road/Node/RoadNextRoad。冻结 Directional V2 `p04_directional_v2_1885118_20260721T154712` 和 High-Precision V3 `p04_hp_v3_1885118_20260721T180655` 仅作历史回归基线。研究 callable 不登记为正式入口，T01-T12 保持不变。 |
+| `p05_neural_road_generation` | Active POC / 成果模块 | 方案A神经网络F-RCSD carrier决策实验模块。冻结T01 Junction—Segment/PhysicalMovement骨架，只研究carrier评分、异常线索和fallback；P12R-R1候选可达性GO，P13-P0完成3 seeds × 5 Case folds，但选择能力与自动发布安全门未通过，正式`P05_SCHEME_A_P2_P3_P13_P0_SELECTION_NO_GO`。当前无可发布模型，未接正式规则链或生产；旧M1/M2R/R2/PTO/JSG-PTO为历史实验。 |
 
 ## 当前业务关系
 
@@ -44,7 +45,7 @@
 - 端到端编排：T10 v1 以文件级 handoff 方式组织 Case package、空间切片、Case 级 replay、T06 反馈闭环和内网全量总控；Case runner 不调用 T08，全量总控可把 T08 作为独立前置阶段串联；两类 runner 均在 T06 后、T09 前强制执行 T11，且可显式在 T06 与 T11 之间插入 T12，默认关闭。
 - F-RCSD 质检：T12 直接审查原始 1V1 F-RCSD，不消费 T06 Step3 F-RCSD；candidate、automatic decision、confirmed、excluded、optional review override 分层发布，保留 CRS、raw/canonical 拓扑、几何、输入参数、运行环境和性能审计。
 - 人工审计输入：T11 从 T10 Case/full run 结果中抽取 relation 修复候选，当前阶段不阻断 T09 对 T06 正式业务 handoff；候选供人工判断后续是否回到 T05 重新生成正式 relation，经 T05 发布为可消费 `T11_MANUAL` relation 后，可在 T06 Step1 释放对应 `fail3/fail4` 旧锚定失败门禁，最终替换仍由 T06 Step2/Step3 审计决定。
-- POC 验证：P01 承载异构路口通行能力 POC，不替代 T09；P02 承载武汉局部人工锚定实验，不替代 T08/T01/T05/T06；P04 并行验证 Segment-first Road 直出，不改变 relation-first 正式主链。
+- POC 验证：P01 承载异构路口通行能力 POC，不替代 T09；P02 承载武汉局部人工锚定实验，不替代 T08/T01/T05/T06；P04 并行验证 Segment-first Road 直出，不改变 relation-first 正式主链；P05 承载冻结业务骨架下的神经网络 carrier 决策实验，不替代 T01-T06。
 
 ## 当前治理缺口
 

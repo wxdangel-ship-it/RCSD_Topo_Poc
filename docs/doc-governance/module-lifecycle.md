@@ -34,6 +34,7 @@
 | `p01_arm_build` | `Active POC / 成果模块` | `modules/p01_arm_build` | 异构路口通行能力 POC / 成果模块，当前历史 P10 口径统一改称 P01。 |
 | `p02_wuhan_local_experiment` | `Active POC / 成果模块` | `modules/p02_wuhan_local_experiment` | 武汉局部人工锚定实验模块，复用 T08/T01/T05/T06 并收口关系转换与验证证据。 |
 | `p04_road_direct_generation` | `Active POC / 成果模块` | `modules/p04_road_direct_generation` | 当前执行独立 Segment-first Road 直出：T01 Segment 为顶层业务单元，复用 T07/T03/T04/T08 accepted surface 与 Patch Vector/Patch Road/LaneTopo 构建 Road/Node/RoadNextRoad。冻结 Directional V2 和 High-Precision V3 保留为历史回归基线；无正式入口，尚未生产正式化。 |
+| `p05_neural_road_generation` | `Active POC / 成果模块` | `modules/p05_neural_road_generation` | 当前采用方案A；P12R-R1候选可达性为GO，P13-P0的candidate-set scorer完成3 seeds × 5 Case folds，但选择能力与自动发布安全门未通过，正式`P05_SCHEME_A_P2_P3_P13_P0_SELECTION_NO_GO`。冻结骨架与fallback合同继续有效；Movement冻结，未接正式主链或生产。旧M1/M2R/R2/PTO/JSG-PTO只作历史实验。 |
 | `_template` | `Template` | `modules/_template` | 新模块启动模板，不是业务模块。 |
 
 ## 4. 当前主链
@@ -42,7 +43,7 @@
 T08 -> T01 -> T07 -> T03 -> T04 -> T05 -> T06 -> T09
 ```
 
-P01 与主链相关，但定位为 POC / 成果模块，不作为 T09 正式替代契约。P02 只做武汉局部实验编排与证据收口，不作为正式主链阶段。P04 并行验证 Segment-first Road 直出，不替代 relation-first 正式主链，也不把 POC 候选直接交给 T09。
+P01 与主链相关，但定位为 POC / 成果模块，不作为 T09 正式替代契约。P02 只做武汉局部实验编排与证据收口，不作为正式主链阶段。P04 并行验证 Segment-first Road 直出，不替代 relation-first 正式主链，也不把 POC 候选直接交给 T09。P05 只做冻结业务骨架下的神经网络 carrier 决策实验，不替代 T01-T06 或进入正式主链。
 
 ## 5. 当前治理缺口
 

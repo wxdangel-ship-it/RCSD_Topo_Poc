@@ -15,6 +15,8 @@
 | Segment | 以 SWSD Road / Node 组织出的可替换道路连续单元 | T01、T06、T11、T09 |
 | Virtual Anchor | 在无现成 RCSD 路口面或需补充表达时构建的虚拟锚定成果 | T03、T04、T05 |
 | Relation Evidence | SWSD 与 RCSD 语义路口、Road、Segment 的关联证据 | T05、T06、T11、T09 |
+| Patch Vector Evidence | 与 SWSD/完整 RCSD 无对象级直接 ID 关系的 Patch Lane、LaneTopo、Boundary、道路面和设施证据；通过 Segment 覆盖范围、Patch membership 与跨 Patch 统一聚合建立候选，高精 Road 几何以此为正式物理证据 | P04 |
+| Segment-first RoadGraph Candidate | P04 中由 T01 Segment 和 SWSD 路口—路段先验建立完整语义骨架，由 T07/T03/T04/T08 accepted surface 定义 JunctionUnit，再由 Patch Vector、同版本 Patch Road 与 LaneTopo 实例化的 Road/Node/RoadNextRoad POC 候选；语义存在、证据支持、可发布性与接管范围必须分离 | P04 POC QA |
 
 ## 主数据流
 
@@ -44,6 +46,13 @@ SWSD / RCSD raw data
 | `restriction` | SWSD 限行 / 禁转语义输入，T09 用于路口通行规则还原。 |
 | T05 `T11_MANUAL` relation audit | 人工审计后由 T05 正式发布的正向 relation 来源。T06 Step1 只在 `source_modules/source_module` 包含 `T11_MANUAL`、`relation_status/status=0`、`base_id>0` 且 `graph_consumable=1` 时，用它释放对应 `is_anchor=fail3/fail4` 的旧锚定失败门禁；该语义不改变节点事实，也不是 T06 Step2/Step3 替换白名单。 |
 | T12 quality hypothesis | SWSD 与原始 1V1 F-RCSD 在通行性上应等价。该语义用于 raw endpoint topology、portal-constrained semantic carrier、标准路口 portal 和锚点可信度联合质检；semantic carrier 只排除 raw 假断裂，完成排除门禁后仍失败的记录可进入正式问题层，但任何质量结论都不得直接提升为修复规则。 |
+| `SWSD Road.patch_id`（P04） | P04 当前确认其为 Patch membership；逗号分隔表示多个 Patch 共同覆盖同一 SWSD Road。它只能限定 Segment 候选证据范围，不构成 Patch Vector 对象级匹配。跨 Patch Segment 必须先统一聚合证据再构建。 |
+| `DriveZone_fix / DivStripZone_fix`（P04） | T00 生成的修正版图层：`DriveZone_fix` 与原始 `DriveZone` 业务语义等价，均表示道路面；`DivStripZone_fix` 与原始 `DivStripZone` 业务语义等价，均表示路面导流带，不是 Patch 分区。`fix` 的 per-Patch 生成方式只属于处理与 lineage 事实，不产生新的业务对象类型；P04 不把 raw 与 fix 当两份独立证据重复计权。 |
+| `ReferenceLane.FlowNum`（P04） | 当前可用语义为轨迹聚合强度的弱证据，用于 movement 候选排序和审计；不解释为精确车流量、合法通行规则或单独的 accepted 门禁。 |
+| `inferred_lane_width_m`（P04） | 通过 Lane 局部垂线分别投影到左右最近且方向/走廊相容的 LaneBoundary，取两侧距离之和形成的几何推导宽度；必须同时记录双侧匹配覆盖率和宽度稳定性，不能由单侧或跨道路 Boundary 补造。 |
+| P04 Segment 发布状态 | `hp_full / hp_partial / swsd_retained / conflict_retained`。它描述 Segment carrier 的证据与发布方式，并与 `segment_publishable`、`carrier_takeover_ready`、`replacement_scope`、`review_required` 和 `evidence_quality_state` 分离。`hp_partial` 内的新建 Road 只允许由 `hp_observed + hp_constrained_completion` 组成，不直接拼接 SWSD 坐标；不能满足 hard gate 时整体保留原 carrier 或仅阻断该 Segment，不得以 review 绕过。 |
+| P04 Road/Node 连通不变量 | 每个正式 Segment 至少有一条独立 Road；高精证据可区分上下行时必须形成两条连续方向主干链，链可按LaneGroup、物理Node、`junc_nodes`、分流合流和证据边界细分为多条Road，铺装面内无法区分方向时可发布双向Road，非高速主辅路等按T01结构可包含额外方向链和附属Road。SWSD负责完整的逐Segment Access方向与逐Junction Movement拓扑合同，不负责built坐标或Road一一对应；细分后仍按归一化方向链保持该合同。ordinary Junction保留分布式portal Node，同一正确分类JunctionUnit的Node共享mainnodeid，不生成中心聚合点或星形内部Road；其RoadNextRoad由同一ordinary JunctionUnit内方向兼容的进入—离开Road组合编译，并记录两端物理Node与Junction lineage。Segment内部连续性和复杂路口仍要求实际共享Node或显式物理关系；T04复杂路口、环岛和聚合异常不得由mainnode机械全连接。跨Segment被拒Movement显式排除，不自动回退两侧Segment。 |
+| P04 历史候选 | M2、冻结 Directional V2 与 High-Precision V3 保留为回归和几何对照，不再作为当前 Segment-first 数据模型。 |
 
 ## 字段治理规则
 

@@ -34,7 +34,7 @@
 | 类别 | 范围 | 当前状态 |
 |---|---|---|
 | Active 正式业务模块文档面 | T01、T03、T04、T05、T06、T07、T08、T09、T10 | 已按 T03 模板具备标准 01-06 模块文档面；模块 `SPEC.md` 承载模块需求，`architecture/03-solution-strategy.md` 承载架构设计 / 需求具体实现策略，`INTERFACE_CONTRACT.md` 承载稳定接口契约；模块级 `AGENTS.md` 仅作为可选 Agent 局部红线 |
-| Active POC / 成果模块文档面 | P01、P02 | 已具备标准模块文档面；各模块 `SPEC.md` 明确 POC 业务需求和不替代正式业务模块的边界 |
+| Active POC / 成果模块文档面 | P01、P02、P04 | 已具备标准模块文档面；各模块 `SPEC.md` 明确 POC 业务需求和不替代正式业务模块的边界；P04 已将 Segment-first 当前业务口径同步到模块 01-06 文档、接口契约和独立 SpecKit，既有第一/第二里程碑、Directional V2 与 High-Precision V3 文档保留为历史回归证据 |
 | Retired 模块文档面 | T02 | 历史文档、实现与支撑入口保留；`SPEC.md` 明确 retired / historical 需求口径 |
 | Support Retained 文档面 | T00 | 工具集合模块文档面保留；`SPEC.md` 明确支撑工具范围和非业务生产边界 |
 | 模板文档面 | `_template` | 新模块启动模板保留；结构与 `docs/doc-governance/module-doc-template.md` 保持一致 |
@@ -57,3 +57,4 @@
 4. T09 后续业务迭代重点仍是 RCSD Laneinfo 与轨迹通行证据补充。
 5. T10 当前定位为端到端编排与 Case 证据组织，不替代项目级主业务链。
 6. T02 已 Retired，保留历史文档面与支撑入口，后续需同步入口登记 retired / historical 口径。
+7. P04 已建立 Segment-first 标准模块文档面和独立 SpecKit，当前有研究 callable 但无正式入口；1885118 Segment-first单Case已完成`passed / accepted_with_review`端到端验收，第一/第二里程碑、冻结 Directional Road V2 与 High-Precision Road V3 仅作历史基线。restriction/ReferenceLane完整movement合法性、多Case、缺失局部结构恢复和生产正式化仍待后续。

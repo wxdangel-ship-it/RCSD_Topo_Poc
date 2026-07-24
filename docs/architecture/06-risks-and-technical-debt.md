@@ -15,6 +15,7 @@
 | 原始 1V1 F-RCSD 与 T06 F-RCSD 混用 | 相同 Source 语义但生成路径不同，混用会污染质检结论 | T12 只接受显式 `frcsd_1v1_roads / frcsd_1v1_nodes`，不得回退到 T06 Step3 输出 |
 | T12 候选被误当正式问题 | 自动可达性检查仍可能受 canonical 节点折叠、node portal、路口归组或数据覆盖影响 | raw endpoint 图为主；既有 semantic carrier 保留端点和 alias 间距约束；正确且唯一的 T07 标准面允许用有向物理 Road 的 surface 相交或 anchor→frontier、接触标准面的单侧一跳 support 排除 node-portal 假断裂，禁止双端任意一跳拼接，其它距离仅作审计；锚点可信度、方向和路径长度继续门禁，外部 review 只作可选 QA 覆盖 |
 | T09 通行证据缺口 | T09 已具备模块文档面，但 RCSD Laneinfo 与轨迹通行证据仍不足 | 后续专项补充 RCSD Laneinfo / 轨迹证据，并同步 T09 契约 |
+| P04 直出 POC 过早正式化 | 冻结 Directional V2 与 High-Precision V3 仅证明历史候选在单 Case 技术门禁下成立，未证明 Segment-first 语义完整、JunctionUnit 边界、局部结构召回、部分资料缺失接管和正式 Road/Node/RoadNextRoad 合同；restriction/ReferenceLane 完整合法性仍未接入 | 保持 Active POC、无正式入口；按独立 Segment-first SpecKit 实现，未知字段不进强规则，状态、可发布性、接管范围与输入质量解耦，继续做真实数据、多 Case movement/几何真值/性能 QA |
 | T02 历史入口仍在 | Retired 生命周期与真实脚本入口容易混淆 | 后续入口治理中同步 retired / historical 口径 |
 
 ## 可接受技术债
@@ -22,6 +23,7 @@
 - 当前保留 T00 / T02 历史支撑入口，以满足追溯和局部工具复用。
 - P01 作为 POC / 成果模块存在，不进入 T09 正式契约。
 - P02 作为武汉局部实验 POC / 成果模块存在；完整输入实验、人工关系和空兼容工件不得被误解释为全量 T07/T03/T04/T05 生产能力。
+- P04 作为 Segment-first Road 直出 POC / 成果模块存在；Phase 0、第一/第二里程碑、冻结 Directional Road V2、High-Precision Road V3 及当前 Segment-first 单 Case 成果均不得被误解释为已实现生产能力。
 - 旧 `TEXT_QC_BUNDLE` 相关 CLI 入口保留为兼容工具，但不再作为正式协作协议。
 - `docs/doc-governance/audits/` 保留历史审计材料，其中旧文件名和旧口径仅作追溯，不作为当前源事实。
 - T06 当前同时保留 problem registry、visual check、topology audit 和 surface topology audit 多类质量证据；短期接受证据类型较多，后续应沉淀成更稳定的批量质量看板。

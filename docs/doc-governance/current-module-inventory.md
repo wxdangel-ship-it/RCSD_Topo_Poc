@@ -9,7 +9,7 @@
 ## 当前生命周期结论
 
 - `Active`：`t01_data_preprocess`、`t03_virtual_junction_anchor`、`t04_divmerge_virtual_polygon`、`t05_junction_surface_fusion`、`t06_segment_fusion_precheck`、`t07_semantic_junction_anchor`、`t08_preprocess`、`t09_swsd_field_rule_restoration`、`t10_e2e_orchestration`、`t11_manual_relation_review`、`t12_frcsd_quality_audit`
-- `Active POC / 成果模块`：`p01_arm_build`、`p02_wuhan_local_experiment`
+- `Active POC / 成果模块`：`p01_arm_build`、`p02_wuhan_local_experiment`、`p04_road_direct_generation`
 - `Retired`：`t02_junction_anchor`
 - `Support Retained`：`t00_utility_toolbox`
 - `Template`：`modules/_template/`
@@ -33,6 +33,7 @@
 | `t12_frcsd_quality_audit` | Active | 原始 1V1 F-RCSD 质量审计模块。以 SWSD 与 1V1 F-RCSD 的通行性等价为待验证假设，用 canonical 图宽召回候选，并以 raw endpoint topology、RCSDIntersection 标准路口 portal 和锚点可信度自动发布高置信正式问题；人工复核仅作可选 QA 覆盖，不执行修复。 |
 | `p01_arm_build` | Active POC / 成果模块 | 当前仓库中用户历史 `P10` 口径统一改称为 `P01`。P01 面向异构路口通行能力 / RoadNextRoad POC，不作为 T09 正式契约。 |
 | `p02_wuhan_local_experiment` | Active POC / 成果模块 | 武汉局部人工锚定实验模块。按 Tool1→Tool3→Tool6→Tool4→Tool5 预处理 SWSD，在 Tool5 后转换 T11 格式人工关系，再复用 T01/T05/T06 完成局部 Segment 融合验证；正式内网单 Case 入口同时生成相对路径 QGIS 工程。 |
+| `p04_road_direct_generation` | Active POC / 成果模块 | 当前执行独立 Segment-first Road 直出：以 T01 Segment 为顶层业务单元，复用 T07/T03/T04/T08 accepted surface 建立 JunctionUnit，并以 Patch Vector、Patch Road 与 LaneTopo 实例化 Road/Node/RoadNextRoad。冻结 Directional V2 `p04_directional_v2_1885118_20260721T154712` 和 High-Precision V3 `p04_hp_v3_1885118_20260721T180655` 仅作历史回归基线。研究 callable 不登记为正式入口，T01-T12 保持不变。 |
 
 ## 当前业务关系
 
@@ -43,7 +44,7 @@
 - 端到端编排：T10 v1 以文件级 handoff 方式组织 Case package、空间切片、Case 级 replay、T06 反馈闭环和内网全量总控；Case runner 不调用 T08，全量总控可把 T08 作为独立前置阶段串联；两类 runner 均在 T06 后、T09 前强制执行 T11，且可显式在 T06 与 T11 之间插入 T12，默认关闭。
 - F-RCSD 质检：T12 直接审查原始 1V1 F-RCSD，不消费 T06 Step3 F-RCSD；candidate、automatic decision、confirmed、excluded、optional review override 分层发布，保留 CRS、raw/canonical 拓扑、几何、输入参数、运行环境和性能审计。
 - 人工审计输入：T11 从 T10 Case/full run 结果中抽取 relation 修复候选，当前阶段不阻断 T09 对 T06 正式业务 handoff；候选供人工判断后续是否回到 T05 重新生成正式 relation，经 T05 发布为可消费 `T11_MANUAL` relation 后，可在 T06 Step1 释放对应 `fail3/fail4` 旧锚定失败门禁，最终替换仍由 T06 Step2/Step3 审计决定。
-- POC 验证：P01 承载异构路口通行能力 POC，不替代 T09；P02 承载武汉局部人工锚定实验，不替代 T08/T01/T05/T06。
+- POC 验证：P01 承载异构路口通行能力 POC，不替代 T09；P02 承载武汉局部人工锚定实验，不替代 T08/T01/T05/T06；P04 并行验证 Segment-first Road 直出，不改变 relation-first 正式主链。
 
 ## 当前治理缺口
 
@@ -51,3 +52,4 @@
 2. `t10_e2e_orchestration` 已具备 Case 级 replay、空间切片、反馈闭环与内网全量总控；后续需持续收敛真实数据下的反馈迭代质量、全量审计口径和跨模块 handoff 稳定性。
 3. `t02_junction_anchor` 已 Retired，但入口登记仍需后续同步 retired / historical 口径。
 4. 模块级实现细节应保留在模块文档，项目级盘点只维护业务目标、关系和缺口。
+5. P04 第一、第二里程碑、冻结 Directional Road V2 和 High-Precision Road V3 已完成并转为历史基线；当前 Segment-first已在1885118单Case验证完整Segment carrier、ordinary JunctionUnit内部carrier、Road/Node/RoadNextRoad合同、LaneTopo阻断范围、跨Patch原子性和几何平滑门禁，终态为`passed / accepted_with_review`。T04/环岛/主辅多Road的独立分型样本、多Case和缺失局部结构恢复仍待扩展；未知 Vector 枚举不进强规则，RoadSplit、SWSD restriction/Laneinfo、ReferenceLane补充与完整movement合法性明确推迟，输入质量异常与冲突状态保持解耦，单Case结果不升级为生产规则。

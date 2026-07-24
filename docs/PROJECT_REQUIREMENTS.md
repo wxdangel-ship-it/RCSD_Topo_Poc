@@ -80,6 +80,9 @@ T10 负责组织端到端 Case package、Case replay、full pipeline manifest、
 | T12 | 原始 1V1 F-RCSD 质量审计；验证 SWSD 可达性等价假设，以 raw endpoint topology 为主、portal-constrained semantic carrier 与 T07 Road-surface portal carrier 为误报排除门禁，结合标准路口和锚点可信度自动发布高置信问题与排除证据，人工 review 仅作可选 QA 覆盖，不执行修复。 |
 | P01 | 异构路口通行能力 POC，不作为 T09 正式替代契约。 |
 | P02 | 武汉局部人工锚定实验编排与证据收口；复用 T08/T01/T05/T06，不替代这些模块的正式业务契约。 |
+| P04 | Segment-first Road 直出 POC；T01 Segment 是顶层业务单元，SWSD 路口—路段结构提供完整Access/Movement拓扑合同而非built几何模板，T07/T03/T04/T08 accepted surface 定义 JunctionUnit，Patch Vector 与同版本 Patch Road 提供高精物理证据，锚定成功的完整 RCSD 只作跨 Patch 辅助与缺证据 carrier 候选。每个正式 Segment 必须发布至少一条独立 Road；高精可区分方向时，业务验收对象是两条连续的方向主干链，而不是固定两条 Road 记录。方向主干链可按 LaneGroup、物理 Node、`junc_nodes`、分流合流和证据边界细分为多条 Road；细分不要求与SWSD Road一一对应，但不得改变SWSD定义的进出方向和路口Movement完整性；非高速主辅路等还可包含额外方向链和附属 Road。新建 Road 几何只能由 `hp_observed + hp_constrained_completion` 形成，不直接拼接 SWSD 坐标；缺证据时可整体保留 SWSD carrier，单 Segment hard gate 失败只阻断该 Segment 及相关 Movement。ordinary Junction保留分布式高精portal Node，不生成中心聚合点或星形JunctionUnit内部Road；同一正确分类的ordinary JunctionUnit内Node共享`mainnodeid`，RoadNextRoad按该JunctionUnit的方向兼容进入—离开Road组合编译默认PhysicalMovement。实际共享Node仍用于Segment内部连续性和显式物理连接；T04复杂路口、环岛及聚合异常不得由mainnode机械全连接，必须按上游物理子图和LaneTopo编译。跨Segment被拒Movement显式排除，不自动回退两侧Segment。发布状态为 `hp_full / hp_partial / swsd_retained / conflict_retained`，并与 `segment_publishable`、`carrier_takeover_ready`、`replacement_scope` 和输入质量状态分离。正式 POC 候选只发布 Road、Node、RoadNextRoad。冻结 Directional V2 和 High-Precision V3 只作历史对照。最大化复用既有模块正式产物与公开契约，但不修改 T01-T12；当前不替代 relation-first 正式主链，不发布正式 RCSD/F-RCSD。 |
+
+P04闭域目标必须同时发布三套事实：输入确定的`BaselineCohort`、外部确认清单确定的`DirectBuildEligibility`和最终`PublishDisposition`。Baseline历史分母不得因资料不足或现实变化而被改写；只有逐对象、可哈希、可追溯的`patch_data_insufficient`或`reality_change`可以退出DirectBuild硬分母，未列出的对象默认`direct_build_required`。退出硬分母的对象仍必须保留完整可发布图结构，并分别进入资料不足或现实变化审计。
 
 ## 5. 质量与验收口径
 
@@ -98,6 +101,10 @@ T10 负责组织端到端 Case package、Case replay、full pipeline manifest、
 - T06 不用 problem registry 或 surface fallback 绕过 replacement plan。
 - P01 不替代 T09 正式通行规则恢复契约。
 - P02 不伪造缺失的 T07/T03/T04 道路面锚定成果，不把局部实验结论直接提升为全量口径。
+- P04 不把当前 Road/LaneGroup、单 Case Vector 观测或未确认枚举直接提升为生产规则，也不把高精资料不足自动解释为道路不存在。
+- P04 高精接管顺序固定为“完整 Segment 方向走廊 → baseline/access 恢复 → 单 SWSD member 缺方向的 RoadSurface 受约束推导”；后一级不得抢占前一级已成立的高精走廊。Segment hard fallback 后必须释放其独占但未发布的恢复证据并重算其它 Segment，仍被有效 built carrier 占用的证据不得释放。
+- P04 的 access 恢复可把正式 `accepted surface + junction_endpoint_buffer` 作为 Segment 两端物理交接边界：当 Patch 候选已通过冲突占用、DriveZone和最小观测比例门禁，且两个端点保护区互不接触时，可按 surface-to-surface 高精桥接实例化方向主干，不再用包含路口内部长度的 SWSD 轴覆盖率否决；保护区相交、端点无法区分或任一拓扑/几何 hard gate失败时仍整体保留。
+- P04 的endpoint completion先尝试直接补齐；直线离开合法域时，只允许在局部`DriveZone/RoadSurface + 正式buffer + accepted endpoint surface`内生成短路径，并通过覆盖率、绕行比例、平滑后合法域和几何hard gate。该路径不消费SWSD坐标。若其LaneTopo交接把相邻主干切出端点面外尾段，只有同父carrier存在唯一贯穿两端面的片段时才抑制尾段，并保留Movement与抑制审计；不得改变无关Segment。
 - T02 不继续承接新业务需求。
 
 ## 7. 改进路线
@@ -107,3 +114,4 @@ T10 负责组织端到端 Case package、Case replay、full pipeline manifest、
 3. F-RCSD 自动 QA：T06 Step3 结果继续由 T06 正式审计；原始 1V1 F-RCSD 由 T12 检查 road-node integrity、raw endpoint 方向可达性、受信 portal-constrained semantic carrier、标准路口 portal、局部替代路径和 DriveZone 证据，并自动发布高置信问题；人工 review 仅作可选 QA 覆盖。
 4. 通行能力增强：T09 后续引入 RCSD Laneinfo 和轨迹证据；P01 Arm / RoadNextRoad 经验可作为正式化前参考。
 5. 文档层级收敛：根目录只保留简洁入口和简版需求，详细需求、架构策略、治理盘点和模块契约下沉到对应目录。
+6. Road 直出 POC：P04 既有第一/第二里程碑、冻结 Directional V2 `p04_directional_v2_1885118_20260721T154712` 与 High-Precision V3 `p04_hp_v3_1885118_20260721T180655` 保留为历史比较基线，不再代表当前构图架构。当前阶段执行独立 Segment-first SpecKit：先建立完整 Segment/JunctionUnit 语义骨架，再按 Segment 原子消费 Patch Vector、Patch Road、LaneTopo 与可用 accepted surface，发布 Road/Node/RoadNextRoad 及独立审计/QGIS 对比成果。restriction/Laneinfo、ReferenceLane 补充、RoadSplit、完整 movement 合法性、多 Case 真值和生产正式化仍在后续。

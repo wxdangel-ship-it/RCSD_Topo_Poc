@@ -33,6 +33,7 @@
 | `t12_frcsd_quality_audit` | `Active` | `modules/t12_frcsd_quality_audit` | 原始 1V1 F-RCSD 质量审计模块；以 SWSD 可达性等价为待验证假设，使用 raw endpoint topology、标准路口 portal 和锚点可信度自动发布高置信确认与排除证据，人工复核仅作可选 QA 覆盖，不修改 T06 或输入路网。 |
 | `p01_arm_build` | `Active POC / 成果模块` | `modules/p01_arm_build` | 异构路口通行能力 POC / 成果模块，当前历史 P10 口径统一改称 P01。 |
 | `p02_wuhan_local_experiment` | `Active POC / 成果模块` | `modules/p02_wuhan_local_experiment` | 武汉局部人工锚定实验模块，复用 T08/T01/T05/T06 并收口关系转换与验证证据。 |
+| `p04_road_direct_generation` | `Active POC / 成果模块` | `modules/p04_road_direct_generation` | 当前执行独立 Segment-first Road 直出：T01 Segment 为顶层业务单元，复用 T07/T03/T04/T08 accepted surface 与 Patch Vector/Patch Road/LaneTopo 构建 Road/Node/RoadNextRoad。冻结 Directional V2 和 High-Precision V3 保留为历史回归基线；无正式入口，尚未生产正式化。 |
 | `_template` | `Template` | `modules/_template` | 新模块启动模板，不是业务模块。 |
 
 ## 4. 当前主链
@@ -41,7 +42,7 @@
 T08 -> T01 -> T07 -> T03 -> T04 -> T05 -> T06 -> T09
 ```
 
-P01 与主链相关，但定位为 POC / 成果模块，不作为 T09 正式替代契约。P02 只做武汉局部实验编排与证据收口，不作为正式主链阶段。
+P01 与主链相关，但定位为 POC / 成果模块，不作为 T09 正式替代契约。P02 只做武汉局部实验编排与证据收口，不作为正式主链阶段。P04 并行验证 Segment-first Road 直出，不替代 relation-first 正式主链，也不把 POC 候选直接交给 T09。
 
 ## 5. 当前治理缺口
 

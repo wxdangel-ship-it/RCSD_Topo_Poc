@@ -2,7 +2,7 @@
 
 ## 范围
 
-- 主审计日期：2026-06-12；T09 增量审计：2026-07-10；T10 性能与 60KB 治理增量审计：2026-07-11；T01/T06 ownership 增量审计：2026-07-12；T10 增加 T11 工作流增量审计：2026-07-13；T06 性能恢复与 Step3 修复性拆分增量审计：2026-07-14；T06 全量性能恢复增量审计：2026-07-16；T12 F-RCSD 质检、T10 可选接入及专用流水线增量审计：2026-07-18；T12 reviewed resume 与 false-positive hardening 增量审计：2026-07-19；T12 Road-surface portal 增量审计：2026-07-20
+- 主审计日期：2026-06-12；T09 增量审计：2026-07-10；T10 性能与 60KB 治理增量审计：2026-07-11；T01/T06 ownership 增量审计：2026-07-12；T10 增加 T11 工作流增量审计：2026-07-13；T06 性能恢复与 Step3 修复性拆分增量审计：2026-07-14；T06 全量性能恢复增量审计：2026-07-16；T12 F-RCSD 质检、T10 可选接入及专用流水线增量审计：2026-07-18；T12 reviewed resume 与 false-positive hardening 增量审计：2026-07-19；T12 Road-surface portal 增量审计：2026-07-20；P04 Road 直出第二里程碑、冻结 Directional Road V2、High-Precision Road V3 与独立几何/拓扑 QA 增量审计：2026-07-21；P04 Segment-first Road直出增量审计：2026-07-22；P04 Segment-first LaneTopo 投影拆分增量审计：2026-07-23
 - 阈值：单文件超过 `100 KB`
 - 口径：按 `code-boundaries-and-entrypoints.md`，审计纳入版本管理的 `src/`、`scripts/`、`tests/`、`tools/` 下源码 / 脚本文件。
 - 本表只记录结构债事实，不代表本轮进入对应模块正文治理。
@@ -15,6 +15,19 @@
 - 2026-07-19 T12 reviewed resume 轮次修改 `2` 个既有脚本和 `2` 个入口契约测试：`t10_run_innernet_full_pipeline.sh` 为 `64067` bytes，`t10_run_frcsd_quality_pipeline.sh` 为 `2696` bytes，两个测试分别为 `8104` 与 `3237` bytes，均低于 100KB 硬阈值。full runner 已超过 60KiB 软预警线，本轮仅修复显式新 `T12_RUN_ID` 的 run-root/manifest 选择、失败恢复一致性与复核输入优先级，未增加算法职责；后续增长前仍须拆分 stage helper。
 - 2026-07-19 T12 false-positive hardening 轮次扫描全部 `14` 个新增/修改源码、测试和 SpecKit validation 脚本：`>=100KB` 为 `0`；最大为 `candidate_audit.py`（`23435` bytes），新拆出的 `semantic_carrier.py` 为 `8348` bytes，最大一次性 validation 脚本 `analyze_alias_transitions.py` 为 `15836` bytes。正式入口、CLI 参数和 T10 阶段顺序均未改变；新增 semantic helper 只承接 portal-constrained carrier 的端点与内部 alias 门禁，不回填 candidate 主编排。
 - 2026-07-20 T12 Road-surface portal 轮次扫描全部 `10` 个新增/修改源码、测试和 SpecKit validation 脚本：`>=100KB` 为 `0`；最大为 `candidate_audit.py`（`29673` bytes），新拆出的 `surface_portal_carrier.py` 为 `22950` bytes，`outputs.py` 为 `22016` bytes，一次性原始数据分析脚本 `analyze_anchored_surface_portals.py` 为 `17081` bytes。正式入口、CLI 参数与 T10 阶段顺序均未改变；新 helper 只承接双 T07 唯一标准面的 Road-surface 有向 carrier、anchor→frontier 支撑与 audit-only 距离证据，不包含对象 ID 特判。
+- 2026-07-21 P04 Road 直出第二里程碑、冻结 Directional Road V2、High-Precision Road V3、双向证据塌缩降级、物理走廊、三类几何来源及独立几何/拓扑 QA 扫描 P04 `src/`、`tests/` 与 V3 SpecKit `validation/` 共 `56` 个 `.py` 文件：`>=61440 bytes` 与 `>=100KB` 均为 0；最大为 `directional_evidence.py`（`42766` bytes），V3 最大为 `high_precision_geometry.py`（`37608` bytes），新增 V2 对照 helper 为 `6170` bytes，性能 replay validation 为 `2179` bytes。directional/high-precision 的 evidence、geometry、comparison、movement、quality、topology、pipeline、QGIS 与测试按职责隔离。新增/修改均为模块内研究 callable、测试和一次性验证工件，不新增 repo CLI/root script，不修改 M2、冻结 V2、T00-T12 V1、`scripts/` 或入口 registry，仓库超阈值集合不变。
+- 2026-07-22 P04 Segment-first 目标覆盖迭代扫描 `24` 个源码与 `19` 个专项测试：`>=61440 bytes` 与 `>=100KB` 均为0；最大源码为`segment_first_pipeline.py`（`57688` bytes），其次为`segment_first_nodes.py`（`52055` bytes），最大测试为`test_segment_first_nodes.py`（`14890` bytes）。本轮新增 JunctionUnit endpoint surface 恢复候选及已发布 carrier 几何重叠冲突保护，未新增 repo CLI/root script，未修改 T01–T12、`scripts/`或入口 registry。
+- 2026-07-23 P04 Segment-first LaneTopo 投影与 endpoint surface 定向救援迭代后扫描 `25` 个 `segment_first*.py` 源码与 `19` 个专项测试：`>=61440 bytes` 为 `1`、`>=100KB` 为 `0`。主编排 `segment_first_pipeline.py` 为 `88766` bytes；LaneTopo 正式 Road 投影、父 Road 同载体识别、Lane 级拒绝归集、已接受物理交接复用和 Junction carrier path 查询保持在 `segment_first_lane_topo.py`（`10857` bytes）。Endpoint 候选只使用 T07/T03/T04 accepted surface，且仅在普通构图产生 Junction rejected spoke、同时存在贯通两端面的 Patch 候选时定向重选；不完整方向先剔除，再复用既有 DriveZone 约束反向推导，未进入救援的 Segment 保持原候选选择。Road-Lane 正式关系同时按 Patch Road lineage 与 Road `source_lane_ids` 编译，覆盖 Lane fragment 直出 Road。本轮未新增正式入口，未修改 T01–T12、`scripts/` 或入口 registry；主编排后续仍应继续拆出 network rebuild/summary职责，不得回填投影算法。
+- 2026-07-23 P04 Segment-first 分布式路口与物理方向链审计迭代后扫描 `25` 个 `segment_first*.py` 源码与 `22` 个专项测试：源码`>=61440 bytes`为`3`、测试`>=61440 bytes`为`0`、全部`>=100KB`为`0`。最大源码`segment_first_pipeline.py`为`92988` bytes，其次`segment_first_carriers.py`为`65432` bytes、`segment_first_nodes.py`为`63099` bytes；最大测试`test_segment_first_nodes.py`为`34974` bytes。新增 SWSD-only portal 的 DriveZone 物理支撑门禁、跨 Segment 分离 portal、accepted surface 可信锚点保留、最终 Node 坐标审计、ordinary 分布式 portal 和 QGIS 方向链 PASS/FAIL 分类样式；未新增正式入口，未修改 T01–T12、`scripts/`或入口 registry。`segment_first_pipeline.py`距100KB硬阈值不足10KB，`segment_first_nodes.py`已超过60KiB观察线，后续禁止继续回填新职责，必须优先拆出 network rebuild/summary 与 endpoint resolution/connection audit。
+- 2026-07-24 P04 SWSD路口先验保护、稳定Road lineage细分与多Road LaneTopo链迭代后扫描 `26` 个 `segment_first*.py` 源码与 `23` 个专项测试：源码`>=61440 bytes`为`3`、测试`>=61440 bytes`为`0`、全部`>=100000 bytes`为`0`。最大源码`segment_first_pipeline.py`为`96321` bytes，其次`segment_first_carriers.py`为`65464` bytes、`segment_first_nodes.py`为`64396` bytes；新增`segment_first_lineage.py`为`27918` bytes。细分职责独立承接Junction保护、父Road精确子串、内部Node增量物化和审计重映射；LaneTopo链投影仍留在`segment_first_lane_topo.py`。未新增正式入口，未修改T01–T12、`scripts/`或入口registry。主编排距100000字节硬阈值仅3679字节，下一轮源码新增职责前必须先拆分。
+- 2026-07-25 P04 SWSD Access切分lineage、方向化Road-Lane关系和完整路口结构审计迭代后扫描`33`个`segment_first*.py`源码与`28`个专项测试：源码`>=61440 bytes`为`3`、测试`>=61440 bytes`为`0`、全部`>=100000 bytes`为`0`。最大源码`segment_first_pipeline.py`为`94714` bytes，其次`segment_first_nodes.py`为`68350` bytes、`segment_first_carriers.py`为`65464` bytes；Road-Lane局部方向匹配下沉到`segment_first_road_lane.py`（`6315` bytes），SWSD Junction结构聚合下沉到`segment_first_swsd_junction_audit.py`（`4951` bytes）。本轮未新增正式入口，未修改T01–T12、`scripts/`或入口registry；主编排只保留调用与发布挂接。
+- 2026-07-26 P04 T04 accepted surface、LaneTopo与局部连接Road三重证据约束的复杂路口显式关系迭代后扫描`33`个`segment_first*.py`源码与`28`个专项测试：源码`>=61440 bytes`为`3`、测试`>=61440 bytes`为`0`、全部`>=100000 bytes`为`0`。最大源码`segment_first_pipeline.py`为`94774` bytes，其次`segment_first_nodes.py`为`70163` bytes、`segment_first_carriers.py`为`65464` bytes；复杂路口规则保留在`segment_first_junction_topology.py`（`28328` bytes），主编排仅增加`connection_evidence`挂接。专项测试`201 passed`；未新增正式入口，未修改T01–T12、`scripts/`或入口registry。
+- 2026-07-26 P04 SWSD完整路口、LaneGroup细Road和分布式方向portal收敛后扫描`33`个`segment_first*.py`源码与`28`个专项测试：源码`>=61440 bytes`为`3`、测试`>=61440 bytes`为`0`、全部`>=100000 bytes`为`0`。最大源码`segment_first_pipeline.py`为`94971` bytes，其次`segment_first_nodes.py`为`78887` bytes、`segment_first_carriers.py`为`78790` bytes；最大测试`test_segment_first_nodes.py`为`50732` bytes。目标端点裁切仍只在主编排挂接；受限保留语义桥LaneTopo映射留在`segment_first_lane_topo.py`，built/retained portal分离和surface交点Node留在`segment_first_nodes.py`。专项测试`212 passed`；未新增正式入口，未修改T01–T12、`scripts/`或入口registry。`segment_first_pipeline.py`距100000字节仅5029字节，`segment_first_nodes.py`新增职责前必须拆分。
+- 2026-07-24 P04 accepted surface保护域、部分证据端点补全、SWSD方向路径审计与QGIS CRS修复后扫描`34`个`segment_first*.py`源码与`29`个专项测试：源码`>=61440 bytes`为`3`、测试`>=61440 bytes`为`0`、全部`>=100000 bytes`为`0`。最大源码`segment_first_pipeline.py`为`96729` bytes，其次`segment_first_carriers.py`为`80725` bytes、`segment_first_nodes.py`为`78887` bytes；`segment_first_swsd_paths.py`为`11985` bytes，`segment_first_qgis.py`为`23350` bytes。最大测试`test_segment_first_nodes.py`为`50732` bytes，专项回归`221 passed`。主编排只增加SWSD方向路径审计挂接且正式发布角色为空；端点补全逻辑留在carrier模块，QGIS只增加CRS序列化。未新增正式入口，未修改T01–T12、`scripts/`或入口registry；`segment_first_pipeline.py`距100000字节仅3271字节，后续新增职责前必须拆分。
+- 2026-07-24 P04 fallback证据占用固定点、SWSD唯一方向路径发布与单member缺方向恢复后扫描`35`个`segment_first*.py`源码与`29`个专项测试：源码`>=61440 bytes`为`3`、测试`>=61440 bytes`为`0`、全部`>=100000 bytes`为`0`。最大源码`segment_first_pipeline.py`为`97742` bytes，其次`segment_first_carriers.py`为`86143` bytes、`segment_first_nodes.py`为`79087` bytes；新增`segment_first_member_recovery.py`为`3303` bytes，恢复候选冲突重协调继续位于`segment_first_access_recovery.py`（`14183` bytes）。最大测试`test_segment_first_nodes.py`为`52325` bytes，专项回归`225 passed`。本轮未新增正式入口，未修改T01–T12、`scripts/`或入口registry；主编排距100000字节仅2258字节，后续新增任何职责前必须先拆分。
+- 2026-07-24 P04 accepted endpoint surface短桥接与V57单调恢复后扫描`36`个`segment_first*.py`源码与`29`个专项测试：源码`>=61440 bytes`为`3`、测试`>=61440 bytes`为`0`、全部`>=100000 bytes`为`0`。最大源码`segment_first_pipeline.py`为`97742` bytes，其次`segment_first_carriers.py`为`88360` bytes、`segment_first_nodes.py`为`79087` bytes；新增`segment_first_surface_bridge.py`为`5273` bytes，surface-to-surface证据识别已下沉，carrier只保留调用与推导编排。最大测试`test_segment_first_nodes.py`为`52325` bytes，`test_segment_first_target_carriers.py`为`47186` bytes，专项回归`226 passed`。本轮未新增正式入口，未修改T01–T12、`scripts/`或入口registry；主编排距100000字节仅2258字节，carriers新增职责前必须继续拆分。
+- 2026-07-25 P04 局部RoadSurface端点路由与V61单调恢复后扫描`37`个`segment_first*.py`源码与`30`个专项测试：源码`>=61440 bytes`为`3`、测试`>=61440 bytes`为`0`、全部`>=100000 bytes`为`0`。最大源码`segment_first_pipeline.py`为`97742` bytes，其次`segment_first_carriers.py`为`88871` bytes、`segment_first_nodes.py`为`79087` bytes；新增`segment_first_surface_routing.py`为当前独立小模块，Movement端点面外尾段审计保留在`segment_first_movements.py`（`37081` bytes）。最大测试`test_segment_first_nodes.py`为`52325` bytes、`test_segment_first_target_carriers.py`为`47186` bytes，专项回归`230 passed`。本轮未新增正式入口，未修改T01–T12、`scripts/`或入口registry；主编排距100000字节仅2258字节，carrier与pipeline后续仍禁止回填新职责。
+- 2026-07-25 P04 Road端点严格入面、人工surface优先与THROUGH实际穿面约束迭代后扫描`41`个`segment_first*.py`源码与`33`个专项测试：源码`>=61440 bytes`为`3`、测试`>=61440 bytes`为`0`、全部`>=100000 bytes`为`0`。最大源码`segment_first_pipeline.py`为`97984` bytes，其次`segment_first_nodes.py`为`97571` bytes、`segment_first_carriers.py`为`93331` bytes；端点内缩目标和局部路由继续位于`segment_first_surface_routing.py`，T07端点surface与T04 topology解耦位于`segment_first_junctions.py`，accepted polygon的THROUGH仅在Road实际穿入内缩surface时切分，只有同一T01 Segment正式retained lineage唯一时允许不移动几何的投影细分。最大测试`test_segment_first_nodes.py`为`57813` bytes，专项回归`253 passed`。本轮未新增正式入口，未修改T01–T12、`scripts/`或入口registry；主编排距100000字节仅2016字节，nodes距100000字节仅2429字节，二者后续不得继续增加职责。
 
 ## 结果
 
@@ -253,6 +266,166 @@
 | `src/rcsd_topo_poc/modules/t10_e2e_orchestration/scratch_publish.py` | `14231` bytes | T10 既有 wrapper 的临时 Linux 文件系统执行结果发布 helper；负责受校验的 tar 发布、路径回写、清单核验与 scratch 清理 | 不新增正式入口；保持发布前后文件数/字节数一致并限制清理根边界 |
 | `src/rcsd_topo_poc/modules/t06_segment_fusion_precheck/step3_final_topology_gate.py` | `9687` bytes | Final topology 正式失败决策、失败节点证据与 hard-gate plan 回退 helper | 保持决策与 plan 标记职责，不承接 F-RCSD 几何或 relation 编排 |
 | `src/rcsd_topo_poc/modules/t06_segment_fusion_precheck/step3_authoritative_transition_closure.py` | `14812` bytes | hard-gate 直接回退后 mixed-source 级联 transition 的 T05 权威 mainnode 收口与审计 | 保持严格候选、12m 门禁和审计职责，不扩展为通用 surface fallback |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_access_recovery.py` | `10667` bytes | JunctionUnit endpoint surface 约束下的完整 Patch Road 恢复候选、accepted endpoint surface合同、端点协调后重判及已发布 carrier 重叠冲突审计 | 仅为缺失角色提供后置候选；不得复用已发布主体几何 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_carriers.py` | `65464` bytes | Segment carrier角色、四态、目标角色恢复、显式作用域内的endpoint surface候选完整性、局部connector隔离与原子回退 | 已超过60KiB观察线；不得继续回填恢复编排，新增职责前先拆分 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_config.py` | `4715` bytes | 版本化显式路径、CRS、局部Junction routing与Road lineage细分阈值配置 | 不扩展为正式入口 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_corridors.py` | `16022` bytes | 跨Patch方向观测span组装、道路域补全与高精观测链平滑保护 | 保持corridor职责 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_evidence.py` | `33281` bytes | Patch Road/Lane/LaneTopo证据、目标fragment assignment与隔离恢复候选 | 保持证据身份和质量隔离 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_finalize.py` | `7679` bytes | 外部验收证据校验与`technical_passed→passed`晋级 | 不承接生成算法或入口 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_geometry_quality.py` | `7046` bytes | built Segment Road观测/道路面推导/completion几何hard/soft质量审计 | 保持几何QA职责 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_geometry.py` | `13095` bytes | carrier到Segment Road几何、source span及道路面推导来源物化 | 不回填carrier规划或Junction内部Road |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_inputs.py` | `7920` bytes | 上游/Patch输入、accepted surface、完整RCSD弱锚定与CRS adapter | 不反推未知字段语义 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_junction_carriers.py` | `40009` bytes | ordinary分布式高精portal、accepted surface/DriveZone支撑审计、父级与Lane级LaneTopo强制portal和完整RCSD弱证据 | 不扩展为T03/T04路口搜索或通用几何修复；ordinary不得恢复中心星形Road |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_lane_topo.py` | `13887` bytes | LaneTopo向正式Road投影、父Road同载体识别、精确Lane关系拒绝归集、已接受物理交接复用、Junction carrier path与稳定父Road多part有向链查询 | 保持发布投影与审计职责；不得在此生成Road或修改业务Segment |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_lineage.py` | `27918` bytes | Junction关系范围外的稳定Road lineage边界识别、精确父Road子串切分、内部Node增量物化、既有Node图保持和审计重映射 | 不决定Segment/Junction；不得重新拟合几何或触发全图Node重编译 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_junctions.py` | `5795` bytes | T07/T03/T04优先级与JunctionUnit | 不重做上游路口算法 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_movements.py` | `25724` bytes | LaneTopo内部anchor、terminal-equivalent movement、THROUGH access与Road切分 | 不切分业务Segment |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_nodes.py` | `64396` bytes | Node继承/稳定生成、分布式Junction portal、mainnode、逐Road交接、DriveZone约束端点补全、跨Segment portal分离、最终坐标支撑审计及可选lineage字段空值隔离 | 已超过60KiB观察线；不得继续回填endpoint resolution或connection audit职责，新增职责前先拆分 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_outputs.py` | `2215` bytes | 正式/审计/关系GPKG发布 | 保持发布职责 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_pipeline.py` | `96321` bytes | Segment-first阶段编排、Junction rejected spoke后的accepted endpoint surface定向救援、Road-Lane双来源lineage编译、端点协调后恢复重判、定向语义端点重试、稳定lineage后置细分、fallback固定点、summary及对照层准备 | 距100000字节硬阈值仅3679字节；禁止继续回填，下一轮源码新增职责前必须先拆出network rebuild与summary |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_qgis.py` | `18026` bytes | 相对路径QGIS工程、四组Road/Node对照、方向主干链PASS/FAIL分类、Junction portal/LaneTopo exclusion及Road细分决策分组与样式 | 保持可视化职责 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_quality.py` | `10437` bytes | 发布后独立只读QA | 不依赖生成器内存结论 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_skeleton.py` | `6709` bytes | T01 SegmentBuildUnit与Access | 保持T01 owner职责 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_target_assignment.py` | `11754` bytes | 冻结目标锚定与 Patch Road/Lane 分配 | 保持目标合同与普通证据分配隔离 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_target_coverage.py` | `9356` bytes | 闭合 Patch core、ADVANCE_RIGHT 与 boundary review 目标集 | 不改变 T01 Segment 业务定义 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_target_fragments.py` | `13409` bytes | 目标 Segment 内 Patch Road/Lane station fragment 切分 | 保持原始证据身份与区间可追溯 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_target_realization.py` | `15456` bytes | 按目标方向角色审计多Road方向链、实际共享Node、终端Junction identity及accepted surface物理到达 | 不以技术 gate或mainnode属性替代业务目标验收 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_topology.py` | `4942` bytes | 从实际共享Node编译RoadNextRoad | 不由mainnode直接连边 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_types.py` | `3331` bytes | Segment-first枚举、结果和状态合同 | 保持纯模型职责 |
+| `tests/modules/p04_road_direct_generation/test_segment_first_contract.py` | `2710` bytes | 配置、枚举、四态合同 | 按主题保持拆分 |
+| `tests/modules/p04_road_direct_generation/test_segment_first_access_recovery.py` | `6758` bytes | accepted endpoint surface合同、endpoint surface候选、已发布主体重叠阻断、短交接重叠允许及协调后重判 | 按主题保持拆分 |
+| `tests/modules/p04_road_direct_generation/test_segment_first_corridors.py` | `6639` bytes | 跨Patch组装、双向原子性、反向几何与观测链平滑保护 | 按主题保持拆分 |
+| `tests/modules/p04_road_direct_generation/test_segment_first_evidence.py` | `8227` bytes | 中心走廊、Junction优先级、部分支持、LaneTopo与目标恢复候选 | 按主题保持拆分 |
+| `tests/modules/p04_road_direct_generation/test_segment_first_finalize.py` | `3387` bytes | finalizer完整/失败证据门禁 | 按主题保持拆分 |
+| `tests/modules/p04_road_direct_generation/test_segment_first_geometry_quality.py` | `3515` bytes | completion及道路面推导几何hard gate | 按主题保持拆分 |
+| `tests/modules/p04_road_direct_generation/test_segment_first_geometry.py` | `2416` bytes | 道路面推导source span与发布属性 | 按主题保持拆分 |
+| `tests/modules/p04_road_direct_generation/test_segment_first_inputs.py` | `1555` bytes | accepted surface与schema contract | 按主题保持拆分 |
+| `tests/modules/p04_road_direct_generation/test_segment_first_junction_carriers.py` | `15589` bytes | ordinary分布式portal、局部surface/DriveZone支撑、完整RCSD弱证据、LaneTopo强制portal和单Segment回退 | 按主题保持拆分 |
+| `tests/modules/p04_road_direct_generation/test_segment_first_movements.py` | `9806` bytes | Movement anchor切分、terminal-equivalent、THROUGH access与拒绝 | 按主题保持拆分 |
+| `tests/modules/p04_road_direct_generation/test_segment_first_nodes.py` | `37125` bytes | Node/mainnode、交接、方向、距离、语义端点、DriveZone约束surface补全、跨Segment portal分离、可信surface锚点和可选lineage空值门禁 | 按主题保持拆分 |
+| `tests/modules/p04_road_direct_generation/test_segment_first_lineage.py` | `9665` bytes | 稳定纵向lineage细分、Junction保护、父几何并集、内部Node增量物化和既有Node保持 | 按主题保持拆分 |
+| `tests/modules/p04_road_direct_generation/test_segment_first_pipeline_contract.py` | `18803` bytes | actual shared Node、complex拓扑、候选隔离、Patch Road与direct Lane双来源多对多Road-Lane、父Road同载体、已接受物理交接复用、Lane级拒绝及多Road LaneTopo链投影 | 按主题保持拆分 |
+| `tests/modules/p04_road_direct_generation/test_segment_first_skeleton.py` | `1963` bytes | Segment/ENDPOINT/THROUGH skeleton | 按主题保持拆分 |
+| `tests/modules/p04_road_direct_generation/test_segment_first_target_assignment.py` | `5502` bytes | 冻结目标锚定与候选分配 | 按主题保持拆分 |
+| `tests/modules/p04_road_direct_generation/test_segment_first_target_carriers.py` | `24668` bytes | 目标方向角色、endpoint surface显式救援作用域、部分支持、跨Patch道路面补全、局部connector隔离与恢复接管 | 按主题保持拆分 |
+| `tests/modules/p04_road_direct_generation/test_segment_first_target_coverage.py` | `6468` bytes | core/ADVANCE_RIGHT/boundary review目标合同 | 按主题保持拆分 |
+| `tests/modules/p04_road_direct_generation/test_segment_first_target_fragments.py` | `2932` bytes | Patch Road目标station fragment与重叠审计 | 按主题保持拆分 |
+| `tests/modules/p04_road_direct_generation/test_segment_first_target_lanes.py` | `2160` bytes | Lane目标fragment分配 | 按主题保持拆分 |
+| `tests/modules/p04_road_direct_generation/test_segment_first_target_realization.py` | `8869` bytes | 目标多Road方向链、断裂/分叉/终端错配和accepted surface物理到达审计 | 按主题保持拆分 |
+| `tests/modules/p04_road_direct_generation/test_segment_first_distributed_junction.py` | `8025` bytes | ordinary分布式portal、统一mainnode、无中心星形Road及complex隔离合同 | 按主题保持拆分 |
+| `tests/modules/p04_road_direct_generation/test_segment_first_qgis.py` | `981` bytes | 方向主干链PASS/FAIL分类renderer合同 | 按主题保持拆分 |
+| `tests/modules/p04_road_direct_generation/test_segment_first_quality.py` | `3694` bytes | 发布后独立QA、ID规范化与ordinary星形Road零门禁 | 按主题保持拆分 |
+
+### P04 Segment-first SWSD完整拓扑合同当前快照（2026-07-26，V46）
+
+以下快照覆盖上表中同路径的历史字节数；本轮新增职责已拆入独立文件，所有源码/脚本均低于100KB硬阈值。
+
+| 文件 | 当前体量 | 当前职责 | 后续约束 |
+|---|---:|---|---|
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_pipeline.py` | `94971` bytes | Segment-first阶段编排、稳定lineage后置细分、SWSD Access/Movement合同与fallback固定点 | 距100000字节仅5029字节；禁止回填新算法职责 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_nodes.py` | `78887` bytes | 分布式portal、mainnode、端点协调、built/retained semantic portal隔离及accepted surface方向交点 | 已超过60KiB观察线；新增职责前拆分endpoint resolution |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_carriers.py` | `78790` bytes | Segment carrier角色、目标方向组装、部分支持与单Segment原子回退 | 已超过60KiB观察线；新增职责前拆分carrier recovery |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_lineage.py` | `34443` bytes | 稳定LaneGroup/lineage交接、精确父Road切分、Access端点属性保持与增量度2 Node | 不重新拟合几何或重编全图Node |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_junction_topology.py` | `28328` bytes | ordinary完整Movement合同、T04 complex显式SWSD fallback及LaneTopo+local connector+accepted surface三重证据关系 | 不生成几何；complex不得退化为ordinary全连接 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_qgis.py` | `21268` bytes | QGIS对照、方向链、SWSD Junction Movement合同和完整路口结构审计层 | 保持可视化职责 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_quality.py` | `20121` bytes | 发布后独立只读QA及SWSD拓扑合同复算 | 不依赖生成器内存结论 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_reference_axes.py` | `13384` bytes | SWSD语义参考轴和高精候选纵向排序 | 不输出SWSD几何 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_topology.py` | `10833` bytes | actual shared、ordinary semantic与受约束complex显式RoadNextRoad编译 | 不由裸mainnode直接连边 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_swsd_topology.py` | `10057` bytes | SWSD逐Segment Access方向合同 | 明确Junction lineage是必要条件 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_swsd_junction_audit.py` | `4951` bytes | 聚合SWSD Junction的Segment/ENDPOINT/THROUGH/Movement完整结构用于QGIS审计 | 只读审计，不参与构图决策 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_road_lane.py` | `6315` bytes | 按Lane方向、局部距离和纵向覆盖编译细Road与Lane关系 | Patch Road/LaneGroup只提供候选，不得机械全挂 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_lane_topo.py` | `16266` bytes | 结合方向化Road-Lane关系、同carrier细Road链及受限保留semantic bridge投影LaneTopo | 不修改业务Segment或接受任意图可达 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_movements.py` | `32270` bytes | LaneTopo anchor、THROUGH切分、SWSD Access/Junction切分lineage传递和surface本体端点裁切 | 不切分业务Segment |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_summary.py` | `8360` bytes | summary、report和终态证据汇总 | 不承接构图 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_junctions.py` | `7666` bytes | Junction优先级及SWSD物理Node lineage索引 | 不重做上游路口算法 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_network.py` | `2357` bytes | 细分后网络重编译与LaneTopo投影编排 | 不承接几何或summary |
+| `tests/modules/p04_road_direct_generation/test_segment_first_junction_topology.py` | `11789` bytes | ordinary完整Movement、T04显式fallback及LaneTopo局部连接Road出口合同 | 按主题保持拆分 |
+| `tests/modules/p04_road_direct_generation/test_segment_first_swsd_topology.py` | `5901` bytes | SWSD Access方向、Junction lineage和mainnode不足性 | 按主题保持拆分 |
+| `tests/modules/p04_road_direct_generation/test_segment_first_reference_axes.py` | `8181` bytes | 参考轴、方向投影和候选顺序合同 | 按主题保持拆分 |
+| `tests/modules/p04_road_direct_generation/test_segment_first_nodes.py` | `50732` bytes | ordinary方向portal、built/retained中心隔离、surface交点和Node/mainnode合同 | 按主题保持拆分 |
+| `tests/modules/p04_road_direct_generation/test_segment_first_pipeline_contract.py` | `26242` bytes | 多Road LaneTopo链、保留semantic bridge和跨lineage拒绝合同 | 按主题保持拆分 |
+
+### P04 endpoint surface路由与V61当前快照（2026-07-25）
+
+以下快照覆盖V54及更早表中同路径历史字节数；全部源码/脚本仍低于100KB硬阈值。
+
+| 文件 | 当前体量 | 当前职责 | 后续约束 |
+|---|---:|---|---|
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_pipeline.py` | `97742` bytes | Segment-first编排、fallback证据重协调固定点、SWSD方向角色挂接与发布汇总 | 距100000字节仅2258字节；新增任何职责前必须拆分 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_carriers.py` | `88871` bytes | carrier角色、Segment优先方向组装、观测覆盖率约束端点补全、surface桥接/局部路由调用和单Segment回退 | member/surface识别已下沉；新增carrier职责前继续拆分 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_nodes.py` | `79087` bytes | 分布式portal、mainnode和端点协调 | 新增职责前拆分endpoint resolution |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_movements.py` | `37081` bytes | LaneTopo anchor、THROUGH切分、endpoint surface裁切及局部路由引出的端点面外尾段审计 | 不切分业务Segment；尾段抑制必须有唯一贯穿片段 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_member_recovery.py` | `3303` bytes | Segment级走廊失败后的单member缺方向RoadSurface恢复编排 | 只做后置恢复；不得抢占Segment级候选 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_surface_bridge.py` | `5273` bytes | 已认证access候选的非重叠endpoint surface短桥接识别 | 不放宽raw component或重叠保护区 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_surface_routing.py` | `6651` bytes | endpoint直线失败后的局部RoadSurface可见性路由、绕行门禁与边界内缩 | 不使用SWSD坐标，不沿远端道路域绕行 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_access_recovery.py` | `14183` bytes | access surface候选、carrier冲突及fallback后证据释放固定点 | 只释放已fallback owner独占且未发布的证据 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_swsd_paths.py` | `11985` bytes | SWSD member正反向路径枚举、唯一/歧义审计和候选角色映射 | 唯一路径可驱动发布；歧义路径只审计 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_qgis.py` | `23350` bytes | 43层相对路径QGIS工程、项目/图层CRS、对比样式 | 保持可视化职责 |
+| `tests/modules/p04_road_direct_generation/test_segment_first_target_carriers.py` | `47186` bytes | 目标方向、Segment/member恢复优先级、surface短桥接/重叠拒绝、路径选择和部分支持 | 按主题保持拆分 |
+| `tests/modules/p04_road_direct_generation/test_segment_first_nodes.py` | `52325` bytes | Node组件、冗余显式关系、portal与mainnode合同 | 按主题保持拆分 |
+| `tests/modules/p04_road_direct_generation/test_segment_first_movements.py` | `16302` bytes | Movement切分、endpoint裁切与路由因果范围内的尾段抑制 | 按主题保持拆分 |
+| `tests/modules/p04_road_direct_generation/test_segment_first_surface_routing.py` | `4308` bytes | 局部路由、断开/超绕行拒绝、平滑后合法域和SWSD splice为0 | 按主题保持拆分 |
+| `tests/modules/p04_road_direct_generation/test_segment_first_qgis.py` | `3406` bytes | renderer与项目/图层CRS序列化合同 | 按主题保持拆分 |
+
+### P04 三层目标合同当前快照（2026-07-24，V63）
+
+本轮将目标资格和处置解析拆入独立文件；`segment_first_pipeline.py`只增加通用合同接线，未新增Case/Segment硬编码或构图算法。全部源码/脚本仍低于100KB硬阈值。
+
+| 文件 | 当前体量 | 当前职责 | 后续约束 |
+|---|---:|---|---|
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_pipeline.py` | `98622` bytes | Segment-first编排及三层目标合同接线 | 距100000字节仅1378字节；禁止继续回填，任何新增编排职责前必须先拆分 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_target_disposition.py` | `7777` bytes | 外部确认清单校验、hash及Baseline/DirectBuild资格覆盖 | 不承担构图；禁止Case/Segment硬编码 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_target_coverage.py` | `9662` bytes | 输入确定Baseline并接入资格合同 | Baseline不得被例外清单改写 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_target_realization.py` | `22767` bytes | Baseline/DirectBuild双分母、方向链和PublishDisposition审计 | 使用正式Segment状态区分hard conflict与部分证据，不按ID分类 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_qgis.py` | `24421` bytes | 47层三方对照、目标资格/例外、五类发布处置样式和既有业务审计 | 保持可视化职责 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_summary.py` | `8927` bytes | summary/report并列披露Baseline、DirectBuild和完整发布 | 不承接构图 |
+| `tests/modules/p04_road_direct_generation/test_segment_first_target_disposition.py` | `5968` bytes | 例外清单合同与拒绝路径 | 按主题保持拆分 |
+| `tests/modules/p04_road_direct_generation/test_segment_first_target_coverage.py` | `6857` bytes | Baseline与DirectBuild覆盖合同 | 按主题保持拆分 |
+| `tests/modules/p04_road_direct_generation/test_segment_first_target_realization.py` | `17234` bytes | 双分母、发布处置、方向链及冲突/部分证据分类 | 按主题保持拆分 |
+| `tests/modules/p04_road_direct_generation/test_segment_first_qgis.py` | `3988` bytes | 五类发布处置renderer与项目/图层CRS序列化合同 | 按主题保持拆分 |
+
+### P04 目视审计历史最佳版本快照（2026-07-24，V69/V70）
+
+本轮把retained冗余抑制和部分member接管分别拆入独立模块；`segment_first_pipeline.py`与`segment_first_carriers.py`只增加编排接线。全部源码/脚本仍低于100KB硬阈值，未新增repo入口，也未改动T01–T12。
+
+| 文件 | 当前体量 | 当前职责 | 后续约束 |
+|---|---:|---|---|
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_pipeline.py` | `97757` bytes | Segment-first编排、质量Review传播、冗余retained抑制接线、Patch/T03/T04/T07路口面对照准备 | 距100000字节仅2243字节；不得继续回填算法职责 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_carriers.py` | `93331` bytes | 完整carrier仲裁及部分member接管编排 | 距100000字节仅6669字节；新增恢复策略前继续拆分 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_nodes.py` | `80157` bytes | 分布式portal、mainnode、提前右转端点lineage与实际共享Node | 已超过60KiB观察线；新增端点职责前拆分 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_movements.py` | `37630` bytes | accepted surface保护范围内的Movement切分及主走廊兄弟尾段抑制 | 不切分业务Segment |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_geometry.py` | `14212` bytes | built/whole-retained/partial-retained Road几何与稳定ID物化 | 不回填carrier规划 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_geometry_quality.py` | `7957` bytes | 几何hard/soft质量审计及正式Road Review传播 | Review不得绕过hard gate |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_inputs.py` | `8257` bytes | 上游/Patch输入及Patch原始Intersection加载 | 不反推未知字段语义 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_qgis.py` | `25797` bytes | 52层相对路径QGIS工程、五类路口面和冗余抑制审计 | 保持可视化职责 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_surface_routing.py` | `8975` bytes | 观测端部切线到accepted surface及局部RoadSurface路由 | 不使用SWSD坐标，不改变证据仲裁顺序 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_retained_overlap.py` | `18218` bytes | 简单Segment内冗余retained候选、增量抑制、拓扑复算与原子回滚 | 不抑制THROUGH/局部Movement载体 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_partial_members.py` | `12145` bytes | 单方向member的observed Road与互补retained partial Road构建 | 不满足DirectBuild完整性，不降级既有完整built |
+| `tests/modules/p04_road_direct_generation/test_segment_first_geometry.py` | `5479` bytes | partial retained ID、source lineage与几何来源合同 | 按主题保持拆分 |
+| `tests/modules/p04_road_direct_generation/test_segment_first_geometry_quality.py` | `4765` bytes | soft Review传播与hard gate回归 | 按主题保持拆分 |
+| `tests/modules/p04_road_direct_generation/test_segment_first_nodes.py` | `53559` bytes | 提前右转端点lineage、portal与mainnode合同 | 按主题保持拆分 |
+| `tests/modules/p04_road_direct_generation/test_segment_first_movements.py` | `16388` bytes | surface保护范围与兄弟尾段抑制回归 | 按主题保持拆分 |
+| `tests/modules/p04_road_direct_generation/test_segment_first_quality.py` | `4374` bytes | 正式输出拓扑和几何只读QA | 按主题保持拆分 |
+| `tests/modules/p04_road_direct_generation/test_segment_first_surface_routing.py` | `4888` bytes | 切线surface portal、路由与合法域回归 | 按主题保持拆分 |
+| `tests/modules/p04_road_direct_generation/test_segment_first_qgis.py` | `3988` bytes | QGIS renderer、项目/图层CRS合同 | 按主题保持拆分 |
+| `tests/modules/p04_road_direct_generation/test_segment_first_retained_overlap.py` | `5537` bytes | 冗余retained抑制与hard gate回滚合同 | 按主题保持拆分 |
+| `tests/modules/p04_road_direct_generation/test_segment_first_partial_members.py` | `3433` bytes | observed/retained partial互斥与transition Node合同 | 按主题保持拆分 |
+
+### P04 Road端点严格入面当前快照（2026-07-25，V75）
+
+本轮源码仍保持41个`segment_first*.py`、专项测试33个；全部源码和脚本低于100000字节。V75选择以端点严格入面、LaneTopo unresolved 0和独立QA 0 violation为主，不以DirectBuild数量覆盖hard gate。
+
+| 文件 | 当前体量 | 当前职责 | 后续约束 |
+|---|---:|---|---|
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_pipeline.py` | `97984` bytes | Segment-first阶段编排和发布挂接 | 距100000字节仅2016字节；禁止新增职责 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_nodes.py` | `97571` bytes | 分布式portal、mainnode、严格端点入面与受约束补齐 | 距100000字节仅2429字节；下一次端点策略必须先拆分 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_carriers.py` | `93331` bytes | carrier仲裁与部分证据接管 | 新增恢复策略前继续拆分 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_movements.py` | `38861` bytes | accepted THROUGH穿面切分和retained精确lineage投影细分 | 不扩展到关系半径邻近 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_qgis.py` | `28447` bytes | 53层QGIS工程、路口面和端点协调审计 | 保持只读可视化职责 |
+| `tests/modules/p04_road_direct_generation/test_segment_first_nodes.py` | `57813` bytes | 严格入面、平滑补齐、source-node和mainnode lineage回归 | 达到60KiB前按端点主题继续拆分 |
+| `tests/modules/p04_road_direct_generation/test_segment_first_target_carriers.py` | `47186` bytes | carrier目标、部分支持和surface恢复回归 | 按主题保持拆分 |
+| `tests/modules/p04_road_direct_generation/test_segment_first_pipeline_contract.py` | `28964` bytes | 编排和正式发布合同 | 按主题保持拆分 |
+| `tests/modules/p04_road_direct_generation/test_segment_first_movements.py` | `20146` bytes | THROUGH实际穿面和retained精确lineage例外 | 按主题保持拆分 |
 
 说明：
 

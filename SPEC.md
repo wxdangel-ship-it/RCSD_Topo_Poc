@@ -41,7 +41,7 @@ T10 v1 Case runner 默认编排 `T01 -> T07 Step1/2 -> T03 -> T04 -> T05 -> T06 
 ## 4. 当前模块生命周期
 
 - Active 正式业务模块：`t01_data_preprocess`、`t03_virtual_junction_anchor`、`t04_divmerge_virtual_polygon`、`t05_junction_surface_fusion`、`t06_segment_fusion_precheck`、`t07_semantic_junction_anchor`、`t08_preprocess`、`t09_swsd_field_rule_restoration`、`t10_e2e_orchestration`、`t11_manual_relation_review`、`t12_frcsd_quality_audit`
-- Active POC / 成果模块：`p01_arm_build`、`p02_wuhan_local_experiment`
+- Active POC / 成果模块：`p01_arm_build`、`p02_wuhan_local_experiment`、`p04_road_direct_generation`
 - Retired 模块：`t02_junction_anchor`
 - Support Retained 模块：`t00_utility_toolbox`
 
@@ -61,6 +61,10 @@ T10 v1 Case runner 默认编排 `T01 -> T07 Step1/2 -> T03 -> T04 -> T05 -> T06 
 - 不把 T10 feedback 直接变成 T06 Step3 替换白名单。
 - 不把 P01 POC 结果直接提升为 T09 正式契约。
 - 不把 P02 武汉局部实验结果直接提升为全量生产口径，也不让 P02 替代 T08/T01/T05/T06 正式职责。
+- P04 当前以 T01 Segment 为顶层业务单元，按 T07/T03/T04/T08 的 accepted JunctionUnit 和 Patch Vector 高精证据独立构建 Road/Node/RoadNextRoad；冻结 Directional V2 与 High-Precision V3 仅作历史对照。不得把 P04 单 Case POC 候选直接提升为正式 RCSD/F-RCSD，也不得让 P04 在多 Case 真值、restriction/ReferenceLane 完整 movement 合法性和正式化审批完成前替代 relation-first 正式主链。
+- P04 在 SWSD 参考轴明显包含大段 Junction 内部长度时，可由已通过冲突占用和 DriveZone 门禁的 Patch access-surface候选证明两个不同 accepted endpoint surface之间的短高精物理走廊；仅当两个 `accepted surface + junction_endpoint_buffer`保护区彼此可区分、观测与补齐比例满足门槛、双方向原子实例化且全部拓扑/几何hard gate通过时，才可绕过SWSD长度覆盖门槛。保护区重叠或同一短线无法区分两端Junction时必须保留，不得用Review强行接管。
+- P04 已选高精走廊到endpoint surface的直线补齐若离开合法道路域，但端点距离仍在既有缺失比例上限内，可在局部`RoadSurface ∪ accepted endpoint surface`内搜索受约束路径；路径必须满足覆盖、绕行、平滑后合法域和几何hard gate，不得引入SWSD坐标或远端路网绕行。由该新Road触发的LaneTopo切分若产生位于Segment两端面之外的主干尾段，只在同一父carrier另有唯一片段贯穿两个端点面时抑制该尾段并发布审计。
+- P04 闭域验收采用三层合同：`BaselineCohort`由原始输入确定性计算且历史分母永久保留；`DirectBuildEligibility`只能由外部、可哈希、逐对象可审计的确认清单把对象分为`direct_build_required / patch_data_insufficient / reality_change`，默认均为`direct_build_required`；`PublishDisposition`独立表达最终高精发布、资料不足保留、现实变化待标准化或冲突保留。退出DirectBuild硬分母不等于退出发布，全范围Segment仍须完整发布Road/Node/RoadNextRoad，且报告必须同时披露原Baseline与DirectBuild两套分母。
 - 不继续扩展 Retired T02 的业务职责。
 
 ## 6. 近期改进重点

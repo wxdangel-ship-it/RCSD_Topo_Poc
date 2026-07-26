@@ -33,10 +33,32 @@
 ## 3. 当前入口位置
 
 - 无 repo 官方 CLI。
-- 无 root script 入口。
-- 有研究 callable：历史`run_milestone_one(MilestoneOneConfig)`、`run_milestone_two(MilestoneTwoConfig)`、`run_directional_road_v2(DirectionalRoadV2Config)`、`run_high_precision_road_v3(HighPrecisionRoadV3Config)`，以及当前`run_segment_first_road_direct(SegmentFirstConfig)`与`finalize_segment_first_run(...)`；均不是repo官方入口。
+- 正式内网执行入口：`scripts/p04_run_segment_first_innernet.py`。它只负责显式参数解析、输入前检和调用`run_segment_first_road_direct(SegmentFirstConfig)`，不复制业务算法。
+- Patch输入只接受`--patch-root`目录；SWSD、T01、T07、T03、T04、完整RCSD及可选目标合同均按独立文件路径参数传入，不硬编码本地或内网路径。
+- 历史`run_milestone_one(MilestoneOneConfig)`、`run_milestone_two(MilestoneTwoConfig)`、`run_directional_road_v2(DirectionalRoadV2Config)`、`run_high_precision_road_v3(HighPrecisionRoadV3Config)`，以及当前`run_segment_first_road_direct(SegmentFirstConfig)`与`finalize_segment_first_run(...)`继续作为模块callable；只有Segment-first生成入口由上述脚本正式包装。
 
-未来若新增 repo 官方 CLI/root script 或改变正式调用方式，必须单独获得授权并同步 `docs/repository-metadata/entrypoint-registry.md`。
+正式调用方式：
+
+```bash
+.venv/bin/python scripts/p04_run_segment_first_innernet.py \
+  --patch-root PATCH_ROOT \
+  --swsd-road SWSD_ROAD_FILE \
+  --swsd-node SWSD_NODE_FILE \
+  --t01-road T01_ROAD_FILE \
+  --t01-node T01_NODE_FILE \
+  --t01-segment T01_SEGMENT_FILE \
+  --t07-surface T07_SURFACE_FILE \
+  --t03-surface T03_SURFACE_FILE \
+  --t04-surface T04_SURFACE_FILE \
+  --full-rcsd-road FULL_RCSD_ROAD_FILE \
+  --full-rcsd-node FULL_RCSD_NODE_FILE \
+  --target-replaceability TARGET_REPLACEABILITY_FILE \
+  --target-disposition TARGET_DISPOSITION_FILE \
+  --output-dir NEW_OUTPUT_DIR \
+  --run-id RUN_ID
+```
+
+`--target-replaceability`和`--target-disposition`可选；默认运行成功物化结果即返回0，并在stdout JSON中分别给出`terminal_status/core_gate_pass`。需要业务core gate失败时返回2，可增加`--require-core-pass`。
 
 ## 4. 阅读顺序
 

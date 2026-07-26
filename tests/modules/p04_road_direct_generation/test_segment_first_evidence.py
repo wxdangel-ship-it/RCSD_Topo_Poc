@@ -225,6 +225,42 @@ def test_lane_topo_preserves_direct_lane_pair_for_lane_carrier_paths() -> None:
     assert result.iloc[0]["target_patch_road_key"] == "p:lane:12"
 
 
+def test_lane_topo_keeps_raw_keys_before_publication_mapping() -> None:
+    assignments = gpd.GeoDataFrame(
+        [{"patch_road_key": "p:other", "geometry": Point(0, 0)}],
+        crs="EPSG:32650",
+    )
+    patch_road_next_road = gpd.GeoDataFrame(
+        columns=["source_patch_id", "RoadId", "NextRoadId", "Id", "geometry"],
+        geometry="geometry",
+        crs="EPSG:32650",
+    )
+    lane_topo = gpd.GeoDataFrame(
+        [
+            {
+                "lane_topo_id": "p:101",
+                "source_lane_carrier_key": "p:lane:11",
+                "target_lane_carrier_key": "p:lane:12",
+                "source_patch_road_key": "p:1",
+                "target_patch_road_key": "p:2",
+                "geometry": Point(0.5, 0),
+            }
+        ],
+        crs="EPSG:32650",
+    )
+
+    result = _explicit_road_pairs(
+        patch_road_next_road,
+        assignments,
+        lane_topo,
+    )
+
+    assert set(result["pair_source"]) == {
+        "lane_topo",
+        "lane_topo_lane",
+    }
+
+
 def test_patch_road_center_orientation_follows_road_next_road() -> None:
     centers = gpd.GeoDataFrame(
         [

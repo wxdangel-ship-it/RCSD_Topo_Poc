@@ -44,9 +44,11 @@ Input preflight
 - Segment Road保持各自高精portal，不把空间分离的端点压到同一中值Node。
 - 同一真实物理门户的极近端点可稳定聚类；不同门户保持分布式Node并共享同一mainnodeid。
 - 不生成路口中心Node或portal—中心星形Road。默认PhysicalMovement由同一ordinary JunctionUnit内方向兼容的进入—离开Road组合编译，并保留两端物理Node lineage。
+- ordinary默认组合排除与source方向相反的U-turn；U-turn、retained局部连接和正式`ADVANCE_RIGHT Segment`只在原始LaneTopo或局部连接Road提供显式物理证据时发布。
 - 最终built portal必须进入选定原始surface内部；内缩面用于生成稳定面内目标，原始面`contains(final Node)`用于hard gate。边界、外扩buffer或只有DriveZone支撑均不算入面。
 - 存在accepted polygon时，THROUGH只在高精Road实际穿入内缩surface时切分；仅在关系半径内旁侧邻近时拒绝切分，禁止横向吸附制造直角接头。上游只有`swsd_retained`点且同一T01 Segment正式THROUGH access lineage唯一成立时，可在既有Road最近投影处做不改变几何的语义细分；该例外不具备accepted surface入面效力。
 - 原始SWSD用于枚举完整的Access方向和应有进入—离开Movement，不用于约束portal坐标或要求输出Road与SWSD Road一一对应；高精Road即使按LaneGroup细分，也必须在归一化方向链上保持这套完整拓扑。
+- 路口语义范围之外的同Segment主干交接优先保留较强built端点，通过受限位移使前后Road共享同一实际Node；保留mainnode只参与lineage判定，不作为物理接边结果。
 
 ### 4.2 复杂短距离连续分歧/合流
 

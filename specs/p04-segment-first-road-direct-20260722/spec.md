@@ -155,12 +155,14 @@
 - **FR-017**: 系统 MUST 将 Segment Road边界放在 JunctionUnit的稳定高精SegmentAccess/Portal，不使用 SWSD Node固定距离搜索；每条正式Segment Road必须独立实现其适用Access。
 - **FR-018**: 同一 JunctionUnit内所有 Node MUST 共享相同 `mainnodeid`。
 - **FR-019**: RoadNextRoad MUST 分层编译：Segment内部连续性和复杂路口使用实际共享`nodeid`或显式物理关系；ordinary语义关系必须由同一正确分类JunctionUnit内方向兼容的进入—离开Road组合生成，并记录source/target物理Node、junction_group_id和mainnodeid。不得只比较mainnode字符串。
+- **FR-019A**: 非Junction语义范围内的同Segment主干Road交接 MUST 使用完全相同的实际Node；保留`mainnodeid`只表达lineage，MUST NOT替代共享Node或自动生成RoadNextRoad。
 - **FR-020**: 正确分类的非复杂平交 Junction MUST 以分布式高精portal Node、统一mainnodeid和ordinary语义RoadNextRoad表达默认PhysicalMovement；不得生成中心聚合Node或星形JunctionUnit内部Road，T09合法性不在本变更处理。
 - **FR-021**: 系统 MUST 按 T04内部物理关系处理复杂分歧/合流，不得对 T04 accepted/rejected业务结果另起算法。
 - **FR-022**: 系统 MUST 保持环岛整体为 JunctionUnit。
 - **FR-023**: `junc_nodes/THROUGH` MUST 保持同一业务 Segment，并由前后 Segment Road和中间 Junction carrier表达。
 - **FR-024**: 单 Segment交接或其ordinary portal carrier失败 MUST 只阻断该 Segment及其相关新 Movement，其他 Segment可继续发布；跨Segment被拒Movement MUST 显式excluded且不得同时回退两侧Segment。
 - **FR-025**: 系统 MUST 对全部可用 LaneTopo提供正式映射、软 Review或显式排除去向。
+- **FR-025A**: ordinary之外的retained和正式T01 `ADVANCE_RIGHT Segment`语义RoadNextRoad MUST 逐关系具备同一原始LaneTopo的Road/Lane证据；共享mainnode、空间邻近或几何反向 MUST NOT 自动生成关系。
 - **FR-026**: LaneTopo缺失 MUST NOT 被解释为禁止通行或不存在。
 - **FR-027**: Patch已有调头口/短连接 MAY 在强证据验证后同步构建；Patch缺失时本变更 MUST NOT 主动补建。
 - **FR-028**: T01未表达的普通提前右转 MUST 先作为 RealityChangeClue；无简易可发布 Road时不得发布正式 Segment。
@@ -175,8 +177,9 @@
 - **FR-037**: 系统 MUST 提供独立发布后 QA，从发布 GPKG重新读取并复算业务完整性、几何来源、Node/RoadNextRoad、LaneTopo和跨 Patch门禁。
 - **FR-038**: 系统 MUST 构建相对路径 QGIS工程，显式展示输入、基线、新结果、关系与 Review。
 - **FR-039**: 系统 MUST 保持旧 M1/M2/V2/V3 callable、输出名、测试和基线不变。
-- **FR-040**: 系统 MUST 仅新增模块内研究 callable，不新增 repo CLI、root script或入口登记项。
+- **FR-040**: 系统 MUST 保留模块内研究callable，并提供唯一正式内网入口`scripts/p04_run_segment_first_innernet.py`参数化调用Segment-first生成；除`--patch-root`外，所有业务输入 MUST 以独立文件路径传入，脚本 MUST NOT硬编码本地/内网路径、复制业务算法、自动finalize或修改T01–T12。
 - **FR-041**: 双向Segment的`main_forward/main_reverse`和单向Segment的`main_oneway` MUST 分别形成从一个终端JunctionAccess到另一个终端JunctionAccess的连续方向主干链；链内Road MUST 共享实际Node且不得断裂、分叉或形成重复平行主干。对accepted Junction，两个终端物理Node MUST 分别落入对应surface或正式端点缓冲，仅有正确`junction_group_id/mainnodeid`不得判定为到达。
+- **FR-041A**: 系统 MAY 对已发布主干Road执行端点固定、切向受控的局部正则化，但 MUST 同时通过几何有效、长度变化、最大偏离和弯折改善门禁，且 MUST NOT移动accepted Junction端点、改变Node身份或抹除真实弯道/物理分离/分歧合流。
 - **FR-042**: 系统 MAY 在LaneGroup/Patch Road证据归属、物理Node、`junc_nodes`、分流合流或证据边界处细分Road；每个细分Road MUST 通过关系层恢复Lane/LaneGroup/Patch lineage和细分原因。
 - **FR-043**: 在“有SWSD且功能结构未变化”场景中，系统 MUST 将原始SWSD作为完整拓扑合同而非built几何模板：逐Segment保持全部Access进出方向，逐ordinary Junction保持全部方向兼容的进入—离开Movement；输出Road可更细，但归一化方向链不得丢失原拓扑。
 - **FR-044**: T04 complex不得使用ordinary全连接。Patch/T04内部carrier不足时，原始SWSD关系只有在真实共享Node、两侧member lineage匹配且portal均位于T04 accepted surface时，才 MAY 以`complex_junction_swsd_explicit`保守实例化；不得由裸`mainnodeid`或邻近关系生成。
@@ -232,7 +235,7 @@
 - **SC-003**: 新建 Road直接拼接 SWSD坐标的区间数量为 0。
 - **SC-004**: 新建/保留 carrier方向重复、双向 Road与单向 Road重叠发布数量为 0。
 - **SC-005**: Road几何非空、有效、方向明确；零长度、异常自交和不可解释断裂数量为 0。
-- **SC-006**: 所有Road的snode/enode均存在；actual shared Node型RoadNextRoad共享Node真实性100%；ordinary语义型RoadNextRoad的source/target Node同属一个正确分类JunctionUnit且mainnode一致率100%；无上下文mainnode机械连接数量为0。
+- **SC-006**: 所有Road的snode/enode均存在；actual shared Node型RoadNextRoad共享Node真实性100%；ordinary语义型RoadNextRoad的source/target Node同属一个正确分类JunctionUnit且mainnode一致率100%；retained/ADVANCE_RIGHT显式语义关系的LaneTopo证据命中率100%；无上下文mainnode机械连接和无证据反向/U-turn关系数量均为0。
 - **SC-007**: 同一JunctionUnit内Node的mainnode一致率为100%；ordinary中心聚合Node和星形JunctionUnit内部Road数量均为0；portal支撑完整，未支撑portal在单Segment回退后遗留数量为0；`junction_geometry_unresolved`正式发布数量为0。
 - **SC-008**: T01真实 `junc_nodes` 静默丢失数量为 0，全部正式Segment Road的适用Access交接实现率为100%。
 - **SC-009**: 可用 LaneTopo去向可追溯率为 100%，confirmed LaneTopo静默丢失数量为 0。
@@ -245,7 +248,7 @@
 - **SC-016**: Case 1885118 的`BaselineCohort`稳定为83个核心Segment和20个正式`ADVANCE_RIGHT Segment`，合计103且永久保留；经已确认清单，6个`patch_data_insufficient`和1个`reality_change`退出DirectBuild硬分母，`DirectBuildRequired`为96。96个必要主干/提右必须100%高精且`swsd_retained/conflict_retained`为0；103条Baseline逐对象审计、330范围完整发布。旧冻结run只作回归基线。
 - **SC-017**: 闭域目标的必要方向主干链端到端连续率为100%；链内Road实际共享Node、无断裂/分叉/重复平行主干，且两个终端物理Node分别落入T01声明两端的accepted Junction surface或正式端点缓冲；属性身份不能替代物理到达。
 - **SC-018**: ordinary Junction中心聚合Node和默认星形内部Road均为0；QGIS逐路口可见分布式portal、统一mainnode和ordinary语义RoadNextRoad。
-- **SC-019**: 原始SWSD逐Segment Access方向合同保持率100%，逐Junction Movement合同保持率100%；ordinary expected/actual组合完全一致，所有complex SWSD显式fallback关系均具备shared Node、member lineage和accepted surface证据。
+- **SC-019**: 原始SWSD逐Segment Access方向合同保持率100%，逐Junction Movement合同保持率100%；ordinary expected/actual组合完全一致，所有complex SWSD显式fallback关系均具备shared Node、member lineage和accepted surface证据；非Junction语义范围内主干handoff的实际共享Node率100%。
 
 ## 2. 明确非目标
 

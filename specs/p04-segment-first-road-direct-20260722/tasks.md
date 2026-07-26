@@ -328,6 +328,31 @@
 
 **Gate P19 / 当前Definition of Done**：端点严格入面、路口面优先级、LaneTopo、几何、拓扑、独立QA和QGIS门禁均通过。DirectBuild仍为86/96，10条硬目标未完成，因此V75仅作为当前最佳人工审计候选，P04整体继续保持Active POC，不得finalize。
 
+## Phase 20: 主干物理交接、局部平滑与显式LaneTopo关系
+
+**Goal**: 针对V75人工审计发现的主干Road断裂、路口端局部扭曲和无证据关系问题，在不改变冻结Segment/Junction骨架、470条built Road及86/96 DirectBuild事实的前提下，最多迭代10轮，交付综合效果最佳的人工审视工程。
+
+- [x] T181 [PRODUCT/ARCH] 固化“路段主干必须共享实际Node、mainnode只作lineage、无证据反向/U-turn不发布、retained/ADVANCE_RIGHT显式关系必须命中原始LaneTopo”的业务合同。
+- [x] T182 [TEST] 新增物理handoff、端点固定平滑、反向关系排除、retained显式证据和ADVANCE_RIGHT跨lineage证据回归；P04专项回归258 passed。
+- [x] T183 [DEV] 在独立`segment_first_physical_handoff.py`实现受限主干handoff和Hermite局部正则化，不向已超体量的pipeline/nodes回填职责。
+- [x] T184 [DEV] 重构RoadNextRoad关系来源：ordinary方向兼容默认关系、retained显式LaneTopo、正式ADVANCE_RIGHT显式LaneTopo和complex显式关系分别编译、审计与QA。
+- [x] T185 [QA] 执行V76 Iteration 1–6并停止，选择Iteration 6：Road/Node/RoadNextRoad 887/1134/1933，built/retained 470/417，LaneTopo unresolved 0，Junction contract failure 0，独立QA 0 violation。
+- [x] T186 [QA] 构建57层人工重点审视QGIS工程；470条built Road道路域覆盖97.319384%并通过overlay门禁，重点5条Road及端点Node、19条相关RoadNextRoad和27条显式LaneTopo关系置顶。
+
+**Gate P20 / 当前Definition of Done**：本轮主干物理交接、局部平滑、LaneTopo去向、Junction合同、独立QA和QGIS工程均通过；全流程性能较V75增加17.4%，需作为后续优化项。DirectBuild仍为86/96且两项core gate失败，故Iteration 6只是当前最佳人工审计候选，P04保持Active POC，不得finalize。
+
+## Phase 21: P04参数化内网执行入口
+
+**Goal**: 在不复制业务算法、不硬编码内网路径和不自动finalize的前提下，为Segment-first生成提供唯一正式内网执行脚本；Patch按目录传入，其余业务输入均按文件路径传入。
+
+- [x] T187 [PRODUCT/ARCH] 用户确认方案A，授权以唯一repo script替代原“无正式入口”合同，并同步模块级source-of-truth、SpecKit和入口注册表。
+- [x] T188 [TEST] 新增显式参数映射、Patch目录前检、默认完成状态和可选core gate非零退出合同测试。
+- [x] T189 [DEV] 新增`scripts/p04_run_segment_first_innernet.py`，只构造`SegmentFirstConfig`并调用`run_segment_first_road_direct(...)`。
+- [x] T190 [QA] 使用Case 1885118本地真实文件路径通过新入口完成端到端运行：438个manifest文件、330 Segment、887/1134/1933 Road/Node/RoadNextRoad、独立QA 0 violation、QGIS 52层0 invalid且EPSG:32650；忽略`run_id`后正式三图层与V76 Iteration 6逐要素一致。
+- [x] T191 [QA] P04专项回归261 passed；`--help`、compileall、入口数量/登记一致性、文件体量和`git diff --check`通过。
+
+**Gate P21 / Definition of Done**：Patch以唯一目录参数输入，其余业务输入均为显式文件参数；无硬编码路径；新入口真实运行可定位；原输入未修改；入口登记、模块合同、SpecKit和体量审计一致；不把P04现有业务gate失败误报为脚本执行失败或阶段完成。
+
 ## Dependencies & Execution Order
 
 ```text

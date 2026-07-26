@@ -95,6 +95,9 @@ p04_segment_first_<case>_<timestamp>/
 
 - Segment内部和复杂路口从实际共享Node/显式物理关系编译；
 - ordinary可从同一正确分类JunctionUnit内方向兼容的进入—离开Road组合编译，必须记录source/target物理Node、`junction_group_id`和`mainnodeid`；
+- 非Junction语义范围内的同Segment主干交接必须共享完全相同的实际Node；`mainnodeid`只作lineage，不构成连通；
+- retained和正式T01 `ADVANCE_RIGHT Segment`只可在两侧Road/Lane证据命中同一原始LaneTopo关系时分别以`explicit_lane_topo_retained_semantic`和`explicit_lane_topo_advance_right_semantic`发布；
+- 反向/U-turn不得由几何、mainnode或邻近自动生成；
 - 不得脱离Junction分类仅按`mainnodeid`字符串生成；
 - ordinary不得把空间分离portal压到中值Node，也不得生成中心点或星形JunctionUnit Road；必须通过分布式高精portal Node、统一mainnode和ordinary语义RoadNextRoad表达。
 - T04复杂路口按内部物理 carrier和LaneTopo/保留关系生成；
@@ -174,7 +177,7 @@ p04_segment_first_<case>_<timestamp>/
 6. 任一正式Segment Road未实现其适用Access；
 7. ordinary Junction portal缺少accepted surface/DriveZone支撑，或出现中心聚合Node/星形内部Road；
 8. 真实 `junc_nodes` 静默丢失；
-9. actual shared Node型RoadNextRoad无真实共享Node，或ordinary语义型RoadNextRoad的source/target Node不属于同一正确分类JunctionUnit；
+9. actual shared Node型RoadNextRoad无真实共享Node，ordinary语义型RoadNextRoad的source/target Node不属于同一正确分类JunctionUnit，或显式retained/ADVANCE_RIGHT语义关系无法恢复同一原始LaneTopo证据；
 10. constrained completion越出合法道路域、穿越硬隔离或无法解释；
 11. confirmed LaneTopo证明同Segment主 carrier物理拓扑不成立；
 12. CRS未知、转换失败或隐式跨 CRS运算；

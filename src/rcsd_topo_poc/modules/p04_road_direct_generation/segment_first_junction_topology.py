@@ -7,7 +7,12 @@ import pandas as pd
 from shapely.geometry import GeometryCollection, LineString, Point
 
 from .segment_first_skeleton import canonical_id, parse_id_list
-from .segment_first_topology import TopologyBuildResult, _stable_int
+from .segment_first_topology import (
+    TopologyBuildResult,
+    _endpoint_vector,
+    _semantic_pair_allowed,
+    _stable_int,
+)
 
 
 @dataclass(frozen=True)
@@ -73,6 +78,29 @@ def materialize_swsd_junction_movement_contract(
         topology.road_next_road,
         node_meta,
     )
+    explicit_advance_by_group: dict[
+        str,
+        set[tuple[str, str]],
+    ] = {}
+    if not topology.road_next_road.empty:
+        advance_relations = topology.road_next_road[
+            topology.road_next_road["compile_source"].eq(
+                "explicit_lane_topo_advance_right_semantic"
+            )
+        ]
+        for relation in advance_relations.itertuples():
+            group_id = canonical_id(
+                getattr(relation, "junction_group_id", "")
+            )
+            explicit_advance_by_group.setdefault(
+                group_id,
+                set(),
+            ).add(
+                (
+                    canonical_id(relation.RoadId),
+                    canonical_id(relation.NextRoadId),
+                )
+            )
     explicit_count = 0
     for group_id, expected in sorted(expected_complex.items()):
         actual_segments = _actual_segment_pairs(
@@ -136,16 +164,22 @@ def materialize_swsd_junction_movement_contract(
         if mode == "ordinary_semantic":
             expected_pairs = {
                 (source_id, target_id)
-                for source_id in road_roles.get(group_id, {}).get(
+                for source_id, source in road_roles.get(group_id, {}).get(
                     "incoming",
                     {},
-                )
-                for target_id in road_roles.get(group_id, {}).get(
+                ).items()
+                for target_id, target in road_roles.get(group_id, {}).get(
                     "outgoing",
                     {},
+                ).items()
+                if (
+                    _semantic_pair_allowed(source, target)
+                    or (source_id, target_id) in actual_road_pairs
                 )
-                if source_id != target_id
             }
+            expected_pairs.update(
+                explicit_advance_by_group.get(group_id, set())
+            )
             actual_for_contract = actual_road_pairs
         else:
             expected_pairs = set(
@@ -251,6 +285,11 @@ def _group_modes(
         ascending=[False, True],
     )
     for row in selected.itertuples():
+        if (
+            str(getattr(row, "junction_source", ""))
+            == "swsd_retained"
+        ):
+            continue
         group_id = canonical_id(row.junction_group_id)
         modes.setdefault(group_id, str(row.topology_mode))
     return modes
@@ -304,6 +343,10 @@ def _published_road_roles(
             "realization": str(
                 getattr(row, "realization", "")
             ),
+            "geometry": row.geometry,
+            "direction": _direction(getattr(row, "direction", 2)),
+            "start_node_id": canonical_id(row.snodeid),
+            "end_node_id": canonical_id(row.enodeid),
         }
         start_id = canonical_id(row.snodeid)
         end_id = canonical_id(row.enodeid)
@@ -372,15 +415,32 @@ def _record_road_role(
         return
     record = dict(base_record)
     record["node_id"] = node_id
+    endpoint = (
+        "start"
+        if node_id == str(record["start_node_id"])
+        else "end"
+    )
     for group_id in meta["groups"]:
         roles = result.setdefault(
             group_id,
             {"incoming": {}, "outgoing": {}},
         )
         if incoming:
-            roles["incoming"][str(record["road_id"])] = record
+            incoming_record = dict(record)
+            incoming_record["travel_vector"] = _endpoint_vector(
+                record["geometry"],
+                endpoint,
+                "incoming",
+            )
+            roles["incoming"][str(record["road_id"])] = incoming_record
         if outgoing:
-            roles["outgoing"][str(record["road_id"])] = record
+            outgoing_record = dict(record)
+            outgoing_record["travel_vector"] = _endpoint_vector(
+                record["geometry"],
+                endpoint,
+                "outgoing",
+            )
+            roles["outgoing"][str(record["road_id"])] = outgoing_record
 
 
 def _segment_members(

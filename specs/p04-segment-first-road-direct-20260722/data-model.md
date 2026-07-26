@@ -264,13 +264,15 @@ T07与 T03冲突时使用 T07；差异必须审计。`review_required` surface�
 | `shared_node_id` | RCSD ID? | `actual_shared_node`时必填 |
 | `mainnode_id` | RCSD ID? | ordinary语义关系时必填 |
 | `junction_id` | string? | 关联 JunctionUnit |
-| `movement_source` | enum | `actual_shared_node / ordinary_junction_semantic / complex_junction_swsd_explicit / lane_topo / patch_road / retained_rcsd / complex_junction` |
+| `movement_source` | enum | `actual_shared_node / ordinary_junction_semantic / explicit_lane_topo_retained_semantic / explicit_lane_topo_advance_right_semantic / complex_junction_swsd_explicit / lane_topo / patch_road / retained_rcsd / complex_junction` |
 | `audit_movement_ids` | list[string] | LaneTopo/PhysicalMovement lineage |
 
 ### 不变量
 
 - `movement_source=actual_shared_node`时，`shared_node_id`必须同时是source Road出口和target Road入口的实际Node。
 - `movement_source=ordinary_junction_semantic`时，source/target Node可以不同，但必须属于同一正确分类ordinary JunctionUnit并共享mainnode；不能只比较mainnode字符串。
+- `movement_source=explicit_lane_topo_retained_semantic`时，source/target Road或Lane证据必须命中同一原始LaneTopo关系，且不得扩展到同mainnode的其它Road。
+- `movement_source=explicit_lane_topo_advance_right_semantic`时，source/target中至少一侧必须属于正式T01 `ADVANCE_RIGHT Segment`，两侧Road/Lane证据必须命中同一原始LaneTopo关系，端点必须具备ordinary/retained Junction lineage。
 - `movement_source=complex_junction_swsd_explicit`时，审计必须同时恢复原始SWSD shared Node、两侧member lineage匹配和source/target portal位于T04 accepted surface三项证据。
 - T04复杂路口、环岛和聚合异常不得使用ordinary语义全连接。
 - T09限制不在此对象中表达。

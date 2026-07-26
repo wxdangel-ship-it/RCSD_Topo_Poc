@@ -10,6 +10,9 @@ from .segment_first_config import SegmentFirstConfig
 from .segment_first_fallback import _audit_built_road_continuity
 from .segment_first_geometry import RoadGeometryResult
 from .segment_first_nodes import NodeBuildResult
+from .segment_first_physical_handoff import (
+    normalize_segment_main_handoffs,
+)
 from .segment_first_swsd_topology import audit_swsd_access_direction_topology
 
 
@@ -198,6 +201,41 @@ def try_suppress_redundant_retained_roads(
 ) -> RedundantRetainedSuppressionResult:
     """Apply suppression only when all downstream hard contracts still pass."""
 
+    node_build = normalize_segment_main_handoffs(
+        node_build,
+        config=config,
+    )
+    geometry_summary = dict(geometry.summary)
+    geometry_summary.update(
+        {
+            "road_count": int(len(node_build.roads)),
+            "junction_approach_regularized_count": int(
+                node_build.summary.get(
+                    "junction_approach_regularized_count",
+                    0,
+                )
+            ),
+            "physical_handoff_normalized_count": int(
+                node_build.summary.get(
+                    "physical_handoff_normalized_count",
+                    0,
+                )
+            ),
+        }
+    )
+    geometry = RoadGeometryResult(
+        node_build.roads,
+        geometry.geometry_sources,
+        geometry_summary,
+    )
+    continuity_audit = _audit_built_road_continuity(
+        node_build.roads,
+        node_build.nodes,
+        segment_accesses,
+        node_build.endpoint_audit,
+        run_id=config.run_id,
+        maximum_endpoint_shift_m=config.relation_endpoint_max_distance_m,
+    )
     candidate = audit_redundant_retained_roads(
         node_build.roads,
         node_build.nodes,

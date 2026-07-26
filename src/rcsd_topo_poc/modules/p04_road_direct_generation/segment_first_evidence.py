@@ -779,8 +779,6 @@ def _explicit_road_pairs(
             source_lane
             and target_lane
             and source_lane != target_lane
-            and source_lane in published
-            and target_lane in published
         ):
             rows.append(
                 {
@@ -791,7 +789,7 @@ def _explicit_road_pairs(
                     "source_priority": 3,
                 }
             )
-        if source == target or source not in published or target not in published:
+        if source == target:
             continue
         rows.append(
             {

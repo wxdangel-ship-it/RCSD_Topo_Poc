@@ -88,6 +88,9 @@ src/rcsd_topo_poc/modules/p04_road_direct_generation/
 ├── segment_first_qgis.py
 └── segment_first_pipeline.py
 
+scripts/
+└── p04_run_segment_first_innernet.py
+
 tests/modules/p04_road_direct_generation/
 ├── test_segment_first_contract.py
 ├── test_segment_first_skeleton.py
@@ -97,12 +100,13 @@ tests/modules/p04_road_direct_generation/
 ├── test_segment_first_topology.py
 ├── test_segment_first_quality.py
 ├── test_segment_first_pipeline.py
-└── test_segment_first_legacy_regression.py
+├── test_segment_first_legacy_regression.py
+└── test_innernet_script.py
 ```
 
 文件名可在实现中按现有模块结构合并最小重复，但不得把 input/evidence/geometry/topology/quality/QGIS堆入单一大文件。
 
-**Structure Decision**: 在现有 P04包内增加 `segment_first_*`隔离族；通过 `__init__.py`导出研究 callable，不新增 `__main__.py/run.py/CLI/scripts`。
+**Structure Decision**: 在现有P04包内保持`segment_first_*`隔离族并通过`__init__.py`导出callable；唯一正式内网入口`scripts/p04_run_segment_first_innernet.py`只做显式参数解析、前检和callable转调，不新增CLI子命令、模块`__main__.py/run.py`或第二套业务实现。
 
 ## Data Flow
 
@@ -128,7 +132,8 @@ SegmentAccess + Junction carrier realization
           ↓
 NodeBuildCandidate + stable ID/mainnode
           ↓
-RoadNextRoad from actual shared Node or ordinary Junction semantics
+RoadNextRoad from actual shared Node, ordinary Junction semantics,
+or explicit LaneTopo retained/ADVANCE_RIGHT evidence
           ↓
 SWSD Access direction + Junction Movement completeness contract
           ↓
@@ -192,7 +197,7 @@ independent QA + QGIS + human audit
 1. 继承或稳定生成 Road/Node ID。
 2. 普通Junction保留分布式高精portal并统一mainnode，不实例化中心Node或星形JunctionUnit内部Road；T04复杂、环岛和辅助Junction按各自正式物理结构处理。
 3. 同 JunctionUnit mainnode一致。
-4. Segment内部和复杂路口由实际共享Node/显式物理关系编译RoadNextRoad；ordinary由同一正确分类JunctionUnit内方向兼容的进入—离开Road组合编译语义RoadNextRoad。
+4. Segment内部和复杂路口由实际共享Node/显式物理关系编译RoadNextRoad；ordinary由同一正确分类JunctionUnit内方向兼容的进入—离开Road组合编译语义RoadNextRoad；retained和正式ADVANCE_RIGHT只在原始LaneTopo证据命中时补充显式语义关系。
 5. 投影 LaneTopo并分类 mapped/review/excluded/blocked；跨Segment被拒Movement显式排除，同Segment内部拒绝只阻断owner Segment。
 
 输出：正式三图层候选和关系审计。
@@ -273,7 +278,8 @@ independent QA + QGIS + human audit
 - observed/constrained覆盖；
 - 双向/单向重叠；
 - ID稳定；
-- actual shared Node和ordinary语义两类RoadNextRoad编译；
+- actual shared Node、ordinary语义、显式LaneTopo retained和显式LaneTopo ADVANCE_RIGHT四类RoadNextRoad编译；
+- 无证据反向/U-turn排除与非Junction主干实际共享Node交接；
 - SWSD Access方向合同、ordinary完整Movement合同和T04显式fallback三证门禁；
 - hard/soft gate分层。
 

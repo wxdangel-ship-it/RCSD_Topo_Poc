@@ -6,9 +6,9 @@
 
 ## 2. 当前登记摘要
 
-- 当前真实执行入口共 `107` 个。
+- 当前真实执行入口共 `108` 个。
 - 分布概览：
-  - repo 级入口文件：`77`（`Makefile` 1 + `scripts/` 75 + `.venv/bin/python -m rcsd_topo_poc` 1）
+  - repo 级入口文件：`78`（`Makefile` 1 + `scripts/` 76 + `.venv/bin/python -m rcsd_topo_poc` 1）
   - QGIS 插件加载入口：`1`
   - 模块级 `python -m` 专项入口：`1`
   - CLI 稳定子命令：`28`
@@ -22,7 +22,7 @@
   - `make test`
   - `make smoke`
 - 当前 `make test` / `make smoke` 已重新纳入 `tests/modules/t03_virtual_junction_anchor/**`、`tests/test_smoke_t03_step3_batch.py` 与 `tests/test_smoke_t03_association_batch.py`；T03 不再作为默认本地自检的排除项。
-- 新增依赖或新增入口时，除更新本表外，还必须同步更新 `pyproject.toml`、`uv.lock`、repo root `Makefile`、`doctor` 逻辑以及受影响模块文档。
+- 新增依赖时必须同步依赖锁、Makefile、doctor和受影响模块文档；新增入口但未新增依赖/CLI子命令/Make目标时，必须同步本表与受影响模块文档。
 - 当前 T03 模块仍保留单独治理轮次；在其专门收口之前，不得把 T03 现存命令示例当作新模块模板。
 
 ## 3. 当前已识别入口清单
@@ -54,6 +54,7 @@
 | `p01_run_innernet_case.sh` | `scripts/p01_run_innernet_case.sh` | repo 级 | P01 内网单 Case 端到端执行脚本；直接消费全量 SH SWSD / RCSD / F-RCSD Node、Road 与 RoadNextRoad 输入和单个 `JUNCTION_GROUP`，不支持文本包打包 / 解包；输出以 `<OUT_ROOT>/<case_id>/` 为主目录，A1 / A2 原始 run root 仅保留在 `_raw/` | `active` | 否 |
 | `p02_run_wuhan_internal_case.py` | `scripts/p02_run_wuhan_internal_case.py` | repo 级 | P02 武汉内网单 Case 端到端入口；唯一必填参数为四个约定 GeoJSON 所在 `--input-dir`，自动应用模块登记的 16 条人工锚定关系、9 条 `SNodeId/ENodeId` 修正和 `609020493` T 型人工修正，编排 T08→T01→T05→T06，执行当前结果硬校验并生成相对路径 QGIS 分析工程 | `active` | 否 |
 | `p02_run_wuhan_innernet_case.sh` | `scripts/p02_run_wuhan_innernet_case.sh` | repo 级 | P02 武汉内网 WSL 固定 Case 包装入口；默认使用 `/mnt/d/Work/RCSD_Topo_Poc`、约定四 GeoJSON 输入目录、仓库 `.venv/bin/python` 与 `/usr/bin/python3` PyQGIS，完成前置检查、持久日志、`--qgis-mode required` 转调和 17 阶段/QGIS 结果复核，不复制业务算法 | `active` | 否 |
+| `p04_run_segment_first_innernet.py` | `scripts/p04_run_segment_first_innernet.py` | repo 级 | P04 Segment-first内网正式生成入口；Patch以`--patch-root`目录传入，SWSD/T01/T07/T03/T04/完整RCSD及可选目标合同均以显式文件路径传入，脚本只执行前检、构造`SegmentFirstConfig`和调用既有callable；默认分离进程完成与业务core gate状态，可用`--require-core-pass`启用非零门禁退出 | `active` | 否 |
 | `t03_run_internal_full_input_8workers.sh` | `scripts/t03_run_internal_full_input_8workers.sh` | repo 级 | T03 模块级内网 full-input 全量运行主脚本；外层 shell 暴露 T03 full-input public env surface，并可通过可选 `INTERSECTION_MATCH_ALL_PATH` 读取 `intersection_match_all.geojson` 作为最终 relation 校验输入，旧 `INTERSECTION_MATCH_T07_PATH` 仅作兼容别名且不得与不同文件的 `INTERSECTION_MATCH_ALL_PATH` 同时提供；内部主链为 candidate discovery / shared handle preload / per-case local context query / direct Step1~Step7 case execution，并在 `.venv/bin/python` 关键依赖不可用时自动 fallback 到 `python3`；当前 `_internal/<RUN_ID>/` 已拆分为 `t03_internal_full_input_manifest/progress/performance/failure` 等模块级 observability 工件，批次根目录正式成果至少包括 `virtual_intersection_polygons.gpkg`、downstream `nodes.gpkg`、`t03_swsd_rcsd_relation_evidence.csv/json`、`intersection_match_t03.geojson` 与 `t03_review_*` review-only 输出 | `active` | 否 |
 | `t03_watch_internal_full_input.sh` | `scripts/t03_watch_internal_full_input.sh` | repo 级 | T03 模块级内网 full-input 实时跟踪主脚本；当前作为 T03 internal full-input 的正式 repo 级监控面，默认按 formal-first 口径显示 `total / completed / running / pending / success / failed`（其中 `success = accepted`、`failed = rejected + runtime_failed`）与执行阶段信息，只有 `DEBUG_VISUAL=1` 时才从 review-only 工件读取 V1-V5 统计 | `active` | 否 |
 | `t03_run_internal_full_input_innernet.sh` | `scripts/t03_run_internal_full_input_innernet.sh` | repo 级 | T03 internal full-input 内网运行包装脚本，设置 innernet 默认运行参数后转发到 `t03_run_internal_full_input_8workers.sh` | `active` | 否 |

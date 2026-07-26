@@ -98,6 +98,7 @@ RoadNextRoad
 - `source`是Road属性，具体值沿用RCSD数据规格。
 - `mainnodeid`是Node属性。
 - RoadNextRoad分层编译：实际共享Node用于Segment内部连续性和显式物理连接；正确分类的ordinary JunctionUnit按同组方向兼容进入—离开Road组合编译默认PhysicalMovement，并记录source/target物理Node和Junction lineage。T04复杂路口、环岛和聚合异常不得由mainnode机械全连接。
+- 非Junction语义范围内的同Segment主干交接必须落为完全相同的实际Node；保留Road的`mainnodeid`只表达lineage，不能替代物理共享Node或自动产生RoadNextRoad。
 
 ### 6.2 审计与关系层
 
@@ -176,6 +177,7 @@ RoadNextRoad
 - Movement切分后，若同一父主干carrier的唯一片段已贯穿该Segment两个端点面，位于该走廊之外的兄弟尾段不得继续作为Segment Road发布；必须记录`segment_main_tail_outside_endpoint_corridor_suppressed`。该规则以accepted surface和正式`junction_endpoint_buffer`判定，不要求尾段一定由某一种endpoint路由触发，也不得改写无关Segment。
 - 对简单Segment，若built主方向链已通过实际共享Node连续覆盖两个终端Junction，且某retained语义carrier与built走廊构成高比例冗余、不是受保护的THROUGH/局部Movement载体，则可以抑制该retained Road及其孤立Node。抑制后必须重新通过Segment Access、SWSD功能拓扑、RoadNextRoad和LaneTopo门禁；任一失败即原子回滚，并输出逐Road抑制审计。
 - 为平滑可以忽略Lane局部拓宽/变窄，但不能抹除真实弯道、物理分离或分歧合流。
+- 对已发布主干Road允许执行端点固定、切向受控的局部正则化，但必须同时通过几何有效、长度变化、最大偏离和弯折改善门禁；正则化不得移动已接受Junction端点、改变Node身份或将真实弯道拉直。
 - 双向Segment的高精验收单位是`main_forward/main_reverse`方向主干链。每条链允许多Road，但必须从一个终端JunctionAccess连续到另一个终端JunctionAccess，链内相邻Road共享实际Node且不得分叉、断裂或形成多套平行主干。
 - 对T03/T07/T04 accepted Junction，方向主干链的两个终端物理Node必须分别被选定原始accepted surface严格包含；边界点和面外buffer点均失败。仅写入正确`junction_group_id/mainnodeid`不得替代几何到达；超出surface的补齐只有在沿观测切向或局部RoadSurface平滑进入面内、且全程满足合法域门禁时才能发布为`hp_constrained_completion`。
 - 端点补齐上限由最小观测覆盖率允许的缺失比例、DriveZone覆盖和几何hard gate共同约束，不得把通用relation搜索半径当作唯一补齐上限；但扩大补齐上限不得反向扩大候选路径选择范围或改变证据链排序。
@@ -194,6 +196,9 @@ RoadNextRoad
 - LaneTopo跨越同一稳定父Road的多个细分part时，必须投影为实际RoadNextRoad有向链并记录`carrier_path_road_ids`；不得因不再是单跳关系而新增Review、回并Road或伪造共享Node。
 - LaneTopo在两个高精Road之间经过保留的短`semantic_carrier`时，只允许沿实际有向RoadNextRoad、有限跳数且全部中间Road均为`realization=retained / carrier_role=semantic_carrier`的链映射，并发布完整`carrier_path_road_ids`；不得把任意图可达当作物理关系。
 - 普通JunctionUnit内的跨Segment LaneTopo可经Junction内部carrier路径映射；若物理关系证据被拒，必须显式排除该Movement，但不得据此同时回退两个独立Segment。
+- ordinary之外的保留局部结构不得由共享`mainnodeid`自动全连接。只有source/target Road或其Lane证据能追溯到同一条原始LaneTopo关系时，才可发布`explicit_lane_topo_retained_semantic`，且不得扩展为同组Road笛卡尔积。
+- 正式T01 `ADVANCE_RIGHT Segment`可在其Road/Lane证据与相邻主干Road被同一原始LaneTopo关系命中、且端点属于ordinary或retained Junction lineage时，发布`explicit_lane_topo_advance_right_semantic`；该关系可以跨不同mainnode lineage，但不能反向新增业务Segment或其它功能关系。
+- 几何方向相反、同组mainnode或空间邻近均不能自动产生掉头/反向RoadNextRoad；调头必须具有LaneTopo、Patch局部连接Road或后续专门策略的显式物理证据。
 - 同一Segment内部LaneTopo关系被拒且破坏其carrier连续性时，只回退该Segment及相关Movement。
 - LaneTopo缺失不解释为道路不存在或禁止通行。
 - `junc_nodes`默认relation与最终拓扑hard required；只有显式、可审计`detached/exempt`才例外。
@@ -227,7 +232,7 @@ RoadNextRoad
 - Segment覆盖率100%，每Segment至少一Road，四态唯一。
 - built Road SWSD直接坐标splice数量0，geometry source完整覆盖。
 - Road几何非空、有效、方向明确，无不可解释断裂或方向重复。
-- Road端点Node引用100%存在；实际共享Node型RoadNextRoad真实性100%；ordinary语义型RoadNextRoad的source/target Node同属一个正确分类JunctionUnit且mainnode一致率100%。
+- Road端点Node引用100%存在；实际共享Node型RoadNextRoad真实性100%；ordinary语义型RoadNextRoad的source/target Node同属一个正确分类JunctionUnit且mainnode一致率100%；显式retained/ADVANCE_RIGHT语义关系的原始LaneTopo证据可追溯率100%，无证据反向/U-turn自动关系数量0。
 - 同一JunctionUnit mainnode一致率100%，`junction_geometry_unresolved`数量0。
 - ordinary Junction的portal有accepted surface或DriveZone支撑，中心聚合Node和星形内部Road数量均为0；未支撑portal经单Segment回退后遗留数量0。
 - 原始SWSD逐Segment Access方向合同和逐Junction Movement合同保持率均为100%；ordinary应有组合无缺失，complex显式SWSD fallback逐关系满足共享Node、member lineage和accepted surface三项约束。

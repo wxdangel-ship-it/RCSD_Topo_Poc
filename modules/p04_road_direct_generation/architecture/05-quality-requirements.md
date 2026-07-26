@@ -42,7 +42,7 @@ P04完成不是“代码运行”“pytest通过”或“QGIS能打开”。必�
 
 - 所有Road起终Node存在。
 - 同一JunctionUnit mainnode一致率100%。
-- `actual_shared_node`型RoadNextRoad均有真实共享Node且方向相容；`ordinary_junction_semantic`型允许source/target物理Node不同，但必须同属一个正确分类ordinary JunctionUnit、mainnode一致、方向相容，并具有完整Junction lineage。
+- `actual_shared_node`型RoadNextRoad均有真实共享Node且方向相容；`ordinary_junction_semantic`型允许source/target物理Node不同，但必须同属一个正确分类ordinary JunctionUnit、mainnode一致、方向相容，并具有完整Junction lineage；`explicit_lane_topo_retained_semantic`和`explicit_lane_topo_advance_right_semantic`必须逐关系恢复同一原始LaneTopo证据。
 - 无JunctionUnit分类与Node lineage、仅由mainnode字符串机械生成的RoadNextRoad为0。
 - actual shared Node型RoadNextRoad共享Node真实性100%；ordinary语义型RoadNextRoad同JunctionUnit/mainnode一致率100%。
 - 普通路口应表达的默认物理连接无缺失。
@@ -52,6 +52,7 @@ P04完成不是“代码运行”“pytest通过”或“QGIS能打开”。必�
 - 同组存在T07人工面时端点选面采用T07的比例100%，同时不得改写T04 complex拓扑来源。
 - THROUGH旁侧邻近但未穿入路口面的虚假切分数量0。
 - 闭域目标必要方向主干链端到端连续率100%，链内Road共享实际Node且无断裂、分叉或重复平行主干。
+- 非Junction语义范围内的主干handoff端点实际共享率100%；仅mainnode相同但nodeid不同的断裂数量为0。
 - Road细分点具有LaneGroup/Patch Road、物理Node、`junc_nodes`、Movement或证据边界中的至少一种可追溯原因。
 - T04 complex内部连接与其物理范围和证据一致。
 - SWSD逐Segment Access方向合同保持率100%；逐Junction Movement合同保持率100%，ordinary全部方向兼容组合无缺失。
@@ -70,6 +71,7 @@ P04完成不是“代码运行”“pytest通过”或“QGIS能打开”。必�
 - 被拒跨SegmentMovement显式excluded，不能扩大为两个Segment的自动回退。
 - 被拒同Segment内部关系若破坏carrier连续性，只回退该Segment和相关Movement。
 - 多Road LaneTopo链的每一跳必须是正式有向RoadNextRoad；跨lineage时全部中间Road必须是保留`semantic_carrier`，任意非受限图可达不得判定mapped。
+- 反向/U-turn自动关系数量为0；retained和`ADVANCE_RIGHT Segment`显式语义关系的LaneTopo证据命中率为100%。
 
 ## 6. ID、跨Patch与确定性
 
@@ -164,3 +166,14 @@ Review必须有逐对象图层和reason，不得只给聚合数量。
 - LaneTopo unresolved 0、几何hard failure 0、独立QA 0 violation；
 - QGIS工程53层、EPSG:32650、invalid layer 0；470条built Road在正式道路域内覆盖99.463819%；
 - DirectBuild为86/96，仍有10条硬目标未完成，故`terminal_status=failed`且不得finalize。
+
+## 14. Case 1885118主干连续性人工审计候选（V76 Iteration 6）
+
+`p04_segment_first_trunk_v76_iter06_1885118_20260726T190000`是针对V75目视反馈执行6轮端到端迭代后的综合最佳候选；V75仍是唯一冻结基线，本候选只用于下一轮人工审视：
+
+- Road/Node/RoadNextRoad为887/1134/1933，built/retained仍为470/417，330个Segment完整发布；
+- 231条Road通过端点固定、切向受控的几何正则化，14处同Segment主干交接形成实际共享Node；
+- RoadNextRoad由994条`actual_shared_node`、910条`ordinary_junction_semantic`、13条`explicit_lane_topo_retained_semantic`、14条`explicit_lane_topo_advance_right_semantic`和2条`complex_junction_swsd_explicit`组成；
+- LaneTopo unresolved 0、Junction contract failure 0、独立QA 0 violation；QGIS正式工程53层，人工重点审视工程57层且0 invalid layer；
+- 470条built Road道路域覆盖率97.319384%，通过当前QGIS overlay门禁；全流程851.6秒，较V75的725.4秒增加17.4%，作为本轮明确性能代价；
+- DirectBuild仍为86/96，10条硬目标未完成；`movement_anchor_rejection_zero`和`mandatory_target_high_precision_complete`仍失败，因此保持`terminal_status=failed`，不得finalize。

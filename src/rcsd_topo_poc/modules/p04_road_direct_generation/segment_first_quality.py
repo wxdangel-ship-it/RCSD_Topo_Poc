@@ -129,8 +129,30 @@ def run_independent_quality(
                         relation.geometry,
                     )
                 )
-        elif compile_source == "ordinary_junction_semantic":
+        elif compile_source in {
+            "ordinary_junction_semantic",
+            "explicit_lane_topo_retained_semantic",
+        }:
             reason = _ordinary_semantic_relation_violation(
+                relation,
+                source,
+                target,
+                node_by_id,
+            )
+            if reason:
+                violations.append(
+                    _violation(
+                        run_id,
+                        reason,
+                        str(relation.Id),
+                        relation.geometry,
+                    )
+                )
+        elif (
+            compile_source
+            == "explicit_lane_topo_advance_right_semantic"
+        ):
+            reason = _advance_right_semantic_relation_violation(
                 relation,
                 source,
                 target,
@@ -575,6 +597,58 @@ def _complex_explicit_relation_violation(
         or relation_main != source_main
     ):
         return "roadnextroad_complex_mainnode_mismatch"
+    return ""
+
+
+def _advance_right_semantic_relation_violation(
+    relation: object,
+    source: pd.Series,
+    target: pd.Series,
+    node_by_id: dict[str, object],
+) -> str:
+    source_node_id = _canonical_id(
+        getattr(relation, "source_node_id", "")
+    )
+    target_node_id = _canonical_id(
+        getattr(relation, "target_node_id", "")
+    )
+    if (
+        source_node_id not in _exit_nodes(source)
+        or target_node_id not in _entry_nodes(target)
+    ):
+        return "roadnextroad_advance_right_endpoint_mismatch"
+    if (
+        source_node_id not in node_by_id
+        or target_node_id not in node_by_id
+    ):
+        return "roadnextroad_advance_right_node_missing"
+    segments = {
+        str(source.get("segment_id", "")),
+        str(target.get("segment_id", "")),
+    }
+    if not any(
+        segment.startswith("advance_right_")
+        for segment in segments
+    ):
+        return "roadnextroad_advance_right_segment_missing"
+    kinds = {
+        str(
+            getattr(
+                node_by_id[source_node_id],
+                "junction_kind",
+                "",
+            )
+        ),
+        str(
+            getattr(
+                node_by_id[target_node_id],
+                "junction_kind",
+                "",
+            )
+        ),
+    }
+    if not kinds.issubset({"ordinary", "retained"}):
+        return "roadnextroad_advance_right_endpoint_unclassified"
     return ""
 
 

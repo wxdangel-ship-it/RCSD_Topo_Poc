@@ -167,6 +167,7 @@ PhysicalMovement只表达物理可达，不表达T09合法性。
 - roundabout：T08/T01整体Junction。
 - 同JunctionUnit所有Node共享mainnodeid，但保留分布式物理nodeid。
 - 实际共享nodeid编译Segment内部连续性和显式物理RoadNextRoad。
+- 非Junction语义范围内，同Segment前后主干Road必须以完全相同的实际Node完成物理交接；`mainnodeid`只提供分组lineage，不得替代共享Node。
 - ordinary默认PhysicalMovement由同一正确分类JunctionUnit内方向兼容的进入—离开Road组合编译；每条关系必须记录source/target物理Node、junction_group_id和mainnodeid，不得只按mainnode字符串无上下文笛卡尔连接。
 - SWSD提供完整拓扑验收合同而非built几何：逐Segment保留全部Access进出方向，逐ordinary Junction保留全部方向兼容的进入—离开组合；Road可按稳定LaneGroup交接细分，验收按方向Road链归一，不要求与SWSD Road一一对应。
 - ordinary不发布中心聚合Node或星形`JUNCTION_UNIT`内部Road；空间分离portal保持原高精位置。同一真实门户的极近端点可稳定聚类，不得跨门户snap。
@@ -184,6 +185,9 @@ PhysicalMovement只表达物理可达，不表达T09合法性。
 - Road内部LaneTopo锚点可触发Road切分和共享Node实例化，但业务Segment保持不变。
 - LaneTopo跨细Road时可沿同一稳定父Roadpart链，或沿中间Road全部为保留`semantic_carrier`的有限实际RoadNextRoad链映射；必须发布完整`carrier_path_road_ids`，不得接受任意可达路径。
 - ordinary跨SegmentMovement可直接映射到ordinary语义RoadNextRoad；被物理证据拒绝时显式excluded，不回退两侧Segment。
+- retained语义连接只允许在source/target Road或Lane证据命中同一原始LaneTopo关系时发布为`explicit_lane_topo_retained_semantic`，不得由共享mainnode扩展。
+- T01正式`ADVANCE_RIGHT Segment`与相邻主干Road被同一原始LaneTopo关系命中时，可发布`explicit_lane_topo_advance_right_semantic`；端点必须具备ordinary/retained Junction lineage，且关系不得新增或改写T01业务骨架。
+- 反向/U-turn关系不得由几何、mainnode或邻近自动生成，必须具有原始LaneTopo或局部连接Road显式证据。
 - 同Segment内部关系被拒且破坏carrier连续性时，只阻断该Segment及相关Movement。
 - Patch已有调头/短连接按需同步；缺失不主动恢复。
 - T01未表达提前右转先输出RealityChangeClue；无simple Road不得发布临时Segment。
@@ -297,7 +301,21 @@ QGIS工程和全部空间图层必须显式序列化分析CRS。PyQGIS构建和�
 
 ### 12.1 repo CLI/root scripts
 
-无新增或变更。
+正式内网入口：
+
+```text
+.venv/bin/python scripts/p04_run_segment_first_innernet.py <explicit arguments>
+```
+
+输入参数合同：
+
+- 唯一目录型业务输入：`--patch-root`，其下为`<PatchID>/Vector/*`；
+- 必填文件型输入：`--swsd-road / --swsd-node / --t01-road / --t01-node / --t01-segment / --t07-surface / --t03-surface / --t04-surface / --full-rcsd-road / --full-rcsd-node`；
+- 可选文件型输入：`--target-replaceability / --target-disposition`；
+- 运行参数：`--output-dir / --run-id / --analysis-crs`；
+- 禁止在脚本内硬编码本地或内网业务路径，禁止复制Segment-first业务算法；
+- 输出目录必须为新目录或空目录，且不能与任何输入目录重叠；
+- 默认进程完成即返回0，`terminal_status/core_gate_pass`必须在stdout JSON显式报告；`--require-core-pass`启用时core gate失败返回2。
 
 ### 12.2 模块callable
 
@@ -310,7 +328,7 @@ technical_passed output + acceptance manifest -> finalize_segment_first_run(...)
 
 Result至少包含`run_id/output_root/summary/report/independent_quality/qgis_project/core_gate/terminal_status`。
 
-两个callable均为P04模块内研究接口；不登记repo CLI/root script或正式入口。
+两个callable仍为P04模块接口；`run_segment_first_road_direct(...)`由`p04_run_segment_first_innernet.py`正式参数化包装，`finalize_segment_first_run(...)`不在本入口自动调用，仍需外部验收证据。
 
 ## 13. 历史输出
 

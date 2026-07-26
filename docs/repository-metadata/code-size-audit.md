@@ -3,6 +3,7 @@
 ## 范围
 
 - 主审计日期：2026-06-12；T09 增量审计：2026-07-10；T10 性能与 60KB 治理增量审计：2026-07-11；T01/T06 ownership 增量审计：2026-07-12；T10 增加 T11 工作流增量审计：2026-07-13；T06 性能恢复与 Step3 修复性拆分增量审计：2026-07-14；T06 全量性能恢复增量审计：2026-07-16；T12 F-RCSD 质检、T10 可选接入及专用流水线增量审计：2026-07-18；T12 reviewed resume 与 false-positive hardening 增量审计：2026-07-19；T12 Road-surface portal 增量审计：2026-07-20；P04 Road 直出第二里程碑、冻结 Directional Road V2、High-Precision Road V3 与独立几何/拓扑 QA 增量审计：2026-07-21；P04 Segment-first Road直出增量审计：2026-07-22；P04 Segment-first LaneTopo 投影拆分增量审计：2026-07-23；P05 M0/M1/M2R/R2/PTO-P0/JSG-PTO-P0 神经 Road POC 增量审计：2026-07-21；P05 JSG-PTO-P1/P2/P3、方案 A baseline、Scheme-A-P1、Scheme-A-P2-P0 与 Scheme-A-Dataset-P0 增量审计：2026-07-22；P05 Scheme-A-P2-P1/P2-P2-P0/P2-P2-P1/P2-P2-P2-P0/P2-P2-P2-P1/P2-P2-P2-P2/P2-P3-P0/P2-P3-P1 增量审计：2026-07-23；P05 Scheme-A-P2-P3-P6/P9/P10/P11/P12R/P12R-R1/P13-P0 增量审计：2026-07-24
+- P04主干物理交接、局部平滑与显式LaneTopo关系增量审计：2026-07-26。
 - 阈值：单文件超过 `100 KB`
 - 口径：按 `code-boundaries-and-entrypoints.md`，审计纳入版本管理的 `src/`、`scripts/`、`tests/`、`tools/` 下源码 / 脚本文件。
 - 本表只记录结构债事实，不代表本轮进入对应模块正文治理。
@@ -490,6 +491,28 @@
 | `tests/modules/p04_road_direct_generation/test_segment_first_target_carriers.py` | `47186` bytes | carrier目标、部分支持和surface恢复回归 | 按主题保持拆分 |
 | `tests/modules/p04_road_direct_generation/test_segment_first_pipeline_contract.py` | `28964` bytes | 编排和正式发布合同 | 按主题保持拆分 |
 | `tests/modules/p04_road_direct_generation/test_segment_first_movements.py` | `20146` bytes | THROUGH实际穿面和retained精确lineage例外 | 按主题保持拆分 |
+
+### P04主干物理交接与显式LaneTopo当前快照（2026-07-26，V76 Iteration 6）
+
+当前扫描42个`segment_first*.py`源码与34个专项测试：源码`>=61440 bytes`为3、测试`>=61440 bytes`为0、全部`>=100000 bytes`为2。`segment_first_pipeline.py`和`segment_first_nodes.py`在本临时工作树建立时已超过硬阈值，本轮未写入这两个文件；新增职责全部放入独立小模块。后续任何写入必须先按§3停机并取得拆分或豁免授权。
+
+| 文件 | 当前体量 | 当前职责 | 后续约束 |
+|---|---:|---|---|
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_pipeline.py` | `100510` bytes | Segment-first阶段编排和发布挂接 | 已超过100000字节；禁止写入，须先授权拆分或豁免 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_nodes.py` | `100152` bytes | 分布式portal、mainnode、严格端点入面与受约束补齐 | 已超过100000字节；禁止写入，须先授权拆分或豁免 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_carriers.py` | `95775` bytes | carrier仲裁与部分证据接管 | 距100000字节4225字节；新增策略前继续拆分 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_physical_handoff.py` | `20923` bytes | 同Segment主干实际Node交接与端点固定局部正则化 | 不承接Junction语义关系编译 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_topology.py` | `20344` bytes | actual/ordinary/显式LaneTopo关系编译 | 不反推T01业务骨架 |
+| `tests/modules/p04_road_direct_generation/test_segment_first_nodes.py` | `59605` bytes | 严格入面、平滑补齐、source-node和mainnode lineage回归 | 距60KiB观察线1835字节，新增主题前拆分 |
+
+### P04参数化内网执行入口增量审计（2026-07-26）
+
+本轮新增1个正式repo脚本和1个专项测试，均远低于100000字节；未写入已超阈值的`segment_first_pipeline.py`和`segment_first_nodes.py`，未新增依赖、CLI子命令、Make目标或模块`__main__.py/run.py`。
+
+| 文件 | 当前体量 | 当前职责 | 后续约束 |
+|---|---:|---|---|
+| `scripts/p04_run_segment_first_innernet.py` | `6630` bytes | P04 Segment-first内网显式参数、输入前检、callable转调及结果JSON | 不硬编码业务路径，不复制算法，不自动finalize |
+| `tests/modules/p04_road_direct_generation/test_innernet_script.py` | `6671` bytes | 参数映射、Patch目录前检、help和core gate退出码合同 | 保持脚本边界测试，不复制端到端算法测试 |
 
 说明：
 

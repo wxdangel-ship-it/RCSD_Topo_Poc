@@ -10,6 +10,7 @@ def test_candidate_contract_has_review_layers_without_probability_fields() -> No
     assert "drivezone_in_road_ratio" in fields
     assert {
         "raw_failed_directions",
+        "directional_portal_status",
         "portal_constrained_semantic_status",
         "t07_road_surface_status",
         "t07_road_surface_path_road_ids",

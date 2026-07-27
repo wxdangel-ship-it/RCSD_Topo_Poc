@@ -2,7 +2,7 @@
 
 ## 1. 业务正确性
 
-- SWSD 必需方向、FRCSD direction 和 portal 角色必须可解释。
+- SWSD 必需方向、FRCSD direction 和 portal 角色必须可解释。source portal 必须有符合当前方向的 outgoing Road，target portal 必须有 incoming Road；无向邻接不得替代有向资格或 carrier。
 - 复合路口 canonical 节点组与 raw endpoint 物理通行必须分层；canonical 零长度可达或无物理 Road 路径不得替代 carrier。既有 portal-constrained semantic 层继续拒绝标准面外 T07 alias 和超出 portal radius 的内部 alias；双端唯一 T07 标准面可由独立 Road-surface 层使用 Road 相交或 anchor→frontier 一跳 surface support Road 排除 node-portal 假断裂，support Road 使用 `1m` 拓扑容差且 carrier 至少一端必须实际接触标准面，其它距离指标仅作审计。两层都不能单独确认问题。
 - DriveZone 与 T06 只作证据，不能静默改变 verdict。
 

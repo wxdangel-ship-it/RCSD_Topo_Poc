@@ -98,6 +98,9 @@ def write_outputs(
             "t07_surface_audit": _compact_t07_surface_audit(
                 candidate_audit.get("t07_surface_audit")
             ),
+            "portal_direction_policy": candidate_audit.get(
+                "portal_direction_policy"
+            ),
             "semantic_carrier_policy": candidate_audit.get(
                 "semantic_carrier_policy"
             ),
@@ -211,6 +214,7 @@ def _candidate_fields() -> tuple[str, ...]:
         "base_nodes",
         "anchor_confidence",
         "t07_surface_statuses",
+        "directional_portal_status",
         "portal_equivalent",
         "automatic_equivalence_basis",
         "portal_constrained_semantic_status",
@@ -272,6 +276,13 @@ def _flatten_candidate(row: Mapping[str, Any]) -> dict[str, Any]:
         )
         for item in directions
     ]
+    directional_portals = [
+        {
+            "direction": item.get("direction", ""),
+            **dict(item.get("directional_portal_status") or {}),
+        }
+        for item in directions
+    ]
     t07_road_surface = [
         (
             f"{item['direction']}:"
@@ -297,6 +308,11 @@ def _flatten_candidate(row: Mapping[str, Any]) -> dict[str, Any]:
         "anchor_confidence": row.get("anchor_confidence", ""),
         "t07_surface_statuses": "|".join(
             row.get("t07_surface_statuses") or []
+        ),
+        "directional_portal_status": json.dumps(
+            directional_portals,
+            ensure_ascii=False,
+            separators=(",", ":"),
         ),
         "portal_equivalent": bool(row.get("automatic_all_directions_equivalent")),
         "automatic_equivalence_basis": row.get(

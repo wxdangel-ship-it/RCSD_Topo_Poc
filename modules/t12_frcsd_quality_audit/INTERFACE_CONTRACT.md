@@ -27,7 +27,7 @@
 
 ### 2.3 关键字段与方向
 
-- Road：`id/snodeid/enodeid/direction`；`direction 0/1` 双向、`2` snode→enode、`3` enode→snode。
+- Road：`id/snodeid/enodeid/direction`；`direction 0/1` 双向、`2` snode→enode、`3` enode→snode。每个 SWSD 必需方向独立构造 source/target portal；source raw node 必须具有当前方向可用的 outgoing Road，target raw node 必须具有 incoming Road。无向图只用于诊断，不参与 portal 资格或等价 carrier。
 - Node：`id`；`mainNodeId/subNodeId` 用于 canonical 候选图，并可在 raw failure 后构造 portal-constrained semantic 或 T07 Road-surface 排除证据。既有 semantic 证据继续要求 T07 alias 位于唯一标准面、非 T07 alias 及内部 transition 满足 `portal_radius_m`。Road-surface 证据仅在双端唯一 T07 标准面锚定时启用，必须包含方向正确的物理 Road，并由 Road/标准面相交或锚点组一跳物理 Road frontier 证明 access；一跳 support Road 必须是 anchor→frontier 有向边、接触标准面（允许 `1m` 拓扑容差），且整条 carrier 至少一端实际 Road-surface contact。其它距离类指标仅作审计。两类证据均不能单独确认问题。
 - Segment：`id/pair_nodes/roads`。
 - Source 只进入审计证据，不参与 verdict。
@@ -44,6 +44,7 @@
 | `raw_failed_directions` | SWSD 必需方向子集 | raw local directed 图失败的原始方向，不因 semantic 排除而丢失。 |
 | `failed_directions` | SWSD 必需方向子集 | 完成 portal-constrained semantic 与 T07 Road-surface 排除后仍未解决的正式失败方向。 |
 | `automatic_equivalence_basis` | 空 / `raw_carrier / portal_constrained_semantic_carrier / t07_road_surface_carrier` | 自动排除时使用的等价 carrier 层。 |
+| `directional_portal_status` | 按方向的 JSON 数组 | source outgoing/target incoming 资格、portal 数量和可用性。 |
 | `portal_constrained_semantic_status` | 按方向的 `equivalent / rejection_reason` | semantic 路径、端点和内部 alias 门禁结果。 |
 | `t07_road_surface_status` | 按方向的 `equivalent / rejection_reason` | Road-surface 路径、两端 access、长度强门禁和距离审计结果。 |
 | `anchor_confidence` | `t07_standard_surface / t03_pair / insufficient` | 自动归因锚点信用。 |

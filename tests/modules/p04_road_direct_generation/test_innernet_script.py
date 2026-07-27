@@ -4,6 +4,7 @@ import importlib.util
 import json
 import subprocess
 import sys
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -136,11 +137,18 @@ def test_innernet_script_maps_all_explicit_inputs_to_segment_first_config(
     assert config.output_dir == paths["output_dir"].resolve()
     assert config.analysis_crs == "EPSG:32650"
 
-    payload = json.loads(capsys.readouterr().out)
+    console = capsys.readouterr()
+    payload = json.loads(console.out)
     assert payload["process_completed"] is True
     assert payload["terminal_status"] == "failed"
     assert payload["core_gate_pass"] is False
     assert payload["patch_count"] == 1
+    assert "[1/4] Input validation completed." in console.err
+    assert "[2/4] Discovered 1 Patch directories: 5417631180197930." in console.err
+    assert "[3/4] Starting Segment-first Road generation." in console.err
+    assert "[3/4] Segment-first Road generation completed" in console.err
+    assert "[4/4] Outputs completed." in console.err
+    assert "Run finished with exit_code=0." in console.err
 
 
 def test_innernet_script_can_make_core_gate_failure_nonzero(tmp_path: Path) -> None:
@@ -164,6 +172,37 @@ def test_innernet_script_can_make_core_gate_failure_nonzero(tmp_path: Path) -> N
         )
 
     assert module.main(argv, runner=fake_runner) == 2
+
+
+def test_innernet_script_reports_heartbeat_during_long_run(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    module = _load_script()
+    argv, _ = _arguments(tmp_path)
+    monkeypatch.setattr(module, "PROGRESS_HEARTBEAT_SECONDS", 0.01)
+
+    def slow_runner(config):
+        time.sleep(0.035)
+        return SimpleNamespace(
+            run_id=config.run_id,
+            output_dir=config.output_dir,
+            formal_gpkg=config.output_dir / "formal.gpkg",
+            audit_gpkg=config.output_dir / "audit.gpkg",
+            relations_gpkg=config.output_dir / "relations.gpkg",
+            summary_path=config.output_dir / "summary.json",
+            report_path=config.output_dir / "report.md",
+            independent_quality_path=config.output_dir / "quality.json",
+            qgis_project_path=None,
+            terminal_status="failed",
+            core_gate_pass=False,
+        )
+
+    assert module.main(argv, runner=slow_runner) == 0
+    console = capsys.readouterr()
+    json.loads(console.out)
+    assert "Segment-first Road generation is still running; elapsed=" in console.err
 
 
 def test_innernet_script_help_exposes_only_parameterized_business_paths() -> None:

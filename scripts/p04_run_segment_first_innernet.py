@@ -4,6 +4,9 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import threading
+import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
@@ -19,6 +22,7 @@ from rcsd_topo_poc.modules.p04_road_direct_generation import (  # noqa: E402
 
 
 Runner = Callable[[SegmentFirstConfig], Any]
+PROGRESS_HEARTBEAT_SECONDS = 30.0
 
 
 def main(
@@ -27,6 +31,7 @@ def main(
     runner: Runner | None = None,
 ) -> int:
     args = _parse_args(argv)
+    _log_progress("[1/4] Validating input paths and runtime configuration.")
     config = _build_config(args)
 
     from rcsd_topo_poc.modules.p04_road_direct_generation.io import (
@@ -35,6 +40,14 @@ def main(
 
     patch_dirs = discover_patch_dirs(config.patch_root)
     config.validate_paths()
+    _log_progress(
+        f"[1/4] Input validation completed. run_id={config.run_id}, "
+        f"analysis_crs={config.analysis_crs}."
+    )
+    _log_progress(
+        f"[2/4] Discovered {len(patch_dirs)} Patch directories: "
+        f"{_summarize_patch_ids(patch_dirs)}."
+    )
     if runner is None:
         from rcsd_topo_poc.modules.p04_road_direct_generation import (
             run_segment_first_road_direct,
@@ -42,7 +55,14 @@ def main(
 
         runner = run_segment_first_road_direct
 
-    result = runner(config)
+    _log_progress("[3/4] Starting Segment-first Road generation.")
+    started_at = time.monotonic()
+    result = _run_with_progress_heartbeat(runner, config, started_at=started_at)
+    elapsed_seconds = time.monotonic() - started_at
+    _log_progress(
+        f"[3/4] Segment-first Road generation completed in "
+        f"{elapsed_seconds:.1f}s."
+    )
     payload = {
         "process_completed": True,
         "run_id": result.run_id,
@@ -64,10 +84,59 @@ def main(
             else None
         ),
     }
+    _log_progress(
+        f"[4/4] Outputs completed. terminal_status={result.terminal_status}, "
+        f"core_gate_pass={result.core_gate_pass}."
+    )
+    _log_progress(f"[4/4] Summary: {result.summary_path}")
     print(json.dumps(payload, ensure_ascii=False, indent=2), flush=True)
     if args.require_core_pass and not result.core_gate_pass:
+        _log_progress("Run finished with exit_code=2 because the core gate failed.")
         return 2
+    _log_progress("Run finished with exit_code=0.")
     return 0
+
+
+def _run_with_progress_heartbeat(
+    runner: Runner,
+    config: SegmentFirstConfig,
+    *,
+    started_at: float,
+) -> Any:
+    stop_event = threading.Event()
+
+    def report_progress() -> None:
+        while not stop_event.wait(PROGRESS_HEARTBEAT_SECONDS):
+            elapsed_seconds = time.monotonic() - started_at
+            _log_progress(
+                f"[3/4] Segment-first Road generation is still running; "
+                f"elapsed={elapsed_seconds:.1f}s."
+            )
+
+    reporter = threading.Thread(
+        target=report_progress,
+        name="p04-progress-reporter",
+        daemon=True,
+    )
+    reporter.start()
+    try:
+        return runner(config)
+    finally:
+        stop_event.set()
+        reporter.join(timeout=1.0)
+
+
+def _log_progress(message: str) -> None:
+    timestamp = datetime.now().astimezone().isoformat(timespec="seconds")
+    print(f"[{timestamp}] [P04] {message}", file=sys.stderr, flush=True)
+
+
+def _summarize_patch_ids(patch_dirs: Sequence[Path], *, limit: int = 10) -> str:
+    patch_ids = [path.name for path in patch_dirs]
+    visible_ids = patch_ids[:limit]
+    if len(patch_ids) > limit:
+        visible_ids.append(f"...(+{len(patch_ids) - limit})")
+    return ", ".join(visible_ids)
 
 
 def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:

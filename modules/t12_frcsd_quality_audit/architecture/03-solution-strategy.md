@@ -13,13 +13,14 @@ T12 先用 canonical base-node 图检查宽召回疑点，再以 raw Road endpoi
 ## 3. Anchor portal 与 carrier
 
 - T07 anchor 使用 T05 base/grouped raw node，并加入与该 SWSD 语义路口唯一关联的 RCSDIntersection 面内 raw node。
-- T03/T04 默认在 SWSD carrier 端点 `50m` 内查找空间 raw portal；所有 start 必须有出边、end 必须有入边。
+- T03/T04 默认在 SWSD carrier 端点 `50m` 内查找空间 raw portal；每个方向独立筛选，start 必须属于 raw local directed graph 的 outgoing node，end 必须属于 incoming node。T07 group/surface raw node同样执行该方向角色过滤。
 - 路径必须满足长度比例、绝对增量和最大走廊偏离三项阈值。
 - 双端唯一 T07 标准面时，可附加 Road-surface portal：有向 Road 几何与对应标准面相交，或 carrier frontier 与锚点组之间存在 anchor→frontier 一跳物理 Road；support Road 必须接触标准面（允许 `1m` 拓扑容差），且 carrier 至少一端实际 Road-surface contact。该层长度比例/附加长度仍是强门禁；其它 surface/portal/alias/corridor 距离只作审计。
 
 ## 4. 候选与复核
 
 - raw local directed 失败后，若 canonical local directed 物理 Road 路径通过原长度/增量/走廊阈值，且两端 portal 与内部 alias transition 全部受信，则按 `equivalent_portal_constrained_semantic_carrier` 排除该 raw 假断裂。T07 alias 端点只接受同一唯一标准路口面；非 T07 alias 端点和内部 alias transition 还必须在 `portal_radius_m` 内。
+- raw/canonical undirected path 仅用于诊断物理走廊与方向差异；它不得提供当前方向 portal，不得成为等价 basis，也不得覆盖 directed failure。
 - 若上述层仍失败但双端唯一 T07 标准面成立，则在实际有向 Road 图上搜索 Road-surface/anchor-one-hop-frontier 路径；通过方向、物理 Road、surface access 与长度门禁后，按 `equivalent_t07_road_surface_carrier` 排除。距离指标保留到审计，不单独拒绝。
 - 完成上述排除后，canonical local directed 仍失败而 canonical local undirected 成功时判为 `directed_carrier_missing`；其它未解决方向判为 `required_local_connectivity_missing`。多个失败方向中只要存在明确方向缺失证据，Segment 级类型优先为 `directed_carrier_missing`。
 - 至少一端具有唯一 T07 标准面信用，或两端均为正式 T03 anchor 时，允许未解决失败自动 confirmed；其它失败按 `insufficient_anchor_confidence` 排除。

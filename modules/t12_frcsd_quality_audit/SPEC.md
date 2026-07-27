@@ -47,7 +47,7 @@ T12 与 T06 分工明确：T06 继续负责 Segment 替换预检和 F-RCSD 生�
 ## 5. 关键业务步骤
 
 1. 预检全部输入路径、字段、CRS、几何有效性和 FRCSD Road endpoint 完整性；禁止 silent fix。
-2. 依据 SWSD Segment 内道路图确定必需方向；canonical 图做宽召回候选，raw Road endpoint 图负责主 carrier 判定。
+2. 依据 SWSD Segment 内道路图确定必需方向；canonical 图做宽召回候选，raw Road endpoint 图负责主 carrier 判定。每个方向独立构造 portal，source 只接受当前有向图存在 outgoing Road 的 raw node，target 只接受存在 incoming Road 的 raw node；无向图只作方向缺失诊断。
 3. T07 使用 T05 显式 group 与对应 RCSDIntersection 面内 raw portal；T03/T04 使用显式 group 与 SWSD 实际接入侧 spatial portal。
 4. 比较 raw local/full directed/undirected carrier。raw local directed 失败后，先检查既有 portal-constrained semantic local directed carrier：路径必须包含至少一条物理 Road 并满足方向、长度、增量和走廊偏离阈值；T07 非 raw 端点必须与 portal 同属唯一 RCSDIntersection 标准面，非 T07 非 raw 端点必须与 portal 同 canonical group 且间距不超过 portal radius；内部每个 alias transition 间距也不得超过 portal radius。
 5. 若失败方向两端均为正确且唯一的 T07 标准面锚点，再检查 Road-surface portal carrier：source/target Road 几何与对应标准面相交，或 carrier frontier 可由锚点组一跳物理 Road 明确连接；一跳 support Road 必须存在 anchor→frontier 有向边且与对应标准面相交或满足 `1m` 拓扑容差，整条 carrier 至少一端必须有实际 Road-surface contact。路径必须包含方向正确的物理 Road，并通过长度比例/附加长度门禁。Road-surface gap、SWSD portal gap、内部 alias gap 和走廊距离等其它距离指标仅作审计，不作为该层单独拒绝理由。通过时只能覆盖该方向的 raw/node-portal failure 并自动 excluded。
@@ -57,6 +57,7 @@ T12 与 T06 分工明确：T06 继续负责 Segment 替换预检和 F-RCSD 生�
 ## 6. 什么是对
 
 - canonical 图中归并到同一 FRCSD 语义节点的零长度路径不能作为 carrier。semantic 与 Road-surface 排除证据必须包含物理 Road；Road-surface 层还必须有唯一标准面和显式 surface/frontier access。两者只允许排除 raw 假断裂，不能单独确认问题。
+- `direction=0/1` 双向、`2` 为 `snodeId→enodeId`、`3` 为 `enodeId→snodeId`；正反向必须分别沿合法有向 Road 跟踪。反向 Road 只能进入反向 carrier 或无向诊断，不能成为正向 portal/carrier。
 - 复合路口允许正反方向使用不同的有效接入 portal。
 - `candidate_count = confirmed + excluded + manual`，三组 candidate ID 互斥。
 - 无复核文件时也必须自动生成 confirmed/excluded；默认自动运行 manual 必须为 `0`。

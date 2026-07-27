@@ -9,8 +9,8 @@
 
 ## 2. 业务对象与分层
 
-- `portal`：T07 为显式 group 或对应标准路口面内 raw node；T03/T04 为显式 group或 SWSD carrier 实际接入侧附近、且满足 start 出边或 end 入边角色的 raw node。
-- `carrier evidence`：raw endpoint 图的 local/full 与 directed/undirected 四种路径及其长度、偏离和道路序列；canonical 路径还记录物理 Road、端点 portal 信用和内部 alias gap，只有全部门禁通过才形成 portal-constrained semantic 排除证据。
+- `portal`：T07 为显式 group 或对应标准路口面内 raw node；T03/T04 为显式 group或 SWSD carrier 实际接入侧附近的 raw node。每个必需方向分别筛选角色：start 必须在有向图中具有 outgoing Road，end 必须具有 incoming Road；反向 Road 端点不得因无向邻接进入当前方向 portal。
+- `carrier evidence`：raw endpoint 图的 local/full 与 directed/undirected 四种路径及其长度、偏离和道路序列；只有 directed 路径可成为等价 carrier，undirected 路径只作方向缺失诊断。canonical directed 路径还记录物理 Road、端点 portal 信用和内部 alias gap，只有全部门禁通过才形成 portal-constrained semantic 排除证据。
 - `candidate`：选择 base node 失败后需要进一步 portal 审计的 Segment。
 - `automatic decision`：按 raw carrier、portal-constrained semantic 排除结果与锚点可信度对 candidate 的确认或排除。
 - `review override`：可选外部 QA 对 automatic decision 的显式覆盖。

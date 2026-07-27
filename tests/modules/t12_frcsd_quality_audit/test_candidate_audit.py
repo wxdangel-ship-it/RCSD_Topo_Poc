@@ -185,6 +185,81 @@ def test_crop_edge_candidate_is_excluded_not_silently_repaired() -> None:
     assert audit["counts"]["crop_edge_excluded_count"] == 1
 
 
+def test_portals_require_outgoing_start_and_incoming_end_nodes() -> None:
+    loaded = _loaded(reverse_main=True, drivezone=False)
+    anchors = loaded.t05_anchor_audit.copy()
+    anchors["source_module"] = ["T03", "T03"]
+    loaded = replace(loaded, t05_anchor_audit=anchors)
+
+    candidates, layers, audit = audit_frcsd_candidates(
+        loaded,
+        AuditConfig(),
+    )
+
+    assert len(candidates) == 1
+    direction = candidates[0]["directions"][0]
+    assert [row["raw_id"] for row in direction["start_portal_candidates"]] == [
+        "a"
+    ]
+    assert [row["raw_id"] for row in direction["end_portal_candidates"]] == [
+        "b"
+    ]
+    assert direction["directional_portal_status"] == {
+        "start_eligibility": "directed_outgoing_node",
+        "end_eligibility": "directed_incoming_node",
+        "start_portal_count": 1,
+        "end_portal_count": 1,
+        "start_available": True,
+        "end_available": True,
+    }
+    portal_rows = [
+        row
+        for row in layers.anchor_portals
+        if row["direction"] == "pair0_to_pair1"
+    ]
+    assert {
+        (row["direction_role"], row["raw_id"]) for row in portal_rows
+    } == {("start", "a"), ("end", "b")}
+    assert audit["portal_direction_policy"] == {
+        "start_eligibility": "directed_outgoing_nodes",
+        "end_eligibility": "directed_incoming_nodes",
+        "undirected_role": "diagnostic_only",
+        "road_direction_required": True,
+    }
+
+
+def test_bidirectional_requirement_uses_separate_directional_roads() -> None:
+    loaded = _loaded(reverse_main=False, drivezone=False)
+    loaded.swsd_roads["direction"] = [1]
+    forward_and_reverse = gpd.GeoDataFrame(
+        [
+            {
+                "id": "forward_main",
+                "snodeid": "a",
+                "enodeid": "b",
+                "direction": 2,
+                "source": 99,
+                "geometry": LineString([(0, 0), (100, 0)]),
+            },
+            {
+                "id": "reverse_main",
+                "snodeid": "a",
+                "enodeid": "b",
+                "direction": 3,
+                "source": 99,
+                "geometry": LineString([(0, -1), (100, -1)]),
+            },
+        ],
+        crs="EPSG:3857",
+    )
+    loaded = replace(loaded, frcsd_roads=forward_and_reverse)
+
+    candidates, _, audit = audit_frcsd_candidates(loaded, AuditConfig())
+
+    assert candidates == []
+    assert audit["counts"]["coarse_equivalent_count"] == 1
+
+
 def test_t07_alias_outside_standard_surface_does_not_override_raw_failure() -> None:
     loaded = _loaded(reverse_main=False, drivezone=False)
     loaded.swsd_roads["direction"] = [2]
@@ -239,7 +314,7 @@ def test_t07_alias_outside_standard_surface_does_not_override_raw_failure() -> N
                     "id": "end_portal_spur",
                     "snodeid": "q",
                     "enodeid": "t",
-                    "direction": 2,
+                    "direction": 3,
                     "source": 1,
                     "geometry": LineString([(100, 1), (100, 5)]),
                 },

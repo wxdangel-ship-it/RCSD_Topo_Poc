@@ -209,6 +209,8 @@ def test_portals_require_outgoing_start_and_incoming_end_nodes() -> None:
         "end_eligibility": "directed_incoming_node",
         "start_portal_count": 1,
         "end_portal_count": 1,
+        "start_anchored_group_portal_count": 1,
+        "end_anchored_group_portal_count": 1,
         "start_available": True,
         "end_available": True,
     }
@@ -223,6 +225,9 @@ def test_portals_require_outgoing_start_and_incoming_end_nodes() -> None:
     assert audit["portal_direction_policy"] == {
         "start_eligibility": "directed_outgoing_nodes",
         "end_eligibility": "directed_incoming_nodes",
+        "anchored_alias_membership": "selected_base_canonical_group",
+        "anchored_alias_distance_gate_role": "audit_only",
+        "spatial_fallback_distance_gate_role": "hard_radius",
         "undirected_role": "diagnostic_only",
         "road_direction_required": True,
     }

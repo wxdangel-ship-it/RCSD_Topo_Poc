@@ -4,12 +4,12 @@
 
 - `Segment requirement`：SWSD Segment 的 pair、成员道路、必需方向和几何走廊。
 - `FRCSD target`：原始 1V1 FRCSD Road/Node 拓扑。
-- `Anchor group`：T05 base/grouped raw node；T07 另关联对应 RCSDIntersection 标准路口面。FRCSD main/subnode alias 属于 canonical 候选证据，并可在端点与 alias 间距门禁通过后构成 raw 假断裂排除证据。
+- `Anchor group`：只展开 T05 选中 `base_id` 所属 canonical group；其它 grouped raw node 按显式成员保留但不递归扩组。选中 mainNode 的 subnode raw alias 是受信锚点成员，但不产生零成本通行。T07 另关联对应 RCSDIntersection 标准路口面。
 - `Cross evidence`：T06 Step2/Step3、DriveZone 和 Case crop bounds。
 
 ## 2. 业务对象与分层
 
-- `portal`：T07 为显式 group 或对应标准路口面内 raw node；T03/T04 为显式 group或 SWSD carrier 实际接入侧附近的 raw node。每个必需方向分别筛选角色：start 必须在有向图中具有 outgoing Road，end 必须具有 incoming Road；反向 Road 端点不得因无向邻接进入当前方向 portal。
+- `portal`：选中 `base_id` mainNode 的 canonical raw alias group 先展开，显式 grouped raw node不递归扩组；每个必需方向分别筛选角色：start 必须在 raw 有向图中具有 outgoing Road，end 必须具有 incoming Road；成员距离只作审计。非 anchored T07 fallback 为对应标准路口面内 raw node，非 anchored T03/T04 fallback 为 SWSD carrier 实际接入侧附近 raw node。反向 Road 端点不得因无向邻接进入当前方向 portal。
 - `carrier evidence`：raw endpoint 图的 local/full 与 directed/undirected 四种路径及其长度、偏离和道路序列；只有 directed 路径可成为等价 carrier，undirected 路径只作方向缺失诊断。canonical directed 路径还记录物理 Road、端点 portal 信用和内部 alias gap，只有全部门禁通过才形成 portal-constrained semantic 排除证据。
 - `candidate`：选择 base node 失败后需要进一步 portal 审计的 Segment。
 - `automatic decision`：按 raw carrier、portal-constrained semantic 排除结果与锚点可信度对 candidate 的确认或排除。

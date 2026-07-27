@@ -48,7 +48,7 @@ def audit_frcsd_candidates(
 ) -> tuple[list[dict[str, Any]], EvidenceLayers, dict[str, Any]]:
     anchors = build_anchor_map(loaded.t05_anchor_audit)
     swsd_canonicalizer, _, swsd_raw_points = build_node_context(loaded.swsd_nodes)
-    frcsd_canonicalizer, _, frcsd_raw_points = build_node_context(
+    frcsd_canonicalizer, frcsd_canonical_groups, frcsd_raw_points = build_node_context(
         loaded.frcsd_nodes
     )
     raw_canonicalizer, _, raw_frcsd_points = build_raw_node_context(
@@ -153,6 +153,7 @@ def audit_frcsd_candidates(
             swsd_canonicalizer=swsd_canonicalizer,
             swsd_raw_points=swsd_raw_points,
             frcsd_canonicalizer=frcsd_canonicalizer,
+            frcsd_canonical_groups=frcsd_canonical_groups,
             frcsd_raw_points=raw_frcsd_points,
             frcsd_nodes=loaded.frcsd_nodes,
             full_graph=raw_full_graph,
@@ -226,6 +227,9 @@ def audit_frcsd_candidates(
         "portal_direction_policy": {
             "start_eligibility": "directed_outgoing_nodes",
             "end_eligibility": "directed_incoming_nodes",
+            "anchored_alias_membership": "selected_base_canonical_group",
+            "anchored_alias_distance_gate_role": "audit_only",
+            "spatial_fallback_distance_gate_role": "hard_radius",
             "undirected_role": "diagnostic_only",
             "road_direction_required": True,
         },
@@ -277,6 +281,7 @@ def _enrich_candidate(
     swsd_canonicalizer: NodeCanonicalizer,
     swsd_raw_points: Mapping[str, Any],
     frcsd_canonicalizer: NodeCanonicalizer,
+    frcsd_canonical_groups: Mapping[str, tuple[str, ...]],
     frcsd_raw_points: Mapping[str, Any],
     frcsd_nodes: gpd.GeoDataFrame,
     full_graph: GraphBundle,
@@ -308,6 +313,8 @@ def _enrich_candidate(
             anchor=anchors[source_index],
             portal_point=carrier["source_point"],
             frcsd_nodes=frcsd_nodes,
+            canonicalizer=frcsd_canonicalizer,
+            canonical_groups=frcsd_canonical_groups,
             raw_node_points=frcsd_raw_points,
             eligible_raw_ids=local_graph.outgoing_nodes,
             radius_m=config.portal_radius_m,
@@ -318,6 +325,8 @@ def _enrich_candidate(
             anchor=anchors[target_index],
             portal_point=carrier["target_point"],
             frcsd_nodes=frcsd_nodes,
+            canonicalizer=frcsd_canonicalizer,
+            canonical_groups=frcsd_canonical_groups,
             raw_node_points=frcsd_raw_points,
             eligible_raw_ids=local_graph.incoming_nodes,
             radius_m=config.portal_radius_m,
@@ -497,6 +506,14 @@ def _enrich_candidate(
                     "end_eligibility": "directed_incoming_node",
                     "start_portal_count": len(starts),
                     "end_portal_count": len(ends),
+                    "start_anchored_group_portal_count": sum(
+                        row.get("distance_gate_role") == "audit_only"
+                        for row in starts
+                    ),
+                    "end_anchored_group_portal_count": sum(
+                        row.get("distance_gate_role") == "audit_only"
+                        for row in ends
+                    ),
                     "start_available": bool(starts),
                     "end_available": bool(ends),
                 },

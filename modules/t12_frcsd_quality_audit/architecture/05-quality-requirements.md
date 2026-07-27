@@ -2,8 +2,8 @@
 
 ## 1. 业务正确性
 
-- SWSD 必需方向、FRCSD direction 和 portal 角色必须可解释。source portal 必须有符合当前方向的 outgoing Road，target portal 必须有 incoming Road；无向邻接不得替代有向资格或 carrier。
-- 复合路口 canonical 节点组与 raw endpoint 物理通行必须分层；canonical 零长度可达或无物理 Road 路径不得替代 carrier。既有 portal-constrained semantic 层继续拒绝标准面外 T07 alias 和超出 portal radius 的内部 alias；双端唯一 T07 标准面可由独立 Road-surface 层使用 Road 相交或 anchor→frontier 一跳 surface support Road 排除 node-portal 假断裂，support Road 使用 `1m` 拓扑容差且 carrier 至少一端必须实际接触标准面，其它距离指标仅作审计。两层都不能单独确认问题。
+- SWSD 必需方向、FRCSD direction 和 portal 角色必须可解释。只允许选中 `base_id` mainNode 的 canonical raw alias group 提供扩展 raw portal membership；其它显式 grouped raw node不递归扩组。source 必须有符合当前方向的 outgoing Road，target 必须有 incoming Road，且等价 carrier 必须在 raw identity 图包含实际 Road；无向邻接或 canonical 零成本折叠不得替代有向资格或 carrier。
+- 复合路口 canonical 节点组与 raw endpoint 物理通行必须分层；anchored alias 距离只作审计，非 anchored spatial/标准面 fallback 不放宽。既有 portal-constrained semantic 层继续拒绝非 anchored 标准面外 T07 alias 和超出 portal radius 的内部 alias；双端唯一 T07 标准面可由独立 Road-surface 层使用 Road 相交或 anchor→frontier 一跳 surface support Road 排除 node-portal 假断裂，support Road 使用 `1m` 拓扑容差且 carrier 至少一端必须实际接触标准面，其它距离指标仅作审计。两层都不能单独确认问题。
 - DriveZone 与 T06 只作证据，不能静默改变 verdict。
 
 ## 2. GIS 与拓扑

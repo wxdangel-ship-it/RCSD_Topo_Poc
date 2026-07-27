@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import geopandas as gpd
 import pandas as pd
-from shapely.geometry import Point, box
+from shapely.geometry import LineString, Point, box
 
 from rcsd_topo_poc.modules.t12_frcsd_quality_audit.anchor_portals import (
     AnchorRecord,
@@ -13,7 +13,10 @@ from rcsd_topo_poc.modules.t12_frcsd_quality_audit.anchor_portals import (
     validate_t07_truth_anchors,
 )
 from rcsd_topo_poc.modules.t12_frcsd_quality_audit.carrier_graph import (
+    build_graph,
     build_node_context,
+    build_raw_node_context,
+    shortest_path_between_sets,
 )
 
 
@@ -97,12 +100,15 @@ def test_t07_raw_portals_are_limited_to_explicit_group_and_standard_surface() ->
         crs="EPSG:3857",
     )
     raw_points = dict(zip(nodes["id"], nodes.geometry, strict=True))
+    canonicalizer, groups, _ = build_node_context(nodes)
     anchor = AnchorRecord("junction", "base", "T07", "", "", ("base", "grouped"))
 
     portals = raw_portal_candidates(
         anchor=anchor,
         portal_point=Point(0, 0),
         frcsd_nodes=nodes,
+        canonicalizer=canonicalizer,
+        canonical_groups=groups,
         raw_node_points=raw_points,
         eligible_raw_ids={"base", "grouped", "inside", "near_outside"},
         radius_m=50.0,
@@ -126,12 +132,15 @@ def test_non_t07_raw_portals_keep_spatial_access_side() -> None:
         crs="EPSG:3857",
     )
     raw_points = dict(zip(nodes["id"], nodes.geometry, strict=True))
+    canonicalizer, groups, _ = build_node_context(nodes)
     anchor = AnchorRecord("junction", "base", "T04", "", "", ("base",))
 
     portals = raw_portal_candidates(
         anchor=anchor,
         portal_point=Point(0, 0),
         frcsd_nodes=nodes,
+        canonicalizer=canonicalizer,
+        canonical_groups=groups,
         raw_node_points=raw_points,
         eligible_raw_ids={"base", "near", "outside"},
         radius_m=50.0,
@@ -141,6 +150,248 @@ def test_non_t07_raw_portals_keep_spatial_access_side() -> None:
 
     assert [row["raw_id"] for row in portals] == ["base", "near"]
     assert portals[1]["source"] == "spatial_portal"
+
+
+def test_anchored_alias_group_is_distance_audit_only_and_direction_filtered() -> None:
+    nodes = gpd.GeoDataFrame(
+        {
+            "id": [
+                "main",
+                "forward_alias",
+                "reverse_alias",
+                "nearby_spatial",
+                "outside_spatial",
+            ],
+            "mainNodeId": ["100", "100", "100", "", ""],
+            "subNodeId": ["main|forward_alias|reverse_alias", "", "", "", ""],
+            "geometry": [
+                Point(0, 0),
+                Point(80, 0),
+                Point(70, 0),
+                Point(10, 0),
+                Point(80, 10),
+            ],
+        },
+        crs="EPSG:3857",
+    )
+    canonicalizer, groups, raw_points = build_node_context(nodes)
+    anchor = AnchorRecord("junction", "main", "T03", "", "", ("main",))
+
+    portals = raw_portal_candidates(
+        anchor=anchor,
+        portal_point=Point(0, 0),
+        frcsd_nodes=nodes,
+        canonicalizer=canonicalizer,
+        canonical_groups=groups,
+        raw_node_points=raw_points,
+        eligible_raw_ids={"forward_alias", "nearby_spatial", "outside_spatial"},
+        radius_m=50.0,
+        direction_role="start",
+        truth_surface=None,
+    )
+
+    assert [row["raw_id"] for row in portals] == [
+        "nearby_spatial",
+        "forward_alias",
+    ]
+    by_id = {row["raw_id"]: row for row in portals}
+    assert by_id["forward_alias"] == {
+        "canonical_id": "forward_alias",
+        "raw_id": "forward_alias",
+        "distance_m": 80.0,
+        "source": "anchored_canonical_alias",
+        "direction_role": "start",
+        "anchor_canonical_id": "100",
+        "distance_gate_role": "audit_only",
+    }
+    assert by_id["nearby_spatial"]["source"] == "spatial_portal"
+    assert by_id["nearby_spatial"]["distance_gate_role"] == "hard_radius"
+    assert "reverse_alias" not in by_id
+    assert "outside_spatial" not in by_id
+
+
+def test_only_selected_base_mainnode_group_is_expanded() -> None:
+    nodes = gpd.GeoDataFrame(
+        {
+            "id": [
+                "selected_main",
+                "selected_alias",
+                "explicit_other",
+                "other_alias",
+            ],
+            "mainNodeId": ["100", "100", "200", "200"],
+            "subNodeId": [
+                "selected_main|selected_alias",
+                "",
+                "explicit_other|other_alias",
+                "",
+            ],
+            "geometry": [
+                Point(0, 0),
+                Point(80, 0),
+                Point(5, 0),
+                Point(80, 10),
+            ],
+        },
+        crs="EPSG:3857",
+    )
+    canonicalizer, groups, raw_points = build_node_context(nodes)
+    anchor = AnchorRecord(
+        "junction",
+        "selected_main",
+        "T07",
+        "",
+        "",
+        ("selected_main", "explicit_other"),
+    )
+
+    portals = raw_portal_candidates(
+        anchor=anchor,
+        portal_point=Point(0, 0),
+        frcsd_nodes=nodes,
+        canonicalizer=canonicalizer,
+        canonical_groups=groups,
+        raw_node_points=raw_points,
+        eligible_raw_ids={"selected_alias", "other_alias"},
+        radius_m=50.0,
+        direction_role="start",
+        truth_surface=None,
+    )
+
+    assert [row["raw_id"] for row in portals] == ["selected_alias"]
+    assert portals[0]["source"] == "anchored_canonical_alias"
+
+
+def test_opposite_directions_use_separate_anchored_alias_road_chains() -> None:
+    nodes = gpd.GeoDataFrame(
+        {
+            "id": [
+                "source_main",
+                "source_forward",
+                "source_reverse",
+                "target_main",
+                "target_forward",
+                "target_reverse",
+            ],
+            "mainNodeId": ["100", "100", "100", "200", "200", "200"],
+            "subNodeId": [
+                "source_main|source_forward|source_reverse",
+                "",
+                "",
+                "target_main|target_forward|target_reverse",
+                "",
+                "",
+            ],
+            "geometry": [
+                Point(0, 0),
+                Point(80, 0),
+                Point(80, 10),
+                Point(100, 0),
+                Point(180, 0),
+                Point(180, 10),
+            ],
+        },
+        crs="EPSG:3857",
+    )
+    roads = gpd.GeoDataFrame(
+        {
+            "id": ["forward_road", "reverse_road"],
+            "snodeid": ["source_forward", "source_reverse"],
+            "enodeid": ["target_forward", "target_reverse"],
+            "direction": [2, 3],
+            "geometry": [
+                LineString([(80, 0), (180, 0)]),
+                LineString([(80, 10), (180, 10)]),
+            ],
+        },
+        crs="EPSG:3857",
+    )
+    canonicalizer, groups, raw_points = build_node_context(nodes)
+    raw_canonicalizer, _, _ = build_raw_node_context(nodes)
+    graph = build_graph(roads, raw_canonicalizer)
+    source_anchor = AnchorRecord(
+        "source",
+        "source_main",
+        "T03",
+        "",
+        "",
+        ("source_main",),
+    )
+    target_anchor = AnchorRecord(
+        "target",
+        "target_main",
+        "T03",
+        "",
+        "",
+        ("target_main",),
+    )
+
+    forward_starts = raw_portal_candidates(
+        anchor=source_anchor,
+        portal_point=Point(0, 0),
+        frcsd_nodes=nodes,
+        canonicalizer=canonicalizer,
+        canonical_groups=groups,
+        raw_node_points=raw_points,
+        eligible_raw_ids=graph.outgoing_nodes,
+        radius_m=50.0,
+        direction_role="start",
+        truth_surface=None,
+    )
+    forward_ends = raw_portal_candidates(
+        anchor=target_anchor,
+        portal_point=Point(100, 0),
+        frcsd_nodes=nodes,
+        canonicalizer=canonicalizer,
+        canonical_groups=groups,
+        raw_node_points=raw_points,
+        eligible_raw_ids=graph.incoming_nodes,
+        radius_m=50.0,
+        direction_role="end",
+        truth_surface=None,
+    )
+    forward_path = shortest_path_between_sets(
+        graph.directed,
+        {row["raw_id"] for row in forward_starts},
+        {row["raw_id"] for row in forward_ends},
+    )
+
+    reverse_starts = raw_portal_candidates(
+        anchor=target_anchor,
+        portal_point=Point(100, 0),
+        frcsd_nodes=nodes,
+        canonicalizer=canonicalizer,
+        canonical_groups=groups,
+        raw_node_points=raw_points,
+        eligible_raw_ids=graph.outgoing_nodes,
+        radius_m=50.0,
+        direction_role="start",
+        truth_surface=None,
+    )
+    reverse_ends = raw_portal_candidates(
+        anchor=source_anchor,
+        portal_point=Point(0, 0),
+        frcsd_nodes=nodes,
+        canonicalizer=canonicalizer,
+        canonical_groups=groups,
+        raw_node_points=raw_points,
+        eligible_raw_ids=graph.incoming_nodes,
+        radius_m=50.0,
+        direction_role="end",
+        truth_surface=None,
+    )
+    reverse_path = shortest_path_between_sets(
+        graph.directed,
+        {row["raw_id"] for row in reverse_starts},
+        {row["raw_id"] for row in reverse_ends},
+    )
+
+    assert forward_path is not None
+    assert forward_path.road_ids == ("forward_road",)
+    assert forward_path.node_ids == ("source_forward", "target_forward")
+    assert reverse_path is not None
+    assert reverse_path.road_ids == ("reverse_road",)
+    assert reverse_path.node_ids == ("target_reverse", "source_reverse")
 
 
 def test_t07_surface_association_is_unique_and_audited() -> None:

@@ -4,7 +4,7 @@
 
 - T04 或 T03/T04 混合 anchor 可能存在端点不确定性；在没有 T07 标准面或双 T03 正式锚点信用时自动排除，不归因 FRCSD。
 - 大裁剪边缘可能制造假断路；Case manifest 存在时使用 500m 内区审计。
-- FRCSD main/subnode 的 canonical 折叠可能制造假通路，也可能把同一现实路口拆成 raw 假断裂。raw endpoint 图继续作为主证据；既有 semantic carrier 保留严格 alias 门禁。双端唯一 T07 标准面可由独立 Road-surface carrier 通过 Road 相交或 anchor→frontier 且接触标准面的单侧一跳 support 排除 node-portal 假断裂，禁止双端任意一跳拼接；其它距离只作审计，但方向、物理 Road和长度仍是强门禁。T05 grouped node 或 RCSDIntersection 覆盖不完整会降低召回，必须留审计统计。
+- FRCSD main/subnode 的 canonical 折叠可能制造假通路，也可能把同一现实路口拆成 raw 假断裂。只提升选中 `base_id` canonical group 的 raw alias portal membership，禁止递归展开其它 grouped node 的 group；raw endpoint identity 图、方向正确的物理 Road和长度继续作为强门禁，非锚定 spatial/标准面 fallback 不放宽。既有 semantic carrier 保留内部 alias 门禁。双端唯一 T07 标准面可由独立 Road-surface carrier 通过 Road 相交或 anchor→frontier 且接触标准面的单侧一跳 support 排除 node-portal 假断裂，禁止双端任意一跳拼接；其它距离只作审计。T05 selected base、grouped node、canonical group 或 RCSDIntersection 覆盖不完整会降低召回，必须留审计统计。
 - 正反向平行 Road 可能在同一空间走廊内高度重合；portal 若只按无向邻接筛选，会把反向端点混入当前方向并产生误报。所有方向必须使用 outgoing/incoming 角色过滤，无向路径只能作为诊断证据。
 
 ## 2. 参数推广风险

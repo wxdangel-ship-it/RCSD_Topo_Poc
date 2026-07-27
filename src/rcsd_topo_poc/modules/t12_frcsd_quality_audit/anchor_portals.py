@@ -165,6 +165,20 @@ def merge_anchor_groups(
     return tuple(sorted(raw_ids))
 
 
+def expand_selected_main_group(
+    anchor: AnchorRecord,
+    canonicalizer: NodeCanonicalizer,
+    canonical_groups: Mapping[str, tuple[str, ...]],
+) -> tuple[str, ...]:
+    """Keep explicit grouped nodes and expand only the selected base mainNode."""
+    raw_ids: set[str] = set(anchor.grouped_node_ids)
+    base_canonical_id = canonicalizer.canonicalize(anchor.base_id)
+    raw_ids.update(
+        canonical_groups.get(base_canonical_id, (anchor.base_id,))
+    )
+    return tuple(sorted(raw_ids))
+
+
 def portal_candidates(
     *,
     anchor: AnchorRecord,
@@ -220,27 +234,41 @@ def raw_portal_candidates(
     anchor: AnchorRecord,
     portal_point: Any,
     frcsd_nodes: gpd.GeoDataFrame,
+    canonicalizer: NodeCanonicalizer,
+    canonical_groups: Mapping[str, tuple[str, ...]],
     raw_node_points: Mapping[str, Any],
     eligible_raw_ids: Iterable[str],
     radius_m: float,
     direction_role: str,
     truth_surface: Any | None,
 ) -> list[dict[str, Any]]:
-    """Build physical endpoint portals without canonical alias expansion."""
+    """Build physical endpoint portals while preserving anchored aliases."""
     eligible = set(eligible_raw_ids)
     best: dict[str, dict[str, Any]] = {}
+    explicit_group = set(anchor.grouped_node_ids)
+    anchored_group = expand_selected_main_group(
+        anchor,
+        canonicalizer,
+        canonical_groups,
+    )
     group_source = (
         "truth_group" if anchor.source_module == "T07" else "grouped_relation"
     )
-    for raw_id in anchor.grouped_node_ids:
+    for raw_id in anchored_group:
         _consider_raw_portal(
             best,
             raw_id=raw_id,
             portal_point=portal_point,
             raw_node_points=raw_node_points,
             eligible=eligible,
-            source=group_source,
+            source=(
+                group_source
+                if raw_id in explicit_group
+                else "anchored_canonical_alias"
+            ),
             direction_role=direction_role,
+            anchor_canonical_id=canonicalizer.canonicalize(raw_id),
+            distance_gate_role="audit_only",
             enforce_radius=False,
             radius_m=radius_m,
         )
@@ -258,6 +286,10 @@ def raw_portal_candidates(
                     eligible=eligible,
                     source="rcsdintersection_surface",
                     direction_role=direction_role,
+                    anchor_canonical_id=canonicalizer.canonicalize(
+                        normalize_id(row[node_id_field])
+                    ),
+                    distance_gate_role="standard_surface",
                     enforce_radius=False,
                     radius_m=radius_m,
                 )
@@ -273,6 +305,10 @@ def raw_portal_candidates(
                 eligible=eligible,
                 source="spatial_portal",
                 direction_role=direction_role,
+                anchor_canonical_id=canonicalizer.canonicalize(
+                    normalize_id(row[node_id_field])
+                ),
+                distance_gate_role="hard_radius",
                 enforce_radius=True,
                 radius_m=radius_m,
             )
@@ -328,6 +364,8 @@ def _consider_raw_portal(
     eligible: set[str],
     source: str,
     direction_role: str,
+    anchor_canonical_id: str,
+    distance_gate_role: str,
     enforce_radius: bool,
     radius_m: float,
 ) -> None:
@@ -343,6 +381,8 @@ def _consider_raw_portal(
         "distance_m": distance_m,
         "source": source,
         "direction_role": direction_role,
+        "anchor_canonical_id": anchor_canonical_id,
+        "distance_gate_role": distance_gate_role,
     }
     current = best.get(raw_id)
     if current is None or distance_m < current["distance_m"]:

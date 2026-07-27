@@ -22,7 +22,7 @@ T08 -> T01 -> T07 -> T03 -> T04 -> T05 -> T06 -> T09
 | 路口关系 | T07 / T03 / T04 / T05 | 构建并发布 SWSD-RCSD 语义路口关系。T07 处理已有路口面锚定并保留可选兼容 relation 补锚，T03 处理交叉 / T 型，T04 处理分歧 / 合流 / 复杂路口，T05 统一发布 relation。 |
 | Segment 替换 | T06 | 基于 T01 Segment 与 T05 relation 判断可替换性，处理 RCSD 数据质量和 SWSD/RCSD 工艺差异，输出 F-RCSD Road / Node。 |
 | 人工审计 | T11 | 在 T10 编排中于 T06 后、T09 前抽取 relation repair candidates 与人工模板；只读审计，不改变 T06 到 T09 的业务数据依赖。 |
-| F-RCSD 质检 | T12 | 对原始 1V1 匹配生成的 F-RCSD 做 SWSD 可达性等价假设检查，以 raw endpoint topology 为主证据，并以 portal-constrained semantic carrier 和 T07 Road-surface portal carrier 排除 raw 假断裂；后者要求唯一标准路口面、方向正确的物理 Road 及 Road-surface 或锚点一跳 frontier 证据，距离仅作审计。锚点可信度通过后自动发布高置信问题及排除证据，人工复核仅作可选 QA 覆盖，不修改 T06 或目标路网。 |
+| F-RCSD 质检 | T12 | 对原始 1V1 匹配生成的 F-RCSD 做 SWSD 可达性等价假设检查，以 raw endpoint topology 为主证据。1V1/T05 选中 `base_id` mainNode 的 canonical raw alias group 先展开为实际 Road endpoint；其它显式 grouped raw node 保留但不递归展开各自 group。随后按当前方向筛选 source outgoing / target incoming；锚定 alias 距离只作审计，非锚定 spatial fallback 仍受原门禁。并以 portal-constrained semantic carrier 和 T07 Road-surface portal carrier 排除其余 raw 假断裂；后者要求唯一标准路口面、方向正确的物理 Road 及 Road-surface 或锚点一跳 frontier 证据。锚点可信度通过后自动发布高置信问题及排除证据，人工复核仅作可选 QA 覆盖，不修改 T06 或目标路网。 |
 | 通行恢复 | T09 | 基于 SWSD restriction / Laneinfo 与 T06 F-RCSD 承载关系恢复路口级通行规则。 |
 | 编排证据 | T10 | 组织 Case package、Case replay、full pipeline manifest、T06 funnel、可选 T12 quality audit、T11 candidate audit、feedback 和 visual check；不替代 T01-T09 / T11 / T12 算法。 |
 | 神经直出 POC | P05 | 当前采用方案 A：冻结 T01 Junction—Segment 骨架和 PhysicalMovement 存在性，模型只负责 carrier 评分/选择、异常线索与失败概率；证据冲突按最小依赖闭包 fallback，不改写业务骨架。P13-P0 已完成并判定 `P05_SCHEME_A_P2_P3_P13_P0_SELECTION_NO_GO`，当前无可发布神经模型；M1/M2R/R2/RoadGraph PTO-P0 与 JSG-PTO-P0/P1/P2/P3 仅保留为历史实验结论。 |
@@ -37,7 +37,7 @@ T10 v1 Case runner 默认编排 `T01 -> T07 Step1/2 -> T03 -> T04 -> T05 -> T06 
 4. T06 不能只按“有 1:1 relation”机械替换 Segment，必须处理 RCSD 端点、方向、道路切分、提前右转、内部短连接、surface 证据和 topology 连通等真实数据差异；surface 证据只能在 T04 未 reject、Patch 无冲突、证据可解释且 topology 回退通过时，将 retained-junction 距离 gate 降级为风险释放。
 5. T11 必须在 T10 工作流中于 T06 后抽取人工 relation 修复候选，且不得把候选解释为人工确认或 T09 业务输入。
 6. T09 必须在 F-RCSD 承载关系上恢复 SWSD 现场通行规则，并保留可追溯的 restriction、Laneinfo 和风险审计链。
-7. T12 必须把“SWSD 与原始 1V1 F-RCSD 的通行性应等价”作为待验证质量假设；raw endpoint failure 还必须依次排除受信 portal-constrained semantic carrier 与 T07 Road-surface portal carrier 后，才能结合标准路口、方向/几何和锚点可信度门禁自动进入 confirmed 正式问题层。两端唯一 T07 标准面锚定正确时，Road 与标准面的相交或锚点组一跳物理 Road 证明的 frontier 可作为 surface portal；一跳 support Road 必须从 anchor 向 frontier 有向并与标准面相交或满足 `1m` 拓扑容差，整条 carrier 至少一端必须有实际 Road-surface contact，不能以双端任意一跳邻接代替。其余距离类门禁只作审计，不能单独拒绝，但方向、物理 Road、锚点唯一性和路径长度等价仍是强门禁。两类 carrier 都只允许排除 raw 假断裂，不能靠零长度 canonical 折叠或无物理 Road 路径确认连通；外部 review decisions 仅作可选 QA 覆盖，任何结果都不得据此 silent fix。
+7. T12 必须把“SWSD 与原始 1V1 F-RCSD 的通行性应等价”作为待验证质量假设；1V1/T05 锚定 mainNode 时，只展开选中 `base_id` 所代表 canonical group 的 raw subNode/alias，显式 grouped raw node 保留但不递归扩展各自 canonical group。成员必须落回 raw Road endpoint 图并按当前方向筛选 source outgoing / target incoming，不能用 canonical 零成本折叠代替物理 Road。锚定 alias 的 portal/标准面距离只作审计；非锚定 spatial node 仍执行既有范围/标准面门禁。raw endpoint failure 还必须依次排除受信 portal-constrained semantic carrier 与 T07 Road-surface portal carrier 后，才能结合标准路口、方向/几何和锚点可信度门禁自动进入 confirmed 正式问题层。两端唯一 T07 标准面锚定正确时，Road 与标准面的相交或锚点组一跳物理 Road 证明的 frontier 可作为 surface portal；一跳 support Road 必须从 anchor 向 frontier 有向并与标准面相交或满足 `1m` 拓扑容差，整条 carrier 至少一端必须有实际 Road-surface contact，不能以双端任意一跳邻接代替。其余距离类门禁只作审计，不能单独拒绝，但方向、物理 Road、锚点唯一性和路径长度等价仍是强门禁。两类 carrier 都只允许排除 raw 假断裂，不能靠零长度 canonical 折叠或无物理 Road 路径确认连通；外部 review decisions 仅作可选 QA 覆盖，任何结果都不得据此 silent fix。
 
 ## 4. 当前模块生命周期
 

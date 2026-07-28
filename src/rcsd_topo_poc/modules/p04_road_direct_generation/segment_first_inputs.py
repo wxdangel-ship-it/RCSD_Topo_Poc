@@ -41,7 +41,10 @@ class SegmentInputBundle:
 def load_segment_first_inputs(config: SegmentFirstConfig) -> SegmentInputBundle:
     cfg = config.resolved()
     cfg.validate_paths()
-    patch_dirs = discover_patch_dirs(cfg.patch_root)
+    patch_dirs = discover_patch_dirs(
+        cfg.patch_root,
+        allow_equivalent_vector_fallback=True,
+    )
     external = {
         "swsd_roads": cfg.swsd_road_path,
         "swsd_nodes": cfg.swsd_node_path,
@@ -89,8 +92,16 @@ def load_segment_first_inputs(config: SegmentFirstConfig) -> SegmentInputBundle:
         "Intersection.geojson",
         cfg.analysis_crs,
     )
-    drivezones = _load_patch_layer(patch_dirs, "DriveZone_fix.geojson", cfg.analysis_crs)
-    divstripzones = _load_patch_layer(patch_dirs, "DivStripZone_fix.geojson", cfg.analysis_crs)
+    drivezones = _load_patch_layer(
+        patch_dirs,
+        ("DriveZone_fix.geojson", "DriveZone.geojson"),
+        cfg.analysis_crs,
+    )
+    divstripzones = _load_patch_layer(
+        patch_dirs,
+        ("DivStripZone_fix.geojson", "DivStripZone.geojson"),
+        cfg.analysis_crs,
+    )
     require_columns(patch_roads, ("Id",), "patch_roads")
     require_columns(patch_lanes, ("Id", "RoadId", "Width"), "patch_lanes")
     require_columns(patch_lane_topo, ("Id", "LaneId", "NextLaneId"), "patch_lane_topo")
@@ -166,20 +177,34 @@ def require_columns(frame: pd.DataFrame, columns: Iterable[str], role: str) -> N
 
 def _load_patch_layer(
     patch_dirs: tuple[Path, ...],
-    filename: str,
+    filename: str | tuple[str, ...],
     analysis_crs: str,
     *,
     geometry_optional: bool = False,
 ) -> gpd.GeoDataFrame:
+    filenames = (filename,) if isinstance(filename, str) else filename
     frames: list[gpd.GeoDataFrame] = []
     for patch_dir in patch_dirs:
-        path = patch_dir / "Vector" / filename
+        path = next(
+            (
+                patch_dir / "Vector" / candidate_name
+                for candidate_name in filenames
+                if (patch_dir / "Vector" / candidate_name).is_file()
+            ),
+            None,
+        )
+        if path is None:
+            raise FileNotFoundError(
+                f"missing Patch Vector layer for {patch_dir.name}: "
+                f"one of {list(filenames)}"
+            )
         frame = gpd.read_file(path)
         if frame.crs is None:
             raise ValueError(f"input CRS is missing: {path}")
         frame = frame.to_crs(analysis_crs)
         frame.geometry = frame.geometry.map(to_2d)
         frame["source_patch_id"] = patch_dir.name
+        frame["source_vector_filename"] = path.name
         frames.append(frame)
     if not frames:
         return gpd.GeoDataFrame(geometry=[], crs=analysis_crs)

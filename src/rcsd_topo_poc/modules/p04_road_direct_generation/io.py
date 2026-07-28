@@ -35,8 +35,17 @@ CORE_VECTOR_FILES = (
     "ReferenceLane.geojson",
 )
 
+EQUIVALENT_VECTOR_FILE_FAMILIES = (
+    ("DriveZone_fix.geojson", "DriveZone.geojson"),
+    ("DivStripZone_fix.geojson", "DivStripZone.geojson"),
+)
 
-def discover_patch_dirs(patch_root: Path) -> tuple[Path, ...]:
+
+def discover_patch_dirs(
+    patch_root: Path,
+    *,
+    allow_equivalent_vector_fallback: bool = False,
+) -> tuple[Path, ...]:
     patch_dirs = tuple(sorted(path for path in patch_root.iterdir() if path.is_dir()))
     if not patch_dirs:
         raise ValueError(f"no Patch directories found: {patch_root}")
@@ -44,10 +53,40 @@ def discover_patch_dirs(patch_root: Path) -> tuple[Path, ...]:
         vector_dir = patch_dir / "Vector"
         if not vector_dir.is_dir():
             raise FileNotFoundError(f"missing Vector directory: {vector_dir}")
-        missing = [name for name in CORE_VECTOR_FILES if not (vector_dir / name).is_file()]
+        missing = _missing_core_vector_files(
+            vector_dir,
+            allow_equivalent_vector_fallback=allow_equivalent_vector_fallback,
+        )
         if missing:
             raise FileNotFoundError(f"missing core Vector files for {patch_dir.name}: {missing}")
     return patch_dirs
+
+
+def _missing_core_vector_files(
+    vector_dir: Path,
+    *,
+    allow_equivalent_vector_fallback: bool,
+) -> list[str]:
+    if not allow_equivalent_vector_fallback:
+        return [name for name in CORE_VECTOR_FILES if not (vector_dir / name).is_file()]
+
+    equivalent_names = {
+        name
+        for family in EQUIVALENT_VECTOR_FILE_FAMILIES
+        for name in family
+    }
+    missing = [
+        name
+        for name in CORE_VECTOR_FILES
+        if name not in equivalent_names and not (vector_dir / name).is_file()
+    ]
+    for preferred_name, fallback_name in EQUIVALENT_VECTOR_FILE_FAMILIES:
+        if not any(
+            (vector_dir / candidate_name).is_file()
+            for candidate_name in (preferred_name, fallback_name)
+        ):
+            missing.append(f"{preferred_name} or {fallback_name}")
+    return missing
 
 
 def read_vector(path: Path, analysis_crs: str, *, layer: str | None = None) -> gpd.GeoDataFrame:
@@ -245,6 +284,7 @@ def _json_default(value: Any) -> Any:
 
 __all__ = [
     "CORE_VECTOR_FILES",
+    "EQUIVALENT_VECTOR_FILE_FAMILIES",
     "build_input_manifest",
     "discover_patch_dirs",
     "prepare_output_dir",

@@ -38,7 +38,10 @@ def main(
         discover_patch_dirs,
     )
 
-    patch_dirs = discover_patch_dirs(config.patch_root)
+    patch_dirs = discover_patch_dirs(
+        config.patch_root,
+        allow_equivalent_vector_fallback=True,
+    )
     config.validate_paths()
     _log_progress(
         f"[1/4] Input validation completed. run_id={config.run_id}, "

@@ -57,6 +57,8 @@ def test_frcsd_quality_profile_help_and_preflight_blocks() -> None:
     assert "T12_PROCESSING_CRS" in help_result.stdout
     assert "T12_RUN_ID" in help_result.stdout
     assert "T12_REVIEW_DECISIONS" in help_result.stdout
+    assert "RUN_STAGES=t12" in help_result.stdout
+    assert "RESUME_RUN_ROOT" in help_result.stdout
 
     base_env = os.environ.copy()
     for key in (
@@ -92,3 +94,62 @@ def test_frcsd_quality_profile_help_and_preflight_blocks() -> None:
     )
     assert conflict_result.returncode == 2
     assert "requires RUN_T08=0" in conflict_result.stderr
+
+    t12_only_without_resume = subprocess.run(
+        ["bash", str(SCRIPT_PATH)],
+        cwd=REPO_ROOT,
+        env=dict(base_env, RUN_STAGES="t12"),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert t12_only_without_resume.returncode == 2
+    assert "RUN_STAGES=t12 requires RESUME_RUN_ROOT" in t12_only_without_resume.stderr
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash is unavailable")
+def test_t12_only_resume_delegates_with_new_sub_run_id(tmp_path: Path) -> None:
+    scripts_dir = tmp_path / "scripts"
+    scripts_dir.mkdir()
+    wrapper = scripts_dir / SCRIPT_PATH.name
+    shutil.copy2(SCRIPT_PATH, wrapper)
+    fake_full_pipeline = scripts_dir / FULL_PIPELINE_PATH.name
+    fake_full_pipeline.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf 'run_t08=%s\\n' \"$RUN_T08\"\n"
+        "printf 'run_t12=%s\\n' \"$RUN_T12\"\n"
+        "printf 'run_stages=%s\\n' \"$RUN_STAGES\"\n"
+        "printf 'resume_run_root=%s\\n' \"$RESUME_RUN_ROOT\"\n"
+        "printf 't12_run_id=%s\\n' \"$T12_RUN_ID\"\n",
+        encoding="utf-8",
+    )
+    resume_root = tmp_path / "existing_t10_run"
+    resume_root.mkdir()
+    env = os.environ.copy()
+    for key in ("RUN_T08", "RUN_T12", "T12_RUN_ID"):
+        env.pop(key, None)
+    env.update(
+        {
+            "RESUME_RUN_ROOT": str(resume_root),
+            "RUN_STAGES": "t12",
+        }
+    )
+
+    result = subprocess.run(
+        ["bash", str(wrapper)],
+        cwd=tmp_path,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "run_t08=0" in result.stdout
+    assert "run_t12=1" in result.stdout
+    assert "run_stages=t12" in result.stdout
+    assert f"resume_run_root={resume_root}" in result.stdout
+    run_id_line = next(
+        line for line in result.stdout.splitlines() if line.startswith("t12_run_id=")
+    )
+    assert run_id_line.startswith("t12_run_id=t12_frcsd_quality_")

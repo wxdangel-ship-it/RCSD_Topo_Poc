@@ -98,6 +98,17 @@ from rcsd_topo_poc.modules.t12_frcsd_quality_audit import run_t12_frcsd_quality_
 T10 Case：`RUN_T12=1 scripts/t10_run_e2e_cases.sh ...`。
 T10 full：`RUN_T12=1 FRCSD_1V1_ROADS_PATH=... FRCSD_1V1_NODES_PATH=... T12_PROCESSING_CRS=<optional projected metre CRS> scripts/t10_run_innernet_full_pipeline.sh`。T10 的 `T12_PROCESSING_CRS` 只在非空时透传为 `--processing-crs`；空值保持混合 CRS 硬阻断，禁止自动推断。
 
+T06/T10 已完成后的 T12-only 正式调用：
+
+```bash
+RESUME_RUN_ROOT=/path/to/existing/t10_run \
+RUN_STAGES=t12 \
+T12_PROCESSING_CRS=EPSG:3857 \
+bash scripts/t10_run_frcsd_quality_pipeline.sh
+```
+
+该模式必须复用 existing T10 manifest，只运行 T12，默认创建新的 timestamped `T12_RUN_ID`，不覆盖旧 T12 结果，也不重跑 T01-T11/T09。需要替换 manifest 中的原始 1V1 FRCSD 输入时，显式设置 `FRCSD_1V1_ROADS_PATH / FRCSD_1V1_NODES_PATH`。
+
 T12 在 T10 中位于 T11 后、T09 前，始终 audit-only；该执行顺序不表示 T12 消费 T11 输出。
 
 ## 7. 验收口径

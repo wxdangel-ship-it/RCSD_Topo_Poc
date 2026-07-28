@@ -21,6 +21,7 @@
 - root script：`.venv/bin/python scripts/t12_run_frcsd_quality_audit.py --help`。
 - callable：`run_t12_frcsd_quality_audit(...)`。
 - T10 full/profile：混合 CRS 输入必须显式设置 `T12_PROCESSING_CRS=<projected metre CRS>`，由 T10 透传为本模块的 `--processing-crs`；不设置时保持硬阻断。
+- T06/T10 已完成后，只重跑 T12 使用正式 profile：`RESUME_RUN_ROOT=/path/to/run RUN_STAGES=t12 T12_PROCESSING_CRS=EPSG:3857 bash scripts/t10_run_frcsd_quality_pipeline.sh`。该模式生成新的 T12 子运行目录，不覆盖旧结果，也不重跑 T01-T11/T09。
 
 ## 4. 阅读顺序
 

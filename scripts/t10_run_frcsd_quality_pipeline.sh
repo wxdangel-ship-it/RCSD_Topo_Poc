@@ -26,6 +26,13 @@ Optional reviewed publication input:
   T12_RUN_ID            T12 sub-run ID. Use a new value when resuming reviewed output.
   T12_REVIEW_DECISIONS  Review-decision CSV whose run_id matches T12_RUN_ID.
 
+T12-only resume after an existing T06/T10 run:
+  RESUME_RUN_ROOT       Existing T10 full-pipeline run root.
+  RUN_STAGES=t12        Run only T12; do not rerun T01-T11 or T09.
+  T12_RUN_ID            Optional. Defaults to a new timestamped T12 sub-run ID.
+  FRCSD_1V1_ROADS_PATH / FRCSD_1V1_NODES_PATH
+                        Optional overrides; otherwise reuse manifest inputs.
+
 Profile invariants:
   RUN_T08=0
   RUN_T12=1
@@ -68,6 +75,13 @@ FINALIZE_EXISTING="${FINALIZE_EXISTING:-0}"
 RESUME_RUN_ROOT="${RESUME_RUN_ROOT:-}"
 RESUME_FROM_STAGE="${RESUME_FROM_STAGE:-}"
 RUN_STAGES="${RUN_STAGES:-}"
+if [[ "$RUN_STAGES" == "t12" ]]; then
+  if [[ -z "$RESUME_RUN_ROOT" ]]; then
+    echo "[BLOCK] RUN_STAGES=t12 requires RESUME_RUN_ROOT for an existing T10 run." >&2
+    exit 2
+  fi
+  export T12_RUN_ID="${T12_RUN_ID:-t12_frcsd_quality_$(date +%Y%m%d_%H%M%S)}"
+fi
 if [[ "$FINALIZE_EXISTING" != "1" && -z "$RESUME_RUN_ROOT" && -z "$RESUME_FROM_STAGE" && -z "$RUN_STAGES" ]]; then
   if [[ -z "${FRCSD_1V1_ROADS_PATH:-}" || -z "${FRCSD_1V1_NODES_PATH:-}" ]]; then
     echo "[BLOCK] Fresh FRCSD quality run requires FRCSD_1V1_ROADS_PATH and FRCSD_1V1_NODES_PATH." >&2
@@ -78,5 +92,8 @@ fi
 echo "[PROFILE] id=frcsd_quality"
 echo "[PROFILE] stages=t01,t07_step12,t03,t04,t05,t06_step12,t06_step3,t11,t12,t09"
 echo "[PROFILE] RUN_T08=$RUN_T08 RUN_T12=$RUN_T12"
+if [[ "$RUN_STAGES" == "t12" ]]; then
+  echo "[PROFILE] mode=t12_only_resume RESUME_RUN_ROOT=$RESUME_RUN_ROOT T12_RUN_ID=$T12_RUN_ID"
+fi
 
 exec bash "$REPO_DIR/scripts/t10_run_innernet_full_pipeline.sh"

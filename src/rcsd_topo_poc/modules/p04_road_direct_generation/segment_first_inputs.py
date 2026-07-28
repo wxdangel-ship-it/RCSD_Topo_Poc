@@ -144,10 +144,13 @@ def accepted_surface(frame: gpd.GeoDataFrame, source: str) -> gpd.GeoDataFrame:
         require_columns(frame, ("final_state",), "t07_surface")
         mask = frame["final_state"].fillna("").astype(str).str.lower().eq("accepted")
     elif source == "t03":
-        require_columns(frame, ("success", "acceptance_class"), "t03_surface")
-        success = frame["success"].map(_truthy)
-        accepted = frame["acceptance_class"].fillna("").astype(str).str.lower().eq("accepted")
-        mask = success & accepted
+        if "step7_state" in frame.columns:
+            mask = frame["step7_state"].fillna("").astype(str).str.lower().eq("accepted")
+        else:
+            require_columns(frame, ("success", "acceptance_class"), "t03_surface")
+            success = frame["success"].map(_truthy)
+            accepted = frame["acceptance_class"].fillna("").astype(str).str.lower().eq("accepted")
+            mask = success & accepted
     elif source == "t04":
         require_columns(frame, ("final_state",), "t04_surface")
         mask = frame["final_state"].fillna("").astype(str).str.lower().eq("accepted")

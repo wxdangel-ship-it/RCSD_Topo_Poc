@@ -38,6 +38,30 @@ def test_t03_requires_explicit_accepted_and_success() -> None:
     assert accepted_surface(frame, "t03")["id"].tolist() == ["ok"]
 
 
+def test_t03_formal_step7_state_is_preferred() -> None:
+    frame = gpd.GeoDataFrame(
+        [
+            {
+                "id": "ok",
+                "step7_state": "accepted",
+                "success": False,
+                "acceptance_class": "rejected",
+                "geometry": LineString([(0, 0), (1, 0)]).buffer(1),
+            },
+            {
+                "id": "rejected",
+                "step7_state": "rejected",
+                "success": True,
+                "acceptance_class": "accepted",
+                "geometry": LineString([(2, 0), (3, 0)]).buffer(1),
+            },
+        ],
+        crs="EPSG:32650",
+    )
+
+    assert accepted_surface(frame, "t03")["id"].tolist() == ["ok"]
+
+
 def test_required_t01_contract_is_explicit() -> None:
     frame = gpd.GeoDataFrame(
         [{"id": "s1", "geometry": LineString([(0, 0), (1, 0)])}],

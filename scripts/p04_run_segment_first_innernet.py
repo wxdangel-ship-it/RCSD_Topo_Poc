@@ -74,7 +74,7 @@ def main(
     _log_progress(
         "[1/4] Runtime resource contract: "
         f"logical_cpu_count={runtime_resources['logical_cpu_count']}; "
-        "patch_io_workers<=6; "
+        f"patch_io_workers<={runtime_resources['patch_io_workers_max']}; "
         f"native_thread_limits={runtime_resources['native_thread_limits']}."
     )
     _log_progress(

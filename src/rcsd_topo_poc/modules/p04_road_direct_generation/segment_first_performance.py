@@ -17,6 +17,7 @@ WALL_TARGET_SECONDS = 6 * 60 * 60
 WALL_HARD_LIMIT_SECONDS = 8 * 60 * 60
 RESOURCE_TIMELINE_SECONDS = 30.0
 MAX_RESOURCE_TIMELINE_SAMPLES = 1024
+PATCH_IO_WORKERS_MAX = 6
 NATIVE_THREAD_ENV_KEYS = (
     "OPENBLAS_NUM_THREADS",
     "OMP_NUM_THREADS",
@@ -223,6 +224,7 @@ class SegmentFirstPerformanceMonitor:
 def runtime_resource_contract() -> dict[str, Any]:
     return {
         "logical_cpu_count": os.cpu_count(),
+        "patch_io_workers_max": PATCH_IO_WORKERS_MAX,
         "native_thread_limits": {
             name: os.environ.get(name)
             for name in NATIVE_THREAD_ENV_KEYS
@@ -422,6 +424,7 @@ def _format_bytes(value: int | None) -> str:
 
 __all__ = [
     "ProcessResourceSnapshot",
+    "PATCH_IO_WORKERS_MAX",
     "SegmentFirstPerformanceMonitor",
     "active_p04_location",
     "format_resource_snapshot",

@@ -11,9 +11,10 @@ import pandas as pd
 from .geometry import to_2d
 from .io import build_input_manifest, discover_patch_dirs, read_vector
 from .segment_first_config import SegmentFirstConfig
+from .segment_first_performance import PATCH_IO_WORKERS_MAX
 
 
-PATCH_READ_WORKERS = 6
+PATCH_READ_WORKERS = PATCH_IO_WORKERS_MAX
 SEGMENT_FIRST_PATCH_LAYER_FAMILIES = (
     ("Road.geojson",),
     ("Lane.geojson",),

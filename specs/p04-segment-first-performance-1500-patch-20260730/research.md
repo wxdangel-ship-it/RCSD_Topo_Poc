@@ -116,3 +116,32 @@ CRS转换、稳定拼接，以及12000个消费文件的SHA256清单，不执行
 
 该复跑仍报告与冻结候选相同的`terminal_status=failed`、
 `core_gate_pass=false`，未用性能优化或Review绕过既有POC业务hard gate。
+
+## 8. 内网验收器与资源合同闭环
+
+新增只读验证脚本
+`validation/validate_innernet_acceptance.py`，自动核对：
+
+- 约1500 Patch范围和每Patch 8类正式消费文件；
+- `<=6h`目标、`<=8h`硬上限、`<=8GiB`目标和`<16GiB`硬上限；
+- 指定8逻辑核、P04最多6个Patch I/O worker、原生计算线程均为1；
+- 30秒资源时间线完整性、RSS尾部持续增长提示；
+- CRS、独立QA、QGIS回读、正式工件完整性；
+- 可选同输入参考的输入身份与7类业务工件规范化指纹。
+
+验收器不允许把缺失证据静默升级：无同输入参考时最多返回
+`EVIDENCE_READY`；只有全部自动gate和同输入业务等价均通过时返回
+`ACCEPTED`。超过6小时但未超过8小时时还必须提供书面说明。
+
+资源合同中的`patch_io_workers_max=6`现由
+`segment_first_performance.py`单一常量同时驱动Patch读取、控制台日志和
+summary，避免实现与审计口径漂移。
+
+最新正式复跑`perf_opt15_1885118_20260730T1340`：
+
+- wall：`150.900s`，peak RSS：约`514.1MiB`；
+- 与`perf_opt13`输入身份及7类业务指纹完全一致；
+- 带同输入参考执行验收器：`ACCEPTED`，失败gate为0；
+- 不带参考执行验收器：`EVIDENCE_READY`，不会掩盖现有core gate复核；
+- 验收器负向用例确认旧opt14仅因未记录I/O worker合同而失败；
+- P04专项回归更新为`280 passed`。

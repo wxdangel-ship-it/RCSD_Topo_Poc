@@ -38,6 +38,7 @@ def test_monitor_records_resources_and_sampled_hotspots() -> None:
     assert result["budgets"]["wall_target_seconds"] == 21600
     assert result["budgets"]["wall_hard_limit_seconds"] == 28800
     assert result["runtime_resources"]["logical_cpu_count"]
+    assert result["runtime_resources"]["patch_io_workers_max"] == 6
     assert "OPENBLAS_NUM_THREADS" in result["runtime_resources"][
         "native_thread_limits"
     ]

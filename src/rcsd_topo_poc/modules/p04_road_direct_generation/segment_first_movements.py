@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 import math
+import weakref
 
 import geopandas as gpd
 import pandas as pd
@@ -14,6 +15,10 @@ from .segment_first_junctions import endpoint_surface_geometry
 from .segment_first_surface_routing import interior_surface_target
 
 _MIN_THROUGH_SPLIT_PART_LENGTH_M = 2.0
+_JUNCTION_SURFACE_CACHE: dict[
+    int,
+    tuple[weakref.ReferenceType[gpd.GeoDataFrame], int, dict[str, object]],
+] = {}
 
 
 @dataclass(frozen=True)
@@ -285,15 +290,7 @@ def split_carriers_at_segment_accesses(
     carriers = movement_result.carriers
     if carriers.empty or junction_units.empty:
         return movement_result
-    surfaces = {
-        str(group_id): unary_union(
-            [
-                endpoint_surface_geometry(row)
-                for row in group.itertuples(index=False)
-            ]
-        )
-        for group_id, group in junction_units.groupby("junction_group_id")
-    }
+    surfaces = _junction_surfaces(junction_units)
     surface_sources = {
         str(group_id): str(
             getattr(group.iloc[0], "junction_source", "")
@@ -478,6 +475,40 @@ def split_carriers_at_segment_accesses(
         }
     )
     return MovementSplitResult(result, audit, summary)
+
+
+def _junction_surfaces(
+    junction_units: gpd.GeoDataFrame,
+) -> dict[str, object]:
+    key = id(junction_units)
+    cached = _JUNCTION_SURFACE_CACHE.get(key)
+    if (
+        cached is not None
+        and cached[0]() is junction_units
+        and cached[1] == id(junction_units._mgr)
+    ):
+        return cached[2]
+    result = {
+        str(group_id): unary_union(
+            [
+                endpoint_surface_geometry(row)
+                for row in group.itertuples(index=False)
+            ]
+        )
+        for group_id, group in junction_units.groupby("junction_group_id")
+    }
+
+    def remove(_: weakref.ReferenceType[gpd.GeoDataFrame]) -> None:
+        current = _JUNCTION_SURFACE_CACHE.get(key)
+        if current is not None and current[0]() is None:
+            _JUNCTION_SURFACE_CACHE.pop(key, None)
+
+    _JUNCTION_SURFACE_CACHE[key] = (
+        weakref.ref(junction_units, remove),
+        id(junction_units._mgr),
+        result,
+    )
+    return result
 
 
 def _trim_target_main_carriers_to_endpoint_surfaces(

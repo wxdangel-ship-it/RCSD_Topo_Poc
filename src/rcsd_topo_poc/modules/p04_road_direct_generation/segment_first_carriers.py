@@ -14,8 +14,13 @@ from .segment_first_corridors import (
     assemble_directional_corridor,
     evidence_direction_role,
 )
+from .segment_first_geometry_cache import buffered_union
 from .segment_first_member_recovery import recover_dual_target_member_carriers
 from .segment_first_partial_members import build_partial_member_carriers
+from .segment_first_path_scoring import (
+    build_target_path_metrics,
+    target_path_score,
+)
 from .segment_first_skeleton import canonical_id, parse_id_list
 from .segment_first_surface_bridge import (
     build_endpoint_surface_bridge_assembly,
@@ -101,9 +106,47 @@ def plan_segment_carriers(
             ["assigned_segment_id", "target_swsd_road_id"]
         )
     } if not eligible.empty else {}
+    eligible_by_segment = (
+        {
+            str(segment_id): group.copy()
+            for segment_id, group in eligible.groupby(
+                eligible["assigned_segment_id"].astype(str),
+                sort=False,
+            )
+        }
+        if not eligible.empty
+        else {}
+    )
+    recovery_by_segment = (
+        {
+            str(segment_id): group.copy()
+            for segment_id, group in recovery_candidates.groupby(
+                recovery_candidates["assigned_segment_id"].astype(str),
+                sort=False,
+            )
+        }
+        if not recovery_candidates.empty
+        else {}
+    )
+    empty_eligible = eligible.iloc[0:0]
+    empty_recovery = recovery_candidates.iloc[0:0]
+    carrier_roles_by_member: dict[tuple[str, str], dict[str, str]] = {}
+    required_roles_by_segment: dict[str, set[tuple[str, str]]] = {}
+    for (
+        role_segment_id,
+        role_member_id,
+        direction_role,
+    ), carrier_role in directional_member_roles.items():
+        carrier_roles_by_member.setdefault(
+            (role_segment_id, role_member_id),
+            {},
+        )[direction_role] = carrier_role
+        required_roles_by_segment.setdefault(role_segment_id, set()).add(
+            (role_member_id, carrier_role)
+        )
     connector_pair_counts = _connector_pair_counts(explicit_pairs)
     drivezone_surface = (
-        drivezones.geometry.union_all().buffer(1.0)
+        buffered_union(drivezones, 1.0)
         if drivezones is not None and not drivezones.empty
         else None
     )
@@ -165,12 +208,8 @@ def plan_segment_carriers(
         replaced_members = 0
         partial_member_takeover = False
         partial_member_ids: set[str] = set()
-        segment_evidence = eligible[
-            eligible["assigned_segment_id"].astype(str).eq(segment_id)
-        ] if not eligible.empty else eligible
-        segment_recovery = recovery_candidates[
-            recovery_candidates["assigned_segment_id"].astype(str).eq(segment_id)
-        ] if not recovery_candidates.empty else recovery_candidates
+        segment_evidence = eligible_by_segment.get(segment_id, empty_eligible)
+        segment_recovery = recovery_by_segment.get(segment_id, empty_recovery)
 
         for member_id in member_ids:
             member = road_by_id.loc[member_id] if member_id in road_by_id.index else None
@@ -190,16 +229,10 @@ def plan_segment_carriers(
                     minimum_member_coverage=minimum_member_coverage,
                     sample_spacing_m=sample_spacing_m,
                     completion_min_coverage=completion_min_coverage,
-                    carrier_roles_by_direction={
-                        direction_role: carrier_role
-                        for (
-                            role_segment_id,
-                            role_member_id,
-                            direction_role,
-                        ), carrier_role in directional_member_roles.items()
-                        if role_segment_id == segment_id
-                        and role_member_id == member_id
-                    },
+                    carrier_roles_by_direction=carrier_roles_by_member.get(
+                        (segment_id, member_id),
+                        {},
+                    ),
                     allow_surface_inferred_counterpart=False,
                 )
                 if (
@@ -217,16 +250,10 @@ def plan_segment_carriers(
                         sample_spacing_m=sample_spacing_m,
                         completion_min_coverage=completion_min_coverage,
                         member_carrier_builder=_member_carriers,
-                        carrier_roles_by_direction={
-                            direction_role: carrier_role
-                            for (
-                                role_segment_id,
-                                role_member_id,
-                                direction_role,
-                            ), carrier_role in directional_member_roles.items()
-                            if role_segment_id == segment_id
-                            and role_member_id == member_id
-                        },
+                        carrier_roles_by_direction=carrier_roles_by_member.get(
+                            (segment_id, member_id),
+                            {},
+                        ),
                     )
             if built_rows:
                 carrier_rows.extend(built_rows)
@@ -310,15 +337,10 @@ def plan_segment_carriers(
                     carrier_rows[carrier_start:],
                     str(getattr(segment, "target_class", "")),
                     str(getattr(segment, "sgrade", "") or ""),
-                    required_member_roles={
-                        (role_member_id, carrier_role)
-                        for (
-                            role_segment_id,
-                            role_member_id,
-                            _,
-                        ), carrier_role in directional_member_roles.items()
-                        if role_segment_id == segment_id
-                    },
+                    required_member_roles=required_roles_by_segment.get(
+                        segment_id,
+                        set(),
+                    ),
                 )
             )
         ):
@@ -431,15 +453,10 @@ def plan_segment_carriers(
                     carrier_rows[carrier_start:],
                     str(getattr(segment, "target_class", "")),
                     str(getattr(segment, "sgrade", "") or ""),
-                    required_member_roles={
-                        (role_member_id, carrier_role)
-                        for (
-                            role_segment_id,
-                            role_member_id,
-                            _,
-                        ), carrier_role in directional_member_roles.items()
-                        if role_segment_id == segment_id
-                    },
+                    required_member_roles=required_roles_by_segment.get(
+                        segment_id,
+                        set(),
+                    ),
                 )
             ):
                 inferred_member_rows = recover_dual_target_member_carriers(
@@ -1848,12 +1865,13 @@ def _select_directed_target_path(
         visit((key,))
     if not paths:
         return evidence
+    path_metrics = build_target_path_metrics(by_key, reference)
     best = max(
         paths,
-        key=lambda path: _target_path_score(
+        key=lambda path: target_path_score(
             path,
-            by_key,
-            reference,
+            path_metrics,
+            float(reference.length),
             surface_mask_by_key,
             len(required_surfaces),
         ),
@@ -2070,90 +2088,6 @@ def _complete_target_assembly_to_endpoint_surfaces(
     )
 
 
-def _target_path_score(
-    path: tuple[str, ...],
-    by_key: dict[str, gpd.GeoDataFrame],
-    reference: LineString,
-    surface_mask_by_key: dict[str, int],
-    required_surface_count: int,
-) -> tuple[float, float, int, float]:
-    intervals = [
-        _reference_interval(geometry, reference)
-        for key in path
-        for geometry in by_key[key].geometry
-    ]
-    coverage = _interval_coverage_ratio(intervals, float(reference.length))
-    minimum = min(start for start, _ in intervals)
-    maximum = max(end for _, end in intervals)
-    total = max(float(reference.length), 1e-9)
-    endpoint_gap = minimum / total + max(0.0, total - maximum) / total
-    assignment_scores = [
-        float(value)
-        for key in path
-        for value in (
-            pd.to_numeric(by_key[key]["assignment_score"], errors="coerce").dropna()
-            if "assignment_score" in by_key[key]
-            else []
-        )
-    ]
-    finite_scores = [value for value in assignment_scores if math.isfinite(value)]
-    mean_assignment = (
-        sum(finite_scores) / len(finite_scores) if finite_scores else 100.0
-    )
-    support_fraction = sum(
-        bool(
-            by_key[key]
-            .get("full_rcsd_anchor_supported", pd.Series(dtype=bool))
-            .fillna(False)
-            .astype(bool)
-            .any()
-        )
-        for key in path
-    ) / len(path)
-    surface_mask = 0
-    for key in path:
-        surface_mask |= surface_mask_by_key.get(key, 0)
-    surface_fraction = (
-        surface_mask.bit_count() / required_surface_count
-        if required_surface_count
-        else 0.0
-    )
-    return (
-        surface_fraction,
-        coverage
-        - 0.5 * endpoint_gap
-        - 0.01 * mean_assignment
-        + 0.30 * support_fraction,
-        len(path),
-        -mean_assignment,
-    )
-
-
-def _reference_interval(
-    geometry: LineString,
-    reference: LineString,
-) -> tuple[float, float]:
-    sample_count = max(3, int(math.ceil(float(geometry.length) / 5.0)) + 1)
-    measures = [
-        float(reference.project(geometry.interpolate(index / (sample_count - 1), normalized=True)))
-        for index in range(sample_count)
-    ]
-    return min(measures), max(measures)
-
-
-def _interval_coverage_ratio(
-    intervals: list[tuple[float, float]],
-    total: float,
-) -> float:
-    merged: list[list[float]] = []
-    for start, end in sorted(intervals):
-        if not merged or start > merged[-1][1] + 1.0:
-            merged.append([start, end])
-        else:
-            merged[-1][1] = max(merged[-1][1], end)
-    return min(1.0, sum(end - start for start, end in merged) / total) if total else 0.0
-
-
 def _target_corridor_carrier(
     segment_id: str,
     member_ids: tuple[str, ...],
@@ -2194,7 +2128,7 @@ def _target_corridor_carrier(
                 evidence.get(
                     "full_rcsd_anchor_supported",
                     pd.Series(False, index=evidence.index),
-                ).fillna(False).astype(bool).any()
+                ).dropna().astype(bool).any()
             ),
             "full_rcsd_anchor_ids": ",".join(
                 sorted(

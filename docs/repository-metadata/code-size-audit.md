@@ -544,3 +544,36 @@ Access 几何同时缺失时不猜测，继续由
 | `scripts/p04_run_segment_first_innernet.py` | `10038` bytes | P04内网参数化入口、带当前执行位置的心跳及模块级进度日志 | 不改变正式参数合同，不复制业务算法 |
 | `tests/modules/p04_road_direct_generation/test_innernet_script.py` | `8476` bytes | 内网参数映射、core gate退出码、心跳执行位置和help合同 | 保持入口行为测试，不复制业务算法 |
 | `tests/modules/p04_road_direct_generation/test_segment_first_access_memberships.py` | `4730` bytes | Access空几何在有/无accepted surface时的非静默回归 | 保持资料部分缺失与hard gate两类合同 |
+
+### P04 1500 Patch性能优化（2026-07-30）
+
+本轮未修改已超过硬阈值的`segment_first_pipeline.py`。路径评分、资源采样和
+跨阶段道路面缓存分别下沉到独立模块；Patch输入读取与实际消费文件清单使用
+最多6个有界I/O worker，未引入进程池或无界并发。现有carrier、Node、输入、
+走廊和目标碎片模块只进行等价计算复用与全表扫描收敛。
+
+当前扫描`47`个`segment_first*.py`源码与`40`个专项测试：源码
+`>=61440 bytes`为`3`、测试`>=61440 bytes`为`0`，全部
+`>=100000 bytes`仍仅有未写入的`segment_first_pipeline.py`一个。
+另有`2`个SpecKit性能/验收验证脚本，均低于`61440 bytes`。本轮修改及新增的
+全部源码、脚本和测试均低于`100000 bytes`。
+
+| 文件 | 当前体量 | 当前职责 | 后续约束 |
+|---|---:|---|---|
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_pipeline.py` | `100510` bytes | Segment-first阶段编排和发布挂接 | 本轮未写入；继续禁止写入，后续须单独授权拆分或豁免 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_carriers.py` | `93166` bytes | carrier仲裁、方向组装及按Segment预分组 | 距硬阈值较近；不得回填新的业务策略 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_nodes.py` | `89059` bytes | Node/mainnode、端点协调及有界几何缓存调用 | 不回填SegmentAccess编排或新端点策略 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_inputs.py` | `10616` bytes | 正式Patch输入读取及与资源合同共源的最多6个I/O worker | 不改变图层族、字段语义或稳定拼接顺序 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_path_scoring.py` | `4595` bytes | Patch Road路径指标预计算和等价评分 | 只承接无状态评分复用 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_geometry_metrics.py` | `2928` bytes | 最大采样转角和道路面覆盖的精确有界复用 | 不引入近似几何或silent fix |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_performance.py` | `15078` bytes | 高分辨率墙钟、进程CPU/RSS/I/O、最多6个Patch I/O worker合同、30秒资源时间线和预算审计 | 最多保留1024个有界样本，不进入业务决策；Windows API必须保留64位句柄签名 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_geometry_cache.py` | `1124` bytes | 按活动GeoDataFrame身份复用精确buffered union | 只缓存不可变计算结果，不做几何修复 |
+| `scripts/p04_run_segment_first_innernet.py` | `12409` bytes | 正式参数化内网入口、心跳、共源I/O worker上限、原生线程默认上限及资源审计 | 不改变正式参数合同，不复制业务算法 |
+| `specs/p04-segment-first-performance-1500-patch-20260730/validation/benchmark_input_scale.py` | `14543` bytes | 真实Vector循环复用下的Patch输入读取、CRS、拼接、清单和峰值内存规模验证 | 仅为SpecKit验证脚本，不登记为正式入口，不替代内网端到端验收 |
+| `specs/p04-segment-first-performance-1500-patch-20260730/validation/validate_innernet_acceptance.py` | `17775` bytes | 约1500 Patch时限、资源、QA、QGIS、输入身份及同输入业务指纹只读验收 | 无同输入参考时最多输出EVIDENCE_READY；不得把局部证据升级为ACCEPTED |
+| `tests/modules/p04_road_direct_generation/test_innernet_script.py` | `9130` bytes | 参数入口、退出码、心跳及8核资源默认值合同 | 保持入口行为测试 |
+| `tests/modules/p04_road_direct_generation/test_segment_first_performance.py` | `3060` bytes | 性能监控、Windows资源读取、I/O worker上限、资源时间线、预算和summary合并合同 | 保持独立于业务成果 |
+| `tests/modules/p04_road_direct_generation/test_innernet_acceptance_validation.py` | `4578` bytes | 完整证据无参考与缺失I/O worker合同两类验收器回归 | 不使用伪造业务参考证明零回退 |
+| `tests/modules/p04_road_direct_generation/test_segment_first_geometry_cache.py` | `864` bytes | buffered union精确复用和空输入合同 | 不以近似几何替代等价计算 |
+| `tests/modules/p04_road_direct_generation/test_segment_first_geometry_metrics.py` | `1787` bytes | 转角与道路面覆盖精确缓存合同 | 重复调用必须保持数值等价 |
+| `tests/modules/p04_road_direct_generation/test_segment_first_path_scoring.py` | `1164` bytes | 路径评分数值与布尔归一合同 | 不改变缺失值和非有限值语义 |

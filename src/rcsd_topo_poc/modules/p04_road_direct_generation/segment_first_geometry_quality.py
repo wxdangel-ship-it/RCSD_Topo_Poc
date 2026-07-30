@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 
 from .segment_first_config import SegmentFirstConfig
+from .segment_first_geometry_metrics import max_sample_turn as _max_sample_turn
 
 
 @dataclass(frozen=True)
@@ -159,36 +160,6 @@ def apply_review_flags(
     ).fillna(False).astype(bool)
     result["review_required"] = existing | result["id"].astype(str).isin(flagged)
     return result
-
-
-def _max_sample_turn(geometry: object, spacing: float) -> float:
-    if geometry is None or geometry.is_empty or geometry.length <= spacing * 2:
-        return 0.0
-    count = max(3, int(math.ceil(geometry.length / spacing)) + 1)
-    points = [
-        geometry.interpolate(value)
-        for value in np.linspace(0.0, geometry.length, count)
-    ]
-    maximum = 0.0
-    for index in range(1, len(points) - 1):
-        first = np.array(
-            [
-                points[index].x - points[index - 1].x,
-                points[index].y - points[index - 1].y,
-            ]
-        )
-        second = np.array(
-            [
-                points[index + 1].x - points[index].x,
-                points[index + 1].y - points[index].y,
-            ]
-        )
-        denominator = float(np.linalg.norm(first) * np.linalg.norm(second))
-        if denominator <= 1e-9:
-            continue
-        cosine = float(np.clip(np.dot(first, second) / denominator, -1.0, 1.0))
-        maximum = max(maximum, math.degrees(math.acos(cosine)))
-    return maximum
 
 
 def _directed_sample_distance(geometry: object, source: object) -> float:

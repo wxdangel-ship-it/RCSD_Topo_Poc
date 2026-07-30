@@ -1,12 +1,32 @@
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import dataclass
+from itertools import repeat
 import json
 import math
 
 import geopandas as gpd
 import numpy as np
+from shapely import (
+    get_x,
+    get_y,
+    line_interpolate_point,
+    line_locate_point,
+)
 from shapely.geometry import LineString
+
+from .segment_first_geometry_metrics import (
+    max_sample_turn as _max_sample_turn,
+    surface_coverage as _surface_coverage,
+)
+
+_REFERENCE_METRIC_CACHE_MAXSIZE = 32768
+_DIRECTION_ROLE_CACHE: OrderedDict[tuple[bytes, bytes], str] = OrderedDict()
+_EVIDENCE_REFERENCE_CACHE: OrderedDict[
+    tuple[bytes, bytes],
+    tuple[float, float, float],
+] = OrderedDict()
 
 
 @dataclass(frozen=True)
@@ -26,6 +46,11 @@ class CorridorAssembly:
 
 def evidence_direction_role(geometry: LineString, reference: LineString) -> str:
     """Classify travel orientation while using SWSD only as a semantic station axis."""
+    key = (geometry.wkb, reference.wkb)
+    cached = _DIRECTION_ROLE_CACHE.get(key)
+    if cached is not None:
+        _DIRECTION_ROLE_CACHE.move_to_end(key)
+        return cached
     start = geometry.interpolate(0.10, normalized=True)
     end = geometry.interpolate(0.90, normalized=True)
     delta = float(reference.project(end) - reference.project(start))
@@ -34,7 +59,12 @@ def evidence_direction_role(geometry: LineString, reference: LineString) -> str:
             reference.project(geometry.interpolate(1.0, normalized=True))
             - reference.project(geometry.interpolate(0.0, normalized=True))
         )
-    return "forward" if delta >= 0.0 else "reverse"
+    result = "forward" if delta >= 0.0 else "reverse"
+    _DIRECTION_ROLE_CACHE[key] = result
+    _DIRECTION_ROLE_CACHE.move_to_end(key)
+    if len(_DIRECTION_ROLE_CACHE) > _REFERENCE_METRIC_CACHE_MAXSIZE:
+        _DIRECTION_ROLE_CACHE.popitem(last=False)
+    return result
 
 
 def assemble_directional_corridor(
@@ -55,7 +85,29 @@ def assemble_directional_corridor(
     if evidence.empty or reference is None or reference.is_empty or reference.length <= 0.0:
         return None
     ordered = evidence.sort_values("patch_road_key", kind="stable").reset_index(drop=True)
-    records = [_evidence_record(row, reference) for row in ordered.itertuples()]
+    records = [
+        _evidence_record(
+            geometry,
+            patch_road_key,
+            source_patch_id,
+            center_lane_id,
+            road_id,
+            reference,
+        )
+        for (
+            geometry,
+            patch_road_key,
+            source_patch_id,
+            center_lane_id,
+            road_id,
+        ) in zip(
+            ordered.geometry,
+            ordered["patch_road_key"],
+            _column_values(ordered, "source_patch_id"),
+            _column_values(ordered, "center_lane_id"),
+            _column_values(ordered, "road_id"),
+        )
+    ]
     records = [record for record in records if record["end_m"] - record["start_m"] > 1e-6]
     if not records:
         return None
@@ -106,16 +158,22 @@ def assemble_directional_corridor(
         if not active:
             continue
         reference_point = reference.interpolate(float(station))
-        observed_points = [
-            record["geometry"].interpolate(record["geometry"].project(reference_point))
-            for record in active
-        ]
+        active_geometries = np.asarray(
+            [record["geometry"] for record in active],
+            dtype=object,
+        )
+        observed_points = line_interpolate_point(
+            active_geometries,
+            line_locate_point(active_geometries, reference_point),
+        )
+        observed_x = get_x(observed_points)
+        observed_y = get_y(observed_points)
         point_rows.append(
             {
                 "station": float(station),
                 "coord": (
-                    float(np.median([point.x for point in observed_points])),
-                    float(np.median([point.y for point in observed_points])),
+                    _coordinate_median(observed_x),
+                    _coordinate_median(observed_y),
                 ),
                 "source_keys": tuple(
                     sorted(str(record["patch_road_key"]) for record in active)
@@ -188,23 +246,62 @@ def assemble_directional_corridor(
     )
 
 
-def _evidence_record(row: object, reference: LineString) -> dict[str, object]:
-    geometry = row.geometry
-    count = max(3, int(math.ceil(float(geometry.length) / 5.0)) + 1)
-    measures = [
-        float(reference.project(geometry.interpolate(distance)))
-        for distance in np.linspace(0.0, float(geometry.length), count)
-    ]
+def _column_values(
+    frame: gpd.GeoDataFrame,
+    column: str,
+) -> object:
+    return frame[column] if column in frame else repeat("")
+
+
+def _evidence_record(
+    geometry: LineString,
+    patch_road_key: object,
+    source_patch_id: object,
+    center_lane_id: object,
+    road_id: object,
+    reference: LineString,
+) -> dict[str, object]:
+    travel_start_m, start_m, end_m = _evidence_reference_metrics(
+        geometry,
+        reference,
+    )
     return {
         "geometry": geometry,
-        "patch_road_key": str(row.patch_road_key),
-        "source_patch_id": str(getattr(row, "source_patch_id", "")),
-        "center_lane_id": str(getattr(row, "center_lane_id", "") or ""),
-        "road_id": str(getattr(row, "road_id", "") or ""),
-        "travel_start_m": float(reference.project(geometry.interpolate(0.0))),
-        "start_m": min(measures),
-        "end_m": max(measures),
+        "patch_road_key": str(patch_road_key),
+        "source_patch_id": str(source_patch_id),
+        "center_lane_id": str(center_lane_id or ""),
+        "road_id": str(road_id or ""),
+        "travel_start_m": travel_start_m,
+        "start_m": start_m,
+        "end_m": end_m,
     }
+
+
+def _evidence_reference_metrics(
+    geometry: LineString,
+    reference: LineString,
+) -> tuple[float, float, float]:
+    key = (geometry.wkb, reference.wkb)
+    cached = _EVIDENCE_REFERENCE_CACHE.get(key)
+    if cached is not None:
+        _EVIDENCE_REFERENCE_CACHE.move_to_end(key)
+        return cached
+    count = max(3, int(math.ceil(float(geometry.length) / 5.0)) + 1)
+    sample_points = line_interpolate_point(
+        geometry,
+        np.linspace(0.0, float(geometry.length), count),
+    )
+    measures = line_locate_point(reference, sample_points)
+    result = (
+        float(reference.project(geometry.interpolate(0.0))),
+        float(np.min(measures)),
+        float(np.max(measures)),
+    )
+    _EVIDENCE_REFERENCE_CACHE[key] = result
+    _EVIDENCE_REFERENCE_CACHE.move_to_end(key)
+    if len(_EVIDENCE_REFERENCE_CACHE) > _REFERENCE_METRIC_CACHE_MAXSIZE:
+        _EVIDENCE_REFERENCE_CACHE.popitem(last=False)
+    return result
 
 
 def _observed_chain_assembly(
@@ -316,31 +413,12 @@ def _observed_chain_assembly(
     )
 
 
-def _max_sample_turn(line: LineString, spacing: float) -> float:
-    if line.length <= spacing * 2:
-        return 0.0
-    count = max(3, int(math.ceil(line.length / spacing)) + 1)
-    points = [line.interpolate(value) for value in np.linspace(0.0, line.length, count)]
-    maximum = 0.0
-    for index in range(1, len(points) - 1):
-        first = np.array(
-            [
-                points[index].x - points[index - 1].x,
-                points[index].y - points[index - 1].y,
-            ]
-        )
-        second = np.array(
-            [
-                points[index + 1].x - points[index].x,
-                points[index + 1].y - points[index].y,
-            ]
-        )
-        denominator = float(np.linalg.norm(first) * np.linalg.norm(second))
-        if denominator <= 1e-9:
-            continue
-        cosine = float(np.clip(np.dot(first, second) / denominator, -1.0, 1.0))
-        maximum = max(maximum, math.degrees(math.acos(cosine)))
-    return maximum
+def _coordinate_median(values: np.ndarray) -> float:
+    if len(values) == 1:
+        return float(values[0])
+    if len(values) == 2:
+        return float((values[0] + values[1]) / 2.0)
+    return float(np.median(values))
 
 
 def _assembly(
@@ -378,14 +456,6 @@ def _interval_coverage(intervals: list[tuple[float, float]], total: float) -> fl
         else:
             merged[-1][1] = max(merged[-1][1], end)
     return min(1.0, sum(end - start for start, end in merged) / total) if total else 0.0
-
-
-def _surface_coverage(line: LineString, surface: object | None) -> float:
-    if line.length <= 1e-9:
-        return 1.0
-    if surface is None or getattr(surface, "is_empty", True):
-        return 0.0
-    return float(line.intersection(surface).length / line.length)
 
 
 def _deduplicate_points(rows: list[dict[str, object]]) -> list[dict[str, object]]:

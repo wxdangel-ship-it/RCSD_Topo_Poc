@@ -11,6 +11,7 @@ from shapely.geometry import LineString, Point
 from shapely.ops import substring, unary_union
 
 from .segment_first_config import SegmentFirstConfig
+from .segment_first_geometry_cache import buffered_union
 from .segment_first_lane_topo import LANE_TOPO_PAIR_SOURCES
 from .segment_first_nodes import resolve_road_endpoint_junctions
 
@@ -87,9 +88,7 @@ def materialize_ordinary_junction_carriers(
         set(surface_by_group),
     )
     drivezone_surface = (
-        drivezones.geometry.union_all().buffer(
-            config.completion_surface_buffer_m
-        )
+        buffered_union(drivezones, config.completion_surface_buffer_m)
         if not drivezones.empty
         else None
     )
@@ -316,7 +315,7 @@ def _materialize_ordinary_junction_carriers_legacy(
     }
 
     drivezone_surface = (
-        drivezones.geometry.union_all().buffer(config.completion_surface_buffer_m)
+        buffered_union(drivezones, config.completion_surface_buffer_m)
         if not drivezones.empty
         else None
     )

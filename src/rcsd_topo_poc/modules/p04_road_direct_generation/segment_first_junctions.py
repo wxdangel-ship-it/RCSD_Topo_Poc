@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 import hashlib
 
 import geopandas as gpd
@@ -236,8 +237,13 @@ def endpoint_surface_geometry(row: object) -> object:
     if value is None and hasattr(row, "get"):
         value = row.get("endpoint_surface_wkt")
     if value is not None and pd.notna(value) and str(value):
-        return wkt.loads(str(value))
+        return _load_endpoint_surface_wkt(str(value))
     return getattr(row, "geometry")
+
+
+@lru_cache(maxsize=16384)
+def _load_endpoint_surface_wkt(value: str) -> object:
+    return wkt.loads(value)
 
 
 def build_endpoint_surface_audit(

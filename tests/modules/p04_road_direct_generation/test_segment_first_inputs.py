@@ -6,9 +6,12 @@ from shapely.geometry import LineString
 
 from rcsd_topo_poc.modules.p04_road_direct_generation.io import (
     CORE_VECTOR_FILES,
+    build_input_manifest,
     discover_patch_dirs,
 )
 from rcsd_topo_poc.modules.p04_road_direct_generation.segment_first_inputs import (
+    SEGMENT_FIRST_PATCH_LAYER_FAMILIES,
+    _consumed_patch_inputs,
     _load_patch_layer,
     accepted_surface,
     require_columns,
@@ -135,3 +138,36 @@ def test_patch_layer_prefers_fix_and_records_raw_fallback(tmp_path) -> None:
         "DivStripZone.geojson",
     ]
     assert result["Id"].tolist() == ["fix", "raw"]
+
+
+def test_segment_first_manifest_hashes_only_consumed_patch_layers(
+    tmp_path,
+) -> None:
+    patch_dir = tmp_path / "patches" / "patch_a"
+    vector_dir = patch_dir / "Vector"
+    vector_dir.mkdir(parents=True)
+    for filenames in SEGMENT_FIRST_PATCH_LAYER_FAMILIES:
+        (vector_dir / filenames[0]).write_text(
+            filenames[0],
+            encoding="utf-8",
+        )
+    unrelated = vector_dir / "Crosswalk.geojson"
+    unrelated.write_text("not consumed by P04", encoding="utf-8")
+    external = tmp_path / "swsd.gpkg"
+    external.write_text("external", encoding="utf-8")
+
+    manifest = build_input_manifest(
+        run_id="case",
+        patch_dirs=(patch_dir,),
+        external_inputs={"swsd_roads": external},
+        parameters={},
+        patch_inputs=_consumed_patch_inputs((patch_dir,)),
+    )
+
+    assert manifest["input_file_count"] == (
+        len(SEGMENT_FIRST_PATCH_LAYER_FAMILIES) + 1
+    )
+    assert unrelated.as_posix() not in {
+        str(row["path"]).replace("\\", "/")
+        for row in manifest["files"]
+    }

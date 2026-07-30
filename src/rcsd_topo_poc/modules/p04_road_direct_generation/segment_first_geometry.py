@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import dataclass
 import hashlib
 import json
@@ -13,6 +14,13 @@ from shapely.ops import substring
 
 from .segment_first_config import SegmentFirstConfig
 from .segment_first_skeleton import canonical_id
+
+
+_SMOOTH_CENTERLINE_CACHE_MAXSIZE = 32768
+_SMOOTH_CENTERLINE_CACHE: OrderedDict[
+    tuple[bytes, float, float],
+    tuple[LineString, str],
+] = OrderedDict()
 
 
 @dataclass(frozen=True)
@@ -241,6 +249,11 @@ def _smooth_centerline(
 ) -> tuple[LineString, str]:
     if geometry is None or geometry.is_empty or geometry.length < spacing * 5:
         return geometry, "too_short_for_smoothing"
+    key = (geometry.wkb, float(spacing), float(max_deviation))
+    cached = _SMOOTH_CENTERLINE_CACHE.get(key)
+    if cached is not None:
+        _SMOOTH_CENTERLINE_CACHE.move_to_end(key)
+        return cached
     count = max(6, int(math.ceil(geometry.length / spacing)) + 1)
     distances = np.linspace(0.0, geometry.length, count)
     coords = np.array([[geometry.interpolate(value).x, geometry.interpolate(value).y] for value in distances])
@@ -249,12 +262,28 @@ def _smooth_centerline(
         smoothed[index] = np.average(coords[index - 2 : index + 3], axis=0, weights=[1, 2, 3, 2, 1])
     candidate = LineString(smoothed).simplify(0.10, preserve_topology=True)
     if not candidate.is_valid or not candidate.is_simple:
-        return geometry.simplify(0.10, preserve_topology=True), "smoothing_rejected_invalid"
-    sample_points = [candidate.interpolate(value, normalized=True) for value in np.linspace(0, 1, 21)]
-    deviation = max(point.distance(geometry) for point in sample_points)
-    if deviation > max_deviation:
-        return geometry.simplify(0.10, preserve_topology=True), "smoothing_rejected_deviation"
-    return candidate, "smoothed_within_deviation_gate"
+        result = (
+            geometry.simplify(0.10, preserve_topology=True),
+            "smoothing_rejected_invalid",
+        )
+    else:
+        sample_points = [
+            candidate.interpolate(value, normalized=True)
+            for value in np.linspace(0, 1, 21)
+        ]
+        deviation = max(point.distance(geometry) for point in sample_points)
+        if deviation > max_deviation:
+            result = (
+                geometry.simplify(0.10, preserve_topology=True),
+                "smoothing_rejected_deviation",
+            )
+        else:
+            result = candidate, "smoothed_within_deviation_gate"
+    _SMOOTH_CENTERLINE_CACHE[key] = result
+    _SMOOTH_CENTERLINE_CACHE.move_to_end(key)
+    if len(_SMOOTH_CENTERLINE_CACHE) > _SMOOTH_CENTERLINE_CACHE_MAXSIZE:
+        _SMOOTH_CENTERLINE_CACHE.popitem(last=False)
+    return result
 
 
 def _member_value(member: pd.Series | None, field: str, default: object) -> object:

@@ -519,3 +519,28 @@
 
 - 当前未发现 `scripts/` 下超过 `100 KB` 的入口脚本。
 - 本表不裁定业务基线、模块正式范围或是否立即重构；只记录结构债事实。
+
+### P04 SegmentAccess 空几何恢复与 Node 模块拆分（2026-07-30）
+
+本轮经用户授权执行超阈值拆分：将 built Road 的 SegmentAccess
+补接编排从 `segment_first_nodes.py` 下沉到独立模块，并保留 Node
+编译层提供的几何与 Junction 策略。空 Access 几何不再参与距离计算；
+存在 accepted JunctionUnit surface 时仍可按面完成交接，surface 与
+Access 几何同时缺失时不猜测，继续由
+`segment_access_not_materialized` hard gate 阻断。内网入口新增该子阶段
+处理量、空几何数、未解析目标数和耗时日志，不改变入口参数。
+
+当前扫描 `43` 个 `segment_first*.py` 源码与 `35` 个专项测试：
+源码 `>=61440 bytes` 为 `3`、测试 `>=61440 bytes` 为 `0`，
+全部 `>=100000 bytes` 为 `1`。`segment_first_nodes.py` 已从
+`100152` bytes 降至 `84351` bytes；未写入仍超阈值的
+`segment_first_pipeline.py`。
+
+| 文件 | 当前体量 | 当前职责 | 后续约束 |
+|---|---:|---|---|
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_pipeline.py` | `100510` bytes | Segment-first阶段编排和发布挂接 | 仍超过100000字节；禁止写入，后续须单独授权拆分或豁免 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_nodes.py` | `84351` bytes | Node生成、mainnode、端点协调及几何策略 | SegmentAccess补接编排已拆出；禁止回填该职责 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_access_memberships.py` | `19936` bytes | accepted surface约束的SegmentAccess补接、空几何降级和子阶段性能日志 | 不扩大为全局路口距离搜索；无有效目标时必须保留hard gate |
+| `scripts/p04_run_segment_first_innernet.py` | `10038` bytes | P04内网参数化入口、带当前执行位置的心跳及模块级进度日志 | 不改变正式参数合同，不复制业务算法 |
+| `tests/modules/p04_road_direct_generation/test_innernet_script.py` | `8476` bytes | 内网参数映射、core gate退出码、心跳执行位置和help合同 | 保持入口行为测试，不复制业务算法 |
+| `tests/modules/p04_road_direct_generation/test_segment_first_access_memberships.py` | `4730` bytes | Access空几何在有/无accepted surface时的非静默回归 | 保持资料部分缺失与hard gate两类合同 |

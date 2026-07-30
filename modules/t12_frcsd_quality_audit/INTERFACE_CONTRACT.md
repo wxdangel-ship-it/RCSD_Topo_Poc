@@ -28,7 +28,7 @@
 ### 2.3 关键字段与方向
 
 - Road：`id/snodeid/enodeid/direction`；`direction 0/1` 双向、`2` snode→enode、`3` enode→snode。
-- Node：`id`；`mainNodeId/subNodeId` 用于 canonical 候选图，并可在 raw failure 后构造 portal-constrained semantic 或 T07 Road-surface 排除证据。既有 semantic 证据继续要求 T07 alias 位于唯一标准面、非 T07 alias 及内部 transition 满足 `portal_radius_m`。Road-surface 证据仅在双端唯一 T07 标准面锚定时启用，必须包含方向正确的物理 Road，并由 Road/标准面相交或锚点组一跳物理 Road frontier 证明 access；一跳 support Road 必须是 anchor→frontier 有向边、接触标准面（允许 `1m` 拓扑容差），且整条 carrier 至少一端实际 Road-surface contact。其它距离类指标仅作审计。两类证据均不能单独确认问题。
+- Node：`id`；`mainNodeId/subNodeId` 用于 canonical 候选图，并可在 raw failure 后构造 portal-constrained semantic 或 T07 Road-surface 排除证据。既有 semantic 证据继续要求 T07 alias 位于唯一标准面、非 T07 alias 及内部 transition 满足 `portal_radius_m`。Road-surface 证据仅在双端唯一 T07 标准面锚定时启用，必须包含方向正确的物理 Road，并由 Road/标准面相交或锚点组一跳物理 Road frontier 证明 access；一跳 support Road 必须是 anchor→frontier 有向边、接触标准面（允许 `1m` 拓扑容差），且整条 carrier 至少一端实际 Road-surface contact。其它距离类指标仅作审计。两类证据均不能单独确认问题。对 `unexpected_reverse_carrier`，双 T07 还可把与 anchor base/group 同 canonical group、位于 `portal_radius_m` 内且落在正确 SWSD portal Voronoi 侧的实际 raw endpoint 用作路径端点；这不创建图边，也不允许内部 alias 跳接。
 - Segment：`id/pair_nodes/roads`。
 - Source 只进入审计证据，不参与 verdict。
 
@@ -38,14 +38,18 @@
 |---|---|---|
 | `candidate_status` | `candidate_pending_decision` | 自动发现，尚需进入自动 decision 层。 |
 | `review_status` | `confirmed_frcsd_quality_issue / excluded_false_positive / manual_review_required` | 最终兼容状态；默认由自动 decision 产生，显式 review 可覆盖。 |
-| `issue_type` | `directed_carrier_missing / required_local_connectivity_missing` | 仅 confirmed 行允许非空。 |
+| `issue_type` | `directed_carrier_missing / required_local_connectivity_missing / unexpected_reverse_carrier` | 仅 confirmed 行允许非空。 |
 | `decision_source` | `automatic_high_confidence / external_review_override` | 最终决定来源。 |
-| `decision_rule` | `raw_carrier_missing_trusted_anchor / equivalent_raw_carrier / equivalent_portal_constrained_semantic_carrier / equivalent_t07_road_surface_carrier / insufficient_anchor_confidence / external_review_override` | 可审计决定规则。 |
+| `decision_rule` | `raw_carrier_missing_trusted_anchor / equivalent_raw_carrier / equivalent_portal_constrained_semantic_carrier / equivalent_t07_road_surface_carrier / insufficient_anchor_confidence / unexpected_reverse_raw_carrier_dual_t07 / unexpected_reverse_swsd_equivalent / unexpected_reverse_insufficient_high_precision_evidence / external_review_override` | 可审计决定规则。 |
+| `candidate_kind` | `missing_required_carrier / unexpected_reverse_carrier` | 区分既有必需方向缺失与单向 Segment 的非预期反向载体。 |
 | `raw_failed_directions` | SWSD 必需方向子集 | raw local directed 图失败的原始方向，不因 semantic 排除而丢失。 |
 | `failed_directions` | SWSD 必需方向子集 | 完成 portal-constrained semantic 与 T07 Road-surface 排除后仍未解决的正式失败方向。 |
 | `automatic_equivalence_basis` | 空 / `raw_carrier / portal_constrained_semantic_carrier / t07_road_surface_carrier` | 自动排除时使用的等价 carrier 层。 |
 | `portal_constrained_semantic_status` | 按方向的 `equivalent / rejection_reason` | semantic 路径、端点和内部 alias 门禁结果。 |
 | `t07_road_surface_status` | 按方向的 `equivalent / rejection_reason` | Road-surface 路径、两端 access、长度强门禁和距离审计结果。 |
+| `unexpected_direction` | 空 / `pair0_to_pair1 / pair1_to_pair0` | 单向 Segment 不应额外出现的相反方向。 |
+| `unexpected_reverse_frcsd_status` | 空 / `equivalent / rejection_reason` | 反向 raw FRCSD 实际 Road 路径及几何门禁结果。 |
+| `unexpected_reverse_swsd_status` | 空 / `equivalent / rejection_reason` | SWSD 全图反向替代路径的保守排除结果。 |
 | `anchor_confidence` | `t07_standard_surface / t03_pair / insufficient` | 自动归因锚点信用。 |
 | run `status` | `passed / blocked / failed` | 契约完成、前置阻断或执行失败。 |
 
@@ -78,7 +82,7 @@ run_id,candidate_id,review_status,issue_type,review_reason,review_source,reviewe
 - `t12_frcsd_quality_manual_review_required.csv`
 - `t12_frcsd_quality_report.md`
 
-manifest/summary 至少记录输入绝对路径与 SHA-256、参数、CRS 转换、无效几何、endpoint 拓扑、canonical/raw 图分层、portal-constrained semantic carrier、T07 Road-surface carrier、surface 关联与 distance audit-only 指标、自动 decision、T05/T06 证据关系、对象规模、分阶段耗时、输出路径和 `silent_fix=false`。
+manifest/summary 至少记录输入绝对路径与 SHA-256、参数、CRS 转换、无效几何、endpoint 拓扑、canonical/raw 图分层、portal-constrained semantic carrier、T07 Road-surface carrier、FRCSD 反向载体、SWSD 反向替代路径、surface 关联与 distance audit-only 指标、自动 decision、T05/T06 证据关系、对象规模、分阶段耗时、输出路径和 `silent_fix=false`。
 
 `<out-root>/<run-id>` 必须尚不存在；同名运行根在加载输入前以 contract error 阻断，不覆盖或追加既有审计结果。
 

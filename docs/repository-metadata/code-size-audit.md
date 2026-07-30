@@ -495,3 +495,18 @@
 
 - 当前未发现 `scripts/` 下超过 `100 KB` 的入口脚本。
 - 本表不裁定业务基线、模块正式范围或是否立即重构；只记录结构债事实。
+
+### T12 非预期反向载体检出当前快照（2026-07-30）
+
+本轮只扩展 T12 既有实现、输出和测试，不新增或改变执行入口。全部受影响源码/测试均低于 `100000` bytes 硬阈值。
+
+| 文件 | 当前体量 | 当前职责 | 后续约束 |
+|---|---:|---|---|
+| `src/rcsd_topo_poc/modules/t12_frcsd_quality_audit/models.py` | `3601` bytes | additive schema、问题枚举和证据层模型 | 保持纯模型职责 |
+| `src/rcsd_topo_poc/modules/t12_frcsd_quality_audit/candidate_audit.py` | `47505` bytes | 必需方向缺失与非预期反向载体候选、portal 分侧及路径证据 | 新候选类型继续按独立 helper 分层；达到 60KiB 前评估拆分 |
+| `src/rcsd_topo_poc/modules/t12_frcsd_quality_audit/review_publish.py` | `10087` bytes | 候选种类专属自动决定与外部 review override | 不承接图或几何算法 |
+| `src/rcsd_topo_poc/modules/t12_frcsd_quality_audit/outputs.py` | `23527` bytes | additive CSV/GPKG/JSON 发布与证据图层 | 不承接候选判断 |
+| `tests/modules/t12_frcsd_quality_audit/test_candidate_audit.py` | `17846` bytes | 反向发现、SWSD 替代排除、弱锚点和 T07 alias endpoint 回归 | 按候选主题保持拆分 |
+| `tests/modules/t12_frcsd_quality_audit/test_review_publish.py` | `8523` bytes | 精度优先自动决定与 review 契约 | 保持 decision 专项 |
+| `tests/modules/t12_frcsd_quality_audit/test_outputs.py` | `1135` bytes | additive 输出字段合同 | 保持轻量 |
+| `tests/modules/t12_frcsd_quality_audit/test_1026960_fixture.py` | `2365` bytes | 既有冻结清单与生产代码无 Case ID 硬编码门禁 | 不把新候选写入旧 review fixture |

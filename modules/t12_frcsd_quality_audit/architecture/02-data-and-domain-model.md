@@ -11,7 +11,8 @@
 
 - `portal`：T07 为显式 group 或对应标准路口面内 raw node；T03/T04 为显式 group或 SWSD carrier 实际接入侧附近、且满足 start 出边或 end 入边角色的 raw node。
 - `carrier evidence`：raw endpoint 图的 local/full 与 directed/undirected 四种路径及其长度、偏离和道路序列；canonical 路径还记录物理 Road、端点 portal 信用和内部 alias gap，只有全部门禁通过才形成 portal-constrained semantic 排除证据。
-- `candidate`：选择 base node 失败后需要进一步 portal 审计的 Segment。
+- `candidate`：必需方向选择 base node 失败后需要进一步 portal 审计的 Segment，或要求方向已等价但存在 raw FRCSD 反向载体的单向 Segment。
+- `unexpected reverse evidence`：反向 raw FRCSD 物理 Road 路径与 SWSD 全图反向替代路径；两者使用同一长度/走廊门禁，后者只作保守排除。短 Segment 的端点 portal 按两端 SWSD portal 距离做 Voronoi 分侧；双 T07 可在正确侧使用同 canonical group 且不超过 `portal_radius_m` 的实际 raw endpoint，但不增加任何图边。
 - `automatic decision`：按 raw carrier、portal-constrained semantic 排除结果与锚点可信度对 candidate 的确认或排除。
 - `review override`：可选外部 QA 对 automatic decision 的显式覆盖。
 
@@ -19,7 +20,7 @@
 
 - 所有距离计算使用 projected metre CRS；不同 CRS 只有显式 `processing_crs` 才能转换。
 - 无效/空几何和缺失 endpoint 阻断运行，不自动 repair。
-- Road `direction` 沿用 T06 当前语义；Source 不参与判定。
+- Road `direction` 沿用 T06 当前语义；单向 Segment 的相反方向由已确认的必需方向反转得到，不从 Source 或 DriveZone 推断。
 
 ## 4. 下游语义
 

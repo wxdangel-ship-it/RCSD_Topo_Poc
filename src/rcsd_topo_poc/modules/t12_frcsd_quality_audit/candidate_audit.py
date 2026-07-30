@@ -68,6 +68,7 @@ def audit_frcsd_candidates(
     )
     full_graph = build_graph(loaded.frcsd_roads, frcsd_canonicalizer)
     raw_full_graph = build_graph(loaded.frcsd_roads, raw_canonicalizer)
+    swsd_full_graph = build_graph(loaded.swsd_roads, swsd_canonicalizer)
     segment_id_field = field_name(loaded.segments, "id")
     segment_pair_field = field_name(loaded.segments, "pair_nodes")
     segment_roads_field = field_name(loaded.segments, "roads")
@@ -135,36 +136,74 @@ def audit_frcsd_candidates(
             local_graph,
             base_nodes,
         )
-        if not coarse_full_missing and not coarse_local_missing:
+        coarse_equivalent = not coarse_full_missing and not coarse_local_missing
+        if coarse_equivalent:
             counters["coarse_equivalent_count"] += 1
-            continue
+            if len(required_directions) != 1:
+                continue
         if not _is_fully_inner(geometry, loaded.crop_inner_geometry):
-            counters["crop_edge_excluded_count"] += 1
+            counters[
+                (
+                    "unexpected_reverse_crop_edge_excluded_count"
+                    if coarse_equivalent
+                    else "crop_edge_excluded_count"
+                )
+            ] += 1
             continue
         raw_local_graph = build_graph(local_roads, raw_canonicalizer)
-        candidate = _enrich_candidate(
-            segment_id=segment_id,
-            segment_geometry=geometry,
-            pair_nodes=pair_nodes,
-            segment_roads=segment_roads,
-            required_directions=required_directions,
-            anchors=anchor_pair,
-            base_nodes=base_nodes,
-            swsd_canonicalizer=swsd_canonicalizer,
-            swsd_raw_points=swsd_raw_points,
-            frcsd_canonicalizer=frcsd_canonicalizer,
-            frcsd_raw_points=raw_frcsd_points,
-            frcsd_nodes=loaded.frcsd_nodes,
-            full_graph=raw_full_graph,
-            local_graph=raw_local_graph,
-            semantic_full_graph=full_graph,
-            semantic_local_graph=local_graph,
-            t07_surfaces=t07_surfaces,
-            t07_surface_ids=t07_surface_audit.get("surface_ids", {}),
-            t06_cross_evidence=loaded.t06_cross_evidence.get(segment_id, {}),
-            config=config,
-            layers=layers,
-        )
+        if coarse_equivalent:
+            candidate = _enrich_unexpected_reverse_candidate(
+                segment_id=segment_id,
+                segment_geometry=geometry,
+                pair_nodes=pair_nodes,
+                segment_roads=segment_roads,
+                swsd_roads=loaded.swsd_roads,
+                required_directions=required_directions,
+                anchors=anchor_pair,
+                base_nodes=base_nodes,
+                swsd_canonicalizer=swsd_canonicalizer,
+                swsd_raw_points=swsd_raw_points,
+                swsd_full_graph=swsd_full_graph,
+                frcsd_canonicalizer=frcsd_canonicalizer,
+                frcsd_raw_points=raw_frcsd_points,
+                frcsd_nodes=loaded.frcsd_nodes,
+                raw_local_graph=raw_local_graph,
+                t07_surfaces=t07_surfaces,
+                t06_cross_evidence=loaded.t06_cross_evidence.get(
+                    segment_id, {}
+                ),
+                config=config,
+                layers=layers,
+            )
+            if candidate is None:
+                continue
+            counters["unexpected_reverse_candidate_count"] += 1
+        else:
+            candidate = _enrich_candidate(
+                segment_id=segment_id,
+                segment_geometry=geometry,
+                pair_nodes=pair_nodes,
+                segment_roads=segment_roads,
+                required_directions=required_directions,
+                anchors=anchor_pair,
+                base_nodes=base_nodes,
+                swsd_canonicalizer=swsd_canonicalizer,
+                swsd_raw_points=swsd_raw_points,
+                frcsd_canonicalizer=frcsd_canonicalizer,
+                frcsd_raw_points=raw_frcsd_points,
+                frcsd_nodes=loaded.frcsd_nodes,
+                full_graph=raw_full_graph,
+                local_graph=raw_local_graph,
+                semantic_full_graph=full_graph,
+                semantic_local_graph=local_graph,
+                t07_surfaces=t07_surfaces,
+                t07_surface_ids=t07_surface_audit.get("surface_ids", {}),
+                t06_cross_evidence=loaded.t06_cross_evidence.get(
+                    segment_id, {}
+                ),
+                config=config,
+                layers=layers,
+            )
         candidate["coarse_full_missing_directions"] = coarse_full_missing
         candidate["coarse_local_missing_directions"] = coarse_local_missing
         candidate["drivezone_in_road_ratio"] = (
@@ -178,8 +217,12 @@ def audit_frcsd_candidates(
             {
                 "candidate_id": segment_id,
                 "segment_id": segment_id,
+                "candidate_kind": candidate["candidate_kind"],
                 "candidate_status": "candidate_pending_decision",
                 "suggested_issue_type": candidate["suggested_issue_type"],
+                "unexpected_direction": candidate.get(
+                    "unexpected_direction", ""
+                ),
                 "failed_directions": "|".join(candidate["failed_directions"]),
                 "raw_failed_directions": "|".join(
                     candidate["raw_failed_directions"]
@@ -256,7 +299,467 @@ def audit_frcsd_candidates(
                 "max_corridor_distance_m": config.path_max_corridor_distance_m,
             },
         },
+        "unexpected_reverse_carrier_policy": {
+            "role": "precision_first_additional_direction_audit",
+            "eligible_segment": (
+                "one_way_swsd_with_equivalent_required_direction"
+            ),
+            "frcsd_evidence": "raw_local_directed_physical_road",
+            "swsd_exclusion_evidence": (
+                "canonical_full_directed_physical_road"
+            ),
+            "required_anchor_for_confirmation": (
+                "dual_t07_unique_standard_surface"
+            ),
+            "drivezone_affects_verdict": False,
+            "path_thresholds": {
+                "max_length_ratio": config.path_max_length_ratio,
+                "max_additive_m": config.path_max_additive_m,
+                "max_corridor_distance_m": (
+                    config.path_max_corridor_distance_m
+                ),
+            },
+        },
     }
+
+
+def _enrich_unexpected_reverse_candidate(
+    *,
+    segment_id: str,
+    segment_geometry: Any,
+    pair_nodes: list[str],
+    segment_roads: gpd.GeoDataFrame,
+    swsd_roads: gpd.GeoDataFrame,
+    required_directions: list[str],
+    anchors: list[AnchorRecord],
+    base_nodes: list[str],
+    swsd_canonicalizer: NodeCanonicalizer,
+    swsd_raw_points: Mapping[str, Any],
+    swsd_full_graph: GraphBundle,
+    frcsd_canonicalizer: NodeCanonicalizer,
+    frcsd_raw_points: Mapping[str, Any],
+    frcsd_nodes: gpd.GeoDataFrame,
+    raw_local_graph: GraphBundle,
+    t07_surfaces: Mapping[str, Any],
+    t06_cross_evidence: Mapping[str, Any],
+    config: AuditConfig,
+    layers: EvidenceLayers,
+) -> dict[str, Any] | None:
+    required_direction = required_directions[0]
+    unexpected_direction = _opposite_direction(required_direction)
+    carrier = directional_swsd_carrier(
+        required_direction,
+        pair_nodes,
+        segment_roads,
+        swsd_canonicalizer,
+        swsd_raw_points,
+    )
+    source_index, target_index = (
+        (0, 1) if required_direction == "pair0_to_pair1" else (1, 0)
+    )
+    required_starts = raw_portal_candidates(
+        anchor=anchors[source_index],
+        portal_point=carrier["source_point"],
+        frcsd_nodes=frcsd_nodes,
+        raw_node_points=frcsd_raw_points,
+        eligible_raw_ids=raw_local_graph.directed,
+        radius_m=config.portal_radius_m,
+        direction_role="start",
+        truth_surface=t07_surfaces.get(pair_nodes[source_index]),
+    )
+    required_ends = raw_portal_candidates(
+        anchor=anchors[target_index],
+        portal_point=carrier["target_point"],
+        frcsd_nodes=frcsd_nodes,
+        raw_node_points=frcsd_raw_points,
+        eligible_raw_ids=raw_local_graph.incoming,
+        radius_m=config.portal_radius_m,
+        direction_role="end",
+        truth_surface=t07_surfaces.get(pair_nodes[target_index]),
+    )
+    required_starts = _trusted_unexpected_reverse_portals(
+        required_starts,
+        anchor=anchors[source_index],
+        own_portal_point=carrier["source_point"],
+        opposite_portal_point=carrier["target_point"],
+        canonicalizer=frcsd_canonicalizer,
+        raw_node_points=frcsd_raw_points,
+        eligible_raw_ids=raw_local_graph.directed,
+        radius_m=config.portal_radius_m,
+        direction_role="start",
+    )
+    required_ends = _trusted_unexpected_reverse_portals(
+        required_ends,
+        anchor=anchors[target_index],
+        own_portal_point=carrier["target_point"],
+        opposite_portal_point=carrier["source_point"],
+        canonicalizer=frcsd_canonicalizer,
+        raw_node_points=frcsd_raw_points,
+        eligible_raw_ids=raw_local_graph.incoming,
+        radius_m=config.portal_radius_m,
+        direction_role="end",
+    )
+    required_path = shortest_path_between_sets(
+        raw_local_graph.directed,
+        {row["canonical_id"] for row in required_starts},
+        {row["canonical_id"] for row in required_ends},
+    )
+    required_metrics = _physical_path_metrics(
+        required_path,
+        raw_local_graph,
+        segment_geometry,
+        carrier["length_m"],
+        config,
+    )
+    if not required_metrics["accepted_equivalent_carrier"]:
+        return None
+
+    reverse_starts = raw_portal_candidates(
+        anchor=anchors[target_index],
+        portal_point=carrier["target_point"],
+        frcsd_nodes=frcsd_nodes,
+        raw_node_points=frcsd_raw_points,
+        eligible_raw_ids=raw_local_graph.directed,
+        radius_m=config.portal_radius_m,
+        direction_role="start",
+        truth_surface=t07_surfaces.get(pair_nodes[target_index]),
+    )
+    reverse_ends = raw_portal_candidates(
+        anchor=anchors[source_index],
+        portal_point=carrier["source_point"],
+        frcsd_nodes=frcsd_nodes,
+        raw_node_points=frcsd_raw_points,
+        eligible_raw_ids=raw_local_graph.incoming,
+        radius_m=config.portal_radius_m,
+        direction_role="end",
+        truth_surface=t07_surfaces.get(pair_nodes[source_index]),
+    )
+    reverse_starts = _trusted_unexpected_reverse_portals(
+        reverse_starts,
+        anchor=anchors[target_index],
+        own_portal_point=carrier["target_point"],
+        opposite_portal_point=carrier["source_point"],
+        canonicalizer=frcsd_canonicalizer,
+        raw_node_points=frcsd_raw_points,
+        eligible_raw_ids=raw_local_graph.directed,
+        radius_m=config.portal_radius_m,
+        direction_role="start",
+    )
+    reverse_ends = _trusted_unexpected_reverse_portals(
+        reverse_ends,
+        anchor=anchors[source_index],
+        own_portal_point=carrier["source_point"],
+        opposite_portal_point=carrier["target_point"],
+        canonicalizer=frcsd_canonicalizer,
+        raw_node_points=frcsd_raw_points,
+        eligible_raw_ids=raw_local_graph.incoming,
+        radius_m=config.portal_radius_m,
+        direction_role="end",
+    )
+    reverse_path = shortest_path_between_sets(
+        raw_local_graph.directed,
+        {row["canonical_id"] for row in reverse_starts},
+        {row["canonical_id"] for row in reverse_ends},
+    )
+    reverse_metrics = _physical_path_metrics(
+        reverse_path,
+        raw_local_graph,
+        segment_geometry,
+        carrier["length_m"],
+        config,
+    )
+    if not reverse_metrics["accepted_equivalent_carrier"]:
+        return None
+
+    canonical_pair = [
+        swsd_canonicalizer.canonicalize(node_id) for node_id in pair_nodes
+    ]
+    swsd_reverse_path = shortest_path_between_sets(
+        swsd_full_graph.directed,
+        [canonical_pair[target_index]],
+        [canonical_pair[source_index]],
+    )
+    swsd_reverse_metrics = _physical_path_metrics(
+        swsd_reverse_path,
+        swsd_full_graph,
+        segment_geometry,
+        carrier["length_m"],
+        config,
+    )
+    high_precision_anchor = (
+        [anchor.source_module for anchor in anchors] == ["T07", "T07"]
+        and all(node_id in t07_surfaces for node_id in pair_nodes)
+    )
+    for portal in reverse_starts + reverse_ends:
+        layers.anchor_portals.append(
+            {
+                "candidate_id": segment_id,
+                "direction": unexpected_direction,
+                "portal_purpose": "unexpected_reverse",
+                **portal,
+                "geometry": frcsd_raw_points.get(portal["raw_id"]),
+            }
+        )
+    _append_swsd_reference_layers(
+        layers,
+        candidate_id=segment_id,
+        direction=required_direction,
+        carrier=carrier,
+        segment_roads=segment_roads,
+    )
+    _append_graph_path_evidence(
+        layers.frcsd_carrier_paths,
+        candidate_id=segment_id,
+        direction=required_direction,
+        path_kind="required_raw_local_directed",
+        path=required_path,
+        metrics=required_metrics,
+        graph=raw_local_graph,
+    )
+    _append_graph_path_evidence(
+        layers.frcsd_carrier_paths,
+        candidate_id=segment_id,
+        direction=unexpected_direction,
+        path_kind="unexpected_reverse_raw_local_directed",
+        path=reverse_path,
+        metrics=reverse_metrics,
+        graph=raw_local_graph,
+    )
+    _append_swsd_reverse_path_evidence(
+        layers,
+        candidate_id=segment_id,
+        direction=unexpected_direction,
+        path=swsd_reverse_path,
+        metrics=swsd_reverse_metrics,
+        graph=swsd_full_graph,
+    )
+    return {
+        "candidate_id": segment_id,
+        "segment_id": segment_id,
+        "candidate_kind": "unexpected_reverse_carrier",
+        "candidate_status": "candidate_pending_decision",
+        "review_status": "",
+        "review_reason": "",
+        "suggested_issue_type": "unexpected_reverse_carrier",
+        "required_directions": required_directions,
+        "raw_failed_directions": [],
+        "failed_directions": [],
+        "unexpected_direction": unexpected_direction,
+        "unexpected_reverse_required_frcsd": required_metrics,
+        "unexpected_reverse_frcsd": reverse_metrics,
+        "unexpected_reverse_swsd": swsd_reverse_metrics,
+        "unexpected_reverse_high_precision_anchor": high_precision_anchor,
+        "anchor_modules": [anchor.source_module for anchor in anchors],
+        "base_nodes": base_nodes,
+        "anchor_groups": [list(anchor.grouped_node_ids) for anchor in anchors],
+        "anchor_confidence": _anchor_confidence(
+            pair_nodes,
+            anchors,
+            t07_surfaces,
+        ),
+        "t07_surface_statuses": [
+            (
+                "unique_surface"
+                if anchor.source_module == "T07"
+                and pair_nodes[index] in t07_surfaces
+                else "missing_or_ambiguous_surface"
+                if anchor.source_module == "T07"
+                else "not_applicable"
+            )
+            for index, anchor in enumerate(anchors)
+        ],
+        "automatic_all_directions_equivalent": False,
+        "automatic_equivalence_basis": "",
+        "portal_constrained_semantic_all_raw_failures_equivalent": False,
+        "t07_road_surface_resolved_directions": [],
+        "semantic_resolved_directions": [],
+        "t07_road_surface_all_remaining_failures_equivalent": False,
+        "directions": [],
+        "t06_cross_evidence": dict(t06_cross_evidence),
+    }
+
+
+def _trusted_unexpected_reverse_portals(
+    portals: list[dict[str, Any]],
+    *,
+    anchor: AnchorRecord,
+    own_portal_point: Any,
+    opposite_portal_point: Any,
+    canonicalizer: NodeCanonicalizer,
+    raw_node_points: Mapping[str, Any],
+    eligible_raw_ids: Mapping[str, Any],
+    radius_m: float,
+    direction_role: str,
+) -> list[dict[str, Any]]:
+    eligible = set(eligible_raw_ids)
+    selected: dict[str, dict[str, Any]] = {}
+    for portal in portals:
+        raw_id = str(portal["raw_id"])
+        point = raw_node_points.get(raw_id)
+        if (
+            raw_id in eligible
+            and point is not None
+            and float(point.distance(own_portal_point))
+            <= float(point.distance(opposite_portal_point))
+        ):
+            selected[raw_id] = portal
+    if anchor.source_module == "T07":
+        trusted_canonical_ids = {
+            canonicalizer.canonicalize(raw_id)
+            for raw_id in (anchor.base_id, *anchor.grouped_node_ids)
+        }
+        for raw_id, point in raw_node_points.items():
+            own_distance = float(point.distance(own_portal_point))
+            if (
+                raw_id not in eligible
+                or canonicalizer.canonicalize(raw_id)
+                not in trusted_canonical_ids
+                or own_distance > radius_m
+                or own_distance > float(point.distance(opposite_portal_point))
+            ):
+                continue
+            selected.setdefault(
+                raw_id,
+                {
+                    "canonical_id": raw_id,
+                    "raw_id": raw_id,
+                    "distance_m": own_distance,
+                    "source": "t07_canonical_endpoint_within_radius",
+                    "direction_role": direction_role,
+                },
+            )
+    return sorted(
+        selected.values(),
+        key=lambda row: (row["distance_m"], row["raw_id"]),
+    )
+
+
+def _physical_path_metrics(
+    path: Any,
+    graph: GraphBundle,
+    reference_geometry: Any,
+    reference_length_m: float,
+    config: AuditConfig,
+) -> dict[str, Any]:
+    metrics = path_metrics(
+        path,
+        graph.edges,
+        reference_geometry,
+        reference_length_m,
+        config,
+    )
+    if path is None:
+        metrics["rejection_reason"] = "missing_directed_path"
+    elif not path.road_ids:
+        metrics["accepted_equivalent_carrier"] = False
+        metrics["rejection_reason"] = "physical_road_required"
+    elif metrics["accepted_equivalent_carrier"]:
+        metrics["rejection_reason"] = ""
+    else:
+        metrics["rejection_reason"] = "geometry_threshold_rejected"
+    return metrics
+
+
+def _append_swsd_reference_layers(
+    layers: EvidenceLayers,
+    *,
+    candidate_id: str,
+    direction: str,
+    carrier: Mapping[str, Any],
+    segment_roads: gpd.GeoDataFrame,
+) -> None:
+    road_id_field = field_name(segment_roads, "id")
+    by_id = {
+        normalize_id(row[road_id_field]): row
+        for _, row in segment_roads.iterrows()
+    }
+    for sequence, road_id in enumerate(carrier["road_ids"], start=1):
+        layers.swsd_required_carriers.append(
+            {
+                "candidate_id": candidate_id,
+                "direction": direction,
+                "sequence": sequence,
+                "road_id": road_id,
+                "geometry": by_id[road_id].geometry,
+            }
+        )
+
+
+def _append_graph_path_evidence(
+    target: list[dict[str, Any]],
+    *,
+    candidate_id: str,
+    direction: str,
+    path_kind: str,
+    path: Any,
+    metrics: Mapping[str, Any],
+    graph: GraphBundle,
+) -> None:
+    if path is None:
+        return
+    for sequence, road_id in enumerate(path.road_ids, start=1):
+        edge = graph.edges[road_id]
+        target.append(
+            {
+                "candidate_id": candidate_id,
+                "direction": direction,
+                "path_kind": path_kind,
+                "sequence": sequence,
+                "road_id": road_id,
+                "road_direction": edge.direction,
+                "source": edge.source,
+                "accepted_equivalent_carrier": metrics[
+                    "accepted_equivalent_carrier"
+                ],
+                "path_length_m": metrics["length_m"],
+                "path_length_ratio": metrics["length_ratio"],
+                "max_corridor_distance_m": metrics[
+                    "max_corridor_distance_m"
+                ],
+                "geometry": edge.geometry,
+            }
+        )
+
+
+def _append_swsd_reverse_path_evidence(
+    layers: EvidenceLayers,
+    *,
+    candidate_id: str,
+    direction: str,
+    path: Any,
+    metrics: Mapping[str, Any],
+    graph: GraphBundle,
+) -> None:
+    if path is None:
+        return
+    for sequence, road_id in enumerate(path.road_ids, start=1):
+        edge = graph.edges[road_id]
+        layers.swsd_reverse_carriers.append(
+            {
+                "candidate_id": candidate_id,
+                "direction": direction,
+                "sequence": sequence,
+                "road_id": road_id,
+                "road_direction": edge.direction,
+                "accepted_equivalent_carrier": metrics[
+                    "accepted_equivalent_carrier"
+                ],
+                "path_length_m": metrics["length_m"],
+                "path_length_ratio": metrics["length_ratio"],
+                "max_corridor_distance_m": metrics[
+                    "max_corridor_distance_m"
+                ],
+                "geometry": edge.geometry,
+            }
+        )
+
+
+def _opposite_direction(direction: str) -> str:
+    return (
+        "pair1_to_pair0"
+        if direction == "pair0_to_pair1"
+        else "pair0_to_pair1"
+    )
 
 
 def _enrich_candidate(
@@ -515,6 +1018,7 @@ def _enrich_candidate(
     return {
         "candidate_id": segment_id,
         "segment_id": segment_id,
+        "candidate_kind": "missing_required_carrier",
         "candidate_status": "candidate_pending_decision",
         "review_status": "",
         "review_reason": "",

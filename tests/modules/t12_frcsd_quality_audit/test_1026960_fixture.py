@@ -75,6 +75,9 @@ def test_focus_ids_are_not_hardcoded_in_production_source() -> None:
         "1026960",
         "1001716_1010487",
         "1039488_1039490",
+        "26219553_1026960",
+        "624023705_39546468",
+        "61704236_1049438",
     }
     assert forbidden.isdisjoint(production_text.split())
     for object_id in forbidden:

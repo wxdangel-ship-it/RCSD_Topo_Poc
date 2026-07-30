@@ -2,7 +2,7 @@
 
 ## 1. 策略总览
 
-T12 先用 canonical base-node 图检查宽召回疑点，再以 raw Road endpoint 图、标准路口面和实际接入 portal 构造多源多目标最短路，比较局部/全图、有向/无向 carrier。raw failure 依次经过 portal-constrained semantic carrier 与 T07 Road-surface portal carrier 排除检查；完成排除后仍失败且通过锚点可信度门禁的 candidate 才自动进入正式问题，外部复核仅作可选 QA 覆盖。
+T12 先用 canonical base-node 图检查必需方向的宽召回疑点，再以 raw Road endpoint 图、标准路口面和实际接入 portal 构造多源多目标最短路，比较局部/全图、有向/无向 carrier。raw failure 依次经过 portal-constrained semantic carrier 与 T07 Road-surface portal carrier 排除检查。对必需方向已经等价的单向 Segment，再反转 portal 检查 raw FRCSD 反向载体，并以 SWSD 全图反向替代路径保守排除。完成对应排除且通过候选种类专属锚点门禁后才自动进入正式问题，外部复核仅作可选 QA 覆盖。
 
 ## 2. 预检与建图
 
@@ -24,6 +24,8 @@ T12 先用 canonical base-node 图检查宽召回疑点，再以 raw Road endpoi
 - 完成上述排除后，canonical local directed 仍失败而 canonical local undirected 成功时判为 `directed_carrier_missing`；其它未解决方向判为 `required_local_connectivity_missing`。多个失败方向中只要存在明确方向缺失证据，Segment 级类型优先为 `directed_carrier_missing`。
 - 至少一端具有唯一 T07 标准面信用，或两端均为正式 T03 anchor 时，允许未解决失败自动 confirmed；其它失败按 `insufficient_anchor_confidence` 排除。
 - raw portal 找到等价 carrier 时按 `equivalent_raw_carrier` 排除；生产算法不按对象 ID 特判。
+- 单向 Segment 只有在所有必需方向已等价时才检查反向；短 Segment 的 portal 先按两端 SWSD portal 距离做 Voronoi 分侧，双 T07 可补充同 canonical group、`portal_radius_m` 内的实际 raw endpoint。该扩展只选择端点、不增加图边；raw FRCSD 反向路径仍必须连续包含实际 Road 并通过既有长度比例、附加长度和走廊阈值。
+- SWSD 全图存在通过同一几何阈值的反向替代路径时按 `unexpected_reverse_swsd_equivalent` 排除；否则只有双端唯一 T07 标准面可按 `unexpected_reverse_raw_carrier_dual_t07` 自动确认，弱锚点按 `unexpected_reverse_insufficient_high_precision_evidence` 排除。
 - review CSV 严格 join 当前 run/candidate；缺失 review 行保留自动决定，显式行可以覆盖。
 
 ## 5. 实现分层
@@ -38,4 +40,4 @@ T12 先用 canonical base-node 图检查宽召回疑点，再以 raw Road endpoi
 
 ## 6. 性能与观测
 
-canonical/raw 全图各建一次；每个候选只查询并构建 50m local graph。Road-surface fallback 只对已有失败方向且双端 T07 surface 受信时运行，并复用 local graph/surface 索引。summary 记录对象规模及 loading/candidate/decision/output 分段耗时。
+canonical/raw 全图各建一次；每个候选只查询并构建 50m local graph。Road-surface fallback 只对已有失败方向且双端 T07 surface 受信时运行，并复用 local graph/surface 索引。每个要求方向已等价的单向 Segment最多增加一次 FRCSD local 反向查询和一次 SWSD full 反向查询。summary 记录对象规模及 loading/candidate/decision/output 分段耗时。

@@ -131,6 +131,156 @@ def _loaded(*, reverse_main: bool, drivezone: bool, crop_inner: object | None = 
     )
 
 
+def _loaded_unexpected_reverse(
+    *,
+    anchor_source: str = "T07",
+    swsd_reverse_equivalent: bool = False,
+) -> LoadedInputs:
+    loaded = _loaded(reverse_main=False, drivezone=False)
+    swsd_roads = loaded.swsd_roads.copy()
+    if swsd_reverse_equivalent:
+        swsd_roads = gpd.GeoDataFrame(
+            pd.concat(
+                [
+                    swsd_roads,
+                    gpd.GeoDataFrame(
+                        {
+                            "id": ["swsd_reverse_alternative"],
+                            "snodeid": ["p1"],
+                            "enodeid": ["p0"],
+                            "direction": [2],
+                            "source": [1],
+                            "geometry": [
+                                LineString(
+                                    [(100, 0), (75, 10), (25, 10), (0, 0)]
+                                )
+                            ],
+                        },
+                        crs=swsd_roads.crs,
+                    ),
+                ],
+                ignore_index=True,
+            ),
+            crs=swsd_roads.crs,
+        )
+    anchors = loaded.t05_anchor_audit.copy()
+    anchors["source_module"] = anchor_source
+    return replace(
+        loaded,
+        swsd_roads=swsd_roads,
+        frcsd_roads=gpd.GeoDataFrame(
+            [
+                {
+                    "id": "bidirectional_main",
+                    "snodeid": "a",
+                    "enodeid": "b",
+                    "direction": 1,
+                    "source": 99,
+                    "geometry": LineString([(0, 0), (100, 0)]),
+                }
+            ],
+            crs="EPSG:3857",
+        ),
+        t05_anchor_audit=anchors,
+    )
+
+
+def test_unexpected_reverse_candidate_uses_raw_frcsd_and_swsd_full_graph() -> None:
+    candidates, layers, audit = audit_frcsd_candidates(
+        _loaded_unexpected_reverse(),
+        AuditConfig(),
+    )
+
+    assert len(candidates) == 1
+    candidate = candidates[0]
+    assert candidate["candidate_kind"] == "unexpected_reverse_carrier"
+    assert candidate["suggested_issue_type"] == "unexpected_reverse_carrier"
+    assert candidate["required_directions"] == ["pair0_to_pair1"]
+    assert candidate["unexpected_direction"] == "pair1_to_pair0"
+    assert candidate["unexpected_reverse_frcsd"]["accepted_equivalent_carrier"] is True
+    assert candidate["unexpected_reverse_frcsd"]["road_ids"] == [
+        "bidirectional_main"
+    ]
+    assert candidate["unexpected_reverse_swsd"]["accepted_equivalent_carrier"] is False
+    assert candidate["unexpected_reverse_high_precision_anchor"] is True
+    assert audit["counts"]["unexpected_reverse_candidate_count"] == 1
+    assert {
+        row["path_kind"] for row in layers.frcsd_carrier_paths
+    } >= {"unexpected_reverse_raw_local_directed"}
+
+
+def test_unexpected_reverse_swsd_alternative_is_retained_for_exclusion() -> None:
+    candidates, layers, _ = audit_frcsd_candidates(
+        _loaded_unexpected_reverse(swsd_reverse_equivalent=True),
+        AuditConfig(),
+    )
+
+    assert len(candidates) == 1
+    candidate = candidates[0]
+    assert candidate["unexpected_reverse_swsd"]["accepted_equivalent_carrier"] is True
+    assert candidate["unexpected_reverse_swsd"]["road_ids"] == [
+        "swsd_reverse_alternative"
+    ]
+    assert [
+        row["road_id"] for row in layers.swsd_reverse_carriers
+    ] == ["swsd_reverse_alternative"]
+
+
+def test_unexpected_reverse_t03_pair_is_not_high_precision_anchor() -> None:
+    candidates, _, _ = audit_frcsd_candidates(
+        _loaded_unexpected_reverse(anchor_source="T03"),
+        AuditConfig(),
+    )
+
+    assert len(candidates) == 1
+    assert candidates[0]["anchor_confidence"] == "t03_pair"
+    assert candidates[0]["unexpected_reverse_high_precision_anchor"] is False
+
+
+def test_unexpected_reverse_t07_alias_expansion_keeps_raw_path_physical() -> None:
+    loaded = _loaded_unexpected_reverse()
+    loaded = replace(
+        loaded,
+        frcsd_nodes=gpd.GeoDataFrame(
+            {
+                "id": ["a", "b", "a_alias"],
+                "mainNodeId": ["100", "200", "100"],
+                "subNodeId": ["", "", ""],
+                "geometry": [Point(0, 0), Point(100, 0), Point(10, 0)],
+            },
+            crs="EPSG:3857",
+        ),
+        frcsd_roads=gpd.GeoDataFrame(
+            [
+                {
+                    "id": "required_raw",
+                    "snodeid": "a",
+                    "enodeid": "b",
+                    "direction": 2,
+                    "source": 99,
+                    "geometry": LineString([(0, 0), (100, 0)]),
+                },
+                {
+                    "id": "reverse_to_t07_alias",
+                    "snodeid": "b",
+                    "enodeid": "a_alias",
+                    "direction": 2,
+                    "source": 99,
+                    "geometry": LineString([(100, 0), (10, 0)]),
+                },
+            ],
+            crs="EPSG:3857",
+        ),
+    )
+
+    candidates, _, _ = audit_frcsd_candidates(loaded, AuditConfig())
+
+    assert len(candidates) == 1
+    assert candidates[0]["unexpected_reverse_frcsd"]["road_ids"] == [
+        "reverse_to_t07_alias"
+    ]
+
+
 @pytest.mark.parametrize(
     ("reverse_main", "expected_issue"),
     [
@@ -147,6 +297,7 @@ def test_candidate_issue_type_uses_direction_and_local_connectivity(
     )
 
     assert len(candidates) == 1
+    assert candidates[0]["candidate_kind"] == "missing_required_carrier"
     assert candidates[0]["suggested_issue_type"] == expected_issue
     assert candidates[0]["failed_directions"] == ["pair0_to_pair1"]
     assert candidates[0]["anchor_confidence"] == "t07_standard_surface"

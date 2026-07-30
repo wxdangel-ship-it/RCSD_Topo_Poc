@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = "2026-07-27.t12_frcsd_quality_audit.v6"
+SCHEMA_VERSION = "2026-07-30.t12_frcsd_quality_audit.v7"
 
 REVIEW_STATUSES = frozenset(
     {
@@ -19,6 +19,7 @@ ISSUE_TYPES = frozenset(
     {
         "directed_carrier_missing",
         "required_local_connectivity_missing",
+        "unexpected_reverse_carrier",
     }
 )
 
@@ -104,4 +105,5 @@ class EvidenceLayers:
     candidate_segments: list[dict[str, Any]] = field(default_factory=list)
     anchor_portals: list[dict[str, Any]] = field(default_factory=list)
     swsd_required_carriers: list[dict[str, Any]] = field(default_factory=list)
+    swsd_reverse_carriers: list[dict[str, Any]] = field(default_factory=list)
     frcsd_carrier_paths: list[dict[str, Any]] = field(default_factory=list)

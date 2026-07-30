@@ -9,6 +9,7 @@ T12 与 T06 分工明确：T06 继续负责 Segment 替换预检和 F-RCSD 生�
 ## 2. 业务目标
 
 - 找到两端已锚定且 SWSD 要求通行、但原始 1V1 FRCSD 缺少等价 carrier 的 Segment。
+- 找到 SWSD 仅要求单向、要求方向已等价，但原始 1V1 FRCSD 还存在几何等价反向 carrier 的 Segment。
 - 用复合路口节点组、实际接入 portal、Road-surface、局部/全图和有向/无向路径证据降低误报。
 - 将 canonical 宽召回候选、raw endpoint 主判定、portal-constrained semantic 与 T07 Road-surface 误报排除严格分层，自动发布通过标准路口与锚点可信度门禁的高置信质量问题；人工复核仅作可选 QA 覆盖。
 - 在 T10 中可选 audit-only 编排，不改变 T06、T11、T09 的既有 handoff。
@@ -18,11 +19,11 @@ T12 与 T06 分工明确：T06 继续负责 Segment 替换预检和 F-RCSD 生�
 ### 3.1 正式支持
 
 - 原始 1V1 FRCSD Road/Node 全图或显式切片。
-- SWSD Segment 所含道路的必需方向。
+- SWSD Segment 所含道路的必需方向，以及单向 Segment 的相反方向。
 - T05 成功锚点、`grouped_rcsdnode_ids`、FRCSD raw Road endpoint、用于已锚定 raw alias group、宽召回及受限误报排除的 `mainNodeId/subNodeId`，以及 RCSDIntersection 标准路口面。
 - 默认 `50m` local corridor 和 portal radius；参数必须进入 manifest。
-- `directed_carrier_missing` 与 `required_local_connectivity_missing` 两类确认问题。
-- 候选、自动确认、自动排除、可选复核覆盖，以及 raw/canonical/portal-constrained semantic/T07 Road-surface carrier 空间证据。
+- `directed_carrier_missing`、`required_local_connectivity_missing` 与 `unexpected_reverse_carrier` 三类确认问题。
+- 候选、自动确认、自动排除、可选复核覆盖，以及 raw/canonical/portal-constrained semantic/T07 Road-surface/FRCSD 反向/SWSD 反向替代 carrier 空间证据。
 
 ### 3.2 当前非目标
 
@@ -52,7 +53,9 @@ T12 与 T06 分工明确：T06 继续负责 Segment 替换预检和 F-RCSD 生�
 4. 比较 raw local/full directed/undirected carrier。raw local directed 失败后，先检查既有 portal-constrained semantic local directed carrier：路径必须包含至少一条物理 Road 并满足方向、长度、增量和走廊偏离阈值；T07 非 raw 端点必须与 portal 同属唯一 RCSDIntersection 标准面，非 T07 非 raw 端点必须与 portal 同 canonical group 且间距不超过 portal radius；内部每个 alias transition 间距也不得超过 portal radius。
 5. 若失败方向两端均为正确且唯一的 T07 标准面锚点，再检查 Road-surface portal carrier：source/target Road 几何与对应标准面相交，或 carrier frontier 可由锚点组一跳物理 Road 明确连接；一跳 support Road 必须存在 anchor→frontier 有向边且与对应标准面相交或满足 `1m` 拓扑容差，整条 carrier 至少一端必须有实际 Road-surface contact。路径必须包含方向正确的物理 Road，并通过长度比例/附加长度门禁。Road-surface gap、SWSD portal gap、内部 alias gap 和走廊距离等其它距离指标仅作审计，不作为该层单独拒绝理由。通过时只能覆盖该方向的 raw/node-portal failure 并自动 excluded。
 6. 完成两层误报排除后仍失败、且具有 T07 标准面信用或 T03/T03 正式锚点信用的 candidate 自动 confirmed；raw、portal-constrained semantic 或 T07 Road-surface 等价 carrier，以及锚点信用不足自动 excluded。
-7. 可选 review contract 可以覆盖自动决定，并完整保留原规则与外部来源。
+7. 对必需方向已全部满足的单向 Segment，先按距两端 SWSD portal 的距离对 raw portal 做 Voronoi 分侧，再反转 source/target portal 检查局部 raw FRCSD 反向载体。双 T07 可补入与 anchor base/group 同 canonical group、位于 `portal_radius_m` 内且属于正确侧的实际 raw endpoint；该扩展只选择端点，不创建 graph edge 或跨越路径内部断点。反向载体必须含实际 Road 并通过既有长度比例、附加长度和走廊偏离门禁。随后在 SWSD 全图搜索相同反向的替代路径，只要通过同一几何门禁即自动排除。
+8. 非预期反向 candidate 仅在双端均为正确且唯一的 T07 标准面时自动 confirmed；T03/T03 等弱锚点自动 excluded，但保留候选和路径证据。DriveZone 不参与该 verdict。
+9. 可选 review contract 可以覆盖自动决定，并完整保留原规则与外部来源。
 
 ## 6. 什么是对
 
@@ -60,6 +63,7 @@ T12 与 T06 分工明确：T06 继续负责 Segment 替换预检和 F-RCSD 生�
 - `direction=0/1` 双向、`2` 为 `snodeId→enodeId`、`3` 为 `enodeId→snodeId`；正反向必须分别沿合法有向 Road 跟踪。反向 Road 只能进入反向 carrier 或无向诊断，不能成为正向 portal/carrier。
 - mainNode 锚定只授权选中 `base_id` canonical group 的 raw node 参与扩展 portal 候选；其它显式 grouped raw node 不递归扩组。该 membership 不授权 canonical 零成本通行；正式 raw 等价必须沿这些 raw node 间实际 Road endpoint 链成立。
 - 复合路口允许正反方向使用不同的有效接入 portal。
+- 反向检查只在要求方向已等价时运行，保持一个 Segment 一个 candidate ID。
 - `candidate_count = confirmed + excluded + manual`，三组 candidate ID 互斥。
 - 无复核文件时也必须自动生成 confirmed/excluded；默认自动运行 manual 必须为 `0`。
 - 最终结果不含高概率/中概率分类。
@@ -69,6 +73,7 @@ T12 与 T06 分工明确：T06 继续负责 Segment 替换预检和 F-RCSD 生�
 - 只检查单一 base node、固定 30m 门户、canonical 零成本归并、无物理 Road 的 semantic path 或只看全图连通性。
 - 对 T07 使用 selected base canonical group 和标准路口面之外的任意邻近节点作为正式 portal；其它 grouped node 不递归扩组。Road-surface 规则只接受 Road 相交或锚点组一跳物理 Road frontier，不能退化为距离接边。
 - 把附近任意长绕行当作等价 carrier。
+- 未搜索 SWSD 全图反向替代路径就确认 `unexpected_reverse_carrier`，或把 T03/T03 弱锚点自动确认。
 - 用 DriveZone 缺口静默否决拓扑异常，或用 Source 字段决定真伪。
 - 把 T06 Step3 F-RCSD 冒充原始 1V1 FRCSD target。
 - 根据局部样本固化上游字段新语义。

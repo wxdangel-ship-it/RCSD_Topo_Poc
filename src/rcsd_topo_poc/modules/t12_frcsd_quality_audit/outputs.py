@@ -107,6 +107,9 @@ def write_outputs(
             "t07_road_surface_carrier_policy": candidate_audit.get(
                 "t07_road_surface_carrier_policy"
             ),
+            "unexpected_reverse_carrier_policy": candidate_audit.get(
+                "unexpected_reverse_carrier_policy"
+            ),
         },
         "runtime": dict(runtime),
         "outputs": {name: str(path) for name, path in paths.items()},
@@ -204,6 +207,7 @@ def _candidate_fields() -> tuple[str, ...]:
     return (
         "candidate_id",
         "segment_id",
+        "candidate_kind",
         "candidate_status",
         "suggested_issue_type",
         "issue_type",
@@ -217,6 +221,12 @@ def _candidate_fields() -> tuple[str, ...]:
         "directional_portal_status",
         "portal_equivalent",
         "automatic_equivalence_basis",
+        "unexpected_direction",
+        "unexpected_reverse_frcsd_status",
+        "unexpected_reverse_frcsd_path_road_ids",
+        "unexpected_reverse_swsd_status",
+        "unexpected_reverse_swsd_path_road_ids",
+        "unexpected_reverse_high_precision_anchor",
         "portal_constrained_semantic_status",
         "t07_road_surface_status",
         "t07_road_surface_path_road_ids",
@@ -295,6 +305,9 @@ def _flatten_candidate(row: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "candidate_id": row.get("candidate_id", ""),
         "segment_id": row.get("segment_id", ""),
+        "candidate_kind": row.get(
+            "candidate_kind", "missing_required_carrier"
+        ),
         "candidate_status": row.get("candidate_status", ""),
         "suggested_issue_type": row.get("suggested_issue_type", ""),
         "issue_type": row.get("issue_type", ""),
@@ -317,6 +330,22 @@ def _flatten_candidate(row: Mapping[str, Any]) -> dict[str, Any]:
         "portal_equivalent": bool(row.get("automatic_all_directions_equivalent")),
         "automatic_equivalence_basis": row.get(
             "automatic_equivalence_basis", ""
+        ),
+        "unexpected_direction": row.get("unexpected_direction", ""),
+        "unexpected_reverse_frcsd_status": _path_status(
+            row.get("unexpected_reverse_frcsd") or {}
+        ),
+        "unexpected_reverse_frcsd_path_road_ids": "|".join(
+            (row.get("unexpected_reverse_frcsd") or {}).get("road_ids") or []
+        ),
+        "unexpected_reverse_swsd_status": _path_status(
+            row.get("unexpected_reverse_swsd") or {}
+        ),
+        "unexpected_reverse_swsd_path_road_ids": "|".join(
+            (row.get("unexpected_reverse_swsd") or {}).get("road_ids") or []
+        ),
+        "unexpected_reverse_high_precision_anchor": bool(
+            row.get("unexpected_reverse_high_precision_anchor")
         ),
         "portal_constrained_semantic_status": "|".join(
             portal_constrained_semantic
@@ -485,6 +514,11 @@ def _write_evidence(path: Path, layers: EvidenceLayers, crs: str) -> None:
         (
             "swsd_required_carriers",
             layers.swsd_required_carriers,
+            ("candidate_id", "direction", "road_id"),
+        ),
+        (
+            "swsd_reverse_carriers",
+            layers.swsd_reverse_carriers,
             ("candidate_id", "direction", "road_id"),
         ),
         (

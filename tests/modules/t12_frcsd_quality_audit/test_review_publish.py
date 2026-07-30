@@ -21,6 +21,7 @@ def _candidate(
     return {
         "candidate_id": candidate_id,
         "segment_id": candidate_id,
+        "candidate_kind": "missing_required_carrier",
         "candidate_status": "candidate_pending_decision",
         "automatic_all_directions_equivalent": equivalent,
         "automatic_equivalence_basis": equivalence_basis if equivalent else "",
@@ -30,6 +31,67 @@ def _candidate(
         ),
         "anchor_confidence": anchor_confidence,
     }
+
+
+def _unexpected_candidate(
+    candidate_id: str,
+    *,
+    swsd_equivalent: bool = False,
+    high_precision_anchor: bool = True,
+) -> dict[str, object]:
+    return {
+        "candidate_id": candidate_id,
+        "segment_id": candidate_id,
+        "candidate_kind": "unexpected_reverse_carrier",
+        "candidate_status": "candidate_pending_decision",
+        "automatic_all_directions_equivalent": False,
+        "automatic_equivalence_basis": "",
+        "failed_directions": [],
+        "suggested_issue_type": "unexpected_reverse_carrier",
+        "anchor_confidence": (
+            "t07_standard_surface" if high_precision_anchor else "t03_pair"
+        ),
+        "unexpected_reverse_high_precision_anchor": high_precision_anchor,
+        "unexpected_reverse_frcsd": {
+            "accepted_equivalent_carrier": True,
+            "road_ids": ["fr"],
+        },
+        "unexpected_reverse_swsd": {
+            "accepted_equivalent_carrier": swsd_equivalent,
+            "road_ids": ["sw-alt"] if swsd_equivalent else [],
+        },
+    }
+
+
+def test_unexpected_reverse_automatic_decisions_are_precision_first() -> None:
+    reviewed, confirmed, exclusions, manual = apply_review_decisions(
+        [
+            _unexpected_candidate("confirmed"),
+            _unexpected_candidate("swsd-equivalent", swsd_equivalent=True),
+            _unexpected_candidate(
+                "weak-anchor",
+                high_precision_anchor=False,
+            ),
+        ],
+        run_id="run",
+        review_decisions_path=None,
+    )
+
+    assert manual == []
+    assert len(reviewed) == 3
+    assert [row["candidate_id"] for row in confirmed] == ["confirmed"]
+    assert confirmed[0]["issue_type"] == "unexpected_reverse_carrier"
+    assert confirmed[0]["decision_rule"] == (
+        "unexpected_reverse_raw_carrier_dual_t07"
+    )
+    assert [row["candidate_id"] for row in exclusions] == [
+        "swsd-equivalent",
+        "weak-anchor",
+    ]
+    assert [row["decision_rule"] for row in exclusions] == [
+        "unexpected_reverse_swsd_equivalent",
+        "unexpected_reverse_insufficient_high_precision_evidence",
+    ]
 
 
 def _write_decisions(path: Path, rows: list[dict[str, str]]) -> Path:

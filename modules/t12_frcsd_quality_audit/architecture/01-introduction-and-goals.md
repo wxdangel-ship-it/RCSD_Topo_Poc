@@ -6,7 +6,7 @@
 
 ## 目标
 
-- 以 SWSD 必需方向为质量要求，检查 1V1 FRCSD carrier。
+- 以 SWSD 方向要求为质量基准，既检查 1V1 FRCSD 是否缺少必需 carrier，也检查单向 Segment 是否出现非预期反向 carrier。
 - 用真实路口节点组和 portal 避免单节点锚定误报。
 - 形成 canonical 候选、raw endpoint 自动决定、可选 QA 覆盖和正式问题的可追溯证据。
 

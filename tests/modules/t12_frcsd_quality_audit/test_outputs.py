@@ -9,6 +9,7 @@ def test_candidate_contract_has_review_layers_without_probability_fields() -> No
     assert {"candidate_status", "review_status", "issue_type"} <= fields
     assert "drivezone_in_road_ratio" in fields
     assert {
+        "candidate_kind",
         "raw_failed_directions",
         "directional_portal_status",
         "portal_constrained_semantic_status",
@@ -19,6 +20,12 @@ def test_candidate_contract_has_review_layers_without_probability_fields() -> No
         "t07_road_surface_frontiers",
         "t07_road_surface_distance_audit",
         "automatic_equivalence_basis",
+        "unexpected_direction",
+        "unexpected_reverse_frcsd_status",
+        "unexpected_reverse_frcsd_path_road_ids",
+        "unexpected_reverse_swsd_status",
+        "unexpected_reverse_swsd_path_road_ids",
+        "unexpected_reverse_high_precision_anchor",
     } <= fields
     assert "confidence" not in fields
     assert "probability" not in fields

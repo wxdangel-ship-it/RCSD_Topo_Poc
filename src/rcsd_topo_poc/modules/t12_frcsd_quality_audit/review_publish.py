@@ -55,6 +55,8 @@ def apply_review_decisions(
 
 
 def _automatic_decision(candidate: dict[str, Any]) -> dict[str, Any]:
+    if candidate.get("candidate_kind") == "unexpected_reverse_carrier":
+        return _automatic_unexpected_reverse_decision(candidate)
     equivalent = bool(candidate.get("automatic_all_directions_equivalent"))
     anchor_confidence = str(candidate.get("anchor_confidence") or "insufficient")
     if equivalent:
@@ -121,6 +123,60 @@ def _automatic_decision(candidate: dict[str, Any]) -> dict[str, Any]:
         "reviewed_at_utc": "",
         "decision_source": "automatic_high_confidence",
         "decision_rule": "raw_carrier_missing_trusted_anchor",
+    }
+
+
+def _automatic_unexpected_reverse_decision(
+    candidate: dict[str, Any],
+) -> dict[str, Any]:
+    swsd_evidence = candidate.get("unexpected_reverse_swsd") or {}
+    if bool(swsd_evidence.get("accepted_equivalent_carrier")):
+        return {
+            "review_status": "excluded_false_positive",
+            "issue_type": "",
+            "review_reason": (
+                "SWSD has an equivalent reverse full-graph carrier, so the "
+                "FRCSD reverse carrier is not proven unexpected."
+            ),
+            "review_source": "t12_automatic_high_confidence",
+            "reviewed_at_utc": "",
+            "decision_source": "automatic_high_confidence",
+            "decision_rule": "unexpected_reverse_swsd_equivalent",
+        }
+    if not bool(candidate.get("unexpected_reverse_high_precision_anchor")):
+        return {
+            "review_status": "excluded_false_positive",
+            "issue_type": "",
+            "review_reason": (
+                "The reverse carrier is retained as audit evidence but lacks "
+                "dual unique T07 standard-surface anchors required by the "
+                "precision-first publication policy."
+            ),
+            "review_source": "t12_automatic_high_confidence",
+            "reviewed_at_utc": "",
+            "decision_source": "automatic_high_confidence",
+            "decision_rule": (
+                "unexpected_reverse_insufficient_high_precision_evidence"
+            ),
+        }
+    frcsd_evidence = candidate.get("unexpected_reverse_frcsd") or {}
+    if not bool(frcsd_evidence.get("accepted_equivalent_carrier")):
+        raise T12ContractError(
+            "unexpected reverse candidate lacks an equivalent raw FRCSD "
+            f"carrier: {candidate.get('candidate_id', '')}"
+        )
+    return {
+        "review_status": "confirmed_frcsd_quality_issue",
+        "issue_type": "unexpected_reverse_carrier",
+        "review_reason": (
+            "A one-way SWSD Segment has an equivalent reverse raw local FRCSD "
+            "carrier, no equivalent SWSD reverse full-graph carrier, and dual "
+            "unique T07 standard-surface anchors."
+        ),
+        "review_source": "t12_automatic_high_confidence",
+        "reviewed_at_utc": "",
+        "decision_source": "automatic_high_confidence",
+        "decision_rule": "unexpected_reverse_raw_carrier_dual_t07",
     }
 
 

@@ -25,7 +25,7 @@
 | 复核证据 | 能支持目视检查、GIS 叠加、拓扑抽查和问题 case 追踪。 |
 | Case 证据包 | T10 以外部输入全集为主体，模块间中间产物只作为 handoff audit，不作为外部输入证据。 |
 | 全量编排 manifest | T10 内网全量总控记录阶段顺序、显式输入输出、日志路径和最终 handoff；`t11` 固定位于 `t06_step3` 后，启用 T12 时顺序固定为 `t06_step3 -> t11 -> t12 -> t09`。F-RCSD 专用 profile 的 manifest 不登记未运行的 T08 stage。 |
-| T12 质量审计证据 | 显式记录原始 1V1 F-RCSD、SWSD、RCSDIntersection、T05/T06 交叉证据、CRS、参数、运行环境、耗时，以及 selected base canonical group、显式 grouped raw node、实际 raw alias portal、Direction role、alias distance audit、非锚定 spatial fallback、raw endpoint carrier、portal-constrained semantic carrier 的端点/内部 alias 门禁、自动 decision、confirmed/excluded 和可选 review override 分层输出。 |
+| T12 质量审计证据 | 显式记录原始 1V1 F-RCSD、SWSD、RCSDIntersection、T05/T06 交叉证据、CRS、参数、运行环境、耗时，以及候选种类、selected base canonical group、显式 grouped raw node、实际 raw alias portal、Direction role、alias distance audit、非锚定 spatial fallback、canonical 候选、raw endpoint carrier、portal-constrained semantic carrier 的端点/内部 alias 门禁、F-RCSD 反向载体、SWSD 反向替代路径、自动 decision、confirmed/excluded 和可选 review override 分层输出。 |
 | P05 M0 基准证据 | 显式记录限定 Case manifest、canonical baseline/run summary、artifact hash、标签权重、任务 mask、业务分组、fold、异常、Oracle/破坏测试、环境与性能；不得覆盖原始 Case 或 baseline。 |
 | P05 M1 训练证据 | 显式记录推理时输入与 label-only artifact、候选操作、entity guard、train-only normalization、基线、模型参数/checkpoint、逐 Case 预测、固定 test 首次运行、环境与 RAM/VRAM；`silent_fix=false`。 |
 | P05 M2R 证据 | 显式记录每个任务目标的可用性、trust tier、scope、artifact hash、CRS、mask、grouped OOF checkpoint/预测、free/constrained intervention、逐 Case GPKG 和资源；事后内容修复必须为零。 |

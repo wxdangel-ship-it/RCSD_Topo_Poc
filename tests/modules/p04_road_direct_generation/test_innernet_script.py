@@ -203,6 +203,7 @@ def test_innernet_script_reports_heartbeat_during_long_run(
     console = capsys.readouterr()
     json.loads(console.out)
     assert "Segment-first Road generation is still running; elapsed=" in console.err
+    assert "active=test_innernet_script.py:slow_runner:" in console.err
 
 
 def test_innernet_script_help_exposes_only_parameterized_business_paths() -> None:

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import sys
 import threading
 import time
@@ -31,6 +32,7 @@ def main(
     runner: Runner | None = None,
 ) -> int:
     args = _parse_args(argv)
+    _configure_module_progress_logging()
     _log_progress("[1/4] Validating input paths and runtime configuration.")
     config = _build_config(args)
 
@@ -107,13 +109,16 @@ def _run_with_progress_heartbeat(
     started_at: float,
 ) -> Any:
     stop_event = threading.Event()
+    runner_thread_id = threading.get_ident()
 
     def report_progress() -> None:
         while not stop_event.wait(PROGRESS_HEARTBEAT_SECONDS):
             elapsed_seconds = time.monotonic() - started_at
+            active_location = _active_runner_location(runner_thread_id)
             _log_progress(
                 f"[3/4] Segment-first Road generation is still running; "
-                f"elapsed={elapsed_seconds:.1f}s."
+                f"elapsed={elapsed_seconds:.1f}s; "
+                f"active={active_location}."
             )
 
     reporter = threading.Thread(
@@ -129,9 +134,31 @@ def _run_with_progress_heartbeat(
         reporter.join(timeout=1.0)
 
 
+def _active_runner_location(thread_id: int) -> str:
+    frame = sys._current_frames().get(thread_id)
+    if frame is None:
+        return "unavailable"
+    return (
+        f"{Path(frame.f_code.co_filename).name}:"
+        f"{frame.f_code.co_name}:{frame.f_lineno}"
+    )
+
+
 def _log_progress(message: str) -> None:
     timestamp = datetime.now().astimezone().isoformat(timespec="seconds")
     print(f"[{timestamp}] [P04] {message}", file=sys.stderr, flush=True)
+
+
+def _configure_module_progress_logging() -> None:
+    logging.basicConfig(
+        level=logging.WARNING,
+        format="[%(asctime)s] [P04 detail] %(message)s",
+        datefmt="%Y-%m-%dT%H:%M:%S",
+        stream=sys.stderr,
+    )
+    logging.getLogger(
+        "rcsd_topo_poc.modules.p04_road_direct_generation"
+    ).setLevel(logging.INFO)
 
 
 def _summarize_patch_ids(patch_dirs: Sequence[Path], *, limit: int = 10) -> str:

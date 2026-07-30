@@ -544,3 +544,27 @@ Access 几何同时缺失时不猜测，继续由
 | `scripts/p04_run_segment_first_innernet.py` | `10038` bytes | P04内网参数化入口、带当前执行位置的心跳及模块级进度日志 | 不改变正式参数合同，不复制业务算法 |
 | `tests/modules/p04_road_direct_generation/test_innernet_script.py` | `8476` bytes | 内网参数映射、core gate退出码、心跳执行位置和help合同 | 保持入口行为测试，不复制业务算法 |
 | `tests/modules/p04_road_direct_generation/test_segment_first_access_memberships.py` | `4730` bytes | Access空几何在有/无accepted surface时的非静默回归 | 保持资料部分缺失与hard gate两类合同 |
+
+### P04 1500 Patch性能优化（2026-07-30）
+
+本轮未修改已超过硬阈值的`segment_first_pipeline.py`。路径评分、资源采样和
+跨阶段道路面缓存分别下沉到独立模块；Patch输入读取与实际消费文件清单使用
+最多6个有界I/O worker，未引入进程池或无界并发。现有carrier、Node、输入、
+走廊和目标碎片模块只进行等价计算复用与全表扫描收敛。
+
+当前扫描`46`个`segment_first*.py`源码与`37`个专项测试：源码
+`>=61440 bytes`为`3`、测试`>=61440 bytes`为`0`，全部
+`>=100000 bytes`仍仅有未写入的`segment_first_pipeline.py`一个。
+本轮修改及新增的全部源码、脚本和测试均低于`100000 bytes`。
+
+| 文件 | 当前体量 | 当前职责 | 后续约束 |
+|---|---:|---|---|
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_pipeline.py` | `100510` bytes | Segment-first阶段编排和发布挂接 | 本轮未写入；继续禁止写入，后续须单独授权拆分或豁免 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_carriers.py` | `93176` bytes | carrier仲裁、方向组装及按Segment预分组 | 距硬阈值较近；不得回填新的业务策略 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_nodes.py` | `89942` bytes | Node/mainnode、端点协调及有界几何缓存调用 | 不回填SegmentAccess编排或新端点策略 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_path_scoring.py` | `4241` bytes | Patch Road路径指标预计算和等价评分 | 只承接无状态评分复用 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_performance.py` | `12084` bytes | 进程CPU/RSS/I/O、调用位置采样和预算审计 | 保持低开销、无业务决策 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_geometry_cache.py` | `1124` bytes | 按活动GeoDataFrame身份复用精确buffered union | 只缓存不可变计算结果，不做几何修复 |
+| `scripts/p04_run_segment_first_innernet.py` | `11656` bytes | 正式参数化内网入口、心跳及资源审计 | 不改变正式参数合同，不复制业务算法 |
+| `tests/modules/p04_road_direct_generation/test_segment_first_performance.py` | `2344` bytes | 性能监控、预算和summary合并合同 | 保持独立于业务成果 |
+| `tests/modules/p04_road_direct_generation/test_segment_first_geometry_cache.py` | `864` bytes | buffered union精确复用和空输入合同 | 不以近似几何替代等价计算 |

@@ -15,7 +15,9 @@ Segment-first目标是以T01 Segment为构图/回退原子，使用正式上游J
 - 独立SpecKit：`specs/p04-segment-first-road-direct-20260722/`。
 - 独立模块内callable：`run_segment_first_road_direct(SegmentFirstConfig)`与`finalize_segment_first_run(output_dir, acceptance_manifest_path)`。
 - 独立Config/Result、状态空间、输出目录和QA。
-- 仅模块内研究callable，不登记repo CLI、root script或正式入口。
+- 模块callable由第12.1节登记的正式参数化内网入口
+  `scripts/p04_run_segment_first_innernet.py`包装；该入口不改变模块业务接口，
+  `finalize_segment_first_run(...)`仍按第12.2节独立执行。
 
 ### 2.2 历史版本
 

@@ -20,10 +20,17 @@ if str(SRC_ROOT) not in sys.path:
 from rcsd_topo_poc.modules.p04_road_direct_generation import (  # noqa: E402
     SegmentFirstConfig,
 )
+from rcsd_topo_poc.modules.p04_road_direct_generation.segment_first_performance import (  # noqa: E402
+    SegmentFirstPerformanceMonitor,
+    active_p04_location,
+    format_resource_snapshot,
+    merge_performance_into_summary,
+)
 
 
 Runner = Callable[[SegmentFirstConfig], Any]
 PROGRESS_HEARTBEAT_SECONDS = 30.0
+PERFORMANCE_SAMPLE_SECONDS = 5.0
 
 
 def main(
@@ -62,11 +69,26 @@ def main(
 
     _log_progress("[3/4] Starting Segment-first Road generation.")
     started_at = time.monotonic()
-    result = _run_with_progress_heartbeat(runner, config, started_at=started_at)
+    result, performance = _run_with_progress_heartbeat(
+        runner,
+        config,
+        started_at=started_at,
+    )
     elapsed_seconds = time.monotonic() - started_at
+    performance["sample_interval_seconds"] = min(
+        PERFORMANCE_SAMPLE_SECONDS,
+        PROGRESS_HEARTBEAT_SECONDS,
+    )
+    if merge_performance_into_summary(result.summary_path, performance):
+        _log_progress(
+            "[3/4] Performance telemetry merged into "
+            f"{result.summary_path}."
+        )
     _log_progress(
         f"[3/4] Segment-first Road generation completed in "
-        f"{elapsed_seconds:.1f}s."
+        f"{elapsed_seconds:.1f}s; "
+        f"peak_rss={_format_optional_mib(performance['peak_rss_bytes'])}; "
+        f"cpu={performance['process_cpu_seconds']:.1f}s."
     )
     payload = {
         "process_completed": True,
@@ -107,19 +129,32 @@ def _run_with_progress_heartbeat(
     config: SegmentFirstConfig,
     *,
     started_at: float,
-) -> Any:
+) -> tuple[Any, dict[str, Any]]:
     stop_event = threading.Event()
     runner_thread_id = threading.get_ident()
+    monitor = SegmentFirstPerformanceMonitor()
 
     def report_progress() -> None:
-        while not stop_event.wait(PROGRESS_HEARTBEAT_SECONDS):
+        sample_seconds = min(
+            PERFORMANCE_SAMPLE_SECONDS,
+            PROGRESS_HEARTBEAT_SECONDS,
+        )
+        next_heartbeat = time.monotonic() + PROGRESS_HEARTBEAT_SECONDS
+        while not stop_event.wait(sample_seconds):
             elapsed_seconds = time.monotonic() - started_at
-            active_location = _active_runner_location(runner_thread_id)
+            active_location = active_p04_location(runner_thread_id)
+            snapshot = monitor.sample(active_location=active_location)
+            for warning in monitor.new_warnings(snapshot):
+                _log_progress(f"[3/4] PERFORMANCE WARNING: {warning}.")
+            if time.monotonic() < next_heartbeat:
+                continue
             _log_progress(
                 f"[3/4] Segment-first Road generation is still running; "
                 f"elapsed={elapsed_seconds:.1f}s; "
+                f"{format_resource_snapshot(snapshot)}; "
                 f"active={active_location}."
             )
+            next_heartbeat = time.monotonic() + PROGRESS_HEARTBEAT_SECONDS
 
     reporter = threading.Thread(
         target=report_progress,
@@ -128,20 +163,23 @@ def _run_with_progress_heartbeat(
     )
     reporter.start()
     try:
-        return runner(config)
+        result = runner(config)
+        return result, monitor.finish(
+            active_location=active_p04_location(runner_thread_id)
+        )
     finally:
         stop_event.set()
         reporter.join(timeout=1.0)
 
 
 def _active_runner_location(thread_id: int) -> str:
-    frame = sys._current_frames().get(thread_id)
-    if frame is None:
+    return active_p04_location(thread_id)
+
+
+def _format_optional_mib(value: object) -> str:
+    if not isinstance(value, int):
         return "unavailable"
-    return (
-        f"{Path(frame.f_code.co_filename).name}:"
-        f"{frame.f_code.co_name}:{frame.f_lineno}"
-    )
+    return f"{value / (1024**2):.1f}MiB"
 
 
 def _log_progress(message: str) -> None:

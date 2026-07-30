@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
 import os
@@ -120,17 +121,33 @@ def build_input_manifest(
     patch_dirs: Iterable[Path],
     external_inputs: Mapping[str, Path | None],
     parameters: Mapping[str, Any],
+    patch_inputs: Iterable[tuple[str, Path]] | None = None,
 ) -> dict[str, Any]:
-    files: list[dict[str, Any]] = []
-    for patch_dir in patch_dirs:
-        vector_dir = patch_dir / "Vector"
-        for path in sorted(vector_dir.glob("*.geojson")):
-            files.append(_manifest_row(path, role="patch_vector", patch_id=patch_dir.name))
-        for path in sorted(vector_dir.glob("*.gpkg")):
-            files.append(_manifest_row(path, role="patch_vector_derived", patch_id=patch_dir.name))
-    for role, path in external_inputs.items():
-        if path is not None:
-            files.append(_manifest_row(path, role=role, patch_id=None))
+    requests: list[tuple[Path, str, str | None]] = []
+    if patch_inputs is None:
+        for patch_dir in patch_dirs:
+            vector_dir = patch_dir / "Vector"
+            requests.extend(
+                (path, "patch_vector", patch_dir.name)
+                for path in sorted(vector_dir.glob("*.geojson"))
+            )
+            requests.extend(
+                (path, "patch_vector_derived", patch_dir.name)
+                for path in sorted(vector_dir.glob("*.gpkg"))
+            )
+    else:
+        requests.extend(
+            (path, "patch_vector", patch_id)
+            for patch_id, path in patch_inputs
+        )
+    requests.extend(
+        (path, role, None)
+        for role, path in external_inputs.items()
+        if path is not None
+    )
+    worker_count = min(6, max(1, len(requests)))
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        files = list(executor.map(_manifest_row_request, requests))
     return {
         "run_id": run_id,
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -257,6 +274,13 @@ def _manifest_row(path: Path, *, role: str, patch_id: str | None) -> dict[str, A
         "size_bytes": path.stat().st_size,
         "sha256": sha256_file(path),
     }
+
+
+def _manifest_row_request(
+    request: tuple[Path, str, str | None],
+) -> dict[str, Any]:
+    path, role, patch_id = request
+    return _manifest_row(path, role=role, patch_id=patch_id)
 
 
 def _git_commit() -> str | None:

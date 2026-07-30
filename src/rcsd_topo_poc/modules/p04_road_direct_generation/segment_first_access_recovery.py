@@ -5,6 +5,7 @@ import pandas as pd
 from shapely.geometry import LineString
 from shapely.ops import nearest_points, substring, unary_union
 
+from .segment_first_geometry_cache import buffered_union
 from .segment_first_junctions import endpoint_surface_geometry
 from .segment_first_skeleton import parse_id_list
 from .segment_first_surface_routing import interior_surface_target
@@ -129,7 +130,7 @@ def build_access_surface_recovery_candidates(
         for group_id, group in junction_units.groupby("junction_group_id")
     }
     drivezone_surface = (
-        drivezones.geometry.union_all().buffer(1.0)
+        buffered_union(drivezones, 1.0)
         if not drivezones.empty
         else None
     )

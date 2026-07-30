@@ -6,6 +6,12 @@ import math
 
 import geopandas as gpd
 import numpy as np
+from shapely import (
+    get_x,
+    get_y,
+    line_interpolate_point,
+    line_locate_point,
+)
 from shapely.geometry import LineString
 
 
@@ -106,16 +112,20 @@ def assemble_directional_corridor(
         if not active:
             continue
         reference_point = reference.interpolate(float(station))
-        observed_points = [
-            record["geometry"].interpolate(record["geometry"].project(reference_point))
-            for record in active
-        ]
+        active_geometries = np.asarray(
+            [record["geometry"] for record in active],
+            dtype=object,
+        )
+        observed_points = line_interpolate_point(
+            active_geometries,
+            line_locate_point(active_geometries, reference_point),
+        )
         point_rows.append(
             {
                 "station": float(station),
                 "coord": (
-                    float(np.median([point.x for point in observed_points])),
-                    float(np.median([point.y for point in observed_points])),
+                    float(np.median(get_x(observed_points))),
+                    float(np.median(get_y(observed_points))),
                 ),
                 "source_keys": tuple(
                     sorted(str(record["patch_road_key"]) for record in active)
@@ -191,10 +201,11 @@ def assemble_directional_corridor(
 def _evidence_record(row: object, reference: LineString) -> dict[str, object]:
     geometry = row.geometry
     count = max(3, int(math.ceil(float(geometry.length) / 5.0)) + 1)
-    measures = [
-        float(reference.project(geometry.interpolate(distance)))
-        for distance in np.linspace(0.0, float(geometry.length), count)
-    ]
+    sample_points = line_interpolate_point(
+        geometry,
+        np.linspace(0.0, float(geometry.length), count),
+    )
+    measures = line_locate_point(reference, sample_points)
     return {
         "geometry": geometry,
         "patch_road_key": str(row.patch_road_key),
@@ -202,8 +213,8 @@ def _evidence_record(row: object, reference: LineString) -> dict[str, object]:
         "center_lane_id": str(getattr(row, "center_lane_id", "") or ""),
         "road_id": str(getattr(row, "road_id", "") or ""),
         "travel_start_m": float(reference.project(geometry.interpolate(0.0))),
-        "start_m": min(measures),
-        "end_m": max(measures),
+        "start_m": float(np.min(measures)),
+        "end_m": float(np.max(measures)),
     }
 
 

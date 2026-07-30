@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
@@ -10,6 +11,19 @@ import pandas as pd
 from .geometry import to_2d
 from .io import build_input_manifest, discover_patch_dirs, read_vector
 from .segment_first_config import SegmentFirstConfig
+
+
+PATCH_READ_WORKERS = 6
+SEGMENT_FIRST_PATCH_LAYER_FAMILIES = (
+    ("Road.geojson",),
+    ("Lane.geojson",),
+    ("LaneBoundary.geojson",),
+    ("LaneNextLane.geojson",),
+    ("RoadNextRoad.geojson",),
+    ("Intersection.geojson",),
+    ("DriveZone_fix.geojson", "DriveZone.geojson"),
+    ("DivStripZone_fix.geojson", "DivStripZone.geojson"),
+)
 
 
 @dataclass(frozen=True)
@@ -134,6 +148,7 @@ def load_segment_first_inputs(config: SegmentFirstConfig) -> SegmentInputBundle:
             patch_dirs=patch_dirs,
             external_inputs=external,
             parameters=cfg.parameters(),
+            patch_inputs=_consumed_patch_inputs(patch_dirs),
         ),
     )
 
@@ -186,29 +201,13 @@ def _load_patch_layer(
     geometry_optional: bool = False,
 ) -> gpd.GeoDataFrame:
     filenames = (filename,) if isinstance(filename, str) else filename
-    frames: list[gpd.GeoDataFrame] = []
-    for patch_dir in patch_dirs:
-        path = next(
-            (
-                patch_dir / "Vector" / candidate_name
-                for candidate_name in filenames
-                if (patch_dir / "Vector" / candidate_name).is_file()
-            ),
-            None,
-        )
-        if path is None:
-            raise FileNotFoundError(
-                f"missing Patch Vector layer for {patch_dir.name}: "
-                f"one of {list(filenames)}"
-            )
-        frame = gpd.read_file(path)
-        if frame.crs is None:
-            raise ValueError(f"input CRS is missing: {path}")
-        frame = frame.to_crs(analysis_crs)
-        frame.geometry = frame.geometry.map(to_2d)
-        frame["source_patch_id"] = patch_dir.name
-        frame["source_vector_filename"] = path.name
-        frames.append(frame)
+    requests = [
+        (patch_dir, filenames, analysis_crs)
+        for patch_dir in patch_dirs
+    ]
+    worker_count = min(PATCH_READ_WORKERS, max(1, len(requests)))
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        frames = list(executor.map(_read_patch_layer_request, requests))
     if not frames:
         return gpd.GeoDataFrame(geometry=[], crs=analysis_crs)
     combined = pd.concat(frames, ignore_index=True)
@@ -216,6 +215,51 @@ def _load_patch_layer(
     if not geometry_optional:
         result = result[result.geometry.notna() & ~result.geometry.is_empty].copy()
     return result.reset_index(drop=True)
+
+
+def _read_patch_layer_request(
+    request: tuple[Path, tuple[str, ...], str],
+) -> gpd.GeoDataFrame:
+    patch_dir, filenames, analysis_crs = request
+    path = _resolve_patch_layer_path(patch_dir, filenames)
+    frame = gpd.read_file(path)
+    if frame.crs is None:
+        raise ValueError(f"input CRS is missing: {path}")
+    frame = frame.to_crs(analysis_crs)
+    frame.geometry = frame.geometry.map(to_2d)
+    frame["source_patch_id"] = patch_dir.name
+    frame["source_vector_filename"] = path.name
+    return frame
+
+
+def _resolve_patch_layer_path(
+    patch_dir: Path,
+    filenames: tuple[str, ...],
+) -> Path:
+    path = next(
+        (
+            patch_dir / "Vector" / candidate_name
+            for candidate_name in filenames
+            if (patch_dir / "Vector" / candidate_name).is_file()
+        ),
+        None,
+    )
+    if path is None:
+        raise FileNotFoundError(
+            f"missing Patch Vector layer for {patch_dir.name}: "
+            f"one of {list(filenames)}"
+        )
+    return path
+
+
+def _consumed_patch_inputs(
+    patch_dirs: tuple[Path, ...],
+) -> tuple[tuple[str, Path], ...]:
+    return tuple(
+        (patch_dir.name, _resolve_patch_layer_path(patch_dir, filenames))
+        for patch_dir in patch_dirs
+        for filenames in SEGMENT_FIRST_PATCH_LAYER_FAMILIES
+    )
 
 
 def _truthy(value: object) -> bool:

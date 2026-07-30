@@ -6,6 +6,13 @@ import math
 import geopandas as gpd
 import numpy as np
 import pandas as pd
+from shapely import (
+    distance as geometry_distance,
+    get_x,
+    get_y,
+    line_interpolate_point,
+    line_locate_point,
+)
 from shapely.geometry import LineString, Point
 from shapely.ops import substring
 
@@ -196,15 +203,60 @@ def _station_labels(
 ) -> list[dict[str, object]]:
     count = max(2, int(math.ceil(float(geometry.length) / spacing)) + 1)
     measures = np.linspace(0.0, float(geometry.length), count)
+    axis_rows = list(candidates.itertuples(index=False))
+    axis_geometries = np.asarray(
+        [axis.geometry for axis in axis_rows],
+        dtype=object,
+    )
+    axis_deltas = np.asarray(
+        [_bearing_delta(axis.geometry) for axis in axis_rows],
+        dtype=float,
+    )
+    axis_lengths = np.asarray(
+        [float(axis.geometry.length) for axis in axis_rows],
+        dtype=float,
+    )
     labels: list[dict[str, object]] = []
     for measure in measures:
         point = geometry.interpolate(float(measure))
+        source_bearing = _local_bearing(geometry, float(measure))
         segment_candidates: dict[str, tuple[float, float, float, pd.Series]] = {}
-        for _, axis in candidates.iterrows():
-            distance = float(point.distance(axis.geometry))
-            if distance > max_distance_m:
-                continue
-            angle = _station_angle(geometry, float(measure), axis.geometry)
+        distances = geometry_distance(axis_geometries, point)
+        target_metrics = {
+            axis.geometry: (float(distances[index]), None)
+            for index, axis in enumerate(axis_rows)
+        }
+        eligible_indexes = np.flatnonzero(distances <= max_distance_m)
+        eligible_geometries = axis_geometries[eligible_indexes]
+        target_measures = line_locate_point(eligible_geometries, point)
+        target_deltas = axis_deltas[eligible_indexes]
+        target_starts = line_interpolate_point(
+            eligible_geometries,
+            np.maximum(0.0, target_measures - target_deltas),
+        )
+        target_ends = line_interpolate_point(
+            eligible_geometries,
+            np.minimum(
+                axis_lengths[eligible_indexes],
+                target_measures + target_deltas,
+            ),
+        )
+        target_bearings = [
+            math.degrees(
+                math.atan2(
+                    float(get_y(end) - get_y(start)),
+                    float(get_x(end) - get_x(start)),
+                )
+            )
+            % 180.0
+            for start, end in zip(target_starts, target_ends)
+        ]
+        for position, axis_index in enumerate(eligible_indexes):
+            axis = axis_rows[int(axis_index)]
+            distance = float(distances[int(axis_index)])
+            difference = abs(source_bearing - target_bearings[position]) % 180.0
+            angle = min(difference, 180.0 - difference)
+            target_metrics[axis.geometry] = (distance, angle)
             if angle > max_angle_deg:
                 continue
             score = distance + angle * 0.08 + float(axis.source_priority) * 0.25
@@ -222,10 +274,10 @@ def _station_labels(
         )
         best = ordered[0]
         member_id = _station_member(
-            geometry,
-            float(measure),
             point,
+            source_bearing,
             members_by_segment.get(best[3]),
+            target_metrics,
         )
         if not member_id:
             labels.append({"measure": float(measure), "label": None})
@@ -248,21 +300,48 @@ def _station_labels(
 
 
 def _station_member(
-    source: LineString,
-    measure: float,
     point: Point,
+    source_bearing: float,
     members: gpd.GeoDataFrame | None,
+    target_metrics: dict[object, tuple[float, float | None]],
 ) -> str:
     if members is None or members.empty:
         return ""
-    candidates = []
-    for member in members.itertuples(index=False):
-        distance = float(point.distance(member.geometry))
-        angle = _station_angle(source, measure, member.geometry)
-        candidates.append(
+    member_rows = list(members.itertuples(index=False))
+    metrics: list[tuple[float, float | None]] = []
+    for member in member_rows:
+        metric = target_metrics.get(member.geometry)
+        if metric is None:
+            metric = float(point.distance(member.geometry)), None
+        metrics.append(metric)
+    nearest_index = min(
+        range(len(member_rows)),
+        key=lambda index: metrics[index][0],
+    )
+    nearest = member_rows[nearest_index]
+    distance, angle = metrics[nearest_index]
+    if angle is None:
+        angle = _target_angle(point, source_bearing, nearest.geometry)
+    best = (
+        distance + angle * 0.08,
+        distance,
+        angle,
+        nearest.canonical_road_id,
+    )
+    for index, member in enumerate(member_rows):
+        if index == nearest_index:
+            continue
+        distance, angle = metrics[index]
+        if distance > best[0]:
+            continue
+        if angle is None:
+            angle = _target_angle(point, source_bearing, member.geometry)
+        candidate = (
             (distance + angle * 0.08, distance, angle, member.canonical_road_id)
         )
-    return str(min(candidates)[3])
+        if candidate < best:
+            best = candidate
+    return str(best[3])
 
 
 def _labelled_fragments(
@@ -314,6 +393,14 @@ def _labelled_fragments(
 def _station_angle(source: LineString, measure: float, target: LineString) -> float:
     source_bearing = _local_bearing(source, measure)
     point = source.interpolate(measure)
+    return _target_angle(point, source_bearing, target)
+
+
+def _target_angle(
+    point: Point,
+    source_bearing: float,
+    target: LineString,
+) -> float:
     target_measure = float(target.project(point))
     target_bearing = _local_bearing(target, target_measure)
     difference = abs(source_bearing - target_bearing) % 180.0
@@ -321,10 +408,14 @@ def _station_angle(source: LineString, measure: float, target: LineString) -> fl
 
 
 def _local_bearing(line: LineString, measure: float) -> float:
-    delta = min(5.0, max(0.5, float(line.length) * 0.02))
+    delta = _bearing_delta(line)
     start = line.interpolate(max(0.0, measure - delta))
     end = line.interpolate(min(float(line.length), measure + delta))
     return math.degrees(math.atan2(end.y - start.y, end.x - start.x)) % 180.0
+
+
+def _bearing_delta(line: LineString) -> float:
+    return min(5.0, max(0.5, float(line.length) * 0.02))
 
 
 def _mode(values: list[str]) -> str:

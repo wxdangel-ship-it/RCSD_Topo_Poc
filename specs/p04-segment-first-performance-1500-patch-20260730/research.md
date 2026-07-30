@@ -97,3 +97,22 @@ CRS转换、稳定拼接，以及12000个消费文件的SHA256清单，不执行
 下不会触发内存门槛。由于少量真实文件被重复使用，文件系统缓存和内容分布
 均比内网正式全量有利，因此wall/I/O结果只作为偏乐观下界；它不证明后续
 空间构图阶段的内存上限，也不替代内网约1500 Patch端到端复跑。
+
+## 7. 最新候选监控修复后的业务等价复跑
+
+在`c6928c5`上以正式入口复跑
+`perf_opt14_1885118_20260730T1325`：
+
+- wall：`151.777s`，process CPU：`114.049s`，平均进程CPU：
+  `75.14%`；
+- current RSS：`534609920 bytes`，peak RSS：`536612864 bytes`
+  （约`511.8MiB`）；
+- 正式结果：`887 Road / 1134 Node / 1933 RoadNextRoad`；
+- independent QA：`0 violation`，16项独立gate全部通过；
+- 与`perf_opt13`相比，正式GPKG、审计GPKG、关系GPKG、比较GPKG、
+  独立QA GPKG/JSON和summary共7类业务工件的规范化语义指纹全部一致；
+- input manifest唯一规范化差异为运行环境GeoPandas版本
+  `1.1.3 -> 1.1.2`，不是输入路径、文件内容、参数或业务结果变化。
+
+该复跑仍报告与冻结候选相同的`terminal_status=failed`、
+`core_gate_pass=false`，未用性能优化或Review绕过既有POC业务hard gate。

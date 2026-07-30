@@ -15,6 +15,17 @@ RSS_TARGET_BYTES = 8 * GIB
 RSS_HARD_LIMIT_BYTES = 16 * GIB
 WALL_TARGET_SECONDS = 6 * 60 * 60
 WALL_HARD_LIMIT_SECONDS = 8 * 60 * 60
+RESOURCE_TIMELINE_SECONDS = 30.0
+MAX_RESOURCE_TIMELINE_SAMPLES = 1024
+NATIVE_THREAD_ENV_KEYS = (
+    "OPENBLAS_NUM_THREADS",
+    "OMP_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "NUMEXPR_NUM_THREADS",
+    "NUMEXPR_MAX_THREADS",
+    "GDAL_NUM_THREADS",
+    "CPL_MAX_ERROR_REPORTS",
+)
 
 
 @dataclass(frozen=True)
@@ -38,6 +49,7 @@ class SegmentFirstPerformanceMonitor:
         self._sample_count = 0
         self._hotspots: Counter[str] = Counter()
         self._warnings_emitted: set[str] = set()
+        self._resource_timeline: list[dict[str, Any]] = []
 
     def sample(self, *, active_location: str | None = None) -> ProcessResourceSnapshot:
         snapshot = self.snapshot()
@@ -51,6 +63,7 @@ class SegmentFirstPerformanceMonitor:
                 self._peak_rss_bytes,
                 snapshot.peak_rss_bytes,
             )
+        self._record_timeline(snapshot, active_location=active_location)
         return snapshot
 
     def snapshot(self) -> ProcessResourceSnapshot:
@@ -110,6 +123,11 @@ class SegmentFirstPerformanceMonitor:
 
     def finish(self, *, active_location: str | None = None) -> dict[str, Any]:
         final = self.sample(active_location=active_location)
+        self._record_timeline(
+            final,
+            active_location=active_location,
+            force=True,
+        )
         peak_rss_bytes = max(
             self._peak_rss_bytes,
             final.rss_bytes or 0,
@@ -140,6 +158,8 @@ class SegmentFirstPerformanceMonitor:
             "sample_count": self._sample_count,
             "sample_interval_seconds": None,
             "sampled_hotspots": hotspots,
+            "resource_timeline": list(self._resource_timeline),
+            "runtime_resources": runtime_resource_contract(),
             "budgets": {
                 "wall_target_seconds": WALL_TARGET_SECONDS,
                 "wall_hard_limit_seconds": WALL_HARD_LIMIT_SECONDS,
@@ -161,6 +181,53 @@ class SegmentFirstPerformanceMonitor:
                 ),
             },
         }
+
+    def _record_timeline(
+        self,
+        snapshot: ProcessResourceSnapshot,
+        *,
+        active_location: str | None,
+        force: bool = False,
+    ) -> None:
+        previous_wall = (
+            float(self._resource_timeline[-1]["wall_seconds"])
+            if self._resource_timeline
+            else None
+        )
+        if previous_wall is not None:
+            elapsed = snapshot.wall_seconds - previous_wall
+            if not force and elapsed < RESOURCE_TIMELINE_SECONDS:
+                return
+            if force and elapsed <= 1e-6:
+                return
+        row = {
+            "wall_seconds": snapshot.wall_seconds,
+            "process_cpu_seconds": snapshot.process_cpu_seconds,
+            "rss_bytes": snapshot.rss_bytes,
+            "peak_rss_bytes": max(
+                self._peak_rss_bytes,
+                snapshot.peak_rss_bytes or 0,
+            )
+            or None,
+            "read_bytes": snapshot.read_bytes,
+            "write_bytes": snapshot.write_bytes,
+            "active_location": active_location,
+        }
+        if len(self._resource_timeline) >= MAX_RESOURCE_TIMELINE_SAMPLES:
+            if force:
+                self._resource_timeline[-1] = row
+            return
+        self._resource_timeline.append(row)
+
+
+def runtime_resource_contract() -> dict[str, Any]:
+    return {
+        "logical_cpu_count": os.cpu_count(),
+        "native_thread_limits": {
+            name: os.environ.get(name)
+            for name in NATIVE_THREAD_ENV_KEYS
+        },
+    }
 
 
 def merge_performance_into_summary(
@@ -345,4 +412,5 @@ __all__ = [
     "active_p04_location",
     "format_resource_snapshot",
     "merge_performance_into_summary",
+    "runtime_resource_contract",
 ]

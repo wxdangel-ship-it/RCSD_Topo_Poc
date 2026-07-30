@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
 import threading
 import time
@@ -11,6 +12,18 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
+
+NATIVE_THREAD_DEFAULTS = {
+    "OPENBLAS_NUM_THREADS": "1",
+    "OMP_NUM_THREADS": "1",
+    "MKL_NUM_THREADS": "1",
+    "NUMEXPR_NUM_THREADS": "1",
+    "NUMEXPR_MAX_THREADS": "1",
+    "GDAL_NUM_THREADS": "1",
+    "CPL_MAX_ERROR_REPORTS": "100",
+}
+for _environment_name, _default_value in NATIVE_THREAD_DEFAULTS.items():
+    os.environ.setdefault(_environment_name, _default_value)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = REPO_ROOT / "src"
@@ -25,6 +38,7 @@ from rcsd_topo_poc.modules.p04_road_direct_generation.segment_first_performance 
     active_p04_location,
     format_resource_snapshot,
     merge_performance_into_summary,
+    runtime_resource_contract,
 )
 
 
@@ -55,6 +69,13 @@ def main(
     _log_progress(
         f"[1/4] Input validation completed. run_id={config.run_id}, "
         f"analysis_crs={config.analysis_crs}."
+    )
+    runtime_resources = runtime_resource_contract()
+    _log_progress(
+        "[1/4] Runtime resource contract: "
+        f"logical_cpu_count={runtime_resources['logical_cpu_count']}; "
+        "patch_io_workers<=6; "
+        f"native_thread_limits={runtime_resources['native_thread_limits']}."
     )
     _log_progress(
         f"[2/4] Discovered {len(patch_dirs)} Patch directories: "

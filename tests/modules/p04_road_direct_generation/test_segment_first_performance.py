@@ -27,8 +27,19 @@ def test_monitor_records_resources_and_sampled_hotspots() -> None:
         "sample_count": 2,
         "sample_ratio": 1.0,
     }
+    assert result["resource_timeline"][0]["active_location"] == (
+        "segment_first_inputs.py:load:10"
+    )
+    assert result["resource_timeline"][-1]["wall_seconds"] == result[
+        "wall_seconds"
+    ]
+    assert len(result["resource_timeline"]) == 2
     assert result["budgets"]["wall_target_seconds"] == 21600
     assert result["budgets"]["wall_hard_limit_seconds"] == 28800
+    assert result["runtime_resources"]["logical_cpu_count"]
+    assert "OPENBLAS_NUM_THREADS" in result["runtime_resources"][
+        "native_thread_limits"
+    ]
 
 
 def test_merge_performance_preserves_existing_elapsed_seconds(

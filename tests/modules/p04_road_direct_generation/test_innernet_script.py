@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 import time
@@ -144,11 +145,34 @@ def test_innernet_script_maps_all_explicit_inputs_to_segment_first_config(
     assert payload["core_gate_pass"] is False
     assert payload["patch_count"] == 1
     assert "[1/4] Input validation completed." in console.err
+    assert "[1/4] Runtime resource contract:" in console.err
     assert "[2/4] Discovered 1 Patch directories: 5417631180197930." in console.err
     assert "[3/4] Starting Segment-first Road generation." in console.err
     assert "[3/4] Segment-first Road generation completed" in console.err
     assert "[4/4] Outputs completed." in console.err
     assert "Run finished with exit_code=0." in console.err
+
+
+def test_innernet_script_sets_bounded_native_thread_defaults(
+    monkeypatch,
+) -> None:
+    for name in (
+        "OPENBLAS_NUM_THREADS",
+        "OMP_NUM_THREADS",
+        "MKL_NUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+        "NUMEXPR_MAX_THREADS",
+        "GDAL_NUM_THREADS",
+        "CPL_MAX_ERROR_REPORTS",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    module = _load_script()
+
+    assert {
+        name: os.environ[name]
+        for name in module.NATIVE_THREAD_DEFAULTS
+    } == module.NATIVE_THREAD_DEFAULTS
 
 
 def test_innernet_script_can_make_core_gate_failure_nonzero(tmp_path: Path) -> None:

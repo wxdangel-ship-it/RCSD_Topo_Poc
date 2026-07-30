@@ -58,7 +58,13 @@ def build_target_carrier_fragments(
         member_frame["canonical_segment_id"].isin(target_ids)
     ].copy()
     members_by_segment = {
-        segment_id: group.copy()
+        str(segment_id): tuple(
+            (geometry, str(member_id))
+            for geometry, member_id in zip(
+                group.geometry,
+                group["canonical_road_id"],
+            )
+        )
         for segment_id, group in member_frame.groupby("canonical_segment_id")
     }
     axes = _target_axes(required, target_anchors, member_frame)
@@ -195,7 +201,7 @@ def _target_axes(
 def _station_labels(
     geometry: LineString,
     candidates: gpd.GeoDataFrame,
-    members_by_segment: dict[str, gpd.GeoDataFrame],
+    members_by_segment: dict[str, tuple[tuple[LineString, str], ...]],
     *,
     spacing: float,
     max_distance_m: float,
@@ -302,42 +308,41 @@ def _station_labels(
 def _station_member(
     point: Point,
     source_bearing: float,
-    members: gpd.GeoDataFrame | None,
+    members: tuple[tuple[LineString, str], ...] | None,
     target_metrics: dict[object, tuple[float, float | None]],
 ) -> str:
-    if members is None or members.empty:
+    if not members:
         return ""
-    member_rows = list(members.itertuples(index=False))
     metrics: list[tuple[float, float | None]] = []
-    for member in member_rows:
-        metric = target_metrics.get(member.geometry)
+    for geometry, _ in members:
+        metric = target_metrics.get(geometry)
         if metric is None:
-            metric = float(point.distance(member.geometry)), None
+            metric = float(point.distance(geometry)), None
         metrics.append(metric)
     nearest_index = min(
-        range(len(member_rows)),
+        range(len(members)),
         key=lambda index: metrics[index][0],
     )
-    nearest = member_rows[nearest_index]
+    nearest_geometry, nearest_road_id = members[nearest_index]
     distance, angle = metrics[nearest_index]
     if angle is None:
-        angle = _target_angle(point, source_bearing, nearest.geometry)
+        angle = _target_angle(point, source_bearing, nearest_geometry)
     best = (
         distance + angle * 0.08,
         distance,
         angle,
-        nearest.canonical_road_id,
+        nearest_road_id,
     )
-    for index, member in enumerate(member_rows):
+    for index, (geometry, road_id) in enumerate(members):
         if index == nearest_index:
             continue
         distance, angle = metrics[index]
         if distance > best[0]:
             continue
         if angle is None:
-            angle = _target_angle(point, source_bearing, member.geometry)
+            angle = _target_angle(point, source_bearing, geometry)
         candidate = (
-            (distance + angle * 0.08, distance, angle, member.canonical_road_id)
+            (distance + angle * 0.08, distance, angle, road_id)
         )
         if candidate < best:
             best = candidate

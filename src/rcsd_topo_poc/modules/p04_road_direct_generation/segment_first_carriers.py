@@ -2128,7 +2128,7 @@ def _target_corridor_carrier(
                 evidence.get(
                     "full_rcsd_anchor_supported",
                     pd.Series(False, index=evidence.index),
-                ).fillna(False).astype(bool).any()
+                ).dropna().astype(bool).any()
             ),
             "full_rcsd_anchor_ids": ",".join(
                 sorted(

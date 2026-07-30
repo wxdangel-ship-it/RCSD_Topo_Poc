@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+from collections import OrderedDict
 from dataclasses import dataclass
-from functools import lru_cache
 import hashlib
 import math
 import weakref
@@ -18,6 +18,7 @@ from .segment_first_access_memberships import (
 )
 from .segment_first_config import SegmentFirstConfig
 from .segment_first_geometry_cache import buffered_union
+from .segment_first_geometry_metrics import max_sample_turn as _max_sample_turn
 from .segment_first_junctions import endpoint_surface_geometry
 from .segment_first_skeleton import canonical_id
 from .segment_first_surface_routing import (
@@ -45,6 +46,11 @@ _COMPLETION_SURFACE_CACHE: dict[
         tuple[object, object, object],
     ],
 ] = {}
+_SURFACE_COVERAGE_CACHE_MAXSIZE = 32768
+_SURFACE_COVERAGE_CACHE: OrderedDict[
+    tuple[int, bytes],
+    tuple[weakref.ReferenceType[object], float],
+] = OrderedDict()
 
 
 @dataclass(frozen=True)
@@ -121,6 +127,7 @@ def resolve_road_endpoint_junctions(
             endpoint_rows,
             memberships,
             junction_units,
+            contexts=junction_contexts,
             surfaces=junction_surfaces,
         )
     )
@@ -1461,15 +1468,17 @@ def _surface_coverage(connector: LineString, surface: object | None) -> float:
         return 1.0
     if surface is None or surface.is_empty:
         return 0.0
-    return _cached_surface_coverage(connector, surface)
-
-
-@lru_cache(maxsize=32768)
-def _cached_surface_coverage(
-    connector: LineString,
-    surface: object,
-) -> float:
-    return float(connector.intersection(surface).length / connector.length)
+    key = (id(surface), connector.wkb)
+    cached = _SURFACE_COVERAGE_CACHE.get(key)
+    if cached is not None and cached[0]() is surface:
+        _SURFACE_COVERAGE_CACHE.move_to_end(key)
+        return cached[1]
+    coverage = float(connector.intersection(surface).length / connector.length)
+    _SURFACE_COVERAGE_CACHE[key] = (weakref.ref(surface), coverage)
+    _SURFACE_COVERAGE_CACHE.move_to_end(key)
+    if len(_SURFACE_COVERAGE_CACHE) > _SURFACE_COVERAGE_CACHE_MAXSIZE:
+        _SURFACE_COVERAGE_CACHE.popitem(last=False)
+    return coverage
 
 
 def _records_geodataframe(
@@ -1565,30 +1574,6 @@ def _access_geometry_by_segment_source(
             keys,
             sort=True,
         )
-    }
-
-
-def _junction_context(
-    junction_group_id: str,
-    junction_units: gpd.GeoDataFrame,
-) -> dict[str, str]:
-    candidates = junction_units[
-        junction_units["junction_group_id"].map(canonical_id)
-        == canonical_id(junction_group_id)
-    ]
-    if candidates.empty:
-        return {"junction_kind": "retained", "junction_source": "swsd_retained"}
-    selected = min(
-        candidates.itertuples(),
-        key=lambda row: (
-            -int(getattr(row, "source_priority", 0)),
-            float(row.geometry.area),
-            str(getattr(row, "source_object_id", "")),
-        ),
-    )
-    return {
-        "junction_kind": str(selected.junction_kind),
-        "junction_source": str(selected.junction_source),
     }
 
 
@@ -2015,6 +2000,7 @@ def _apply_shared_split_access_lineage(
     memberships: dict[int, dict[str, object]],
     junction_units: gpd.GeoDataFrame,
     *,
+    contexts: dict[str, dict[str, str]] | None = None,
     surfaces: dict[str, object] | None = None,
 ) -> int:
     """Use declared access lineage only at an actual shared split boundary."""
@@ -2023,6 +2009,11 @@ def _apply_shared_split_access_lineage(
         _junction_surfaces(junction_units)
         if surfaces is None
         else surfaces
+    )
+    contexts = (
+        _junction_contexts(junction_units)
+        if contexts is None
+        else contexts
     )
     candidates: dict[tuple[str, float, float], list[int]] = {}
     for index, endpoint in enumerate(endpoint_rows):
@@ -2064,7 +2055,13 @@ def _apply_shared_split_access_lineage(
         if len(group_ids) != 1:
             continue
         group_id = next(iter(group_ids))
-        context = _junction_context(group_id, junction_units)
+        context = contexts.get(
+            group_id,
+            {
+                "junction_kind": "retained",
+                "junction_source": "swsd_retained",
+            },
+        )
         surface = surfaces.get(group_id)
         split_point = endpoint_rows[indexes[0]]["geometry"]
         if (
@@ -2283,34 +2280,6 @@ def _connection_anchor_distance(
         if cosine >= 0.5:
             return float(position)
     return max(minimum, min(line.length, 1.0))
-
-
-@lru_cache(maxsize=32768)
-def _max_sample_turn(line: LineString, spacing: float) -> float:
-    if line.length <= spacing * 2:
-        return 0.0
-    count = max(3, int(math.ceil(line.length / spacing)) + 1)
-    points = [line.interpolate(value) for value in np.linspace(0.0, line.length, count)]
-    maximum = 0.0
-    for index in range(1, len(points) - 1):
-        first = np.array(
-            [
-                points[index].x - points[index - 1].x,
-                points[index].y - points[index - 1].y,
-            ]
-        )
-        second = np.array(
-            [
-                points[index + 1].x - points[index].x,
-                points[index + 1].y - points[index].y,
-            ]
-        )
-        denominator = float(np.linalg.norm(first) * np.linalg.norm(second))
-        if denominator <= 1e-9:
-            continue
-        cosine = float(np.clip(np.dot(first, second) / denominator, -1.0, 1.0))
-        maximum = max(maximum, math.degrees(math.acos(cosine)))
-    return maximum
 
 
 def _deduplicate_coords(

@@ -28,30 +28,43 @@ def build_target_path_metrics(
             _reference_interval(geometry, reference)
             for geometry in frame.geometry
         )
-        assignment_scores = (
-            pd.to_numeric(frame["assignment_score"], errors="coerce").dropna()
+        finite_scores = _finite_numeric_values(
+            frame["assignment_score"].array
             if "assignment_score" in frame
             else ()
-        )
-        finite_scores = tuple(
-            float(value)
-            for value in assignment_scores
-            if math.isfinite(float(value))
         )
         result[key] = TargetPathKeyMetrics(
             intervals=intervals,
             finite_assignment_scores=finite_scores,
-            full_rcsd_anchor_supported=bool(
-                frame.get(
-                    "full_rcsd_anchor_supported",
-                    pd.Series(dtype=bool),
-                )
-                .fillna(False)
-                .astype(bool)
-                .any()
+            full_rcsd_anchor_supported=_any_truthy_nonmissing(
+                frame["full_rcsd_anchor_supported"].array
+                if "full_rcsd_anchor_supported" in frame
+                else ()
             ),
         )
     return result
+
+
+def _finite_numeric_values(values: object) -> tuple[float, ...]:
+    result: list[float] = []
+    for value in values:
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(number):
+            result.append(number)
+    return tuple(result)
+
+
+def _any_truthy_nonmissing(values: object) -> bool:
+    for value in values:
+        missing = pd.isna(value)
+        if isinstance(missing, (bool, np.bool_)) and bool(missing):
+            continue
+        if bool(value):
+            return True
+    return False
 
 
 def target_path_score(

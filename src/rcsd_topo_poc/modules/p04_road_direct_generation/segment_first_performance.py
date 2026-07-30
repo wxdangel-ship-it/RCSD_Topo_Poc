@@ -42,7 +42,7 @@ class SegmentFirstPerformanceMonitor:
     """Low-overhead process resource and sampled-hotspot monitor."""
 
     def __init__(self) -> None:
-        self._started_wall = time.monotonic()
+        self._started_wall = time.perf_counter()
         self._started_cpu = time.process_time()
         self._started_io = _process_io_bytes()
         self._peak_rss_bytes = 0
@@ -71,7 +71,7 @@ class SegmentFirstPerformanceMonitor:
         read_bytes, write_bytes = _process_io_bytes()
         started_read, started_write = self._started_io
         return ProcessResourceSnapshot(
-            wall_seconds=max(0.0, time.monotonic() - self._started_wall),
+            wall_seconds=max(0.0, time.perf_counter() - self._started_wall),
             process_cpu_seconds=max(0.0, time.process_time() - self._started_cpu),
             rss_bytes=rss_bytes,
             peak_rss_bytes=native_peak_rss_bytes,
@@ -333,11 +333,19 @@ def _read_windows_memory() -> tuple[int | None, int | None]:
                 ("PeakPagefileUsage", ctypes.c_size_t),
             ]
 
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        psapi = ctypes.WinDLL("psapi", use_last_error=True)
+        kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+        psapi.GetProcessMemoryInfo.argtypes = [
+            wintypes.HANDLE,
+            ctypes.POINTER(ProcessMemoryCounters),
+            wintypes.DWORD,
+        ]
+        psapi.GetProcessMemoryInfo.restype = wintypes.BOOL
         counters = ProcessMemoryCounters()
         counters.cb = ctypes.sizeof(counters)
-        handle = ctypes.windll.kernel32.GetCurrentProcess()
-        success = ctypes.windll.psapi.GetProcessMemoryInfo(
-            handle,
+        success = psapi.GetProcessMemoryInfo(
+            kernel32.GetCurrentProcess(),
             ctypes.byref(counters),
             counters.cb,
         )
@@ -377,10 +385,16 @@ def _process_io_bytes() -> tuple[int | None, int | None]:
                     ("OtherTransferCount", ctypes.c_ulonglong),
                 ]
 
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+            kernel32.GetProcessIoCounters.argtypes = [
+                wintypes.HANDLE,
+                ctypes.POINTER(IoCounters),
+            ]
+            kernel32.GetProcessIoCounters.restype = wintypes.BOOL
             counters = IoCounters()
-            handle = ctypes.windll.kernel32.GetCurrentProcess()
-            success = ctypes.windll.kernel32.GetProcessIoCounters(
-                handle,
+            success = kernel32.GetProcessIoCounters(
+                kernel32.GetCurrentProcess(),
                 ctypes.byref(counters),
             )
             if not success:

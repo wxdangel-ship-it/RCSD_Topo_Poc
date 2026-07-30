@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 import threading
 import time
 from pathlib import Path
@@ -40,6 +41,11 @@ def test_monitor_records_resources_and_sampled_hotspots() -> None:
     assert "OPENBLAS_NUM_THREADS" in result["runtime_resources"][
         "native_thread_limits"
     ]
+    if sys.platform == "win32":
+        assert result["current_rss_bytes"]
+        assert result["peak_rss_bytes"]
+        assert result["read_bytes"] is not None
+        assert result["write_bytes"] is not None
 
 
 def test_merge_performance_preserves_existing_elapsed_seconds(

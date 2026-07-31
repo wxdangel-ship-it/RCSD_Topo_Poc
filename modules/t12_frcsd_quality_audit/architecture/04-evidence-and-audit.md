@@ -3,10 +3,10 @@
 ## 1. 证据分层
 
 - candidate：canonical 图发现的宽召回疑点。
-- decision：每方向 selected base canonical group 到 raw alias 的 membership、显式 grouped raw node、source outgoing/target incoming portal 资格、alias distance audit、非锚定 fallback、raw endpoint directed carrier、portal-constrained semantic directed carrier 的端点/内部 alias 门禁、标准路口 portal、FRCSD 反向载体、SWSD 反向替代路径、锚点可信度、自动确认或排除理由；undirected path 只保留为诊断。
+- decision：每方向 selected base canonical group 到 raw alias 的 membership、显式 grouped raw node、source outgoing/target incoming portal 资格、alias distance audit、非锚定 fallback、raw endpoint directed carrier、portal-constrained semantic directed carrier 的端点/内部 alias 门禁、标准路口 portal、FRCSD 反向载体、双端锚点区间、逐 raw RCSD Road 当前/其它 Segment 归属、SWSD 反向替代路径、锚点可信度、自动确认或排除理由；undirected path 只保留为诊断。
 - review-only：可选外部 QA 覆盖、来源和时间。
 - formal：confirmed CSV/GPKG 与 summary 中的确认计数。
-- internal：raw/canonical/portal-constrained semantic/FRCSD 反向/SWSD 反向 carrier/portal GPKG、T06/DriveZone 交叉证据和运行日志。
+- internal：raw/canonical/portal-constrained semantic/FRCSD 反向/SWSD 反向 carrier/portal GPKG、`unexpected_reverse_rcsd_ownership` 逐 Road 空间证据、T06/DriveZone 交叉证据和运行日志。
 
 ## 2. Formal 成果
 

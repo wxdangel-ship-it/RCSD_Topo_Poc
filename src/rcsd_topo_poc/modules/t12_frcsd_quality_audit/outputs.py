@@ -227,6 +227,12 @@ def _candidate_fields() -> tuple[str, ...]:
         "unexpected_reverse_swsd_status",
         "unexpected_reverse_swsd_path_road_ids",
         "unexpected_reverse_high_precision_anchor",
+        "unexpected_reverse_anchor_interval_status",
+        "unexpected_reverse_anchor_interval_audit",
+        "unexpected_reverse_segment_ownership_status",
+        "unexpected_reverse_owner_segment_ids",
+        "unexpected_reverse_other_segment_ids",
+        "unexpected_reverse_segment_ownership_audit",
         "portal_constrained_semantic_status",
         "t07_road_surface_status",
         "t07_road_surface_path_road_ids",
@@ -302,6 +308,8 @@ def _flatten_candidate(row: Mapping[str, Any]) -> dict[str, Any]:
     ]
     surface_details = _surface_carrier_details(directions)
     t06 = row.get("t06_cross_evidence") or {}
+    reverse_anchor_interval = row.get("unexpected_reverse_anchor_interval") or {}
+    reverse_ownership = row.get("unexpected_reverse_segment_ownership") or {}
     return {
         "candidate_id": row.get("candidate_id", ""),
         "segment_id": row.get("segment_id", ""),
@@ -346,6 +354,38 @@ def _flatten_candidate(row: Mapping[str, Any]) -> dict[str, Any]:
         ),
         "unexpected_reverse_high_precision_anchor": bool(
             row.get("unexpected_reverse_high_precision_anchor")
+        ),
+        "unexpected_reverse_anchor_interval_status": (
+            "accepted"
+            if reverse_anchor_interval.get("accepted_anchor_interval")
+            else str(reverse_anchor_interval.get("rejection_reason") or "")
+        ),
+        "unexpected_reverse_anchor_interval_audit": json.dumps(
+            reverse_anchor_interval,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ),
+        "unexpected_reverse_segment_ownership_status": (
+            "current_segment_unique_owner"
+            if reverse_ownership.get("accepted_current_segment_owner")
+            else str(reverse_ownership.get("rejection_reason") or "")
+        ),
+        "unexpected_reverse_owner_segment_ids": "|".join(
+            sorted(
+                {
+                    str(item.get("owner_segment_id") or "")
+                    for item in reverse_ownership.get("road_results") or []
+                    if item.get("owner_segment_id")
+                }
+            )
+        ),
+        "unexpected_reverse_other_segment_ids": "|".join(
+            reverse_ownership.get("other_segment_ids") or []
+        ),
+        "unexpected_reverse_segment_ownership_audit": json.dumps(
+            reverse_ownership,
+            ensure_ascii=False,
+            separators=(",", ":"),
         ),
         "portal_constrained_semantic_status": "|".join(
             portal_constrained_semantic
@@ -525,6 +565,18 @@ def _write_evidence(path: Path, layers: EvidenceLayers, crs: str) -> None:
             "frcsd_carrier_paths",
             layers.frcsd_carrier_paths,
             ("candidate_id", "direction", "path_kind", "road_id"),
+        ),
+        (
+            "unexpected_reverse_rcsd_ownership",
+            layers.unexpected_reverse_rcsd_ownership,
+            (
+                "candidate_id",
+                "segment_id",
+                "direction",
+                "road_id",
+                "scope_status",
+                "owner_segment_id",
+            ),
         ),
     )
     for index, (layer_name, rows, empty_columns) in enumerate(definitions):

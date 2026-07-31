@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = "2026-07-30.t12_frcsd_quality_audit.v7"
+SCHEMA_VERSION = "2026-07-31.t12_frcsd_quality_audit.v8"
 
 REVIEW_STATUSES = frozenset(
     {
@@ -107,3 +107,6 @@ class EvidenceLayers:
     swsd_required_carriers: list[dict[str, Any]] = field(default_factory=list)
     swsd_reverse_carriers: list[dict[str, Any]] = field(default_factory=list)
     frcsd_carrier_paths: list[dict[str, Any]] = field(default_factory=list)
+    unexpected_reverse_rcsd_ownership: list[dict[str, Any]] = field(
+        default_factory=list
+    )

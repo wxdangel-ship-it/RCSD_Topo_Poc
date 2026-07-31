@@ -203,10 +203,77 @@ def test_unexpected_reverse_candidate_uses_raw_frcsd_and_swsd_full_graph() -> No
     ]
     assert candidate["unexpected_reverse_swsd"]["accepted_equivalent_carrier"] is False
     assert candidate["unexpected_reverse_high_precision_anchor"] is True
+    assert candidate["unexpected_reverse_anchor_interval"][
+        "accepted_anchor_interval"
+    ] is True
+    assert candidate["unexpected_reverse_segment_ownership"][
+        "accepted_current_segment_owner"
+    ] is True
     assert audit["counts"]["unexpected_reverse_candidate_count"] == 1
     assert {
         row["path_kind"] for row in layers.frcsd_carrier_paths
     } >= {"unexpected_reverse_raw_local_directed"}
+    assert [
+        row["scope_status"]
+        for row in layers.unexpected_reverse_rcsd_ownership
+    ] == ["owned_by_current_segment"]
+
+
+def test_unexpected_reverse_candidate_retains_other_segment_owner_evidence() -> None:
+    loaded = _loaded_unexpected_reverse()
+    current_geometry = LineString([(0, 0), (50, 25), (100, 0)])
+    current_segment = loaded.segments.iloc[0].copy()
+    current_segment.geometry = current_geometry
+    other_segment = current_segment.copy()
+    other_segment["id"] = "other_segment"
+    other_segment["pair_nodes"] = "missing0|missing1"
+    other_segment["roads"] = "missing-road"
+    other_segment.geometry = LineString([(0, 0), (100, 0)])
+    swsd_roads = loaded.swsd_roads.copy()
+    swsd_roads.at[swsd_roads.index[0], "geometry"] = current_geometry
+    loaded = replace(
+        loaded,
+        segments=gpd.GeoDataFrame(
+            [current_segment, other_segment],
+            geometry="geometry",
+            crs=loaded.segments.crs,
+        ),
+        swsd_roads=swsd_roads,
+    )
+
+    candidates, layers, _ = audit_frcsd_candidates(loaded, AuditConfig())
+
+    assert len(candidates) == 1
+    ownership = candidates[0]["unexpected_reverse_segment_ownership"]
+    assert ownership["accepted_current_segment_owner"] is False
+    assert ownership["other_segment_ids"] == ["other_segment"]
+    assert layers.unexpected_reverse_rcsd_ownership[0][
+        "owner_segment_id"
+    ] == "other_segment"
+
+
+def test_unexpected_reverse_candidate_requires_both_anchor_surface_contacts() -> None:
+    loaded = _loaded_unexpected_reverse()
+    offset_geometry = LineString([(0, 4), (100, 4)])
+    segments = loaded.segments.copy()
+    segments.at[segments.index[0], "geometry"] = offset_geometry
+    swsd_roads = loaded.swsd_roads.copy()
+    swsd_roads.at[swsd_roads.index[0], "geometry"] = offset_geometry
+    frcsd_roads = loaded.frcsd_roads.copy()
+    frcsd_roads.at[frcsd_roads.index[0], "geometry"] = offset_geometry
+    loaded = replace(
+        loaded,
+        segments=segments,
+        swsd_roads=swsd_roads,
+        frcsd_roads=frcsd_roads,
+    )
+
+    candidates, _, _ = audit_frcsd_candidates(loaded, AuditConfig())
+
+    assert len(candidates) == 1
+    interval = candidates[0]["unexpected_reverse_anchor_interval"]
+    assert interval["accepted_anchor_interval"] is False
+    assert interval["rejection_reason"] == "endpoint_road_surface_contact_missing"
 
 
 def test_unexpected_reverse_swsd_alternative_is_retained_for_exclusion() -> None:

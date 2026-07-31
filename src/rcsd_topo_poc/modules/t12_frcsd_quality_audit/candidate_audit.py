@@ -31,6 +31,10 @@ from .carrier_graph import (
 )
 from .inputs import LoadedInputs
 from .models import AuditConfig, EvidenceLayers
+from .reverse_segment_scope import (
+    SegmentScopeIndex,
+    evaluate_reverse_segment_scope,
+)
 from .semantic_carrier import (
     STANDARD_SURFACE_TOLERANCE_M,
     evaluate_portal_constrained_semantic_carrier,
@@ -69,6 +73,7 @@ def audit_frcsd_candidates(
     full_graph = build_graph(loaded.frcsd_roads, frcsd_canonicalizer)
     raw_full_graph = build_graph(loaded.frcsd_roads, raw_canonicalizer)
     swsd_full_graph = build_graph(loaded.swsd_roads, swsd_canonicalizer)
+    segment_scope_index = SegmentScopeIndex(loaded.segments)
     segment_id_field = field_name(loaded.segments, "id")
     segment_pair_field = field_name(loaded.segments, "pair_nodes")
     segment_roads_field = field_name(loaded.segments, "roads")
@@ -169,6 +174,7 @@ def audit_frcsd_candidates(
                 frcsd_raw_points=raw_frcsd_points,
                 frcsd_nodes=loaded.frcsd_nodes,
                 raw_local_graph=raw_local_graph,
+                segment_scope_index=segment_scope_index,
                 t07_surfaces=t07_surfaces,
                 t06_cross_evidence=loaded.t06_cross_evidence.get(
                     segment_id, {}
@@ -233,6 +239,21 @@ def audit_frcsd_candidates(
                     "automatic_all_directions_equivalent"
                 ],
                 "equivalence_basis": candidate["automatic_equivalence_basis"],
+                "unexpected_reverse_anchor_interval": bool(
+                    (
+                        candidate.get("unexpected_reverse_anchor_interval")
+                        or {}
+                    ).get("accepted_anchor_interval")
+                ),
+                "unexpected_reverse_current_segment_owner": bool(
+                    (
+                        candidate.get("unexpected_reverse_segment_ownership")
+                        or {}
+                    ).get("accepted_current_segment_owner")
+                ),
+                "unexpected_reverse_other_segment_ids": (
+                    candidate.get("unexpected_reverse_segment_ownership") or {}
+                ).get("other_segment_ids", []),
                 "drivezone_in_road_ratio": candidate["drivezone_in_road_ratio"],
                 "geometry": geometry,
             }
@@ -322,6 +343,19 @@ def audit_frcsd_candidates(
             "required_anchor_for_confirmation": (
                 "dual_t07_unique_standard_surface"
             ),
+            "required_anchor_interval": (
+                "first_and_last_road_contact_corresponding_t07_surface"
+            ),
+            "anchor_surface_topology_tolerance_m": (
+                ROAD_SURFACE_TOPOLOGY_TOLERANCE_M
+            ),
+            "segment_owner_requirement": (
+                "every_inter_anchor_rcsd_road_uniquely_owned_by_current_segment"
+            ),
+            "segment_owner_ranking": (
+                "20m_coverage_then_50m_coverage_then_geometry_distance"
+            ),
+            "segment_owner_tie_policy": "exclude_without_id_tiebreak",
             "drivezone_affects_verdict": False,
             "path_thresholds": {
                 "max_length_ratio": config.path_max_length_ratio,
@@ -352,6 +386,7 @@ def _enrich_unexpected_reverse_candidate(
     frcsd_raw_points: Mapping[str, Any],
     frcsd_nodes: gpd.GeoDataFrame,
     raw_local_graph: GraphBundle,
+    segment_scope_index: SegmentScopeIndex,
     t07_surfaces: Mapping[str, Any],
     t06_cross_evidence: Mapping[str, Any],
     config: AuditConfig,
@@ -510,6 +545,21 @@ def _enrich_unexpected_reverse_candidate(
         [anchor.source_module for anchor in anchors] == ["T07", "T07"]
         and all(node_id in t07_surfaces for node_id in pair_nodes)
     )
+    (
+        anchor_interval,
+        segment_ownership,
+        ownership_evidence,
+    ) = evaluate_reverse_segment_scope(
+        candidate_id=segment_id,
+        current_segment_id=segment_id,
+        direction=unexpected_direction,
+        path=reverse_path,
+        graph=raw_local_graph,
+        source_surface=t07_surfaces.get(pair_nodes[target_index]),
+        target_surface=t07_surfaces.get(pair_nodes[source_index]),
+        segment_index=segment_scope_index,
+    )
+    layers.unexpected_reverse_rcsd_ownership.extend(ownership_evidence)
     for portal in reverse_starts + reverse_ends:
         layers.anchor_portals.append(
             {
@@ -569,6 +619,8 @@ def _enrich_unexpected_reverse_candidate(
         "unexpected_reverse_frcsd": reverse_metrics,
         "unexpected_reverse_swsd": swsd_reverse_metrics,
         "unexpected_reverse_high_precision_anchor": high_precision_anchor,
+        "unexpected_reverse_anchor_interval": anchor_interval,
+        "unexpected_reverse_segment_ownership": segment_ownership,
         "anchor_modules": [anchor.source_module for anchor in anchors],
         "base_nodes": base_nodes,
         "anchor_groups": [list(anchor.grouped_node_ids) for anchor in anchors],

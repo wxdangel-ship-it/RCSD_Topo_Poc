@@ -27,7 +27,8 @@ T12 先用 canonical base-node 图检查必需方向的宽召回疑点，再以 
 - 至少一端具有唯一 T07 标准面信用，或两端均为正式 T03 anchor 时，允许未解决失败自动 confirmed；其它失败按 `insufficient_anchor_confidence` 排除。
 - raw portal 找到等价 carrier 时按 `equivalent_raw_carrier` 排除；生产算法不按对象 ID 特判。
 - 单向 Segment 只有在所有必需方向已等价时才检查反向；短 Segment 的 portal 先按两端 SWSD portal 距离做 Voronoi 分侧，双 T07 可补充同 canonical group、`portal_radius_m` 内的实际 raw endpoint。该扩展只选择端点、不增加图边；raw FRCSD 反向路径仍必须连续包含实际 Road 并通过既有长度比例、附加长度和走廊阈值。
-- SWSD 全图存在通过同一几何阈值的反向替代路径时按 `unexpected_reverse_swsd_equivalent` 排除；否则只有双端唯一 T07 标准面可按 `unexpected_reverse_raw_carrier_dual_t07` 自动确认，弱锚点按 `unexpected_reverse_insufficient_high_precision_evidence` 排除。
+- 反向路径第一/最后 Road 必须分别接触反向 source/target T07 标准路口面，允许既有 `1m` 拓扑容差。扣除双端标准面及容差后，区间内每条 raw RCSD Road 按 `20m coverage > 50m coverage > geometry distance` 与全量 Segment 竞争，当前 Segment 必须是唯一最优；其它 Segment 更优或并列均自动排除。
+- SWSD 全图存在通过同一几何阈值的反向替代路径时按 `unexpected_reverse_swsd_equivalent` 排除；弱锚点按 `unexpected_reverse_insufficient_high_precision_evidence` 排除；其它 Segment 更强覆盖、归属歧义或锚点区间未证明分别排除。只有双端唯一 T07 标准面、锚点区间、当前 Segment 唯一归属全部成立时，才按 `unexpected_reverse_raw_carrier_dual_t07_segment_scoped` 自动确认。
 - review CSV 严格 join 当前 run/candidate；缺失 review 行保留自动决定，显式行可以覆盖。
 
 ## 5. 实现分层
@@ -42,4 +43,4 @@ T12 先用 canonical base-node 图检查必需方向的宽召回疑点，再以 
 
 ## 6. 性能与观测
 
-canonical/raw 全图各建一次，canonical groups 也只构建一次；每个候选只查询并构建 50m local graph。anchored alias 展开使用预构建 group，不做逐候选全图扫描。Road-surface fallback 只对已有失败方向且双端 T07 surface 受信时运行，并复用 local graph/surface 索引。每个要求方向已等价的单向 Segment 最多增加一次 FRCSD local 反向查询和一次 SWSD full 反向查询。summary 记录对象规模及 loading/candidate/decision/output 分段耗时。
+canonical/raw 全图各建一次，canonical groups 与 Segment STRtree 也只构建一次；每个候选只查询并构建 50m local graph。anchored alias 展开使用预构建 group，不做逐候选全图扫描。Road-surface fallback 只对已有失败方向且双端 T07 surface 受信时运行，并复用 local graph/surface 索引。每个要求方向已等价的单向 Segment 最多增加一次 FRCSD local 反向查询、一次 SWSD full 反向查询和实际反向路径 Road 的局部 Segment 归属查询。summary 记录对象规模及 loading/candidate/decision/output 分段耗时。

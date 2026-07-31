@@ -26,6 +26,12 @@ def test_candidate_contract_has_review_layers_without_probability_fields() -> No
         "unexpected_reverse_swsd_status",
         "unexpected_reverse_swsd_path_road_ids",
         "unexpected_reverse_high_precision_anchor",
+        "unexpected_reverse_anchor_interval_status",
+        "unexpected_reverse_anchor_interval_audit",
+        "unexpected_reverse_segment_ownership_status",
+        "unexpected_reverse_owner_segment_ids",
+        "unexpected_reverse_other_segment_ids",
+        "unexpected_reverse_segment_ownership_audit",
     } <= fields
     assert "confidence" not in fields
     assert "probability" not in fields

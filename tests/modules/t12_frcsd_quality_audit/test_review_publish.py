@@ -38,6 +38,8 @@ def _unexpected_candidate(
     *,
     swsd_equivalent: bool = False,
     high_precision_anchor: bool = True,
+    anchor_interval: bool = True,
+    owner_status: str = "current",
 ) -> dict[str, object]:
     return {
         "candidate_id": candidate_id,
@@ -52,6 +54,24 @@ def _unexpected_candidate(
             "t07_standard_surface" if high_precision_anchor else "t03_pair"
         ),
         "unexpected_reverse_high_precision_anchor": high_precision_anchor,
+        "unexpected_reverse_anchor_interval": {
+            "accepted_anchor_interval": anchor_interval,
+            "rejection_reason": (
+                "" if anchor_interval else "endpoint_road_surface_contact_missing"
+            ),
+        },
+        "unexpected_reverse_segment_ownership": {
+            "accepted_current_segment_owner": owner_status == "current",
+            "other_segment_ids": ["other"] if owner_status == "other" else [],
+            "ambiguous_road_ids": ["fr"] if owner_status == "ambiguous" else [],
+            "rejection_reason": (
+                ""
+                if owner_status == "current"
+                else "other_segment_covered"
+                if owner_status == "other"
+                else "segment_ownership_ambiguous"
+            ),
+        },
         "unexpected_reverse_frcsd": {
             "accepted_equivalent_carrier": True,
             "road_ids": ["fr"],
@@ -72,25 +92,34 @@ def test_unexpected_reverse_automatic_decisions_are_precision_first() -> None:
                 "weak-anchor",
                 high_precision_anchor=False,
             ),
+            _unexpected_candidate("other-owner", owner_status="other"),
+            _unexpected_candidate("ambiguous-owner", owner_status="ambiguous"),
+            _unexpected_candidate("anchor-gap", anchor_interval=False),
         ],
         run_id="run",
         review_decisions_path=None,
     )
 
     assert manual == []
-    assert len(reviewed) == 3
+    assert len(reviewed) == 6
     assert [row["candidate_id"] for row in confirmed] == ["confirmed"]
     assert confirmed[0]["issue_type"] == "unexpected_reverse_carrier"
     assert confirmed[0]["decision_rule"] == (
-        "unexpected_reverse_raw_carrier_dual_t07"
+        "unexpected_reverse_raw_carrier_dual_t07_segment_scoped"
     )
     assert [row["candidate_id"] for row in exclusions] == [
         "swsd-equivalent",
         "weak-anchor",
+        "other-owner",
+        "ambiguous-owner",
+        "anchor-gap",
     ]
     assert [row["decision_rule"] for row in exclusions] == [
         "unexpected_reverse_swsd_equivalent",
         "unexpected_reverse_insufficient_high_precision_evidence",
+        "unexpected_reverse_other_segment_covered",
+        "unexpected_reverse_segment_ownership_ambiguous",
+        "unexpected_reverse_anchor_interval_unproven",
     ]
 
 

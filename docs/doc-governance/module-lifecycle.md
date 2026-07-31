@@ -30,7 +30,7 @@
 | `t09_swsd_field_rule_restoration` | `Active` | `modules/t09_swsd_field_rule_restoration` | 路口级通行规则还原模块，已具备初始模块文档面；RCSD Laneinfo 与轨迹通行证据仍待后续迭代。 |
 | `t10_e2e_orchestration` | `Active` | `modules/t10_e2e_orchestration` | 端到端业务流程编排与 Case 证据组织模块；v1 支持 Case 级 replay、空间切片、T06 反馈闭环与内网全量总控，并在 T06 后、T09 前强制执行 audit-only 的 T11；另提供固定跳过 T08、按 `T06 -> T11 -> T12 -> T09` 执行的原始 1V1 F-RCSD 质量检查专用流水线。 |
 | `t11_manual_relation_review` | `Active` | `modules/t11_manual_relation_review` | 人工 relation 修复候选抽取模块；作为 T10 的 audit-only 阶段从 Case/full run root 读取 T05/T06/T10 证据，输出人工审计候选与模板，不回写 T05/T06/T09。 |
-| `t12_frcsd_quality_audit` | `Active` | `modules/t12_frcsd_quality_audit` | 原始 1V1 F-RCSD 质量审计模块；以 SWSD 方向可达性等价为待验证假设，使用 raw endpoint topology、标准路口 portal、SWSD 反向替代路径和锚点可信度检查必需方向缺失与非预期反向载体，自动发布高置信确认与排除证据，人工复核仅作可选 QA 覆盖，不修改 T06 或输入路网。 |
+| `t12_frcsd_quality_audit` | `Active` | `modules/t12_frcsd_quality_audit` | 原始 1V1 F-RCSD 质量审计模块；以 SWSD 方向可达性等价为待验证假设，使用 raw endpoint topology、标准路口 portal、反向双端锚点区间、逐 raw RCSD Road Segment 唯一归属、SWSD 反向替代路径和锚点可信度检查必需方向缺失与非预期反向载体，自动发布高置信确认与排除证据，人工复核仅作可选 QA 覆盖，不修改 T06 或输入路网。 |
 | `p01_arm_build` | `Active POC / 成果模块` | `modules/p01_arm_build` | 异构路口通行能力 POC / 成果模块，当前历史 P10 口径统一改称 P01。 |
 | `p02_wuhan_local_experiment` | `Active POC / 成果模块` | `modules/p02_wuhan_local_experiment` | 武汉局部人工锚定实验模块，复用 T08/T01/T05/T06 并收口关系转换与验证证据。 |
 | `p04_road_direct_generation` | `Active POC / 成果模块` | `modules/p04_road_direct_generation` | 当前执行独立 Segment-first Road 直出：T01 Segment 为顶层业务单元，复用 T07/T03/T04/T08 accepted surface 与 Patch Vector/Patch Road/LaneTopo 构建 Road/Node/RoadNextRoad。冻结 Directional V2 和 High-Precision V3 保留为历史回归基线；无正式入口，尚未生产正式化。 |

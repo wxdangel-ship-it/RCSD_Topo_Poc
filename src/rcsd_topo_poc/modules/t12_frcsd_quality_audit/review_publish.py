@@ -159,6 +159,54 @@ def _automatic_unexpected_reverse_decision(
                 "unexpected_reverse_insufficient_high_precision_evidence"
             ),
         }
+    ownership = candidate.get("unexpected_reverse_segment_ownership") or {}
+    if not bool(ownership.get("accepted_current_segment_owner")):
+        other_segment_ids = ownership.get("other_segment_ids") or []
+        if other_segment_ids:
+            return {
+                "review_status": "excluded_false_positive",
+                "issue_type": "",
+                "review_reason": (
+                    "The reverse raw FRCSD path is more strongly covered by "
+                    "another SWSD Segment and is not owned by the current "
+                    "Segment: "
+                    + "|".join(str(value) for value in other_segment_ids)
+                ),
+                "review_source": "t12_automatic_high_confidence",
+                "reviewed_at_utc": "",
+                "decision_source": "automatic_high_confidence",
+                "decision_rule": "unexpected_reverse_other_segment_covered",
+            }
+        return {
+            "review_status": "excluded_false_positive",
+            "issue_type": "",
+            "review_reason": (
+                "The inter-anchor reverse raw FRCSD Road ownership is "
+                "ambiguous, so the path cannot be attributed uniquely to "
+                "the current Segment."
+            ),
+            "review_source": "t12_automatic_high_confidence",
+            "reviewed_at_utc": "",
+            "decision_source": "automatic_high_confidence",
+            "decision_rule": (
+                "unexpected_reverse_segment_ownership_ambiguous"
+            ),
+        }
+    anchor_interval = candidate.get("unexpected_reverse_anchor_interval") or {}
+    if not bool(anchor_interval.get("accepted_anchor_interval")):
+        return {
+            "review_status": "excluded_false_positive",
+            "issue_type": "",
+            "review_reason": (
+                "The reverse raw FRCSD path does not prove physical Road "
+                "contact between both current Segment T07 standard-surface "
+                "anchors."
+            ),
+            "review_source": "t12_automatic_high_confidence",
+            "reviewed_at_utc": "",
+            "decision_source": "automatic_high_confidence",
+            "decision_rule": "unexpected_reverse_anchor_interval_unproven",
+        }
     frcsd_evidence = candidate.get("unexpected_reverse_frcsd") or {}
     if not bool(frcsd_evidence.get("accepted_equivalent_carrier")):
         raise T12ContractError(
@@ -171,12 +219,15 @@ def _automatic_unexpected_reverse_decision(
         "review_reason": (
             "A one-way SWSD Segment has an equivalent reverse raw local FRCSD "
             "carrier, no equivalent SWSD reverse full-graph carrier, and dual "
-            "unique T07 standard-surface anchors."
+            "unique T07 standard-surface anchors; the path physically spans "
+            "the two anchors and is uniquely owned by the current Segment."
         ),
         "review_source": "t12_automatic_high_confidence",
         "reviewed_at_utc": "",
         "decision_source": "automatic_high_confidence",
-        "decision_rule": "unexpected_reverse_raw_carrier_dual_t07",
+        "decision_rule": (
+            "unexpected_reverse_raw_carrier_dual_t07_segment_scoped"
+        ),
     }
 
 

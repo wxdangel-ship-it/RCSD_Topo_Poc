@@ -2,7 +2,7 @@
 
 ## 范围
 
-- 主审计日期：2026-06-12；T09 增量审计：2026-07-10；T10 性能与 60KB 治理增量审计：2026-07-11；T01/T06 ownership 增量审计：2026-07-12；T10 增加 T11 工作流增量审计：2026-07-13；T06 性能恢复与 Step3 修复性拆分增量审计：2026-07-14；T06 全量性能恢复增量审计：2026-07-16；T12 F-RCSD 质检、T10 可选接入及专用流水线增量审计：2026-07-18；T12 reviewed resume 与 false-positive hardening 增量审计：2026-07-19；T12 Road-surface portal 增量审计：2026-07-20；T12 anchored canonical alias raw portal 增量审计：2026-07-27；P04 Road 直出第二里程碑、冻结 Directional Road V2、High-Precision Road V3 与独立几何/拓扑 QA 增量审计：2026-07-21；P04 Segment-first Road直出增量审计：2026-07-22；P04 Segment-first LaneTopo 投影拆分增量审计：2026-07-23；P05 M0/M1/M2R/R2/PTO-P0/JSG-PTO-P0 神经 Road POC 增量审计：2026-07-21；P05 JSG-PTO-P1/P2/P3、方案 A baseline、Scheme-A-P1、Scheme-A-P2-P0 与 Scheme-A-Dataset-P0 增量审计：2026-07-22；P05 Scheme-A-P2-P1/P2-P2-P0/P2-P2-P1/P2-P2-P2-P0/P2-P2-P2-P1/P2-P2-P2-P2/P2-P3-P0/P2-P3-P1 增量审计：2026-07-23；P05 Scheme-A-P2-P3-P6/P9/P10/P11/P12R/P12R-R1/P13-P0 增量审计：2026-07-24
+- 主审计日期：2026-06-12；T09 增量审计：2026-07-10；T10 性能与 60KB 治理增量审计：2026-07-11；T01/T06 ownership 增量审计：2026-07-12；T10 增加 T11 工作流增量审计：2026-07-13；T06 性能恢复与 Step3 修复性拆分增量审计：2026-07-14；T06 全量性能恢复增量审计：2026-07-16；T12 F-RCSD 质检、T10 可选接入及专用流水线增量审计：2026-07-18；T12 reviewed resume 与 false-positive hardening 增量审计：2026-07-19；T12 Road-surface portal 增量审计：2026-07-20；T12 anchored canonical alias raw portal 增量审计：2026-07-27；T12 反向路径 Segment 范围增量审计：2026-07-31；P04 Road 直出第二里程碑、冻结 Directional Road V2、High-Precision Road V3 与独立几何/拓扑 QA 增量审计：2026-07-21；P04 Segment-first Road直出增量审计：2026-07-22；P04 Segment-first LaneTopo 投影拆分增量审计：2026-07-23；P05 M0/M1/M2R/R2/PTO-P0/JSG-PTO-P0 神经 Road POC 增量审计：2026-07-21；P05 JSG-PTO-P1/P2/P3、方案 A baseline、Scheme-A-P1、Scheme-A-P2-P0 与 Scheme-A-Dataset-P0 增量审计：2026-07-22；P05 Scheme-A-P2-P1/P2-P2-P0/P2-P2-P1/P2-P2-P2-P0/P2-P2-P2-P1/P2-P2-P2-P2/P2-P3-P0/P2-P3-P1 增量审计：2026-07-23；P05 Scheme-A-P2-P3-P6/P9/P10/P11/P12R/P12R-R1/P13-P0 增量审计：2026-07-24
 - P04主干物理交接、局部平滑与显式LaneTopo关系增量审计：2026-07-26。
 - 阈值：单文件超过 `100 KB`
 - 口径：按 `code-boundaries-and-entrypoints.md`，审计纳入版本管理的 `src/`、`scripts/`、`tests/`、`tools/` 下源码 / 脚本文件。
@@ -17,6 +17,7 @@
 - 2026-07-19 T12 false-positive hardening 轮次扫描全部 `14` 个新增/修改源码、测试和 SpecKit validation 脚本：`>=100KB` 为 `0`；最大为 `candidate_audit.py`（`23435` bytes），新拆出的 `semantic_carrier.py` 为 `8348` bytes，最大一次性 validation 脚本 `analyze_alias_transitions.py` 为 `15836` bytes。正式入口、CLI 参数和 T10 阶段顺序均未改变；新增 semantic helper 只承接 portal-constrained carrier 的端点与内部 alias 门禁，不回填 candidate 主编排。
 - 2026-07-20 T12 Road-surface portal 轮次扫描全部 `10` 个新增/修改源码、测试和 SpecKit validation 脚本：`>=100KB` 为 `0`；最大为 `candidate_audit.py`（`29673` bytes），新拆出的 `surface_portal_carrier.py` 为 `22950` bytes，`outputs.py` 为 `22016` bytes，一次性原始数据分析脚本 `analyze_anchored_surface_portals.py` 为 `17081` bytes。正式入口、CLI 参数与 T10 阶段顺序均未改变；新 helper 只承接双 T07 唯一标准面的 Road-surface 有向 carrier、anchor→frontier 支撑与 audit-only 距离证据，不包含对象 ID 特判。
 - 2026-07-27 T12 anchored canonical alias raw portal 轮次扫描全部 `5` 个修改源码/测试文件：`>=100KB` 与 `>=60KiB` 均为 `0`；最大为 `candidate_audit.py`（`31453` bytes），`anchor_portals.py` 为 `14338` bytes，两个专项测试分别为 `15403` 与 `13184` bytes。变更只把 T05 选中 `base_id` mainNode 的 canonical raw alias group 展开为 Direction 严格的 raw portal；不递归展开其它 grouped node 的 group，未新增入口、CLI 参数、依赖或 Case/Segment 特判，`entrypoint-registry.md` 无需改变。
+- 2026-07-31 T12 反向路径 Segment 范围轮次扫描全部 `9` 个新增/修改源码与测试文件：`>=100000 bytes` 与 `>=61440 bytes` 均为 `0`；最大为 `candidate_audit.py`（`52472` bytes），新增独立归属 helper `reverse_segment_scope.py` 为 `13467` bytes。变更复用 T06 已确认的 `20m / 50m / distance` ownership 排序，只在 T12 内增加双端标准面区间、逐 raw RCSD Road 唯一 Segment 归属及 additive 审计证据；未新增入口、CLI 参数或依赖，`entrypoint-registry.md` 无需改变。
 - 2026-07-21 P04 Road 直出第二里程碑、冻结 Directional Road V2、High-Precision Road V3、双向证据塌缩降级、物理走廊、三类几何来源及独立几何/拓扑 QA 扫描 P04 `src/`、`tests/` 与 V3 SpecKit `validation/` 共 `56` 个 `.py` 文件：`>=61440 bytes` 与 `>=100KB` 均为 0；最大为 `directional_evidence.py`（`42766` bytes），V3 最大为 `high_precision_geometry.py`（`37608` bytes），新增 V2 对照 helper 为 `6170` bytes，性能 replay validation 为 `2179` bytes。directional/high-precision 的 evidence、geometry、comparison、movement、quality、topology、pipeline、QGIS 与测试按职责隔离。新增/修改均为模块内研究 callable、测试和一次性验证工件，不新增 repo CLI/root script，不修改 M2、冻结 V2、T00-T12 V1、`scripts/` 或入口 registry，仓库超阈值集合不变。
 - 2026-07-22 P04 Segment-first 目标覆盖迭代扫描 `24` 个源码与 `19` 个专项测试：`>=61440 bytes` 与 `>=100KB` 均为0；最大源码为`segment_first_pipeline.py`（`57688` bytes），其次为`segment_first_nodes.py`（`52055` bytes），最大测试为`test_segment_first_nodes.py`（`14890` bytes）。本轮新增 JunctionUnit endpoint surface 恢复候选及已发布 carrier 几何重叠冲突保护，未新增 repo CLI/root script，未修改 T01–T12、`scripts/`或入口 registry。
 - 2026-07-23 P04 Segment-first LaneTopo 投影与 endpoint surface 定向救援迭代后扫描 `25` 个 `segment_first*.py` 源码与 `19` 个专项测试：`>=61440 bytes` 为 `1`、`>=100KB` 为 `0`。主编排 `segment_first_pipeline.py` 为 `88766` bytes；LaneTopo 正式 Road 投影、父 Road 同载体识别、Lane 级拒绝归集、已接受物理交接复用和 Junction carrier path 查询保持在 `segment_first_lane_topo.py`（`10857` bytes）。Endpoint 候选只使用 T07/T03/T04 accepted surface，且仅在普通构图产生 Junction rejected spoke、同时存在贯通两端面的 Patch 候选时定向重选；不完整方向先剔除，再复用既有 DriveZone 约束反向推导，未进入救援的 Segment 保持原候选选择。Road-Lane 正式关系同时按 Patch Road lineage 与 Road `source_lane_ids` 编译，覆盖 Lane fragment 直出 Road。本轮未新增正式入口，未修改 T01–T12、`scripts/` 或入口 registry；主编排后续仍应继续拆出 network rebuild/summary职责，不得回填投影算法。
@@ -578,19 +579,21 @@ Access 几何同时缺失时不猜测，继续由
 | `tests/modules/p04_road_direct_generation/test_segment_first_geometry_metrics.py` | `1787` bytes | 转角与道路面覆盖精确缓存合同 | 重复调用必须保持数值等价 |
 | `tests/modules/p04_road_direct_generation/test_segment_first_path_scoring.py` | `1164` bytes | 路径评分数值与布尔归一合同 | 不改变缺失值和非有限值语义 |
 
-### T12 非预期反向载体检出当前快照（2026-07-30）
+### T12 非预期反向载体检出当前快照（2026-07-31）
 
 本轮在主干已有 anchored canonical alias raw portal 规则上扩展 T12
-候选、输出和测试，不新增或改变执行入口。全部受影响源码/测试均低于
+锚点区间、Segment 唯一归属、输出和测试，不新增或改变执行入口。全部受影响源码/测试均低于
 `100000` bytes 硬阈值。
 
 | 文件 | 当前体量 | 当前职责 | 后续约束 |
 |---|---:|---|---|
-| `src/rcsd_topo_poc/modules/t12_frcsd_quality_audit/models.py` | `3608` bytes | additive schema、问题枚举和证据层模型 | 保持纯模型职责 |
-| `src/rcsd_topo_poc/modules/t12_frcsd_quality_audit/candidate_audit.py` | `50193` bytes | 必需方向缺失、anchored alias portal 与非预期反向载体候选、portal 分侧及路径证据 | 新候选类型继续按独立 helper 分层；达到 60KiB 前评估拆分 |
-| `src/rcsd_topo_poc/modules/t12_frcsd_quality_audit/review_publish.py` | `10151` bytes | 候选种类专属自动决定与外部 review override | 不承接图或几何算法 |
-| `src/rcsd_topo_poc/modules/t12_frcsd_quality_audit/outputs.py` | `24110` bytes | additive CSV/GPKG/JSON 发布与证据图层 | 不承接候选判断 |
-| `tests/modules/t12_frcsd_quality_audit/test_candidate_audit.py` | `20830` bytes | 必需方向 portal、反向发现、SWSD 替代排除、弱锚点和 T07 alias endpoint 回归 | 按候选主题保持拆分 |
-| `tests/modules/t12_frcsd_quality_audit/test_review_publish.py` | `8592` bytes | 精度优先自动决定与 review 契约 | 保持 decision 专项 |
-| `tests/modules/t12_frcsd_quality_audit/test_outputs.py` | `1184` bytes | additive 输出字段合同 | 保持轻量 |
+| `src/rcsd_topo_poc/modules/t12_frcsd_quality_audit/models.py` | `3708` bytes | additive schema、问题枚举和证据层模型 | 保持纯模型职责 |
+| `src/rcsd_topo_poc/modules/t12_frcsd_quality_audit/candidate_audit.py` | `52472` bytes | 必需方向缺失、anchored alias portal 与非预期反向载体候选、portal 分侧及路径证据接线 | 新候选类型继续按独立 helper 分层；达到 60KiB 前评估拆分 |
+| `src/rcsd_topo_poc/modules/t12_frcsd_quality_audit/reverse_segment_scope.py` | `13467` bytes | 反向路径双端面接触、逐 raw RCSD Road Segment 唯一归属与空间索引 | 不承接候选发布或 Case 特判 |
+| `src/rcsd_topo_poc/modules/t12_frcsd_quality_audit/review_publish.py` | `12541` bytes | 候选种类专属自动决定与外部 review override | 不承接图或几何算法 |
+| `src/rcsd_topo_poc/modules/t12_frcsd_quality_audit/outputs.py` | `26202` bytes | additive CSV/GPKG/JSON 发布与证据图层 | 不承接候选判断 |
+| `tests/modules/t12_frcsd_quality_audit/test_candidate_audit.py` | `23449` bytes | 必需方向 portal、反向发现、SWSD 替代、弱锚点、T07 alias endpoint 与 Segment scope 接线回归 | 按候选主题保持拆分 |
+| `tests/modules/t12_frcsd_quality_audit/test_reverse_segment_scope.py` | `3899` bytes | 锚点区间、当前 Segment 唯一归属、其它 Segment 覆盖与并列归属回归 | 保持 scope helper 专项 |
+| `tests/modules/t12_frcsd_quality_audit/test_review_publish.py` | `9911` bytes | 精度优先自动决定与 review 契约 | 保持 decision 专项 |
+| `tests/modules/t12_frcsd_quality_audit/test_outputs.py` | `1491` bytes | additive 输出字段合同 | 保持轻量 |
 | `tests/modules/t12_frcsd_quality_audit/test_1026960_fixture.py` | `2370` bytes | 既有冻结清单与生产代码无 Case ID 硬编码门禁 | 不把新候选写入旧 review fixture |

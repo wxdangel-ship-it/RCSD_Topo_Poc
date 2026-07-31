@@ -7,10 +7,15 @@
 - review-only：可选外部 QA 覆盖、来源和时间。
 - formal：confirmed CSV/GPKG 与 summary 中的确认计数。
 - internal：raw/canonical/portal-constrained semantic/FRCSD 反向/SWSD 反向 carrier/portal GPKG、`unexpected_reverse_rcsd_ownership` 逐 Road 空间证据、T06/DriveZone 交叉证据和运行日志。
+- Junction candidate：T03/T07 来源身份、正式 eligibility、association/Step6/Step7 状态、support 来源、target projection、endpoint support/global degree、support component、未匹配 component、Direction、局部替代 carrier、跨层与几何状态。
+- Junction formal：独立 Point candidates/confirmed/exclusions；T07 N:1 逐 Junction 行共享 conflict group。
+- Junction internal：support Road、FRCSD endpoint、target projection 与 T07 conflict link 空间层。
 
 ## 2. Formal 成果
 
 `t12_frcsd_confirmed_quality_issues.*` 只含自动高置信或外部 override confirmed。任何仅 canonical 候选、概率标签或锚点信用不足行都不得进入。
+
+`t12_frcsd_confirmed_junction_quality_issues.*` 只含 T03 原始 FRCSD 高置信复核通过或 T07 1:N/N:1 稳定失败直接发布。T03 rejected 本身、最近距离、`duplicate_target_rows`、无效几何、正式高置信跨层解释或证据不足不得进入。
 
 ## 3. 运行审计
 
@@ -18,8 +23,10 @@
 - 参数：portal/local/path/crop 全部阈值。
 - 拓扑：Road/Node 数量、缺失 endpoint、`silent_fix=false`。
 - 证据关系：T06 Step2 指向的 T05 Phase2 目录必须与所给 anchor audit 同批。
+- Junction 来源：T03/T07 run root、正式工件绝对路径与 SHA-256、T03 rejected case 列表和 T07 error type 计数。
+- Junction 参数与拓扑：`6m` endpoint tolerance、`50m` local scope、support/global endpoint degree、component、Direction、替代 carrier 与 `silent_fix=false`。
 - 性能：对象规模、分阶段和总耗时、Python/GIS 库环境。
 
 ## 4. 下游交接
 
-T10 在 T11 后、T09 前记录 T12 输出位置和状态；该顺序不表示 T12 消费 T11 输出。T12 不成为 T11/T09 的业务输入，也不改变 T06 F-RCSD 文件。
+T10 在 T11 后、T09 前记录 T12 Segment 与 Junction 输出位置和状态；该顺序不表示 T12 消费 T11 输出。T10 显式传入当前 T03 run root，并在正式 T07 Step3 cardinality 工件存在时传入其 stage root。T12 不成为 T11/T09 的业务输入，也不改变 T06 F-RCSD 文件。

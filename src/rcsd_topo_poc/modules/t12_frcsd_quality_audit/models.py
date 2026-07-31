@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = "2026-07-31.t12_frcsd_quality_audit.v8"
+SCHEMA_VERSION = "2026-07-31.t12_frcsd_quality_audit.v9"
 
 REVIEW_STATUSES = frozenset(
     {
@@ -20,6 +20,9 @@ ISSUE_TYPES = frozenset(
         "directed_carrier_missing",
         "required_local_connectivity_missing",
         "unexpected_reverse_carrier",
+        "junction_required_topology_missing",
+        "junction_reality_or_precision_gap",
+        "junction_relation_cardinality_mismatch",
     }
 )
 
@@ -39,6 +42,8 @@ class AuditConfig:
     sample_spacing_m: float = 5.0
     processing_crs: str | None = None
     allow_unverified_t06_evidence: bool = False
+    junction_endpoint_tolerance_m: float = 6.0
+    junction_local_radius_m: float = 50.0
 
     def validate(self) -> None:
         positive = {
@@ -49,6 +54,8 @@ class AuditConfig:
             "path_max_additive_m": self.path_max_additive_m,
             "path_max_corridor_distance_m": self.path_max_corridor_distance_m,
             "sample_spacing_m": self.sample_spacing_m,
+            "junction_endpoint_tolerance_m": self.junction_endpoint_tolerance_m,
+            "junction_local_radius_m": self.junction_local_radius_m,
         }
         invalid = [name for name, value in positive.items() if value <= 0]
         if invalid:
@@ -69,6 +76,8 @@ class AuditConfig:
             "sample_spacing_m": self.sample_spacing_m,
             "processing_crs": self.processing_crs,
             "allow_unverified_t06_evidence": self.allow_unverified_t06_evidence,
+            "junction_endpoint_tolerance_m": self.junction_endpoint_tolerance_m,
+            "junction_local_radius_m": self.junction_local_radius_m,
         }
 
 
@@ -98,6 +107,15 @@ class T12Artifacts:
     confirmed_count: int
     exclusion_count: int
     manual_review_count: int
+    junction_candidates_csv: Path
+    junction_candidates_gpkg: Path
+    junction_confirmed_csv: Path
+    junction_confirmed_gpkg: Path
+    junction_exclusions_csv: Path
+    junction_carrier_evidence_gpkg: Path
+    junction_candidate_count: int
+    junction_confirmed_count: int
+    junction_exclusion_count: int
 
 
 @dataclass

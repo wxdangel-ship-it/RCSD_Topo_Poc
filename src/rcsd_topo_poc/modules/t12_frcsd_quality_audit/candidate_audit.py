@@ -86,7 +86,11 @@ def audit_frcsd_candidates(
     )
     drivezone_union = (
         loaded.drivezone.geometry.union_all()
-        if loaded.drivezone is not None and not loaded.drivezone.empty
+        if (
+            loaded.drivezone is not None
+            and not loaded.drivezone.empty
+            and bool(loaded.drivezone.geometry.is_valid.all())
+        )
         else None
     )
     candidates: list[dict[str, Any]] = []

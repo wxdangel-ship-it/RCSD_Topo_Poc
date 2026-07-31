@@ -1434,11 +1434,23 @@ if [[ "$T12_USE_MANIFEST_OUTPUTS" == "1" ]]; then
   T12_RUN_ROOT="$(manifest_get outputs t12_run_root "$T12_OUT_ROOT/$T12_RUN_ID")"
   T12_CANDIDATES_CSV="$(manifest_get outputs t12_candidates_csv "$T12_RUN_ROOT/t12_frcsd_quality_candidates.csv")"
   T12_CONFIRMED_CSV="$(manifest_get outputs t12_confirmed_csv "$T12_RUN_ROOT/t12_frcsd_confirmed_quality_issues.csv")"
+  T12_JUNCTION_CANDIDATES_CSV="$(manifest_get outputs t12_junction_candidates_csv "$T12_RUN_ROOT/t12_frcsd_junction_quality_candidates.csv")"
+  T12_JUNCTION_CANDIDATES_GPKG="$(manifest_get outputs t12_junction_candidates_gpkg "$T12_RUN_ROOT/t12_frcsd_junction_quality_candidates.gpkg")"
+  T12_JUNCTION_CONFIRMED_CSV="$(manifest_get outputs t12_junction_confirmed_csv "$T12_RUN_ROOT/t12_frcsd_confirmed_junction_quality_issues.csv")"
+  T12_JUNCTION_CONFIRMED_GPKG="$(manifest_get outputs t12_junction_confirmed_gpkg "$T12_RUN_ROOT/t12_frcsd_confirmed_junction_quality_issues.gpkg")"
+  T12_JUNCTION_EXCLUSIONS_CSV="$(manifest_get outputs t12_junction_exclusions_csv "$T12_RUN_ROOT/t12_frcsd_junction_quality_exclusions.csv")"
+  T12_JUNCTION_EVIDENCE_GPKG="$(manifest_get outputs t12_junction_evidence_gpkg "$T12_RUN_ROOT/t12_frcsd_junction_carrier_evidence.gpkg")"
   T12_SUMMARY_JSON="$(manifest_get outputs t12_summary_json "$T12_RUN_ROOT/t12_frcsd_quality_audit_summary.json")"
 else
   T12_RUN_ROOT="$T12_OUT_ROOT/$T12_RUN_ID"
   T12_CANDIDATES_CSV="$T12_RUN_ROOT/t12_frcsd_quality_candidates.csv"
   T12_CONFIRMED_CSV="$T12_RUN_ROOT/t12_frcsd_confirmed_quality_issues.csv"
+  T12_JUNCTION_CANDIDATES_CSV="$T12_RUN_ROOT/t12_frcsd_junction_quality_candidates.csv"
+  T12_JUNCTION_CANDIDATES_GPKG="$T12_RUN_ROOT/t12_frcsd_junction_quality_candidates.gpkg"
+  T12_JUNCTION_CONFIRMED_CSV="$T12_RUN_ROOT/t12_frcsd_confirmed_junction_quality_issues.csv"
+  T12_JUNCTION_CONFIRMED_GPKG="$T12_RUN_ROOT/t12_frcsd_confirmed_junction_quality_issues.gpkg"
+  T12_JUNCTION_EXCLUSIONS_CSV="$T12_RUN_ROOT/t12_frcsd_junction_quality_exclusions.csv"
+  T12_JUNCTION_EVIDENCE_GPKG="$T12_RUN_ROOT/t12_frcsd_junction_carrier_evidence.gpkg"
   T12_SUMMARY_JSON="$T12_RUN_ROOT/t12_frcsd_quality_audit_summary.json"
 fi
 if should_run_t12; then
@@ -1446,6 +1458,10 @@ if should_run_t12; then
   require_file FRCSD_1V1_ROADS_PATH "$FRCSD_1V1_ROADS_PATH"
   require_file FRCSD_1V1_NODES_PATH "$FRCSD_1V1_NODES_PATH"
   require_file T05_ANCHOR_AUDIT "$T05_ANCHOR_AUDIT"
+  if [[ ! -d "$T03_RUN_ROOT" ]]; then
+    echo "[BLOCK] T03_RUN_ROOT does not exist: $T03_RUN_ROOT" >&2
+    exit 2
+  fi
   if [[ -n "$T12_REVIEW_DECISIONS" ]]; then
     require_file T12_REVIEW_DECISIONS "$T12_REVIEW_DECISIONS"
   fi
@@ -1466,9 +1482,13 @@ if should_run_t12; then
     --t05-anchor-audit "$T05_ANCHOR_AUDIT"
     --rcsd-intersection "$RCSD_INTERSECTION_PATH"
     --t06-run-root "$T06_RUN_ROOT"
+    --t03-run-root "$T03_RUN_ROOT"
     --drivezone "$DRIVEZONE_PATH"
     --progress
   )
+  if [[ -f "$T07_STEP3_ROOT/relation_cardinality_errors.json" || -f "$T07_STEP3_ROOT/relation_cardinality_errors.csv" ]]; then
+    T12_ARGS+=(--t07-step3-run-root "$T07_STEP3_ROOT")
+  fi
   if [[ -n "$T12_REVIEW_DECISIONS" ]]; then
     T12_ARGS+=(--review-decisions "$T12_REVIEW_DECISIONS")
   fi
@@ -1481,10 +1501,22 @@ if should_run_t12; then
   run_logged t12 "${T12_ARGS[@]}"
   require_file T12_CANDIDATES_CSV "$T12_CANDIDATES_CSV"
   require_file T12_CONFIRMED_CSV "$T12_CONFIRMED_CSV"
+  require_file T12_JUNCTION_CANDIDATES_CSV "$T12_JUNCTION_CANDIDATES_CSV"
+  require_file T12_JUNCTION_CANDIDATES_GPKG "$T12_JUNCTION_CANDIDATES_GPKG"
+  require_file T12_JUNCTION_CONFIRMED_CSV "$T12_JUNCTION_CONFIRMED_CSV"
+  require_file T12_JUNCTION_CONFIRMED_GPKG "$T12_JUNCTION_CONFIRMED_GPKG"
+  require_file T12_JUNCTION_EXCLUSIONS_CSV "$T12_JUNCTION_EXCLUSIONS_CSV"
+  require_file T12_JUNCTION_EVIDENCE_GPKG "$T12_JUNCTION_EVIDENCE_GPKG"
   require_file T12_SUMMARY_JSON "$T12_SUMMARY_JSON"
   manifest_set outputs t12_run_root "$T12_RUN_ROOT"
   manifest_set outputs t12_candidates_csv "$T12_CANDIDATES_CSV"
   manifest_set outputs t12_confirmed_csv "$T12_CONFIRMED_CSV"
+  manifest_set outputs t12_junction_candidates_csv "$T12_JUNCTION_CANDIDATES_CSV"
+  manifest_set outputs t12_junction_candidates_gpkg "$T12_JUNCTION_CANDIDATES_GPKG"
+  manifest_set outputs t12_junction_confirmed_csv "$T12_JUNCTION_CONFIRMED_CSV"
+  manifest_set outputs t12_junction_confirmed_gpkg "$T12_JUNCTION_CONFIRMED_GPKG"
+  manifest_set outputs t12_junction_exclusions_csv "$T12_JUNCTION_EXCLUSIONS_CSV"
+  manifest_set outputs t12_junction_evidence_gpkg "$T12_JUNCTION_EVIDENCE_GPKG"
   manifest_set outputs t12_summary_json "$T12_SUMMARY_JSON"
   manifest_stage_record t12 T12 passed "$LOG_ROOT/t12.log" \
     "inputs.swsd_segment=$T01_SEGMENT" \
@@ -1495,12 +1527,20 @@ if should_run_t12; then
     "inputs.t05_anchor_audit=$T05_ANCHOR_AUDIT" \
     "inputs.rcsd_intersection=$RCSD_INTERSECTION_PATH" \
     "inputs.t06_run_root=$T06_RUN_ROOT" \
+    "inputs.t03_run_root=$T03_RUN_ROOT" \
+    "inputs.t07_step3_run_root=$T07_STEP3_ROOT" \
     "inputs.drivezone=$DRIVEZONE_PATH" \
     "inputs.review_decisions=$T12_REVIEW_DECISIONS" \
     "inputs.case_manifest=$T12_CASE_MANIFEST" \
     "outputs.run_root=$T12_RUN_ROOT" \
     "outputs.candidates_csv=$T12_CANDIDATES_CSV" \
     "outputs.confirmed_csv=$T12_CONFIRMED_CSV" \
+    "outputs.junction_candidates_csv=$T12_JUNCTION_CANDIDATES_CSV" \
+    "outputs.junction_candidates_gpkg=$T12_JUNCTION_CANDIDATES_GPKG" \
+    "outputs.junction_confirmed_csv=$T12_JUNCTION_CONFIRMED_CSV" \
+    "outputs.junction_confirmed_gpkg=$T12_JUNCTION_CONFIRMED_GPKG" \
+    "outputs.junction_exclusions_csv=$T12_JUNCTION_EXCLUSIONS_CSV" \
+    "outputs.junction_evidence_gpkg=$T12_JUNCTION_EVIDENCE_GPKG" \
     "outputs.summary_json=$T12_SUMMARY_JSON" \
     "params.audit_only=true" \
     "params.run_id=$T12_RUN_ID" \

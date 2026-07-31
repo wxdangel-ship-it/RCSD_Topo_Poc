@@ -10,6 +10,8 @@ import geopandas as gpd
 import pandas as pd
 
 from .models import AuditConfig, EvidenceLayers, SCHEMA_VERSION, T12Artifacts
+from .junction_audit import JunctionAuditResult
+from .junction_outputs import write_junction_outputs
 
 
 def write_outputs(
@@ -28,6 +30,8 @@ def write_outputs(
     topology_audit: Mapping[str, Any],
     evidence_audit: Mapping[str, Any],
     candidate_audit: Mapping[str, Any],
+    junction_result: JunctionAuditResult,
+    junction_input_audit: Mapping[str, Any],
     runtime: dict[str, Any],
 ) -> T12Artifacts:
     output_started = time.perf_counter()
@@ -65,6 +69,11 @@ def write_outputs(
         empty_columns=("candidate_id", "segment_id", "review_status", "issue_type"),
     )
     _write_evidence(paths["evidence_gpkg"], layers, processing_crs)
+    junction_paths = write_junction_outputs(
+        run_root=run_root,
+        processing_crs=processing_crs,
+        result=junction_result,
+    )
     stage_elapsed = runtime.get("stage_elapsed_seconds")
     if isinstance(stage_elapsed, dict):
         stage_elapsed["output_write"] = time.perf_counter() - output_started
@@ -90,6 +99,10 @@ def write_outputs(
             "by_decision_source": _count_by(reviewed, "decision_source"),
             "by_decision_rule": _count_by(reviewed, "decision_rule"),
         },
+        "junction": {
+            **dict(junction_result.audit),
+            "input_audit": dict(junction_input_audit),
+        },
         "crs": input_audit["crs"],
         "quality": {
             "invalid_geometry_count": input_audit["invalid_geometry_count"],
@@ -112,7 +125,10 @@ def write_outputs(
             ),
         },
         "runtime": dict(runtime),
-        "outputs": {name: str(path) for name, path in paths.items()},
+        "outputs": {
+            **{name: str(path) for name, path in paths.items()},
+            **{name: str(path) for name, path in junction_paths.items()},
+        },
         "silent_fix": False,
     }
     manifest = {
@@ -123,6 +139,8 @@ def write_outputs(
         "parameters": config.as_dict(),
         "t06_evidence": dict(evidence_audit),
         "candidate_audit": dict(candidate_audit),
+        "junction_input_audit": dict(junction_input_audit),
+        "junction_audit": dict(junction_result.audit),
         "counts": summary["counts"],
         "runtime": dict(runtime),
         "outputs": summary["outputs"],
@@ -156,6 +174,15 @@ def write_outputs(
         confirmed_count=len(confirmed),
         exclusion_count=len(exclusions),
         manual_review_count=len(manual),
+        junction_candidates_csv=junction_paths["junction_candidates_csv"],
+        junction_candidates_gpkg=junction_paths["junction_candidates_gpkg"],
+        junction_confirmed_csv=junction_paths["junction_confirmed_csv"],
+        junction_confirmed_gpkg=junction_paths["junction_confirmed_gpkg"],
+        junction_exclusions_csv=junction_paths["junction_exclusions_csv"],
+        junction_carrier_evidence_gpkg=junction_paths["junction_evidence_gpkg"],
+        junction_candidate_count=len(junction_result.candidates),
+        junction_confirmed_count=len(junction_result.confirmed),
+        junction_exclusion_count=len(junction_result.exclusions),
     )
 
 

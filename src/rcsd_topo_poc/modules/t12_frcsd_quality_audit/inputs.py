@@ -81,7 +81,11 @@ def load_inputs(
         name: int((~frame.geometry.is_valid | frame.geometry.is_empty).sum())
         for name, frame in vectors.items()
     }
-    invalid_nonzero = {name: count for name, count in invalid_geometry.items() if count}
+    invalid_nonzero = {
+        name: count
+        for name, count in invalid_geometry.items()
+        if count and name != "drivezone"
+    }
     if invalid_nonzero:
         raise T12ContractError(f"invalid or empty geometries found: {invalid_nonzero}")
 

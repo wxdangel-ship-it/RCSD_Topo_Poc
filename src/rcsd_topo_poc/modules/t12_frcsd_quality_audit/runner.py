@@ -12,6 +12,8 @@ import shapely
 
 from .candidate_audit import audit_frcsd_candidates
 from .inputs import load_inputs
+from .junction_audit import audit_junction_quality
+from .junction_inputs import load_junction_sources
 from .models import AuditConfig, T12Artifacts, T12ContractError
 from .outputs import write_failure_manifest, write_outputs
 from .review_publish import apply_review_decisions
@@ -32,6 +34,8 @@ def run_t12_frcsd_quality_audit(
     drivezone_path: str | Path | None = None,
     case_manifest_path: str | Path | None = None,
     review_decisions_path: str | Path | None = None,
+    t03_run_root: str | Path | None = None,
+    t07_step3_run_root: str | Path | None = None,
     config: AuditConfig | None = None,
     progress: bool = False,
 ) -> T12Artifacts:
@@ -64,6 +68,15 @@ def run_t12_frcsd_quality_audit(
             config=active_config,
         )
         stage_elapsed["loading_and_preflight"] = time.perf_counter() - stage_start
+        _progress(progress, "load_junction_sources")
+        stage_start = time.perf_counter()
+        junction_sources = load_junction_sources(
+            t03_run_root=Path(t03_run_root) if t03_run_root else None,
+            t07_step3_run_root=(
+                Path(t07_step3_run_root) if t07_step3_run_root else None
+            ),
+        )
+        stage_elapsed["junction_input"] = time.perf_counter() - stage_start
         _progress(progress, "audit_candidates")
         stage_start = time.perf_counter()
         candidates, layers, candidate_audit = audit_frcsd_candidates(
@@ -71,6 +84,15 @@ def run_t12_frcsd_quality_audit(
             active_config,
         )
         stage_elapsed["candidate_audit"] = time.perf_counter() - stage_start
+        _progress(progress, "audit_junction_quality")
+        stage_start = time.perf_counter()
+        junction_result = audit_junction_quality(
+            loaded,
+            junction_sources,
+            active_config,
+            run_id=active_run_id,
+        )
+        stage_elapsed["junction_audit"] = time.perf_counter() - stage_start
         _progress(progress, "apply_automatic_decision_and_optional_review")
         stage_start = time.perf_counter()
         reviewed, confirmed, exclusions, manual = apply_review_decisions(
@@ -91,6 +113,8 @@ def run_t12_frcsd_quality_audit(
                 "segment_count": len(loaded.segments),
                 "frcsd_road_count": len(loaded.frcsd_roads),
                 "frcsd_node_count": len(loaded.frcsd_nodes),
+                "t03_rejected_case_count": len(junction_sources.t03_cases),
+                "t07_cardinality_error_row_count": len(junction_sources.t07_rows),
             },
             "stage_elapsed_seconds": stage_elapsed,
         }
@@ -109,6 +133,8 @@ def run_t12_frcsd_quality_audit(
             topology_audit=loaded.topology_audit,
             evidence_audit=loaded.evidence_audit,
             candidate_audit=candidate_audit,
+            junction_result=junction_result,
+            junction_input_audit=junction_sources.audit,
             runtime=runtime,
         )
         return artifacts

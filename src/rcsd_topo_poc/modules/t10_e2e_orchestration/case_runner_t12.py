@@ -24,6 +24,8 @@ def run_t12_stage(
         else None
     )
     t06_run_root = facade._path_from(handoffs.get("t06_run_root"))
+    t03_run_root = facade._path_from(handoffs.get("t03_run_root"))
+    t07_step3_run_root = facade._path_from(handoffs.get("t07_step3_root"))
     inputs = {
         "swsd_segment": facade._path_from(handoffs.get("t01_segment")),
         "swsd_roads": facade._path_from(handoffs.get("t01_roads")),
@@ -35,6 +37,8 @@ def run_t12_stage(
         "t05_anchor_audit": t05_anchor_audit,
         "rcsd_intersection": external_inputs.get("rcsd_intersection"),
         "t06_run_root": t06_run_root,
+        "t03_run_root": t03_run_root,
+        "t07_step3_run_root": t07_step3_run_root,
         "drivezone": external_inputs.get("drivezone"),
         "case_manifest": case_manifest_path,
         "review_decisions": review_decisions_path,
@@ -42,11 +46,23 @@ def run_t12_stage(
     required_files = {
         key: value
         for key, value in inputs.items()
-        if key not in {"t06_run_root", "drivezone", "case_manifest", "review_decisions"}
+        if key
+        not in {
+            "t06_run_root",
+            "t03_run_root",
+            "t07_step3_run_root",
+            "drivezone",
+            "case_manifest",
+            "review_decisions",
+        }
     }
     missing = facade._missing_files(required_files)
     if t06_run_root is None or not t06_run_root.is_dir():
         missing.append("t06_run_root")
+    if t03_run_root is None or not t03_run_root.is_dir():
+        missing.append("t03_run_root")
+    if t07_step3_run_root is not None and not t07_step3_run_root.is_dir():
+        missing.append("t07_step3_run_root")
     for optional_file in (case_manifest_path, review_decisions_path):
         if optional_file is not None and not optional_file.is_file():
             missing.append(
@@ -87,7 +103,13 @@ def run_t12_stage(
         str(inputs["rcsd_intersection"]),
         "--t06-run-root",
         str(inputs["t06_run_root"]),
+        "--t03-run-root",
+        str(inputs["t03_run_root"]),
     ]
+    if inputs["t07_step3_run_root"] is not None:
+        command.extend(
+            ["--t07-step3-run-root", str(inputs["t07_step3_run_root"])]
+        )
     if inputs["drivezone"] is not None:
         command.extend(["--drivezone", str(inputs["drivezone"])])
     if inputs["case_manifest"] is not None:
@@ -122,6 +144,24 @@ def run_t12_stage(
         ),
         "t12_manual_review_csv": facade._path_text(
             run_root / "t12_frcsd_quality_manual_review_required.csv"
+        ),
+        "t12_junction_candidates_csv": facade._path_text(
+            run_root / "t12_frcsd_junction_quality_candidates.csv"
+        ),
+        "t12_junction_candidates_gpkg": facade._path_text(
+            run_root / "t12_frcsd_junction_quality_candidates.gpkg"
+        ),
+        "t12_junction_confirmed_csv": facade._path_text(
+            run_root / "t12_frcsd_confirmed_junction_quality_issues.csv"
+        ),
+        "t12_junction_confirmed_gpkg": facade._path_text(
+            run_root / "t12_frcsd_confirmed_junction_quality_issues.gpkg"
+        ),
+        "t12_junction_exclusions_csv": facade._path_text(
+            run_root / "t12_frcsd_junction_quality_exclusions.csv"
+        ),
+        "t12_junction_evidence_gpkg": facade._path_text(
+            run_root / "t12_frcsd_junction_carrier_evidence.gpkg"
         ),
     }
     facade._attach_outputs(record, produced)

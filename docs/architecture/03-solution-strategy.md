@@ -17,7 +17,7 @@
 | T06 | 以 T01 Segment 和 T05 语义关系为依据构建 RCSDSegment，并生成 F-RCSD 承载关系。 |
 | T09 | 基于 SWSD Laneinfo / restriction 与 F-RCSD 承载关系还原路口级通行规则。 |
 | T10 | 组织端到端编排与 Case 证据包；v1 Case runner 编排 T01 / T07 Step1/2 / T03 / T04 / T05 / T06 / T11 / T09，T11 为 audit-only，T08 独立前置运行；内网全量总控可把 T08 作为独立阶段串入。 |
-| T12 | 对原始 1V1 F-RCSD 执行 audit-only 质量检查，验证 SWSD 方向通行性等价假设，覆盖必需方向缺失与非预期反向载体。1V1/T05 mainNode 锚定只展开选中 `base_id` canonical raw alias group，其它显式 grouped raw node 不递归扩组；按当前方向 source outgoing / target incoming 进入 raw identity endpoint topology，锚定 alias 距离仅审计，非锚定 spatial fallback 不放宽。以 portal-constrained semantic carrier、T07 Road-surface portal carrier 和 SWSD 反向替代路径为误报排除门禁；Road-surface 层要求唯一标准面和有向物理 Road，非预期反向载体还必须在双端标准面间形成实际 Road 路径，且锚点间逐 raw RCSD Road 唯一归属于当前 Segment、未被其它 Segment 更强覆盖。人工复核仅作可选 QA 覆盖，不执行修复。 |
+| T12 | 对原始 1V1 F-RCSD 执行 audit-only 质量检查，验证 SWSD 方向通行性等价假设，覆盖必需方向缺失与非预期反向载体。1V1/T05 mainNode 锚定只展开选中 `base_id` canonical raw alias group，其它显式 grouped raw node 不递归扩组；按当前方向 source outgoing / target incoming 进入 raw identity endpoint topology，锚定 alias 距离仅审计，非锚定 spatial fallback 不放宽。以 portal-constrained semantic carrier、T07 Road-surface portal carrier 和 SWSD 反向替代路径为误报排除门禁；Road-surface 层要求唯一标准面和有向物理 Road，非预期反向载体还必须在双端标准面间形成实际 Road 路径，且锚点间逐 raw RCSD Road 唯一归属于当前 Segment、未被其它 Segment 更强覆盖。Junction 层把正式 T03 rejected 作为候选，用原始 FRCSD 准确率优先重验 terminal-collapse 或 unmatched-support；T07 Step3 1:N/N:1 稳定失败直接发布。Segment LineString 与 Junction Point 分层，人工复核仅作 Segment 可选 QA 覆盖，不执行修复。 |
 | P05 | 在正式链外采用方案 A：冻结 T01 Junction—Segment/PhysicalMovement 骨架，模型只为 Road/Node carrier 评分/选择并报告异常；冲突进入最小闭包 fallback。全部旧 M1/M2R/R2/PTO/JSG-PTO 结论作为历史证据。 |
 
 ## 业务分层策略
@@ -133,7 +133,7 @@ T06 的替换率提升不是简单放宽阈值，而是在不破坏安全边界�
 
 - Relation 质量产品化：T07/T03/T04/T05 需要继续减少“成功但不可图消费”的 relation，并把 blocked / review-only / fallback 状态稳定输出给 T06。
 - Feedback 闭环：T10 feedback iteration 应优先消费 T06 problem registry 中明确可自动转给 T05 的 endpoint candidate；其它问题形成上游模块任务，不进入 Step3 白名单。
-- F-RCSD QA：T06 Step3 结果继续由 T06 正式审计；外部 1V1 匹配生成的 F-RCSD 由 T12 检查 SWSD 方向等价可达性、必需方向缺失、非预期反向载体、road-node integrity、anchored canonical alias 到 raw Direction endpoint 的映射、canonical 候选图、raw verdict 图、portal-constrained semantic carrier、T07 Road-surface portal、反向双端锚点区间、逐 raw RCSD Road Segment 唯一归属、SWSD 反向替代路径和自动高置信发布；人工复核仅作可选 QA 覆盖。
+- F-RCSD QA：T06 Step3 结果继续由 T06 正式审计；外部 1V1 匹配生成的 F-RCSD 由 T12 检查 SWSD 方向等价可达性、必需方向缺失、非预期反向载体、road-node integrity、anchored canonical alias 到 raw Direction endpoint 的映射、canonical 候选图、raw verdict 图、portal-constrained semantic carrier、T07 Road-surface portal、反向双端锚点区间、逐 raw RCSD Road Segment 唯一归属、SWSD 反向替代路径和自动高置信发布；同时以 T03 rejected/原始 FRCSD 重验与 T07 稳定 1:N/N:1 发布 Junction Point 质量问题。人工复核仅作 Segment 可选 QA 覆盖。
 - 通行能力增强：T09 当前以 SWSD restriction / Laneinfo 为主，后续应引入 RCSD Laneinfo 和轨迹证据；P01 的 Arm / RoadNextRoad 经验可作为正式化前的参考材料。
 
 ## P05 P2-P3-P4 固定顺序

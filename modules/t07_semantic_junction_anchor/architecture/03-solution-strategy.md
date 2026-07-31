@@ -11,7 +11,7 @@
 3. 按 `mainnodeid` 组装语义路口；空 `mainnodeid` 退化为 singleton。
 4. 识别代表 node；多节点组要求 `id == mainnodeid`。
 5. Step1 按代表 node `kind_2` 过滤处理范围。
-6. Step1 对处理范围内语义路口执行全组 node 的 `DriveZone ∪ RCSDIntersection` intersects/touches 判定；若个别 node 未严格命中但到合并 evidence 面距离不超过 `1.5m`，仍视为命中。只有组内所有 node 均命中或满足容差才写 `has_evd = yes`。
+6. Step1 对处理范围内语义路口执行全组 node 的 `DriveZone` intersects/touches 判定；若个别 node 未严格命中但到 `DriveZone` evidence 面距离不超过 `1.5m`，仍视为命中。只有组内所有 node 均命中或满足容差才写 `has_evd = yes`；`RCSDIntersection` 不参与 Step1 正向判定。
 7. Step2 仅对 `has_evd = yes` 的语义路口执行 `RCSDIntersection` 判定。
 8. Step2 先将 `kind_2 = 64 / 128` 写为基础 `no / NULL`；`kind_2 = 2048` 进入 strict surface 判定，只有 single-surface / single-SWSD / single-RCSD 条件全部满足时才建立 Step2 surface 成功关系，否则写 `no / NULL`，不参与或接收通用 `fail2`。
 9. Step2 对处理范围内类型形成 `RCSDIntersection -> SWSD 语义路口` 反向索引；同一面对应多个 SWSD 语义路口时，对代表 node `kind_2 in {4, 8, 16, 64, 128}` 统一做 `fail2` 覆盖；`kind_2 = 2048` 使用独立 strict surface 审计，不进入通用 `fail2`。

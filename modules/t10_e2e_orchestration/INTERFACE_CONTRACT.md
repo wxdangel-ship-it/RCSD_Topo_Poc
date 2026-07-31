@@ -93,6 +93,10 @@ T10 v1 callable 接受一个结构化 manifest，至少包含：
     "t06_swsd_frcsd_segment_relation": "...",
     "t12_candidates_csv": "...",
     "t12_confirmed_csv": "...",
+    "t12_junction_candidates_csv": "...",
+    "t12_junction_confirmed_csv": "...",
+    "t12_junction_excluded_csv": "...",
+    "t12_junction_evidence_gpkg": "...",
     "t12_summary_json": "...",
     "t11_relation_repair_candidates": "...",
     "t11_relation_repair_summary": "...",
@@ -176,8 +180,8 @@ T10 的 nodes handoff 规则：
 - `t07` 阶段输出的 `t07_nodes` 是 T07 Step2 anchor recognition 后的 nodes，只作为 T03 输入和 T07 审计事实。
 - `t03` 阶段必须输出 `t03_nodes`，T04 必须消费该节点层，确保 T03 已确认的虚拟锚定状态继续传递。
 - `t04` 阶段必须输出 `t04_nodes`，并同步登记为 `final_swsd_nodes`；T05 / T06 / T11 / T12 / T09 必须消费该节点事实，不得回退到 T07 Step2 nodes。
-- `t12` 仅在显式启用时于 `t11` 后、`t09` 前运行；它消费原始 1V1 F-RCSD 和 SWSD/T05/T06/RCSDIntersection 审计证据，但不得消费 T11 输出，也不得消费或改写 T06 Step3 F-RCSD。
-- `t12` 至少发布 candidates、confirmed、excluded、manual review、evidence 和 summary；命令返回 0 但必要输出缺失时仍判定为 failed。
+- `t12` 仅在显式启用时于 `t11` 后、`t09` 前运行；它消费原始 1V1 F-RCSD 和 SWSD/T05/T06/RCSDIntersection 审计证据，并必须接收当前 T03 run root；正式 T07 Step3 cardinality 工件存在时同时接收该 stage root。它不得消费 T11 输出，也不得消费或改写 T06 Step3 F-RCSD。
+- `t12` 至少发布 Segment candidates/confirmed/excluded/manual review/evidence、Junction candidates/confirmed/excluded/evidence 和 summary；命令返回 0 但任一必要输出缺失时仍判定为 failed。
 - `t11` 阶段必须在 `t06_step3` 后执行，调用既有 `scripts/t11_extract_relation_repair_candidates.py` 单用例模式；stage record 记录 Case root 与关键 T06 文件，T11 summary 记录完整 discovered inputs。
 - `t11` 至少发布 `t11_relation_repair_candidates.csv` 与 `t11_relation_repair_candidate_summary.json`；命令返回 0 但必要输出缺失时仍判定为 failed。
 - `t09_step12 / t09_step3` 不消费 T11 candidates，继续使用 T04 final SWSD nodes 与 T06 F-RCSD handoff。
@@ -347,7 +351,7 @@ Segment package 只物化外部输入切片。T10/T06 中间产物只能作为 e
 - `cases/<case_id>/<stage>/stdout.log`
 - `cases/<case_id>/<stage>/<stage>_stage.json`
 
-每个完整 Case 必须包含 `cases/<case_id>/t11/`，其下实际产物位于 `run_<timestamp>/`。Case manifest 的 `handoffs` 至少登记 `t11_run_root / t11_candidates_csv / t11_candidates_gpkg / t11_manual_template_csv / t11_summary_json`。启用 T12 的 Case 还必须包含 `cases/<case_id>/t12/`，并登记 `t12_run_root / t12_candidates_csv / t12_confirmed_csv / t12_excluded_csv / t12_manual_review_csv / t12_summary_json`。
+每个完整 Case 必须包含 `cases/<case_id>/t11/`，其下实际产物位于 `run_<timestamp>/`。Case manifest 的 `handoffs` 至少登记 `t11_run_root / t11_candidates_csv / t11_candidates_gpkg / t11_manual_template_csv / t11_summary_json`。启用 T12 的 Case 还必须包含 `cases/<case_id>/t12/`，并登记 `t12_run_root / t12_candidates_csv / t12_confirmed_csv / t12_excluded_csv / t12_manual_review_csv / t12_junction_candidates_csv / t12_junction_confirmed_csv / t12_junction_excluded_csv / t12_junction_evidence_gpkg / t12_summary_json`。
 
 顶层 `t10_e2e_run_summary.json` 必须输出机器可读完成口径：`status / passed / started_at_utc / ended_at_utc / duration_seconds / completed_case_count`。`status` 的取值与 Case 汇总状态一致：全部 Case 通过时为 `passed`；存在 `failed` Case 时为 `failed`；不存在失败但存在 `blocked` Case 时为 `blocked`；其它截断或未完整执行口径为 `skipped`。每个 `cases/<case_id>/t10_e2e_case_run_summary.json` 同步输出 `status`，取值等于该 Case 的 `overall_status`。
 
@@ -630,5 +634,5 @@ from rcsd_topo_poc.modules.t10_e2e_orchestration import (
 17. Case runner 必须输出 `t10_t06_visual_check_summary.csv/json`，用于固定 T06 目视叠加图层索引和提右快速审计指标。
 18. Segment replay 中 T07/T03/T04 合法无候选时必须输出 `segment_no_candidate_handoff=true` 的显式空 handoff 并继续执行；普通 Case 或非无候选失败不得使用该兜底。
 19. `t11` 必须位于 `t06_step3` 与 `t09_step12` 之间；T11 失败或 candidates/summary 缺失时，当前 Case 或 full pipeline 不得标记 passed，T09 不得消费 T11 部分产物。
-20. T12 默认关闭；显式启用时必须位于 `t11` 与 `t09_step12` 之间。T12 不得消费 T11 输出，不得改变 T06/T11/T09 业务 handoff，且只有人工 review decisions 确认的记录才能进入 confirmed 正式问题层。
+20. T12 默认关闭；显式启用时必须位于 `t11` 与 `t09_step12` 之间。T12 不得消费 T11 输出，不得改变 T06/T11/T09 业务 handoff。Segment 与 Junction 均可按 T12 高置信规则自动进入 confirmed；人工 review decisions 只作 Segment 可选覆盖。T10 必须传入当前 T03 run root，并在正式 T07 Step3 cardinality 工件存在时传入其 stage root。
 21. F-RCSD 质量检查专用入口必须固定 `RUN_T08=0 / RUN_T12=1`，manifest stage order 必须为 `t01 / t07_step12 / t03 / t04 / t05 / t06_step12 / t06_step3 / t11 / t12 / t09`，不得登记未运行的 T08 stage。

@@ -3,8 +3,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import Sequence
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+SRC_ROOT = REPO_ROOT / "src"
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
 
 from rcsd_topo_poc.modules.t12_frcsd_quality_audit import (
     AuditConfig,
@@ -30,6 +36,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--drivezone", type=Path)
     parser.add_argument("--case-manifest", type=Path)
     parser.add_argument("--review-decisions", type=Path)
+    parser.add_argument(
+        "--t03-run-root",
+        type=Path,
+        help="Optional formal T03 run root used as Junction candidate evidence.",
+    )
+    parser.add_argument(
+        "--t07-step3-run-root",
+        type=Path,
+        help="Optional T07 Step3 root with relation_cardinality_errors.",
+    )
     parser.add_argument("--processing-crs")
     parser.add_argument("--local-corridor-m", type=float, default=50.0)
     parser.add_argument("--portal-radius-m", type=float, default=50.0)
@@ -67,6 +83,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             drivezone_path=args.drivezone,
             case_manifest_path=args.case_manifest,
             review_decisions_path=args.review_decisions,
+            t03_run_root=args.t03_run_root,
+            t07_step3_run_root=args.t07_step3_run_root,
             config=config,
             progress=args.progress,
         )
@@ -80,6 +98,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         "confirmed_count": artifacts.confirmed_count,
         "exclusion_count": artifacts.exclusion_count,
         "manual_review_count": artifacts.manual_review_count,
+        "junction_candidate_count": artifacts.junction_candidate_count,
+        "junction_confirmed_count": artifacts.junction_confirmed_count,
+        "junction_exclusion_count": artifacts.junction_exclusion_count,
+        "junction_confirmed_csv": str(artifacts.junction_confirmed_csv),
     }
     print(json.dumps(payload, ensure_ascii=False, indent=2))
     return 0

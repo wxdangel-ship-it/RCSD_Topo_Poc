@@ -59,7 +59,11 @@ def test_t12_case_stage_invokes_entry_and_publishes_outputs(
         "final_swsd_nodes": str(_touch(tmp_path / "case" / "t04" / "nodes.gpkg")),
         "t05_phase2_root": str(t05_phase2),
         "t06_run_root": str(t06_root),
+        "t03_run_root": str(tmp_path / "case" / "t03"),
+        "t07_step3_root": str(tmp_path / "case" / "t07_step3"),
     }
+    (tmp_path / "case" / "t03").mkdir(parents=True)
+    (tmp_path / "case" / "t07_step3").mkdir(parents=True)
     _touch(t05_phase2 / "intersection_match_all_audit.csv")
     case_manifest = _touch(tmp_path / "package" / "t10_case_evidence_manifest.json")
     review = _touch(tmp_path / "review.csv")
@@ -77,6 +81,12 @@ def test_t12_case_stage_invokes_entry_and_publishes_outputs(
             "t12_frcsd_confirmed_quality_issues.gpkg",
             "t12_frcsd_quality_review_exclusions.csv",
             "t12_frcsd_quality_manual_review_required.csv",
+            "t12_frcsd_junction_quality_candidates.csv",
+            "t12_frcsd_junction_quality_candidates.gpkg",
+            "t12_frcsd_confirmed_junction_quality_issues.csv",
+            "t12_frcsd_confirmed_junction_quality_issues.gpkg",
+            "t12_frcsd_junction_quality_exclusions.csv",
+            "t12_frcsd_junction_carrier_evidence.gpkg",
         ):
             _touch(run_root / name)
         return {"stage_id": stage_id, "status": "passed"}
@@ -101,7 +111,12 @@ def test_t12_case_stage_invokes_entry_and_publishes_outputs(
     assert command[1] == "scripts/t12_run_frcsd_quality_audit.py"
     assert "--frcsd-roads" in command
     assert "--review-decisions" in command
+    assert "--t03-run-root" in command
+    assert "--t07-step3-run-root" in command
     assert produced["t12_summary_json"].endswith("t12_frcsd_quality_audit_summary.json")
+    assert produced["t12_junction_confirmed_csv"].endswith(
+        "t12_frcsd_confirmed_junction_quality_issues.csv"
+    )
 
 
 def test_t12_case_stage_blocks_without_explicit_frcsd_slots(tmp_path: Path) -> None:
@@ -156,6 +171,11 @@ def test_full_runner_declares_t12_resume_manifest_and_finalize_contract() -> Non
     assert "run_logged t12" in t12_region
     assert "manifest_stage_record t12 T12 passed" in t12_region
     assert '--frcsd-roads "$FRCSD_1V1_ROADS_PATH"' in t12_region
+    assert '--t03-run-root "$T03_RUN_ROOT"' in t12_region
+    assert 'T12_ARGS+=(--t07-step3-run-root "$T07_STEP3_ROOT")' in t12_region
+    assert "require_file T12_JUNCTION_EVIDENCE_GPKG" in t12_region
+    assert "manifest_set outputs t12_junction_candidates_csv" in t12_region
+    assert "manifest_set outputs t12_junction_confirmed_gpkg" in t12_region
     assert 'T12_ARGS+=(--processing-crs "$T12_PROCESSING_CRS")' in t12_region
     assert '"params.processing_crs=$T12_PROCESSING_CRS"' in t12_region
     assert 'T12_PROCESSING_CRS="$(manifest_get params t12_processing_crs "")"' in script

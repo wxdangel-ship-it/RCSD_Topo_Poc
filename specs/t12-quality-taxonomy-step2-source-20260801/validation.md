@@ -85,3 +85,9 @@ excluded=`12`；4 个正例全部命中，16 个负例无 confirmed。
 3. T09/T12 续跑成功后，原 T12 标准目录进入 `history/t12_frcsd_quality_audit`，
    新成果仍落在 T10 标准目录 `t12_frcsd_quality_audit/<run_id>`；续跑失败时
    失败批次进入 history，原标准批次恢复。
+
+## 7. Git 集成
+
+- 功能分支：`codex/t12-v10-quality-taxonomy@76b0f48`，已推送。
+- 主干合并提交：`a8f7dcb`，已推送到远端 `main`。
+- 合并后的 T12/T10 测试仍为 `160 passed`，T07 diff 为 0。

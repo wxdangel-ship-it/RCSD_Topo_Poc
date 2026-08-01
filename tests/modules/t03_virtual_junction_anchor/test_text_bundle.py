@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import fiona
 from shapely.geometry import LineString, Point, box
 from shapely.ops import unary_union
 
@@ -197,6 +198,75 @@ def test_t03_text_bundle_normalizes_external_camel_case_topology_fields(tmp_path
     manifest = json.loads((decoded.out_dir / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["feature_counts"]["rcsdroad"] == 2
     assert manifest["feature_counts"]["rcsdnode"] == 3
+
+
+def test_t03_text_bundle_allows_context_nodes_without_anchor_eligibility_fields(tmp_path: Path) -> None:
+    inputs = _write_bundle_inputs(tmp_path)
+    nodes_path = tmp_path / "nodes_heterogeneous.geojson"
+    nodes_path.write_text(
+        json.dumps(
+            {
+                "type": "FeatureCollection",
+                "crs": {"type": "name", "properties": {"name": "EPSG:3857"}},
+                "features": [
+                    {
+                        "type": "Feature",
+                        "properties": {
+                            "id": "100",
+                            "mainnodeid": "100",
+                            "has_evd": "yes",
+                            "is_anchor": "no",
+                            "kind_2": 2048,
+                            "grade_2": 1,
+                        },
+                        "geometry": {"type": "Point", "coordinates": [0.0, 0.0]},
+                    },
+                    {
+                        "type": "Feature",
+                        "properties": {
+                            "id": "101",
+                            "mainnodeid": "100",
+                            "has_evd": None,
+                            "is_anchor": None,
+                            "kind_2": 2048,
+                            "grade_2": 1,
+                        },
+                        "geometry": {"type": "Point", "coordinates": [6.0, 0.0]},
+                    },
+                    {
+                        "type": "Feature",
+                        "properties": {"id": "9001", "mainnodeid": None, "kind_2": 0, "grade_2": 0},
+                        "geometry": {"type": "Point", "coordinates": [0.0, 60.0]},
+                    },
+                    {
+                        "type": "Feature",
+                        "properties": {"id": "9002", "mainnodeid": None, "kind_2": 0, "grade_2": 0},
+                        "geometry": {"type": "Point", "coordinates": [55.0, 0.0]},
+                    },
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    inputs["nodes_path"] = nodes_path
+    out_txt = tmp_path / "context_nodes_bundle.txt"
+
+    artifacts = run_t03_export_text_bundle(
+        **inputs,
+        mainnodeid="100",
+        out_txt=out_txt,
+        max_text_size_bytes=256_000,
+    )
+    decoded = run_t03_decode_text_bundle(bundle_txt=out_txt, out_dir=tmp_path / "decoded_context_nodes")
+
+    assert artifacts.success
+    assert decoded.success
+    with fiona.open(decoded.out_dir / "nodes.gpkg") as src:
+        rows = {str(feature["properties"]["id"]): dict(feature["properties"]) for feature in src}
+    assert rows["100"]["has_evd"] == "yes"
+    assert rows["100"]["is_anchor"] == "no"
+    assert rows["9001"]["has_evd"] is None
+    assert rows["9001"]["is_anchor"] is None
 
 
 def test_t04_multi_case_decode_defaults_to_bundle_parent_dir(

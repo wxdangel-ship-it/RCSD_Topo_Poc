@@ -153,6 +153,52 @@ def test_t04_text_bundle_alias_uses_same_common_payload(tmp_path: Path) -> None:
     assert (decoded.out_dir / "divstripzone.gpkg").is_file()
 
 
+def test_t03_text_bundle_normalizes_external_camel_case_topology_fields(tmp_path: Path) -> None:
+    inputs = _write_bundle_inputs(tmp_path)
+    rcsdroad_path = tmp_path / "rcsdroad_camel_case.gpkg"
+    rcsdnode_path = tmp_path / "rcsdnode_camel_case.gpkg"
+    write_vector(
+        rcsdroad_path,
+        [
+            {
+                "properties": {"id": "rc_north_100", "snodeId": "100", "enodeId": "901", "direction": 2},
+                "geometry": LineString([(0.0, 0.0), (0.0, 55.0)]),
+            },
+            {
+                "properties": {"id": "rc_east_100", "snodeId": "100", "enodeId": "903", "direction": 2},
+                "geometry": LineString([(0.0, 0.0), (45.0, 0.0)]),
+            },
+        ],
+        crs_text="EPSG:3857",
+    )
+    write_vector(
+        rcsdnode_path,
+        [
+            {"properties": {"id": "100", "mainNodeId": "100"}, "geometry": Point(0.0, 0.0)},
+            {"properties": {"id": "901", "mainNodeId": None}, "geometry": Point(0.0, 55.0)},
+            {"properties": {"id": "903", "mainNodeId": None}, "geometry": Point(45.0, 0.0)},
+        ],
+        crs_text="EPSG:3857",
+    )
+    inputs["rcsdroad_path"] = rcsdroad_path
+    inputs["rcsdnode_path"] = rcsdnode_path
+    out_txt = tmp_path / "camel_case_bundle.txt"
+
+    artifacts = run_t03_export_text_bundle(
+        **inputs,
+        mainnodeid="100",
+        out_txt=out_txt,
+        max_text_size_bytes=256_000,
+    )
+    decoded = run_t03_decode_text_bundle(bundle_txt=out_txt, out_dir=tmp_path / "decoded_camel_case")
+
+    assert artifacts.success
+    assert decoded.success
+    manifest = json.loads((decoded.out_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["feature_counts"]["rcsdroad"] == 2
+    assert manifest["feature_counts"]["rcsdnode"] == 3
+
+
 def test_t04_multi_case_decode_defaults_to_bundle_parent_dir(
     tmp_path: Path,
     monkeypatch,

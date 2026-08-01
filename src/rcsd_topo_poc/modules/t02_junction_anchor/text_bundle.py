@@ -38,6 +38,7 @@ from rcsd_topo_poc.modules.t02_junction_anchor.virtual_intersection_poc import (
     _resolve_group,
     _resolve_current_patch_id_from_roads,
 )
+from rcsd_topo_poc.utils.field_names import PropertyLookup
 
 
 TEXT_BUNDLE_VERSION = "1"
@@ -223,17 +224,19 @@ def _local_geometry_payload(
 
 
 def _filter_properties(properties: dict[str, Any], field_names: tuple[str, ...]) -> dict[str, Any]:
-    missing = [field_name for field_name in field_names if field_name not in properties]
+    lookup = PropertyLookup(properties)
+    missing = [field_name for field_name in field_names if not lookup.has(field_name)]
     if missing:
         raise TextBundleError("missing_required_field", f"Missing required fields: {','.join(missing)}")
-    return {field_name: properties.get(field_name) for field_name in field_names}
+    return {field_name: lookup.get(field_name) for field_name in field_names}
 
 
 def _filter_road_properties(properties: dict[str, Any]) -> dict[str, Any]:
     filtered = _filter_properties(properties, ROAD_REQUIRED_FIELDS)
+    lookup = PropertyLookup(properties)
     for field_name in ROAD_OPTIONAL_FIELDS:
-        if field_name in properties:
-            filtered[field_name] = properties.get(field_name)
+        if lookup.has(field_name):
+            filtered[field_name] = lookup.get(field_name)
     return filtered
 
 

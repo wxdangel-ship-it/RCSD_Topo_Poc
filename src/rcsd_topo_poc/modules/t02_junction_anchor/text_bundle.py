@@ -439,10 +439,28 @@ def _resolve_target_nodes(
         allow_null_geometry=False,
         property_predicate=target_group_match,
     )
-    target_group_nodes = _parse_nodes(target_nodes_layer_data, require_anchor_fields=True)
+    target_group_nodes = _parse_nodes(target_nodes_layer_data, require_anchor_fields=False)
     if not target_group_nodes:
         raise TextBundleError("mainnodeid_not_found", f"mainnodeid='{normalized_mainnodeid}' was not found in nodes.")
-    return _resolve_group(mainnodeid=normalized_mainnodeid, nodes=target_group_nodes)
+    representative_node, group_nodes = _resolve_group(
+        mainnodeid=normalized_mainnodeid,
+        nodes=target_group_nodes,
+    )
+    representative_lookup = PropertyLookup(representative_node.properties)
+    missing_anchor_fields = [
+        field_name
+        for field_name in NODE_OPTIONAL_CONTEXT_FIELDS
+        if not representative_lookup.has(field_name)
+    ]
+    if missing_anchor_fields:
+        raise TextBundleError(
+            "missing_required_field",
+            (
+                f"representative node feature[{representative_node.feature_index}] "
+                f"missing required fields: {','.join(missing_anchor_fields)}"
+            ),
+        )
+    return representative_node, group_nodes
 
 
 def _non_empty_feature_geometries(features: Iterable[Any]) -> list[BaseGeometry]:

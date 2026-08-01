@@ -226,8 +226,6 @@ def test_t03_text_bundle_allows_context_nodes_without_anchor_eligibility_fields(
                         "properties": {
                             "id": "101",
                             "mainnodeid": "100",
-                            "has_evd": None,
-                            "is_anchor": None,
                             "kind_2": 2048,
                             "grade_2": 1,
                         },
@@ -242,6 +240,11 @@ def test_t03_text_bundle_allows_context_nodes_without_anchor_eligibility_fields(
                         "type": "Feature",
                         "properties": {"id": "9002", "mainnodeid": None, "kind_2": 0, "grade_2": 0},
                         "geometry": {"type": "Point", "coordinates": [55.0, 0.0]},
+                    },
+                    {
+                        "type": "Feature",
+                        "properties": {"id": "200", "mainnodeid": "200", "kind_2": 2048, "grade_2": 1},
+                        "geometry": {"type": "Point", "coordinates": [220.0, 0.0]},
                     },
                 ],
             }
@@ -265,8 +268,21 @@ def test_t03_text_bundle_allows_context_nodes_without_anchor_eligibility_fields(
         rows = {str(feature["properties"]["id"]): dict(feature["properties"]) for feature in src}
     assert rows["100"]["has_evd"] == "yes"
     assert rows["100"]["is_anchor"] == "no"
+    assert rows["101"]["has_evd"] is None
+    assert rows["101"]["is_anchor"] is None
     assert rows["9001"]["has_evd"] is None
     assert rows["9001"]["is_anchor"] is None
+
+    missing_representative_fields = run_t03_export_text_bundle(
+        **inputs,
+        mainnodeid="200",
+        out_txt=tmp_path / "invalid_representative_bundle.txt",
+        max_text_size_bytes=256_000,
+    )
+    assert not missing_representative_fields.success
+    assert missing_representative_fields.failure_reason == "missing_required_field"
+    assert "representative node" in str(missing_representative_fields.failure_detail)
+    assert "has_evd,is_anchor" in str(missing_representative_fields.failure_detail)
 
 
 def test_t04_multi_case_decode_defaults_to_bundle_parent_dir(

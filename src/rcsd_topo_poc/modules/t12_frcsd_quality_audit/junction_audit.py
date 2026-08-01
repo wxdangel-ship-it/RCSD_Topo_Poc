@@ -15,6 +15,7 @@ from shapely.ops import nearest_points
 
 from .carrier_graph import field_name, normalize_id, parse_ids
 from .inputs import LoadedInputs
+from .issue_taxonomy import enrich_quality_result
 from .junction_inputs import JunctionSources, T03CaseEvidence
 from .models import AuditConfig, T12ContractError
 
@@ -56,10 +57,17 @@ def audit_junction_quality(
                 },
                 "source_exclusions": {},
                 "by_issue_type": {},
+                "by_issue_group": {},
+                "by_issue_code": {},
+                "by_result_status": {},
                 "by_decision_rule": {},
                 "eligibility_nodes": {"source": "not_loaded_no_junction_sources"},
                 "t03_policy": {"candidate_source": "formal_t03_rejected_only"},
-                "t07_policy": {"decision": "stable_failure_direct_publish"},
+                "t07_policy": {
+                    "candidate_source": "t07_step2_final_anchor_failure",
+                    "decision": "stable_failure_direct_publish",
+                    "step3_cardinality_import_count": 0,
+                },
                 "silent_fix": False,
             },
         )
@@ -135,29 +143,32 @@ def audit_junction_quality(
         else:
             exclusions.append(row)
 
-    t07_ignored = 0
     for source_index, source_row in enumerate(sources.t07_rows):
-        error_type = str(source_row.get("error_type") or "")
-        if error_type == "duplicate_target_rows":
-            t07_ignored += 1
-            continue
-        if error_type not in {
-            "one_target_to_many_base",
-            "many_target_to_one_base",
-        }:
-            t07_ignored += 1
-            continue
+        failure_type = str(source_row.get("failure_type") or "")
+        if failure_type not in {"fail1", "fail2"}:
+            raise T12ContractError(
+                f"T07 Step2 source has unknown failure_type: row={source_index}"
+            )
         target_ids = parse_ids(
             source_row.get("related_target_ids") or source_row.get("target_id")
         )
-        base_ids = parse_ids(source_row.get("base_id"))
+        base_ids = parse_ids(source_row.get("base_ids"))
         if not target_ids or not base_ids:
             raise T12ContractError(
-                "T07 stable cardinality error has empty target/base IDs: "
+                "T07 Step2 stable anchor failure has empty target/base IDs: "
                 f"row={source_index}"
             )
-        conflict_group_id = _conflict_group_id(error_type, target_ids, base_ids)
+        if failure_type == "fail1" and len(target_ids) != 1:
+            raise T12ContractError(
+                f"T07 Step2 fail1 must identify one semantic junction: row={source_index}"
+            )
+        if failure_type == "fail2" and len(target_ids) < 2:
+            raise T12ContractError(
+                f"T07 Step2 fail2 must identify multiple semantic junctions: row={source_index}"
+            )
+        conflict_group_id = _conflict_group_id(failure_type, target_ids, base_ids)
         target_points: list[Point] = []
+        group_ids_by_target = source_row.get("target_group_node_ids_by_target") or {}
         for target_id in target_ids:
             node_row = output_node_lookup.get(target_id)
             if node_row is None or node_row.geometry is None or node_row.geometry.is_empty:
@@ -169,9 +180,15 @@ def audit_junction_quality(
             row = _t07_row(
                 run_id=run_id,
                 target_id=target_id,
-                target_ids=target_ids,
+                target_ids=parse_ids(
+                    group_ids_by_target.get(target_id)
+                    if isinstance(group_ids_by_target, Mapping)
+                    else None
+                )
+                or parse_ids(source_row.get("target_group_node_ids"))
+                or [target_id],
                 base_ids=base_ids,
-                error_type=error_type,
+                failure_type=failure_type,
                 conflict_group_id=conflict_group_id,
                 source_row=source_row,
                 geometry=point,
@@ -179,19 +196,32 @@ def audit_junction_quality(
             candidates.append(row)
             confirmed.append(row)
             layers["junction_candidates"].append(_point_feature(row))
-            counters[f"t07_{error_type}_junction_count"] += 1
+            counters[f"t07_{failure_type}_junction_count"] += 1
         if len(target_points) > 1:
             layers["t07_conflict_links"].append(
                 {
                     "conflict_group_id": conflict_group_id,
-                    "detection_rule": error_type,
+                    "detection_rule": f"t07_step2_{failure_type}",
                     "target_ids": target_ids,
                     "base_ids": base_ids,
                     "geometry": LineString(target_points),
                 }
             )
 
-    counters["t07_ignored_row_count"] = t07_ignored
+    counters["t07_ignored_row_count"] = 0
+    counters["t07_step3_cardinality_import_count"] = 0
+    candidate_ids = [str(row.get("candidate_id") or "") for row in candidates]
+    duplicate_ids = sorted(
+        candidate_id
+        for candidate_id, count in Counter(candidate_ids).items()
+        if count > 1
+    )
+    if duplicate_ids:
+        raise T12ContractError(
+            "duplicate Junction candidate_id: " + ",".join(duplicate_ids)
+        )
+    if any(not candidate_id for candidate_id in candidate_ids):
+        raise T12ContractError("Junction candidate_id cannot be empty")
     counters["candidate_count"] = len(candidates)
     counters["confirmed_count"] = len(confirmed)
     counters["exclusion_count"] = len(exclusions)
@@ -206,6 +236,9 @@ def audit_junction_quality(
             "counts": dict(sorted(counters.items())),
             "source_exclusions": dict(sorted(source_exclusions.items())),
             "by_issue_type": _count_by(confirmed, "issue_type"),
+            "by_issue_group": _count_by(confirmed, "issue_group"),
+            "by_issue_code": _count_by(confirmed, "issue_code"),
+            "by_result_status": _count_by(candidates, "result_status"),
             "by_decision_rule": _count_by(candidates, "decision_rule"),
             "eligibility_nodes": eligibility_audit,
             "t03_policy": {
@@ -220,12 +253,11 @@ def audit_junction_quality(
                 "alias_role": "semantic_group_only_no_graph_edge",
             },
             "t07_policy": {
+                "candidate_source": "t07_step2_final_anchor_failure",
                 "decision": "stable_failure_direct_publish",
-                "published_error_types": [
-                    "one_target_to_many_base",
-                    "many_target_to_one_base",
-                ],
-                "ignored_error_types": ["duplicate_target_rows"],
+                "published_failure_types": ["fail1", "fail2"],
+                "precedence": "fail2_over_fail1",
+                "step3_cardinality_import_count": 0,
             },
             "silent_fix": False,
         },
@@ -458,7 +490,7 @@ def _evaluate_t03_case(
         )
     elif confirmed:
         detection_rule = "multi_component_unmatched_support"
-        issue_type = "junction_reality_or_precision_gap"
+        issue_type = "junction_unmatched_support_topology"
         decision_rule = "raw_frcsd_multi_component_unmatched_support_confirmed"
         review_reason = (
             "all SWSD targets explain only one raw FRCSD support component while "
@@ -497,6 +529,15 @@ def _evaluate_t03_case(
             else "excluded_false_positive"
         ),
         "issue_type": issue_type,
+        "legacy_issue_type": (
+            "junction_required_topology_missing"
+            if issue_type == "junction_required_topology_missing"
+            else (
+                "junction_reality_or_precision_gap"
+                if issue_type == "junction_unmatched_support_topology"
+                else ""
+            )
+        ),
         "detection_rule": detection_rule,
         "decision_rule": decision_rule,
         "association_class": association_class,
@@ -529,6 +570,7 @@ def _evaluate_t03_case(
         "review_reason": review_reason,
         "decision_source": "automatic_high_confidence",
         "source_module": "T03",
+        "source_failure_type": "t03_step7_rejected",
         "source_case_id": case.case_id,
         "conflict_group_id": "",
         "silent_fix": False,
@@ -566,7 +608,7 @@ def _evaluate_t03_case(
         )
     for projection in row["target_projection_rows"]:
         projection.pop("_geometry", None)
-    return row, evidence
+    return enrich_quality_result(row), evidence
 
 
 def _t07_row(
@@ -575,24 +617,29 @@ def _t07_row(
     target_id: str,
     target_ids: list[str],
     base_ids: list[str],
-    error_type: str,
+    failure_type: str,
     conflict_group_id: str,
     source_row: Mapping[str, Any],
     geometry: Point,
 ) -> dict[str, Any]:
-    return {
+    row = {
         "run_id": run_id,
         "candidate_id": (
-            f"junction:t07:{error_type}:{conflict_group_id}:{target_id}"
+            f"junction:t07:{failure_type}:{conflict_group_id}:{target_id}"
         ),
         "object_type": "junction",
         "junction_id": target_id,
         "target_group_node_ids": target_ids,
         "candidate_status": "candidate_pending_decision",
         "review_status": "confirmed_frcsd_quality_issue",
-        "issue_type": "junction_relation_cardinality_mismatch",
-        "detection_rule": error_type,
-        "decision_rule": f"t07_stable_{error_type}_direct_publish",
+        "issue_type": (
+            "junction_anchor_one_to_many"
+            if failure_type == "fail1"
+            else "junction_anchor_many_to_one"
+        ),
+        "legacy_issue_type": "",
+        "detection_rule": f"t07_step2_{failure_type}",
+        "decision_rule": f"t07_step2_{failure_type}_direct_publish",
         "association_class": "",
         "association_state": "",
         "required_rcsdnode_ids": [],
@@ -615,19 +662,21 @@ def _t07_row(
         "step6_reason": "",
         "pre_business_cleanup_meaningful_component_count": "",
         "review_reason": (
-            f"T07 stable relation cardinality failure {error_type}; "
+            f"T07 Step2 stable anchor failure {failure_type}; "
             "published without T12 rejudgment"
         ),
-        "decision_source": "t07_stable_failure_direct",
+        "decision_source": "t07_step2_stable_failure_direct",
         "source_module": "T07",
-        "source_case_id": str(source_row.get("source_case_ids") or ""),
+        "source_failure_type": failure_type,
+        "source_case_id": "",
         "base_ids": base_ids,
-        "source_modules": str(source_row.get("source_modules") or ""),
-        "scenes": str(source_row.get("scenes") or ""),
+        "source_modules": "T07_STEP2",
+        "scenes": "existing_rcsdintersection_anchor",
         "conflict_group_id": conflict_group_id,
         "silent_fix": False,
         "geometry": geometry,
     }
+    return enrich_quality_result(row)
 
 
 def _formal_t03_eligibility(row: pd.Series) -> tuple[bool, str]:
@@ -1044,7 +1093,17 @@ def _point_feature(row: Mapping[str, Any]) -> dict[str, Any]:
         "junction_id": row["junction_id"],
         "source_module": row["source_module"],
         "review_status": row["review_status"],
+        "result_status": row.get("result_status", ""),
+        "issue_group": row.get("issue_group", ""),
+        "issue_code": row.get("issue_code", ""),
         "issue_type": row["issue_type"],
+        "issue_name_zh": row.get("issue_name_zh", ""),
+        "issue_description_zh": row.get("issue_description_zh", ""),
+        "root_cause_type": row.get("root_cause_type", ""),
+        "source_failure_type": row.get("source_failure_type", ""),
+        "repair_domain": row.get("repair_domain", ""),
+        "repair_hint_zh": row.get("repair_hint_zh", ""),
+        "legacy_issue_type": row.get("legacy_issue_type", ""),
         "detection_rule": row["detection_rule"],
         "decision_rule": row["decision_rule"],
         "conflict_group_id": row.get("conflict_group_id", ""),

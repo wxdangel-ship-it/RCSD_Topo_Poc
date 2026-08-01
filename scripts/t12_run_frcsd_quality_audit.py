@@ -42,9 +42,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Optional formal T03 run root used as Junction candidate evidence.",
     )
     parser.add_argument(
+        "--t07-run-root",
+        type=Path,
+        help=(
+            "Optional formal T07 Step1/2 run root; only final Step2 "
+            "is_anchor=fail1/fail2 are published as Junction issues."
+        ),
+    )
+    parser.add_argument(
         "--t07-step3-run-root",
         type=Path,
-        help="Optional T07 Step3 root with relation_cardinality_errors.",
+        help=(
+            "Deprecated locator compatibility only; cardinality rows are never "
+            "imported. Prefer --t07-run-root."
+        ),
     )
     parser.add_argument("--processing-crs")
     parser.add_argument("--local-corridor-m", type=float, default=50.0)
@@ -84,6 +95,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             case_manifest_path=args.case_manifest,
             review_decisions_path=args.review_decisions,
             t03_run_root=args.t03_run_root,
+            t07_run_root=args.t07_run_root,
             t07_step3_run_root=args.t07_step3_run_root,
             config=config,
             progress=args.progress,

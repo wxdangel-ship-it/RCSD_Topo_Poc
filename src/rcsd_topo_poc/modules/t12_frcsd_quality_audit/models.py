@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = "2026-07-31.t12_frcsd_quality_audit.v9"
+SCHEMA_VERSION = "2026-08-01.t12_frcsd_quality_audit.v10"
 
 REVIEW_STATUSES = frozenset(
     {
@@ -17,12 +17,13 @@ REVIEW_STATUSES = frozenset(
 
 ISSUE_TYPES = frozenset(
     {
-        "directed_carrier_missing",
-        "required_local_connectivity_missing",
-        "unexpected_reverse_carrier",
+        "segment_required_direction_unavailable",
+        "segment_required_connection_missing",
+        "segment_unexpected_reverse_passability",
         "junction_required_topology_missing",
-        "junction_reality_or_precision_gap",
-        "junction_relation_cardinality_mismatch",
+        "junction_unmatched_support_topology",
+        "junction_anchor_one_to_many",
+        "junction_anchor_many_to_one",
     }
 )
 

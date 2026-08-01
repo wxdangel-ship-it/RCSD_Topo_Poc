@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import geopandas as gpd
@@ -18,9 +19,16 @@ from rcsd_topo_poc.modules.t12_frcsd_quality_audit.junction_inputs import (
 from rcsd_topo_poc.modules.t12_frcsd_quality_audit.models import AuditConfig
 
 
-T03_DATA = Path(r"E:\TestData\POC_Data\T03")
-T03_ERROR_DATA = Path(r"E:\TestData\POC_Data\T03_Error")
-T03_VALIDATION_WORK = Path(
+def _host_path(value: str) -> Path:
+    if os.name == "nt":
+        return Path(value)
+    drive, remainder = value.split(":", 1)
+    return Path(f"/mnt/{drive.lower()}{remainder.replace(chr(92), '/')}")
+
+
+T03_DATA = _host_path(r"E:\TestData\POC_Data\T03")
+T03_ERROR_DATA = _host_path(r"E:\TestData\POC_Data\T03_Error")
+T03_VALIDATION_WORK = _host_path(
     r"E:\Work\RCSD_Topo_Poc__wt_t03_quality_closure_20260730"
     r"\outputs\_work\t03_t05_ownership_surface_connectivity_20260731"
 )
@@ -123,6 +131,7 @@ def test_four_positive_and_sixteen_negative_real_cases() -> None:
         "620658564",
     }
     confirmed: set[str] = set()
+    confirmed_types: dict[str, str] = {}
     evaluated: set[str] = set()
     decisions: dict[str, str] = {}
     for data_root, source in (
@@ -140,6 +149,7 @@ def test_four_positive_and_sixteen_negative_real_cases() -> None:
             evaluated.add(case.case_id)
             if result.confirmed:
                 confirmed.add(case.case_id)
+                confirmed_types[case.case_id] = result.confirmed[0]["issue_type"]
             elif result.exclusions:
                 decisions[case.case_id] = result.exclusions[0]["decision_rule"]
             else:
@@ -155,6 +165,12 @@ def test_four_positive_and_sixteen_negative_real_cases() -> None:
     }
     assert "523923800" not in rejected_source_ids
     assert confirmed == positive_ids
+    assert confirmed_types == {
+        "520394575": "junction_unmatched_support_topology",
+        "622700016": "junction_unmatched_support_topology",
+        "522008569": "junction_required_topology_missing",
+        "522806716": "junction_required_topology_missing",
+    }
     assert not (confirmed & negative_ids)
     assert evaluated | {"523923800"} >= positive_ids | negative_ids
     assert decisions["613826647"] == "constraint_induced_split"

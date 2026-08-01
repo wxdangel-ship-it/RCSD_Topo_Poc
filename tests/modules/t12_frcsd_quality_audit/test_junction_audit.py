@@ -4,6 +4,7 @@ from pathlib import Path
 
 import geopandas as gpd
 import pandas as pd
+import pytest
 from shapely.geometry import LineString, Point
 
 from rcsd_topo_poc.modules.t12_frcsd_quality_audit.inputs import LoadedInputs
@@ -17,7 +18,10 @@ from rcsd_topo_poc.modules.t12_frcsd_quality_audit.junction_inputs import (
 from rcsd_topo_poc.modules.t12_frcsd_quality_audit.junction_outputs import (
     write_junction_outputs,
 )
-from rcsd_topo_poc.modules.t12_frcsd_quality_audit.models import AuditConfig
+from rcsd_topo_poc.modules.t12_frcsd_quality_audit.models import (
+    AuditConfig,
+    T12ContractError,
+)
 
 
 CRS = "EPSG:3857"
@@ -273,7 +277,7 @@ def test_multi_component_unmatched_support_is_confirmed() -> None:
     )
 
     assert len(result.confirmed) == 1
-    assert result.confirmed[0]["issue_type"] == "junction_reality_or_precision_gap"
+    assert result.confirmed[0]["issue_type"] == "junction_unmatched_support_topology"
     assert result.confirmed[0]["unmatched_support_component_ids"]
     assert result.confirmed[0]["direction_status"] == "valid_strict_direction"
 
@@ -346,18 +350,17 @@ def test_constraint_split_and_cross_layer_are_precision_first_exclusions() -> No
     )
 
 
-def test_t07_many_to_one_expands_per_junction_and_duplicate_is_ignored() -> None:
+def test_t07_fail2_expands_per_junction_with_shared_conflict_group() -> None:
     rows = (
         {
-            "error_type": "many_target_to_one_base",
-            "target_id": "j|t2",
-            "related_target_ids": "j|t2",
-            "base_id": "base",
-        },
-        {
-            "error_type": "duplicate_target_rows",
+            "failure_type": "fail2",
             "target_id": "j",
-            "base_id": "base",
+            "related_target_ids": ["j", "t2"],
+            "base_ids": ["base"],
+            "target_group_node_ids_by_target": {
+                "j": ["j"],
+                "t2": ["t2"],
+            },
         },
     )
 
@@ -370,8 +373,32 @@ def test_t07_many_to_one_expands_per_junction_and_duplicate_is_ignored() -> None
 
     assert len(result.confirmed) == 2
     assert {row["junction_id"] for row in result.confirmed} == {"j", "t2"}
+    assert {row["issue_type"] for row in result.confirmed} == {
+        "junction_anchor_many_to_one"
+    }
+    assert {row["issue_code"] for row in result.confirmed} == {"J04"}
+    assert {row["result_status"] for row in result.confirmed} == {"confirmed"}
     assert len({row["conflict_group_id"] for row in result.confirmed}) == 1
-    assert result.audit["counts"]["t07_ignored_row_count"] == 1
+    assert result.audit["counts"]["t07_ignored_row_count"] == 0
+    assert result.audit["counts"]["t07_step3_cardinality_import_count"] == 0
+
+
+def test_duplicate_junction_candidate_id_is_blocked() -> None:
+    row = {
+        "failure_type": "fail1",
+        "target_id": "j",
+        "related_target_ids": ["j"],
+        "base_ids": ["base"],
+        "target_group_node_ids": ["j", "t2"],
+    }
+
+    with pytest.raises(T12ContractError, match="duplicate Junction candidate_id"):
+        audit_junction_quality(
+            _loaded(),
+            _sources(t07_rows=(row, row)),
+            AuditConfig(),
+            run_id="run",
+        )
 
 
 def test_junction_outputs_are_point_layers_and_counts_conserve(

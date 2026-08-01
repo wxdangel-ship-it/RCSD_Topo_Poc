@@ -4,7 +4,7 @@
 
 T12 保持既有 Segment 主流程：先用 canonical base-node 图检查必需方向的宽召回疑点，再以 raw Road endpoint 图、标准路口面和实际接入 portal 构造多源多目标最短路，比较局部/全图、有向/无向 carrier。raw failure 依次经过 portal-constrained semantic carrier 与 T07 Road-surface portal carrier 排除检查。对必需方向已经等价的单向 Segment，再反转 portal 检查 raw FRCSD 反向载体，并以 SWSD 全图反向替代路径保守排除。完成对应排除且通过候选种类专属锚点门禁后才自动进入正式问题，外部复核仅作可选 QA 覆盖。
 
-Junction 流程与 Segment 独立：T03 rejected 只提供候选，T12 在原始 FRCSD 中重算 target projection、局部 support ownership、endpoint degree、component 与替代 carrier；T07 1:N/N:1 稳定失败直接发布，不重新裁决。
+Junction 流程与 Segment 独立：T03 rejected 只提供候选，T12 在原始 FRCSD 中重算 target projection、局部 support ownership、endpoint degree、component 与替代 carrier；T07 Step2 final `fail1/fail2` 稳定失败直接发布，不重新裁决。
 
 ## 2. 预检与建图
 
@@ -25,7 +25,7 @@ Junction 流程与 Segment 独立：T03 rejected 只提供候选，T12 在原始
 - raw/canonical undirected path 仅用于诊断物理走廊与方向差异；它不得提供当前方向 portal，不得成为等价 basis，也不得覆盖 directed failure。
 - anchored canonical membership 不能产生 semantic 零长度 carrier；raw 等价仍必须在 identity node 图上包含实际 Road，并逐边符合 Direction。
 - 若上述层仍失败但双端唯一 T07 标准面成立，则在实际有向 Road 图上搜索 Road-surface/anchor-one-hop-frontier 路径；通过方向、物理 Road、surface access 与长度门禁后，按 `equivalent_t07_road_surface_carrier` 排除。距离指标保留到审计，不单独拒绝。
-- 完成上述排除后，canonical local directed 仍失败而 canonical local undirected 成功时判为 `directed_carrier_missing`；其它未解决方向判为 `required_local_connectivity_missing`。多个失败方向中只要存在明确方向缺失证据，Segment 级类型优先为 `directed_carrier_missing`。
+- 完成上述排除后，canonical local directed 仍失败而 canonical local undirected 成功时判为 S01 `segment_required_direction_unavailable`；其它未解决方向判为 S02 `segment_required_connection_missing`。多个失败方向中只要存在明确方向缺失证据，Segment 级类型优先为 S01。
 - 至少一端具有唯一 T07 标准面信用，或两端均为正式 T03 anchor 时，允许未解决失败自动 confirmed；其它失败按 `insufficient_anchor_confidence` 排除。
 - raw portal 找到等价 carrier 时按 `equivalent_raw_carrier` 排除；生产算法不按对象 ID 特判。
 - 单向 Segment 只有在所有必需方向已等价时才检查反向；短 Segment 的 portal 先按两端 SWSD portal 距离做 Voronoi 分侧，双 T07 可补充同 canonical group、`portal_radius_m` 内的实际 raw endpoint。该扩展只选择端点、不增加图边；raw FRCSD 反向路径仍必须连续包含实际 Road 并通过既有长度比例、附加长度和走廊阈值。
@@ -57,4 +57,4 @@ Junction source 未提供时走空源 fast path，不构建 Junction 索引。�
 - `shared_degree1_terminal_collapse`：仅对正式 eligible 的 class B/not established、无 required RCSDNode、至少两个 target 运行。优先使用 T03 正式 support IDs；缺失时从 target 最近 raw FRCSD Road 的 endpoint 邻域检索局部 ownership carrier。所有 target 必须投影到同一 support terminal endpoint、endpoint support degree=1，且无局部替代 carrier、无无效几何、无正式高置信跨层解释。
 - `multi_component_unmatched_support`：仅对 class B/review、无 required RCSDNode 运行。所有 target 必须只解释同一 support component，至少另有一个未解释 component；同时要求 Step6 fragmented-surface reason、cleanup 前 meaningful component 至少 3、`constraint_induced_split=false`，且无局部替代 carrier和高置信跨层解释。
 - raw FRCSD endpoint 的全局 incident Road 可以来自其它 Segment；它只进入全局 degree 审计，不自动成为当前 Junction support。support ownership 以明确路口锚定 target 的局部 carrier 为准。
-- `one_target_to_many_base` 每 target 一行；`many_target_to_one_base` 每 target 一行并共享 deterministic conflict group；`duplicate_target_rows` 只增加 ignored 计数。
+- Step2 `fail1` 每个语义路口发布一条 J03；`fail2` 按共享 RCSDIntersection 的冲突分量逐语义路口发布 J04 并共享 deterministic conflict group。final state、error GPKG 与 summary 不一致时 blocked；Step3 cardinality 导入数恒为 0。

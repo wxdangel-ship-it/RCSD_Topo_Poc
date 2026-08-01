@@ -7,7 +7,7 @@
 - `Anchor group`：只展开 T05 选中 `base_id` 所属 canonical group；其它 grouped raw node 按显式成员保留但不递归扩组。选中 mainNode 的 subnode raw alias 是受信锚点成员，但不产生零成本通行。T07 另关联对应 RCSDIntersection 标准路口面。
 - `Cross evidence`：T06 Step2/Step3、DriveZone 和 Case crop bounds。
 - `T03 Junction source`：正式 T03 Step7 rejected 且 Step3/association/Step6/Step7 审计链完整的 Case；只形成待 T12 复核的候选域。
-- `T07 cardinality source`：正式 Step3 `relation_cardinality_errors.csv/json`；1:N/N:1 是稳定失败并直接发布，duplicate 只审计。
+- `T07 anchor failure source`：Step2 `nodes.gpkg` 代表路口 final `is_anchor=fail1/fail2`；error GPKG、summary 与 relation evidence 只做一致性校验。`fail2 > fail1`，Step3 cardinality 不进入候选。
 
 ## 2. 业务对象与分层
 
@@ -30,4 +30,4 @@
 
 ## 4. 下游语义
 
-候选不是错误；只有自动高置信 decision、T07 稳定失败直接发布或显式 Segment 外部 override 产生的 `review_status=confirmed_frcsd_quality_issue` 才能被下游解释为已确认质量问题。Segment 与 Junction 输出、几何和计数域独立。
+候选不是错误；只有自动高置信 decision、T07 Step2 稳定失败直接发布或显式 Segment 外部 override 产生的 `result_status=confirmed` 才能被下游解释为已确认质量问题。`review_status` 只保留一个版本兼容；Segment 与 Junction 输出、几何和计数域独立。

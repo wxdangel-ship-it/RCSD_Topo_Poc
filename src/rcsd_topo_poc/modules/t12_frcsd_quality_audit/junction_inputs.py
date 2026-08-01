@@ -5,13 +5,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import geopandas as gpd
 import pandas as pd
 
 from rcsd_topo_poc.modules.t00_utility_toolbox.common import (
     normalize_runtime_path,
 )
 
-from .carrier_graph import normalize_id
+from .carrier_graph import field_name, normalize_id, parse_ids
 from .inputs import _file_audit
 from .models import T12ContractError
 
@@ -40,7 +41,8 @@ class JunctionSources:
 def load_junction_sources(
     *,
     t03_run_root: Path | None,
-    t07_step3_run_root: Path | None,
+    t07_run_root: Path | None = None,
+    t07_step3_run_root: Path | None = None,
 ) -> JunctionSources:
     t03_cases: tuple[T03CaseEvidence, ...] = ()
     t07_rows: tuple[dict[str, Any], ...] = ()
@@ -53,8 +55,11 @@ def load_junction_sources(
     if t03_run_root is not None:
         t03_cases, eligibility_nodes_path, t03_audit = _load_t03(t03_run_root)
         audit["t03"] = t03_audit
-    if t07_step3_run_root is not None:
-        t07_rows, t07_audit = _load_t07(t07_step3_run_root)
+    if t07_run_root is not None or t07_step3_run_root is not None:
+        t07_rows, t07_audit = _load_t07(
+            t07_run_root=t07_run_root,
+            legacy_t07_step3_run_root=t07_step3_run_root,
+        )
         audit["t07"] = t07_audit
     return JunctionSources(
         t03_cases=t03_cases,
@@ -198,46 +203,402 @@ def _load_t03(
 
 
 def _load_t07(
-    step3_run_root: Path,
+    *,
+    t07_run_root: Path | None,
+    legacy_t07_step3_run_root: Path | None,
 ) -> tuple[tuple[dict[str, Any], ...], dict[str, Any]]:
-    root = step3_run_root.resolve()
-    if not root.is_dir():
-        raise T12ContractError(f"T07 Step3 run root does not exist: {root}")
-    json_path = root / "relation_cardinality_errors.json"
-    csv_path = root / "relation_cardinality_errors.csv"
-    if json_path.is_file():
-        payload = _read_json(json_path)
-        raw_rows = payload.get("rows")
-        if not isinstance(raw_rows, list):
+    deprecated_locator_used = False
+    if t07_run_root is not None:
+        declared_root = t07_run_root.resolve()
+        if not declared_root.is_dir():
+            raise T12ContractError(f"T07 run root does not exist: {declared_root}")
+        step2_root = _discover_t07_step2_root(declared_root)
+    elif legacy_t07_step3_run_root is not None:
+        legacy_root = legacy_t07_step3_run_root.resolve()
+        if not legacy_root.is_dir():
             raise T12ContractError(
-                f"T07 relation cardinality JSON has no rows array: {json_path}"
+                f"deprecated T07 Step3 run root does not exist: {legacy_root}"
             )
-        rows = [dict(row) for row in raw_rows if isinstance(row, dict)]
-    elif csv_path.is_file():
-        rows = pd.read_csv(csv_path, dtype=str).fillna("").to_dict("records")
+        step2_root = _discover_t07_step2_root_from_legacy(legacy_root)
+        declared_root = step2_root.parent
+        deprecated_locator_used = True
     else:
-        raise T12ContractError(
-            f"T07 Step3 root is missing relation_cardinality_errors: {root}"
+        raise T12ContractError("T07 Step2 source was requested without a run root")
+
+    nodes_path = step2_root / "nodes.gpkg"
+    error1_path = step2_root / "node_error_1.gpkg"
+    error2_path = step2_root / "node_error_2.gpkg"
+    summary_path = step2_root / "t07_step2_summary.json"
+    evidence_paths = [
+        path
+        for path in (
+            step2_root / "t07_swsd_rcsd_relation_evidence.csv",
+            step2_root / "t07_swsd_rcsd_relation_evidence.json",
         )
-    required_fields = {"error_type", "target_id", "base_id"}
-    invalid = [
-        index
-        for index, row in enumerate(rows)
-        if not required_fields.issubset(row)
+        if path.is_file()
     ]
-    if invalid:
-        raise T12ContractError(
-            f"T07 relation cardinality rows miss required fields: {invalid[:20]}"
+    required = (nodes_path, error1_path, error2_path, summary_path)
+    missing = [str(path) for path in required if not path.is_file()]
+    if not evidence_paths:
+        missing.append(
+            str(step2_root / "t07_swsd_rcsd_relation_evidence.csv|json")
         )
-    artifact_paths = [path for path in (json_path, csv_path) if path.is_file()]
+    if missing:
+        raise T12ContractError(
+            "T07 Step2 root is missing formal artifacts: " + ", ".join(missing)
+        )
+
+    try:
+        nodes = gpd.read_file(nodes_path)
+    except Exception as exc:
+        raise T12ContractError(f"cannot read T07 Step2 nodes: {nodes_path}: {exc}") from exc
+    node_id_field = field_name(nodes, "id")
+    state_field = field_name(nodes, "is_anchor")
+    main_field = _optional_field_name(nodes, "mainnodeid")
+    final_by_junction: dict[str, str] = {}
+    group_members: dict[str, list[str]] = {}
+    for _, source in nodes.iterrows():
+        node_id = normalize_id(source[node_id_field])
+        if not node_id:
+            continue
+        main_id = normalize_id(source[main_field]) if main_field else ""
+        group_id = main_id or node_id
+        group_members.setdefault(group_id, []).append(node_id)
+        state = str(source[state_field] or "").strip().lower()
+        if state not in {"fail1", "fail2"}:
+            continue
+        if node_id in final_by_junction:
+            raise T12ContractError(
+                f"duplicate T07 Step2 final failure representative: {node_id}"
+            )
+        final_by_junction[node_id] = state
+
+    error1 = _read_t07_error_memberships(error1_path, "node_error_1")
+    error2 = _read_t07_error_memberships(error2_path, "node_error_2")
+    final_fail1 = {
+        junction_id for junction_id, state in final_by_junction.items() if state == "fail1"
+    }
+    final_fail2 = {
+        junction_id for junction_id, state in final_by_junction.items() if state == "fail2"
+    }
+    missing_error1 = sorted(final_fail1 - set(error1), key=_id_key)
+    missing_error2 = sorted(final_fail2 - set(error2), key=_id_key)
+    extra_error1 = sorted(set(error1) - final_fail1 - final_fail2, key=_id_key)
+    extra_error2 = sorted(set(error2) - final_fail2, key=_id_key)
+    if missing_error1 or extra_error1:
+        raise T12ContractError(
+            "T07 Step2 fail1 final state/error evidence mismatch: "
+            f"missing={missing_error1} extra={extra_error1}"
+        )
+    if missing_error2 or extra_error2:
+        raise T12ContractError(
+            "T07 Step2 fail2 final state/error evidence mismatch: "
+            f"missing={missing_error2} extra={extra_error2}"
+        )
+
+    summary = _read_json(summary_path)
+    summary_fail1 = _required_nonnegative_int(summary, "anchor_fail1_count")
+    summary_fail2 = _required_nonnegative_int(summary, "anchor_fail2_count")
+    if summary_fail1 != len(final_fail1):
+        raise T12ContractError(
+            "T07 Step2 fail1 count mismatch: "
+            f"summary={summary_fail1} final_nodes={len(final_fail1)}"
+        )
+    if summary_fail2 != len(final_fail2):
+        raise T12ContractError(
+            "T07 Step2 fail2 count mismatch: "
+            f"summary={summary_fail2} final_nodes={len(final_fail2)}"
+        )
+    relation_evidence = _read_t07_relation_evidence(evidence_paths)
+    for failure_type, final_ids, error_memberships, expected_state in (
+        (
+            "fail1",
+            final_fail1,
+            error1,
+            "multiple_intersections_for_group",
+        ),
+        (
+            "fail2",
+            final_fail2,
+            error2,
+            "intersection_shared_by_multiple_groups",
+        ),
+    ):
+        for target_id in sorted(final_ids, key=_id_key):
+            evidence = relation_evidence.get(target_id)
+            if evidence is None:
+                raise T12ContractError(
+                    f"T07 Step2 {failure_type} relation evidence is missing: {target_id}"
+                )
+            relation_state, matched_ids = evidence
+            if relation_state != expected_state:
+                raise T12ContractError(
+                    f"T07 Step2 {failure_type} relation_state mismatch: "
+                    f"target={target_id} expected={expected_state} actual={relation_state}"
+                )
+            expected_ids = set(error_memberships[target_id])
+            if set(matched_ids) != expected_ids:
+                raise T12ContractError(
+                    f"T07 Step2 {failure_type} relation evidence IDs mismatch: "
+                    f"target={target_id} expected={sorted(expected_ids, key=_id_key)} "
+                    f"actual={matched_ids}"
+                )
+
+    rows: list[dict[str, Any]] = []
+    for target_id in sorted(final_fail1, key=_id_key):
+        rows.append(
+            {
+                "failure_type": "fail1",
+                "target_id": target_id,
+                "related_target_ids": [target_id],
+                "base_ids": sorted(error1[target_id], key=_id_key),
+                "target_group_node_ids": sorted(
+                    set(group_members.get(target_id) or [target_id]),
+                    key=_id_key,
+                ),
+                "source_step2_root": str(step2_root),
+            }
+        )
+    for targets, base_ids in _fail2_components(
+        {target_id: error2[target_id] for target_id in final_fail2}
+    ):
+        rows.append(
+            {
+                "failure_type": "fail2",
+                "target_id": targets[0],
+                "related_target_ids": targets,
+                "base_ids": base_ids,
+                "target_group_node_ids_by_target": {
+                    target_id: sorted(
+                        set(group_members.get(target_id) or [target_id]),
+                        key=_id_key,
+                    )
+                    for target_id in targets
+                },
+                "source_step2_root": str(step2_root),
+            }
+        )
+    rows.sort(
+        key=lambda row: (
+            0 if row["failure_type"] == "fail1" else 1,
+            _id_key(str(row["target_id"])),
+        )
+    )
+    artifact_paths = [*required, *evidence_paths]
     return tuple(rows), {
         "provided": True,
-        "step3_run_root": str(root),
+        "source_kind": "t07_step2_final_anchor_failure",
+        "t07_run_root": str(declared_root),
+        "step2_run_root": str(step2_root),
         "row_count": len(rows),
-        "by_error_type": _count_by(rows, "error_type"),
+        "final_fail1_count": len(final_fail1),
+        "final_fail2_count": len(final_fail2),
+        "final_fail1_junction_ids": sorted(final_fail1, key=_id_key),
+        "final_fail2_junction_ids": sorted(final_fail2, key=_id_key),
+        "by_failure_type": _count_by(rows, "failure_type"),
+        "relation_evidence_validated_failure_count": len(final_by_junction),
+        "step3_cardinality_import_count": 0,
+        "deprecated_step3_locator_used": deprecated_locator_used,
+        "deprecated_step3_run_root": (
+            str(legacy_t07_step3_run_root.resolve())
+            if legacy_t07_step3_run_root is not None
+            else ""
+        ),
         "artifacts": {path.name: _file_audit(path) for path in artifact_paths},
         "silent_fix": False,
     }
+
+
+def _discover_t07_step2_root(root: Path) -> Path:
+    candidates = (root, root / "step2_anchor_recognition")
+    for candidate in candidates:
+        if (
+            (candidate / "nodes.gpkg").is_file()
+            and (candidate / "t07_step2_summary.json").is_file()
+        ):
+            return candidate.resolve()
+    raise T12ContractError(f"cannot discover T07 Step2 formal root from {root}")
+
+
+def _discover_t07_step2_root_from_legacy(step3_root: Path) -> Path:
+    try:
+        return _discover_t07_step2_root(step3_root)
+    except T12ContractError:
+        pass
+    search_roots = [step3_root, *list(step3_root.parents)[:4]]
+    found: dict[str, Path] = {}
+    for search_root in search_roots:
+        direct = (
+            search_root / "step2_anchor_recognition",
+            search_root / "t07_step12" / "t07_step12" / "step2_anchor_recognition",
+        )
+        shallow = [
+            *search_root.glob("*/step2_anchor_recognition"),
+            *search_root.glob("*/*/step2_anchor_recognition"),
+        ]
+        for candidate in (*direct, *shallow):
+            if (
+                (candidate / "nodes.gpkg").is_file()
+                and (candidate / "t07_step2_summary.json").is_file()
+            ):
+                resolved = candidate.resolve()
+                found[str(resolved)] = resolved
+    if len(found) == 1:
+        return next(iter(found.values()))
+    if not found:
+        raise T12ContractError(
+            "deprecated --t07-step3-run-root cannot locate the corresponding "
+            "T07 Step2 root; provide --t07-run-root"
+        )
+    raise T12ContractError(
+        "deprecated --t07-step3-run-root resolves multiple T07 Step2 roots; "
+        "provide --t07-run-root explicitly"
+    )
+
+
+def _read_t07_error_memberships(
+    path: Path,
+    expected_error_type: str,
+) -> dict[str, set[str]]:
+    try:
+        frame = gpd.read_file(path)
+    except Exception as exc:
+        raise T12ContractError(f"cannot read T07 Step2 error evidence {path}: {exc}") from exc
+    if frame.empty:
+        return {}
+    junction_field = _optional_field_name(frame, "junction_id")
+    representative_field = _optional_field_name(frame, "representative_node_id")
+    intersections_field = _optional_field_name(frame, "intersection_ids")
+    error_field = _optional_field_name(frame, "error_type")
+    if junction_field is None and representative_field is None:
+        raise T12ContractError(
+            f"T07 Step2 error evidence has no junction identity field: {path}"
+        )
+    output: dict[str, set[str]] = {}
+    for _, source in frame.iterrows():
+        if error_field:
+            error_type = str(source[error_field] or "").strip()
+            if error_type and error_type != expected_error_type:
+                raise T12ContractError(
+                    f"T07 error evidence type mismatch in {path}: {error_type}"
+                )
+        target_id = normalize_id(
+            source[junction_field]
+            if junction_field
+            else source[representative_field]  # type: ignore[index]
+        )
+        if not target_id:
+            raise T12ContractError(f"T07 error evidence has empty junction ID: {path}")
+        base_ids = (
+            parse_ids(source[intersections_field]) if intersections_field else []
+        )
+        output.setdefault(target_id, set()).update(base_ids)
+    return output
+
+
+def _read_t07_relation_evidence(
+    paths: list[Path],
+) -> dict[str, tuple[str, list[str]]]:
+    canonical_by_path: list[tuple[Path, dict[str, tuple[str, list[str]]]]] = []
+    for path in paths:
+        if path.suffix.lower() == ".csv":
+            raw_rows = pd.read_csv(path, dtype=str).fillna("").to_dict("records")
+        else:
+            payload = _read_json(path)
+            rows_value = payload.get("rows")
+            if not isinstance(rows_value, list):
+                raise T12ContractError(
+                    f"T07 relation evidence JSON has no rows array: {path}"
+                )
+            raw_rows = [dict(row) for row in rows_value if isinstance(row, dict)]
+        by_target: dict[str, tuple[str, list[str]]] = {}
+        for row in raw_rows:
+            target_id = normalize_id(row.get("target_id"))
+            if not target_id:
+                raise T12ContractError(
+                    f"T07 relation evidence has empty target_id: {path}"
+                )
+            if target_id in by_target:
+                raise T12ContractError(
+                    f"T07 relation evidence has duplicate target_id: {path}: {target_id}"
+                )
+            relation_source = str(row.get("relation_source") or "").strip()
+            if relation_source and relation_source != "T07_STEP2":
+                raise T12ContractError(
+                    f"T07 Step2 relation evidence has invalid source: {target_id}: {relation_source}"
+                )
+            by_target[target_id] = (
+                str(row.get("relation_state") or "").strip(),
+                sorted(
+                    set(parse_ids(row.get("matched_rcsdintersection_ids"))),
+                    key=_id_key,
+                ),
+            )
+        canonical_by_path.append((path, by_target))
+    canonical = canonical_by_path[0][1]
+    for path, other in canonical_by_path[1:]:
+        if other != canonical:
+            raise T12ContractError(
+                f"T07 relation evidence CSV/JSON mismatch: {canonical_by_path[0][0]} != {path}"
+            )
+    return canonical
+
+
+def _fail2_components(
+    target_to_bases: dict[str, set[str]],
+) -> list[tuple[list[str], list[str]]]:
+    base_to_targets: dict[str, set[str]] = {}
+    for target_id, base_ids in target_to_bases.items():
+        if not base_ids:
+            raise T12ContractError(
+                f"T07 Step2 fail2 has no RCSDIntersection IDs: {target_id}"
+            )
+        for base_id in base_ids:
+            base_to_targets.setdefault(base_id, set()).add(target_id)
+    remaining = set(target_to_bases)
+    components: list[tuple[list[str], list[str]]] = []
+    while remaining:
+        pending_targets = [min(remaining, key=_id_key)]
+        component_targets: set[str] = set()
+        component_bases: set[str] = set()
+        while pending_targets:
+            target_id = pending_targets.pop()
+            if target_id in component_targets:
+                continue
+            component_targets.add(target_id)
+            remaining.discard(target_id)
+            for base_id in target_to_bases[target_id]:
+                if base_id in component_bases:
+                    continue
+                component_bases.add(base_id)
+                pending_targets.extend(base_to_targets.get(base_id, ()))
+        if len(component_targets) < 2:
+            raise T12ContractError(
+                "T07 Step2 fail2 component has fewer than two semantic junctions: "
+                + ",".join(sorted(component_targets, key=_id_key))
+            )
+        components.append(
+            (
+                sorted(component_targets, key=_id_key),
+                sorted(component_bases, key=_id_key),
+            )
+        )
+    return sorted(components, key=lambda item: _id_key(item[0][0]))
+
+
+def _optional_field_name(frame: pd.DataFrame, requested: str) -> str | None:
+    by_lower = {str(column).lower(): str(column) for column in frame.columns}
+    return by_lower.get(requested.lower())
+
+
+def _required_nonnegative_int(payload: dict[str, Any], field: str) -> int:
+    try:
+        value = int(payload[field])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise T12ContractError(f"T07 Step2 summary has invalid {field}") from exc
+    if value < 0:
+        raise T12ContractError(f"T07 Step2 summary has negative {field}")
+    return value
 
 
 def _discover_step3_root(

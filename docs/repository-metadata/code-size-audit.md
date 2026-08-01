@@ -598,3 +598,35 @@ Access 几何同时缺失时不猜测，继续由
 | `tests/modules/t12_frcsd_quality_audit/test_review_publish.py` | `9911` bytes | 精度优先自动决定与 review 契约 | 保持 decision 专项 |
 | `tests/modules/t12_frcsd_quality_audit/test_outputs.py` | `1491` bytes | additive 输出字段合同 | 保持轻量 |
 | `tests/modules/t12_frcsd_quality_audit/test_1026960_fixture.py` | `2370` bytes | 既有冻结清单与生产代码无 Case ID 硬编码门禁 | 不把新候选写入旧 review fixture |
+
+### T12 v10 质量分类与 T07 Step2 来源修正（2026-08-01）
+
+本轮修改既有 T10/T12 入口和实现，并新增两个仅位于 SpecKit `validation/`
+目录的验证脚本；未新增正式执行入口。全部修改/新增的源码、脚本和测试均低于
+`100000` bytes，最大文件为既有
+`scripts/t10_run_innernet_full_pipeline.sh`（`69516` bytes）。T07 代码、接口和
+算法未修改。
+
+| 文件 | 当前体量 | 当前职责/约束 |
+|---|---:|---|
+| `scripts/t10_run_innernet_full_pipeline.sh` | `69516` bytes | T10 全量编排；T12 前只归档同一标准目录旧结果，失败时恢复原批次 |
+| `scripts/t12_rerun_frcsd_junction_quality_innernet.sh` | `8080` bytes | T12 独立续跑；保持 T10 标准目录，归档旧批次并在失败时恢复 |
+| `scripts/t12_run_frcsd_quality_audit.py` | `5234` bytes | 既有 T12 CLI；增加可选 T07 Step1/2 根参数 |
+| `src/rcsd_topo_poc/modules/t10_e2e_orchestration/case_runner_t12.py` | `6722` bytes | T10→T12 Step1/2 handoff |
+| `src/rcsd_topo_poc/modules/t12_frcsd_quality_audit/issue_taxonomy.py` | `9157` bytes | 三组七类、中文描述、状态与兼容映射唯一真相 |
+| `src/rcsd_topo_poc/modules/t12_frcsd_quality_audit/junction_audit.py` | `46109` bytes | T03 重验与 T07 Step2 J03/J04 发布；不得承接 T07 算法 |
+| `src/rcsd_topo_poc/modules/t12_frcsd_quality_audit/junction_inputs.py` | `26005` bytes | T03/T07 Step2 只读来源、final/error/summary/relation evidence 强一致性和指纹审计 |
+| `src/rcsd_topo_poc/modules/t12_frcsd_quality_audit/junction_outputs.py` | `6992` bytes | Junction CSV/GPKG 发布 |
+| `src/rcsd_topo_poc/modules/t12_frcsd_quality_audit/models.py` | `4623` bytes | v10 schema 与统一字段模型 |
+| `src/rcsd_topo_poc/modules/t12_frcsd_quality_audit/outputs.py` | `31626` bytes | Segment 输出、中文分类报告与内部根因保留 |
+| `src/rcsd_topo_poc/modules/t12_frcsd_quality_audit/review_publish.py` | `14167` bytes | Segment 分类迁移、决定和候选唯一性门禁 |
+| `src/rcsd_topo_poc/modules/t12_frcsd_quality_audit/runner.py` | `6649` bytes | T12 编排与 T07 Step1/2 可选输入传递 |
+| `tests/modules/t10_e2e_orchestration/test_t10_t12_workflow.py` | `13161` bytes | Step1/2 handoff、标准目录归档与失败恢复合同 |
+| `tests/modules/t12_frcsd_quality_audit/test_issue_taxonomy.py` | `3366` bytes | 七类、状态和兼容映射合同 |
+| `tests/modules/t12_frcsd_quality_audit/test_junction_audit.py` | `13007` bytes | J01-J04 决定、误报排除和唯一性合同 |
+| `tests/modules/t12_frcsd_quality_audit/test_junction_inputs.py` | `10005` bytes | Step2 final/error/summary/relation evidence 一致性和 Step3 零导入合同 |
+| `tests/modules/t12_frcsd_quality_audit/test_outputs.py` | `3243` bytes | Segment/Junction 分类字段和报告合同 |
+| `tests/modules/t12_frcsd_quality_audit/test_real_junction_cases.py` | `5558` bytes | T03 4 正 16 负真实 Case 回归 |
+| `tests/modules/t12_frcsd_quality_audit/test_review_publish.py` | `10676` bytes | Segment 决定、兼容和候选唯一性合同 |
+| `specs/t12-quality-taxonomy-step2-source-20260801/validation/build_real_audit_bundle.py` | `16081` bytes | 一次性真实 Case/QGIS 自包含证据包构建，不登记为正式入口 |
+| `specs/t12-quality-taxonomy-step2-source-20260801/validation/create_qgis_project.py` | `16838` bytes | 一次性 PyQGIS 工程、渲染和图层门禁，不登记为正式入口 |

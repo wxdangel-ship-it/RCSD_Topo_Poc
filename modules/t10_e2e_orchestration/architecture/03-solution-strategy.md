@@ -46,7 +46,7 @@ T03 / T04 当前仍基于输入切片自动发现候选 Case，T10 不在本层�
 
 T06 Step3 成功后，T10 先调用既有 T11 入口生成 relation repair candidate audit；T11 不回写或替代 T06 handoff。随后 T10 通过 T09 既有模块 callable 执行 Step1/2 与 Step3 F-RCSD restriction 投影，T09 输入仍直接来自 T06。
 
-显式启用 T12 时，T10 在 T11 完成后对原始 1V1 F-RCSD 运行 T12，再进入 T09。T12 输出只进入自身 stage record，不消费 T11 输出、不替换 T06 handoff；因此 T11 与 T09 的既有业务输入保持不变。`scripts/t10_run_frcsd_quality_pipeline.sh` 只固定 profile 并 `exec` 通用 full runner，不复制模块算法或编排实现。
+显式启用 T12 时，T10 在 T11 完成后对原始 1V1 F-RCSD 运行 T12，再进入 T09。T10 把当前 T03 root 与既有 T07 Step1/2 root 显式传给 T12，不为 T12 运行可选 Step3。T12 输出只进入自身 stage record，不消费 T11 输出、不替换 T06 handoff；因此 T11 与 T09 的既有业务输入保持不变。`scripts/t10_run_frcsd_quality_pipeline.sh` 只固定 profile 并 `exec` 通用 full runner，不复制模块算法或编排实现。
 
 ## 6. T06 漏斗策略
 

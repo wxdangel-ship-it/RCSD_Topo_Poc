@@ -60,7 +60,8 @@ LEGACY_TEXT_BUNDLE_END_PAYLOAD = "END_PAYLOAD"
 LEGACY_TEXT_BUNDLE_META = "META "
 LEGACY_TEXT_BUNDLE_CHECKSUM = "CHECKSUM "
 
-NODE_FIELDS = ("id", "mainnodeid", "has_evd", "is_anchor", "kind_2", "grade_2")
+NODE_REQUIRED_FIELDS = ("id", "mainnodeid", "kind_2", "grade_2")
+NODE_OPTIONAL_CONTEXT_FIELDS = ("has_evd", "is_anchor")
 ROAD_REQUIRED_FIELDS = ("id", "direction", "snodeid", "enodeid")
 ROAD_OPTIONAL_FIELDS = ("patchid", "patch_id")
 RCSDNODE_FIELDS = ("id", "mainnodeid")
@@ -237,6 +238,14 @@ def _filter_road_properties(properties: dict[str, Any]) -> dict[str, Any]:
     for field_name in ROAD_OPTIONAL_FIELDS:
         if lookup.has(field_name):
             filtered[field_name] = lookup.get(field_name)
+    return filtered
+
+
+def _filter_node_properties(properties: dict[str, Any]) -> dict[str, Any]:
+    filtered = _filter_properties(properties, NODE_REQUIRED_FIELDS)
+    lookup = PropertyLookup(properties)
+    for field_name in NODE_OPTIONAL_CONTEXT_FIELDS:
+        filtered[field_name] = lookup.get(field_name) if lookup.has(field_name) else None
     return filtered
 
 
@@ -1119,7 +1128,9 @@ def _run_t02_export_single_text_bundle(
         local_rcsdroad_layer = local_layers["rcsdroad"]
         local_rcsdnode_layer = local_layers["rcsdnode"]
 
-        local_nodes = _parse_nodes(local_nodes_layer, require_anchor_fields=True)
+        # Only the target semantic group is required to carry T03 eligibility fields.
+        # Ordinary endpoint/context nodes are topology dependencies and may omit them.
+        local_nodes = _parse_nodes(local_nodes_layer, require_anchor_fields=False)
         parsed_roads = _parse_roads(local_roads_layer, label="roads")
         current_patch_id = _resolve_current_patch_id_from_roads(group_nodes=group_nodes, roads=parsed_roads)
         filtered_roads = _select_bundle_component_roads(
@@ -1301,7 +1312,7 @@ def _run_t02_export_single_text_bundle(
         for feature in local_nodes_features:
             nodes_features.append(
                 _local_feature(
-                    properties=_filter_properties(feature.properties, NODE_FIELDS),
+                    properties=_filter_node_properties(feature.properties),
                     geometry=feature.geometry,
                     origin_x=origin_x,
                     origin_y=origin_y,

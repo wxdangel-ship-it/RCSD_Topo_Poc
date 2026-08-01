@@ -57,4 +57,3 @@ Segment 与 Junction 正式结果共享以下分类字段：
 | `junction_reality_or_precision_gap` | `junction_unmatched_support_topology` |
 
 `junction_relation_cardinality_mismatch` 不做自动迁移；必须从 Step2 final state 重新生成 J03/J04。
-

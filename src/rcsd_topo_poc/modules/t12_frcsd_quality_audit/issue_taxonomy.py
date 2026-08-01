@@ -221,4 +221,3 @@ def enrich_quality_result(row: Mapping[str, Any]) -> dict[str, Any]:
 
 def enrich_quality_results(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [enrich_quality_result(row) for row in rows]
-

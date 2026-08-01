@@ -50,4 +50,3 @@
 ## 5. 复杂度说明
 
 不新建服务层或入口；新增 taxonomy 小模块是为消除 Segment/Junction 重复枚举和中文语义漂移。Step2 loader 保留在既有 `junction_inputs.py`，不引入跨模块抽象。
-

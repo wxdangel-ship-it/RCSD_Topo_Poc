@@ -613,7 +613,7 @@ Access 几何同时缺失时不猜测，继续由
 | `scripts/t12_rerun_frcsd_junction_quality_innernet.sh` | `8080` bytes | T12 独立续跑；保持 T10 标准目录，归档旧批次并在失败时恢复 |
 | `scripts/t12_run_frcsd_quality_audit.py` | `5234` bytes | 既有 T12 CLI；增加可选 T07 Step1/2 根参数 |
 | `src/rcsd_topo_poc/modules/t10_e2e_orchestration/case_runner_t12.py` | `6722` bytes | T10→T12 Step1/2 handoff |
-| `src/rcsd_topo_poc/modules/t12_frcsd_quality_audit/issue_taxonomy.py` | `9157` bytes | 三组七类、中文描述、状态与兼容映射唯一真相 |
+| `src/rcsd_topo_poc/modules/t12_frcsd_quality_audit/issue_taxonomy.py` | `9156` bytes | 三组七类、中文描述、状态与兼容映射唯一真相 |
 | `src/rcsd_topo_poc/modules/t12_frcsd_quality_audit/junction_audit.py` | `46109` bytes | T03 重验与 T07 Step2 J03/J04 发布；不得承接 T07 算法 |
 | `src/rcsd_topo_poc/modules/t12_frcsd_quality_audit/junction_inputs.py` | `26005` bytes | T03/T07 Step2 只读来源、final/error/summary/relation evidence 强一致性和指纹审计 |
 | `src/rcsd_topo_poc/modules/t12_frcsd_quality_audit/junction_outputs.py` | `6992` bytes | Junction CSV/GPKG 发布 |
@@ -622,7 +622,7 @@ Access 几何同时缺失时不猜测，继续由
 | `src/rcsd_topo_poc/modules/t12_frcsd_quality_audit/review_publish.py` | `14167` bytes | Segment 分类迁移、决定和候选唯一性门禁 |
 | `src/rcsd_topo_poc/modules/t12_frcsd_quality_audit/runner.py` | `6649` bytes | T12 编排与 T07 Step1/2 可选输入传递 |
 | `tests/modules/t10_e2e_orchestration/test_t10_t12_workflow.py` | `13161` bytes | Step1/2 handoff、标准目录归档与失败恢复合同 |
-| `tests/modules/t12_frcsd_quality_audit/test_issue_taxonomy.py` | `3366` bytes | 七类、状态和兼容映射合同 |
+| `tests/modules/t12_frcsd_quality_audit/test_issue_taxonomy.py` | `3365` bytes | 七类、状态和兼容映射合同 |
 | `tests/modules/t12_frcsd_quality_audit/test_junction_audit.py` | `13007` bytes | J01-J04 决定、误报排除和唯一性合同 |
 | `tests/modules/t12_frcsd_quality_audit/test_junction_inputs.py` | `10005` bytes | Step2 final/error/summary/relation evidence 一致性和 Step3 零导入合同 |
 | `tests/modules/t12_frcsd_quality_audit/test_outputs.py` | `3243` bytes | Segment/Junction 分类字段和报告合同 |

@@ -1,8 +1,8 @@
 # T12 质量分类与 T07 Step2 来源修正
 
-**Feature Branch**: `codex/t12-v10-quality-taxonomy`  
-**Created**: 2026-08-01  
-**Status**: Approved  
+**Feature Branch**: `codex/t12-v10-quality-taxonomy`
+**Created**: 2026-08-01
+**Status**: Approved
 **Input**: 用户批准修复 T07 非所属路口误报，并将 T12 Segment/Junction 正式结果统一为三组七类、可分类型修复的质量错误。
 
 ## 1. 业务目标

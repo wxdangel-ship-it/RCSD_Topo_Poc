@@ -106,4 +106,3 @@ def test_excluded_result_has_authoritative_result_status_without_issue_type() ->
 def test_generic_junction_cardinality_type_cannot_be_migrated_silently() -> None:
     with pytest.raises(T12ContractError, match="must be regenerated from T07 Step2"):
         normalize_issue_type("junction_relation_cardinality_mismatch")
-

@@ -9,13 +9,10 @@ export REPO_DIR="$PWD"
 export PYTHON_BIN="$REPO_DIR/.venv/bin/python"
 export PYTHONPATH="$REPO_DIR/src${PYTHONPATH:+:$PYTHONPATH}"
 
-# 内网正式输入；本脚本无需调用者补路径。
-export NODES_PATH="/mnt/d/TestData/POC_QA/SWSD/nodes.gpkg"
-export ROADS_PATH="/mnt/d/TestData/POC_QA/SWSD/roads.gpkg"
-export DRIVEZONE_PATH="/mnt/d/TestData/POC_QA/Patch_vector/DriveZone.gpkg"
-export DIVSTRIPZONE_PATH="/mnt/d/TestData/POC_QA/Patch_vector/DivStripZone.gpkg"
-export RCSDROAD_PATH="/mnt/d/TestData/POC_QA/FRCSD/RCSDRoad.gpkg"
-export RCSDNODE_PATH="/mnt/d/TestData/POC_QA/FRCSD/RCSDNode.gpkg"
+# 本批 Case 来自该次 T10 正式运行。必须复用 manifest 记录的 T03 交接输入，
+# 尤其是 T07 Step2 Nodes；不得绕过 T01/T07 直接读取原始 SWSD。
+export T10_RUN_ROOT="${T10_RUN_ROOT:-/mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t10_frcsd_quality_pipeline/t10_frcsd_quality_full_20260731_200542}"
+export T10_MANIFEST_PATH="$T10_RUN_ROOT/t10_innernet_full_pipeline_manifest.json"
 
 export RUN_ID="${RUN_ID:-t03_failed_cases_first50_$(date +%Y%m%d_%H%M%S)}"
 export OUT_ROOT="${OUT_ROOT:-$REPO_DIR/outputs/_work/t03_failed_case_bundles}"
@@ -23,6 +20,7 @@ export RUN_DIR="$OUT_ROOT/$RUN_ID"
 export OUT_TXT="$RUN_DIR/t03_failed_cases_first50.txt"
 export DECODE_DIR="$RUN_DIR/decoded"
 export ARCHIVE_PATH="$RUN_DIR/t03_failed_cases_first50_bundle.tar.gz"
+export SOURCE_LINEAGE_PATH="$RUN_DIR/t03_failed_cases_first50_source_lineage.json"
 export MAX_TEXT_SIZE_BYTES="${MAX_TEXT_SIZE_BYTES:-256000}"
 
 CASE_IDS=(
@@ -37,6 +35,66 @@ if [[ ! -x "$PYTHON_BIN" ]]; then
   echo "[BLOCK] Python 不可执行：$PYTHON_BIN" >&2
   exit 2
 fi
+
+if [[ ! -f "$T10_MANIFEST_PATH" ]]; then
+  echo "[BLOCK] T10 manifest 不存在：$T10_MANIFEST_PATH" >&2
+  exit 2
+fi
+
+FORMAL_INPUTS_TEXT="$("$PYTHON_BIN" - "$T10_MANIFEST_PATH" "$T10_RUN_ROOT" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+manifest_path = Path(sys.argv[1])
+t10_run_root = Path(sys.argv[2])
+payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+manifest_run_root = payload.get("run_root")
+if not manifest_run_root:
+    raise SystemExit(f"[BLOCK] T10 manifest 缺少 run_root：{manifest_path}")
+if Path(str(manifest_run_root)).resolve() != t10_run_root.resolve():
+    raise SystemExit(
+        f"[BLOCK] T10 manifest 的 run_root 与指定成果目录不一致："
+        f"manifest={manifest_run_root} expected={t10_run_root}"
+    )
+
+t03_stage = (payload.get("stages") or {}).get("t03") or {}
+t03_status = str(t03_stage.get("status") or "")
+if t03_status != "passed":
+    raise SystemExit(f"[BLOCK] T10 manifest 中 T03 未通过：status={t03_status or '<missing>'}")
+
+t03_inputs = t03_stage.get("inputs") or {}
+root_inputs = payload.get("inputs") or {}
+values = {
+    "nodes": t03_inputs.get("nodes"),
+    "roads": t03_inputs.get("roads"),
+    "drivezone": t03_inputs.get("drivezone"),
+    "divstripzone": root_inputs.get("divstripzone"),
+    "rcsdroad": t03_inputs.get("rcsdroad"),
+    "rcsdnode": t03_inputs.get("rcsdnode"),
+}
+missing = [key for key, value in values.items() if value in (None, "")]
+if missing:
+    raise SystemExit(f"[BLOCK] T10 manifest 缺少正式输入：{','.join(missing)}")
+
+print(t03_status)
+for key in ("nodes", "roads", "drivezone", "divstripzone", "rcsdroad", "rcsdnode"):
+    print(values[key])
+PY
+)"
+mapfile -t FORMAL_INPUTS <<<"$FORMAL_INPUTS_TEXT"
+if (( ${#FORMAL_INPUTS[@]} != 7 )); then
+  echo "[BLOCK] 无法从 T10 manifest 唯一解析 T03 正式输入。" >&2
+  exit 2
+fi
+
+export T03_STAGE_STATUS="${FORMAL_INPUTS[0]}"
+export NODES_PATH="${FORMAL_INPUTS[1]}"
+export ROADS_PATH="${FORMAL_INPUTS[2]}"
+export DRIVEZONE_PATH="${FORMAL_INPUTS[3]}"
+export DIVSTRIPZONE_PATH="${FORMAL_INPUTS[4]}"
+export RCSDROAD_PATH="${FORMAL_INPUTS[5]}"
+export RCSDNODE_PATH="${FORMAL_INPUTS[6]}"
 
 for path in \
   "$NODES_PATH" \
@@ -57,9 +115,10 @@ if [[ -e "$RUN_DIR" ]]; then
 fi
 mkdir -p "$RUN_DIR"
 
-# 前置确认输入角色，并明确接受 1V1 FRCSD 的 snodeId/enodeId/mainNodeId。
+# 前置确认正式 T03 输入字段及全部 50 个代表节点的候选状态；
+# 同时明确接受 1V1 FRCSD 的 snodeId/enodeId/mainNodeId。
 "$PYTHON_BIN" - \
-  "$NODES_PATH" "$ROADS_PATH" "$RCSDROAD_PATH" "$RCSDNODE_PATH" <<'PY'
+  "$NODES_PATH" "$ROADS_PATH" "$RCSDROAD_PATH" "$RCSDNODE_PATH" "${CASE_IDS[@]}" <<'PY'
 import sys
 from pathlib import Path
 
@@ -84,16 +143,120 @@ def require(label: str, path_text: str, required: tuple[str, ...]) -> None:
     print(f"[PASS] {label} fields={resolved}")
 
 
-require("SWSD nodes", sys.argv[1], ("id", "mainnodeid"))
+def normalize_id(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if text.endswith(".0"):
+        try:
+            return str(int(float(text)))
+        except ValueError:
+            pass
+    return text or None
+
+
+def normalize_text(value: object) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip().casefold()
+    return text or None
+
+
+require("T07 Step2 nodes", sys.argv[1], ("id", "mainnodeid", "has_evd", "is_anchor", "kind_2", "grade_2"))
 require("SWSD roads", sys.argv[2], ("id", "snodeid", "enodeid", "direction"))
 require("RCSDRoad", sys.argv[3], ("id", "snodeid", "enodeid", "direction"))
 require("RCSDNode", sys.argv[4], ("id", "mainnodeid"))
+
+case_ids = set(sys.argv[5:])
+representatives: dict[str, dict[str, object]] = {}
+with fiona.open(sys.argv[1], layer=fiona.listlayers(sys.argv[1])[0]) as src:
+    for feature in src:
+        properties = {str(key).casefold(): value for key, value in dict(feature["properties"]).items()}
+        node_id = normalize_id(properties.get("id"))
+        if node_id in case_ids:
+            representatives[node_id] = properties
+
+missing_cases = sorted(case_ids - representatives.keys(), key=int)
+if missing_cases:
+    raise SystemExit(f"[BLOCK] T07 Step2 nodes 缺少代表节点：{','.join(missing_cases)}")
+
+invalid_cases: list[str] = []
+for case_id in sorted(case_ids, key=int):
+    properties = representatives[case_id]
+    mainnodeid = normalize_id(properties.get("mainnodeid"))
+    has_evd = normalize_text(properties.get("has_evd"))
+    is_anchor = normalize_text(properties.get("is_anchor"))
+    try:
+        kind_2 = int(float(str(properties.get("kind_2"))))
+    except (TypeError, ValueError):
+        kind_2 = None
+    if mainnodeid not in {None, case_id} or has_evd != "yes" or is_anchor != "no" or kind_2 not in {4, 2048}:
+        invalid_cases.append(
+            f"{case_id}(mainnodeid={mainnodeid},has_evd={has_evd},is_anchor={is_anchor},kind_2={kind_2})"
+        )
+if invalid_cases:
+    raise SystemExit("[BLOCK] 以下代表节点不满足正式 T03 候选条件：" + ";".join(invalid_cases))
+print(f"[PASS] T07 Step2 nodes 中 {len(case_ids)} 个代表节点均满足 T03 候选条件")
+PY
+
+CASE_IDS_TEXT="$(printf '%s\n' "${CASE_IDS[@]}")" \
+"$PYTHON_BIN" - \
+  "$SOURCE_LINEAGE_PATH" "$T10_RUN_ROOT" "$T10_MANIFEST_PATH" "$T03_STAGE_STATUS" \
+  "$NODES_PATH" "$ROADS_PATH" "$DRIVEZONE_PATH" "$DIVSTRIPZONE_PATH" "$RCSDROAD_PATH" "$RCSDNODE_PATH" \
+  "$(git rev-parse HEAD)" <<'PY'
+import hashlib
+import json
+import os
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+(
+    output_path,
+    t10_run_root,
+    manifest_path,
+    t03_stage_status,
+    nodes_path,
+    roads_path,
+    drivezone_path,
+    divstripzone_path,
+    rcsdroad_path,
+    rcsdnode_path,
+    repository_commit,
+) = sys.argv[1:]
+case_ids = [value for value in os.environ["CASE_IDS_TEXT"].splitlines() if value]
+manifest_bytes = Path(manifest_path).read_bytes()
+payload = {
+    "generated_at_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    "source_policy": "exact_formal_t03_handoff",
+    "repository_commit": repository_commit,
+    "t10_run_root": t10_run_root,
+    "t10_manifest_path": manifest_path,
+    "t10_manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
+    "t03_stage_status": t03_stage_status,
+    "inputs": {
+        "nodes": {"path": nodes_path, "producer": "T07 Step2"},
+        "roads": {"path": roads_path, "producer": "T01"},
+        "drivezone": {"path": drivezone_path},
+        "divstripzone": {"path": divstripzone_path},
+        "rcsdroad": {"path": rcsdroad_path},
+        "rcsdnode": {"path": rcsdnode_path},
+    },
+    "case_count": len(case_ids),
+    "case_ids": case_ids,
+}
+Path(output_path).write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+print(f"[PASS] 已写入输入来源清单：{output_path}")
 PY
 
 echo "[RUN] case_count=${#CASE_IDS[@]}"
 echo "[RUN] first_case=${CASE_IDS[0]}"
 echo "[RUN] last_case=${CASE_IDS[${#CASE_IDS[@]}-1]}"
 echo "[RUN] output=$RUN_DIR"
+echo "[RUN] t10_run_root=$T10_RUN_ROOT"
+echo "[RUN] t10_manifest=$T10_MANIFEST_PATH"
+echo "[RUN] T03_NODES_FROM_T07_STEP2=$NODES_PATH"
+echo "[RUN] T03_ROADS_FROM_T01=$ROADS_PATH"
 
 bash scripts/t03_export_text_bundle_internal_multi_mainnodeids.sh \
   --nodes-path "$NODES_PATH" \
@@ -144,3 +307,4 @@ echo "[DONE] T03 前 50 个失败 Case 已打包并校验"
 echo "[RESULT] 文本 bundle 首分片：$OUT_TXT"
 echo "[RESULT] 传输归档：$ARCHIVE_PATH"
 echo "[RESULT] 解包校验目录：$DECODE_DIR"
+echo "[RESULT] 输入来源清单：$SOURCE_LINEAGE_PATH"

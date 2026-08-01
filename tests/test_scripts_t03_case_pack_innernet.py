@@ -61,18 +61,26 @@ EXPECTED_CASE_IDS = (
 )
 
 
-def test_t03_failed_case_pack_script_uses_exact_first_50_ids_and_fixed_inputs() -> None:
+def test_t03_failed_case_pack_script_uses_exact_first_50_ids_and_formal_t03_handoff() -> None:
     text = SCRIPT_PATH.read_text(encoding="utf-8")
     match = re.search(r"CASE_IDS=\((.*?)\n\)", text, flags=re.DOTALL)
 
     assert match is not None
     assert tuple(match.group(1).split()) == EXPECTED_CASE_IDS
-    assert '/mnt/d/TestData/POC_QA/SWSD/nodes.gpkg' in text
-    assert '/mnt/d/TestData/POC_QA/SWSD/roads.gpkg' in text
-    assert '/mnt/d/TestData/POC_QA/Patch_vector/DriveZone.gpkg' in text
-    assert '/mnt/d/TestData/POC_QA/Patch_vector/DivStripZone.gpkg' in text
-    assert '/mnt/d/TestData/POC_QA/FRCSD/RCSDRoad.gpkg' in text
-    assert '/mnt/d/TestData/POC_QA/FRCSD/RCSDNode.gpkg' in text
+    assert (
+        "/mnt/d/Work/RCSD_Topo_Poc/outputs/_work/t10_frcsd_quality_pipeline/"
+        "t10_frcsd_quality_full_20260731_200542"
+    ) in text
+    assert "t10_innernet_full_pipeline_manifest.json" in text
+    assert 't03_stage = (payload.get("stages") or {}).get("t03") or {}' in text
+    assert '"nodes": t03_inputs.get("nodes")' in text
+    assert '"roads": t03_inputs.get("roads")' in text
+    assert '"rcsdroad": t03_inputs.get("rcsdroad")' in text
+    assert '"rcsdnode": t03_inputs.get("rcsdnode")' in text
+    assert '"divstripzone": root_inputs.get("divstripzone")' in text
+    assert '"source_policy": "exact_formal_t03_handoff"' in text
+    assert "/mnt/d/TestData/POC_QA/SWSD/nodes.gpkg" not in text
+    assert "/mnt/d/TestData/POC_QA/SWSD/roads.gpkg" not in text
     assert "--decode-after-export 1" in text
     assert "--allow-partial-cases" not in text
 

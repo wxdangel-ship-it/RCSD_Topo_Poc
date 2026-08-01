@@ -83,6 +83,15 @@ def _unexpected_candidate(
     }
 
 
+def test_duplicate_segment_candidate_id_is_blocked() -> None:
+    with pytest.raises(T12ContractError, match="duplicate Segment candidate_id"):
+        apply_review_decisions(
+            [_candidate("duplicate"), _candidate("duplicate")],
+            run_id="run",
+            review_decisions_path=None,
+        )
+
+
 def test_unexpected_reverse_automatic_decisions_are_precision_first() -> None:
     reviewed, confirmed, exclusions, manual = apply_review_decisions(
         [
@@ -103,7 +112,9 @@ def test_unexpected_reverse_automatic_decisions_are_precision_first() -> None:
     assert manual == []
     assert len(reviewed) == 6
     assert [row["candidate_id"] for row in confirmed] == ["confirmed"]
-    assert confirmed[0]["issue_type"] == "unexpected_reverse_carrier"
+    assert confirmed[0]["issue_type"] == "segment_unexpected_reverse_passability"
+    assert confirmed[0]["legacy_issue_type"] == "unexpected_reverse_carrier"
+    assert confirmed[0]["issue_code"] == "S03"
     assert confirmed[0]["decision_rule"] == (
         "unexpected_reverse_raw_carrier_dual_t07_segment_scoped"
     )
@@ -163,6 +174,10 @@ def test_automatic_decisions_are_published_without_review() -> None:
     ]
     assert manual == []
     assert confirmed[0]["decision_source"] == "automatic_high_confidence"
+    assert confirmed[0]["issue_type"] == "segment_required_direction_unavailable"
+    assert confirmed[0]["legacy_issue_type"] == "directed_carrier_missing"
+    assert confirmed[0]["result_status"] == "confirmed"
+    assert exclusions[0]["result_status"] == "excluded"
     assert exclusions[0]["decision_rule"] == "equivalent_raw_carrier"
     assert exclusions[1]["decision_rule"] == "insufficient_anchor_confidence"
 

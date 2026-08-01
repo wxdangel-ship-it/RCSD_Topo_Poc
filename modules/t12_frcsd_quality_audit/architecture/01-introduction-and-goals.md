@@ -7,9 +7,9 @@
 ## 目标
 
 - 以 SWSD 方向要求为质量基准，既检查 1V1 FRCSD 是否缺少必需 carrier，也检查单向 Segment 是否在明确双端路口锚点之间出现唯一归属于当前 Segment 的非预期反向 carrier。
-- 以正式 T03 rejected 为候选、原始 1V1 FRCSD 为复核 target，准确率优先发布路口所需拓扑缺失与现实变化/精度差异；以 T07 Step3 稳定 1:N/N:1 失败直接发布关系基数问题。
+- 以正式 T03 rejected 为候选、原始 1V1 FRCSD 为复核 target，准确率优先发布路口所需拓扑缺失与未匹配支撑拓扑；以 T07 Step2 final `fail1/fail2` 直接发布锚定关系问题。
 - 用真实路口节点组和 portal 避免单节点锚定误报。
-- 形成 Segment LineString 与 Junction Point 两套独立的候选、自动决定、可选 QA 覆盖边界和正式问题证据。
+- 形成 Segment 线几何族（`LineString/MultiLineString`）与 Junction Point 两套独立的候选、自动决定、可选 QA 覆盖边界和正式问题证据。
 
 ## 兼容边界
 

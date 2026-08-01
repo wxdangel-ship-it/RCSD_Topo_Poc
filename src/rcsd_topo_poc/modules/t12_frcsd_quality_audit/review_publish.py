@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
@@ -7,6 +8,7 @@ from typing import Any
 import pandas as pd
 
 from .carrier_graph import field_name, normalize_id
+from .issue_taxonomy import enrich_quality_result, normalize_issue_type
 from .models import ISSUE_TYPES, REVIEW_STATUSES, T12ContractError
 
 
@@ -21,7 +23,19 @@ def apply_review_decisions(
     list[dict[str, Any]],
     list[dict[str, Any]],
 ]:
-    candidate_ids = {row["candidate_id"] for row in candidates}
+    candidate_id_values = [str(row.get("candidate_id") or "") for row in candidates]
+    duplicate_ids = sorted(
+        candidate_id
+        for candidate_id, count in Counter(candidate_id_values).items()
+        if count > 1
+    )
+    if duplicate_ids:
+        raise T12ContractError(
+            "duplicate Segment candidate_id: " + ",".join(duplicate_ids)
+        )
+    if any(not candidate_id for candidate_id in candidate_id_values):
+        raise T12ContractError("Segment candidate_id cannot be empty")
+    candidate_ids = set(candidate_id_values)
     decisions = (
         _load_decisions(review_decisions_path, run_id, candidate_ids)
         if review_decisions_path is not None
@@ -33,6 +47,9 @@ def apply_review_decisions(
     manual: list[dict[str, Any]] = []
     for candidate in candidates:
         row = deepcopy(candidate)
+        row.setdefault("object_type", "segment")
+        row.setdefault("source_module", "T12")
+        row.setdefault("silent_fix", False)
         automatic = _automatic_decision(candidate)
         row.update(automatic)
         row["automatic_review_status"] = automatic["review_status"]
@@ -44,6 +61,7 @@ def apply_review_decisions(
             row["decision_source"] = "external_review_override"
             row["decision_rule"] = "external_review_override"
         row["candidate_status"] = "candidate_decided"
+        row = enrich_quality_result(row)
         reviewed.append(row)
         if row["review_status"] == "confirmed_frcsd_quality_issue":
             confirmed.append(row)
@@ -104,7 +122,8 @@ def _automatic_decision(candidate: dict[str, Any]) -> dict[str, Any]:
             "decision_source": "automatic_high_confidence",
             "decision_rule": "insufficient_anchor_confidence",
         }
-    issue_type = str(candidate.get("suggested_issue_type") or "")
+    legacy_issue_type = str(candidate.get("suggested_issue_type") or "")
+    issue_type = normalize_issue_type(legacy_issue_type)
     if issue_type not in ISSUE_TYPES:
         raise T12ContractError(
             "automatic confirmed candidate has no valid issue_type: "
@@ -113,6 +132,7 @@ def _automatic_decision(candidate: dict[str, Any]) -> dict[str, Any]:
     return {
         "review_status": "confirmed_frcsd_quality_issue",
         "issue_type": issue_type,
+        "legacy_issue_type": legacy_issue_type,
         "review_reason": (
             "A SWSD-required direction lacks an equivalent trusted local "
             "FRCSD carrier after raw, portal-constrained semantic, and T07 "
@@ -215,7 +235,8 @@ def _automatic_unexpected_reverse_decision(
         )
     return {
         "review_status": "confirmed_frcsd_quality_issue",
-        "issue_type": "unexpected_reverse_carrier",
+        "issue_type": "segment_unexpected_reverse_passability",
+        "legacy_issue_type": "unexpected_reverse_carrier",
         "review_reason": (
             "A one-way SWSD Segment has an equivalent reverse raw local FRCSD "
             "carrier, no equivalent SWSD reverse full-graph carrier, and dual "
@@ -256,7 +277,12 @@ def _load_decisions(
         decision_run_id = normalize_id(source[fields["run_id"]])
         candidate_id = normalize_id(source[fields["candidate_id"]])
         status = normalize_id(source[fields["review_status"]])
-        issue_type = normalize_id(source[fields["issue_type"]])
+        legacy_issue_type = normalize_id(source[fields["issue_type"]])
+        issue_type = (
+            normalize_issue_type(legacy_issue_type)
+            if status == "confirmed_frcsd_quality_issue"
+            else legacy_issue_type
+        )
         reason = str(source[fields["review_reason"]]).strip()
         if decision_run_id != run_id:
             raise T12ContractError(
@@ -284,6 +310,17 @@ def _load_decisions(
         result[candidate_id] = {
             "review_status": status,
             "issue_type": issue_type,
+            "legacy_issue_type": (
+                legacy_issue_type
+                if legacy_issue_type in {
+                    "directed_carrier_missing",
+                    "required_local_connectivity_missing",
+                    "unexpected_reverse_carrier",
+                    "junction_required_topology_missing",
+                    "junction_reality_or_precision_gap",
+                }
+                else ""
+            ),
             "review_reason": reason,
             "review_source": normalize_id(source[fields["review_source"]]),
             "reviewed_at_utc": normalize_id(source[fields["reviewed_at_utc"]]),

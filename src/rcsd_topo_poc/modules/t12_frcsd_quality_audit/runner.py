@@ -35,6 +35,7 @@ def run_t12_frcsd_quality_audit(
     case_manifest_path: str | Path | None = None,
     review_decisions_path: str | Path | None = None,
     t03_run_root: str | Path | None = None,
+    t07_run_root: str | Path | None = None,
     t07_step3_run_root: str | Path | None = None,
     config: AuditConfig | None = None,
     progress: bool = False,
@@ -72,6 +73,7 @@ def run_t12_frcsd_quality_audit(
         stage_start = time.perf_counter()
         junction_sources = load_junction_sources(
             t03_run_root=Path(t03_run_root) if t03_run_root else None,
+            t07_run_root=Path(t07_run_root) if t07_run_root else None,
             t07_step3_run_root=(
                 Path(t07_step3_run_root) if t07_step3_run_root else None
             ),
@@ -114,7 +116,8 @@ def run_t12_frcsd_quality_audit(
                 "frcsd_road_count": len(loaded.frcsd_roads),
                 "frcsd_node_count": len(loaded.frcsd_nodes),
                 "t03_rejected_case_count": len(junction_sources.t03_cases),
-                "t07_cardinality_error_row_count": len(junction_sources.t07_rows),
+                "t07_step2_failure_group_count": len(junction_sources.t07_rows),
+                "t07_step3_cardinality_import_count": 0,
             },
             "stage_elapsed_seconds": stage_elapsed,
         }

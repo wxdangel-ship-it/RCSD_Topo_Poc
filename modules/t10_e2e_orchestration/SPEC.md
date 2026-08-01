@@ -24,7 +24,7 @@ T01 -> T07 Step1/2 -> T03 -> T04 -> T05 -> T06 -> T11 -> [T12] -> T09
 
 T08 是独立前置预处理、质检和修复模块，不由 T10 Case runner 调用；内网全量总控可把 T08 作为独立阶段串入全量链路。
 T07 Step3 是 T07 模块保留的可选兼容 relation 补锚能力，不属于 T10 v1 Case runner 默认主链；全量总控只有在显式配置兼容 relation 输入时才运行该阶段。
-T10 必须保持连续 nodes handoff：T07 Step2 nodes 进入 T03，T03 downstream nodes 进入 T04，T04 downstream nodes 作为 `final_swsd_nodes` 进入 T05 / T06 / T11 / T12 / T09。T12 读取原始 1V1 F-RCSD，并显式接收当前 T03 run root；当前全量运行存在正式 T07 Step3 关系基数工件时，同时接收该 stage root。T12 不读取或改写 T06 F-RCSD，也不消费 T11 输出。T12 与 T11 都不改变 T09 对 T06 F-RCSD 的直接业务依赖。
+T10 必须保持连续 nodes handoff：T07 Step2 nodes 进入 T03，T03 downstream nodes 进入 T04，T04 downstream nodes 作为 `final_swsd_nodes` 进入 T05 / T06 / T11 / T12 / T09。T12 读取原始 1V1 F-RCSD，并显式接收当前 T03 run root 与同次 T07 Step1/2 run root；T07 Junction 质量来源只允许是 Step2 代表路口 final `is_anchor=fail1/fail2`，不得消费 Step3 cardinality 工件。T12 不读取或改写 T06 F-RCSD，也不消费 T11 输出。T12 与 T11 都不改变 T09 对 T06 F-RCSD 的直接业务依赖。
 
 ## 2. 业务目标
 
@@ -86,7 +86,7 @@ T10 必须保持连续 nodes handoff：T07 Step2 nodes 进入 T03，T03 downstre
 | 既有 T10 run root | Segment package 反查 T01 Segment、T06 problem registry、replacement plan 和 relation 证据的来源。 |
 | T06 problem registry / relation audit | 生成上游反馈包和 feedback iteration 输入。 |
 | T11 relation repair candidates / summary | T06 后、T09 前的人工 relation 候选审计证据；不作为 T09 输入。 |
-| 原始 1V1 F-RCSD Road/Node、当前 T03 run root、可用的 T07 Step3 root 与可选 T12 review decisions | T12 Segment/Junction 自动质检的目标承载网、正式失败来源和可选 Segment 外部决定覆盖；不得以 T06 Step3 F-RCSD 替代。 |
+| 原始 1V1 F-RCSD Road/Node、当前 T03 run root、同次 T07 Step1/2 run root 与可选 T12 review decisions | T12 Segment/Junction 自动质检的目标承载网、正式失败来源和可选 Segment 外部决定覆盖；T07 只读取 Step2 final `fail1/fail2`，不得以 Step3 cardinality 或 T06 Step3 F-RCSD 替代。 |
 | 既有 full pipeline run root | resume 或 finalize-existing 的恢复对象。 |
 
 ## 6. 输出

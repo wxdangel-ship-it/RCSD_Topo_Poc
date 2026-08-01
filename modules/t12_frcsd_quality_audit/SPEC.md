@@ -4,14 +4,14 @@
 
 T12 检查原始 1V1 匹配生成的 FRCSD 是否保留 SWSD 的通行拓扑，并把上游稳定失败转化为可审计的 Junction 质量问题。SWSD 与该 FRCSD 理论上应通行等价，但这只是待数据验证的质量假设，不能直接变成修复规则。
 
-T12 与 T06 分工明确：T06 继续负责 Segment 替换预检和 F-RCSD 生成；T12 以原始 1V1 FRCSD 为 target，消费 T06 Step2/Step3 结果仅作交叉解释，不改变 T06 行为。T03 rejected 只提供 Junction 候选，T12 必须用原始 FRCSD 重新验证；T07 Step3 已稳定识别的 1:N/N:1 关系基数失败直接发布，不修改或重判 T07。
+T12 与 T06 分工明确：T06 继续负责 Segment 替换预检和 F-RCSD 生成；T12 以原始 1V1 FRCSD 为 target，消费 T06 Step2/Step3 结果仅作交叉解释，不改变 T06 行为。T03 rejected 只提供 Junction 候选，T12 必须用原始 FRCSD 重新验证；T07 Step2 最终 `is_anchor=fail1/fail2` 是稳定路口锚定失败，T12 直接发布且不修改或重判 T07。T07 Step3 relation 基数审计不属于 T12 正式错误来源。
 
 ## 2. 业务目标
 
 - 找到两端已锚定且 SWSD 要求通行、但原始 1V1 FRCSD 缺少等价 carrier 的 Segment。
 - 找到 SWSD 仅要求单向、要求方向已等价，且原始 1V1 FRCSD 在当前 Segment 明确双端路口锚点之间还存在唯一归属于当前 Segment 的几何等价反向 carrier。
 - 从正式 T03 rejected 审计链中准确率优先确认路口所需拓扑缺失或现实变化/精度差异，并保留原始 FRCSD support、target projection、endpoint degree 和 component 根因。
-- 将 T07 `one_target_to_many_base` 与 `many_target_to_one_base` 稳定失败直接发布为 Junction 关系基数问题；`duplicate_target_rows` 只计入 ignored 审计。
+- 将 T07 Step2 `fail1/fail2` 稳定失败分别发布为单路口对多路口面和多路口对单路口面问题；`fail2 > fail1`，最终输出必须与 Step2 代表路口 final state 精确一致。
 - 用复合路口节点组、实际接入 portal、Road-surface、局部/全图和有向/无向路径证据降低误报。
 - 将 canonical 宽召回候选、raw endpoint 主判定、portal-constrained semantic 与 T07 Road-surface 误报排除严格分层，自动发布通过标准路口与锚点可信度门禁的高置信质量问题；人工复核仅作可选 QA 覆盖。
 - 在 T10 中可选 audit-only 编排，不改变 T06、T11、T09 的既有 handoff。
@@ -24,13 +24,13 @@ T12 与 T06 分工明确：T06 继续负责 Segment 替换预检和 F-RCSD 生�
 - SWSD Segment 所含道路的必需方向，以及单向 Segment 的相反方向。
 - T05 成功锚点、`grouped_rcsdnode_ids`、FRCSD raw Road endpoint、用于已锚定 raw alias group、宽召回及受限误报排除的 `mainNodeId/subNodeId`，以及 RCSDIntersection 标准路口面。
 - 默认 `50m` local corridor 和 portal radius；参数必须进入 manifest。
-- `directed_carrier_missing`、`required_local_connectivity_missing` 与 `unexpected_reverse_carrier` 三类确认问题；反向问题必须附带锚点区间和跨 Segment 唯一归属证据。
-- `junction_required_topology_missing`、`junction_reality_or_precision_gap` 与 `junction_relation_cardinality_mismatch` 三类 Junction 确认问题。
+- `segment_required_direction_unavailable`、`segment_required_connection_missing` 与 `segment_unexpected_reverse_passability` 三类 Segment 确认问题；反向问题必须附带锚点区间和跨 Segment 唯一归属证据。
+- `junction_required_topology_missing`、`junction_unmatched_support_topology`、`junction_anchor_one_to_many` 与 `junction_anchor_many_to_one` 四类 Junction 确认问题。
 - T03 Junction 候选必须满足正式 eligibility：`has_evd=yes`、`is_anchor=no`、`kind_2 in {4,2048}`，并具有完整 Step3/association/Step6/Step7 rejected 审计链。
 - T03 准确率优先规则只确认 `shared_degree1_terminal_collapse` 与 `multi_component_unmatched_support`；`6m` endpoint tolerance 与 `50m` local Junction scope 必须进入 manifest，距离本身只作检索或审计，不能单独形成结论。
-- T07 只消费正式 `relation_cardinality_errors.csv/json`；N:1 按受影响 SWSD Junction 逐 Point 输出并共享 `conflict_group_id`。
+- T07 只消费 Step2 `nodes.gpkg` 中代表路口 final `fail1/fail2`，并以 `node_error_1.gpkg`、`node_error_2.gpkg`、Step2 summary 与 relation evidence 做一致性校验；`fail2` 按冲突分量逐 SWSD Junction Point 输出并共享 `conflict_group_id`。Step3 `relation_cardinality_errors.csv/json` 导入数恒为 0。
 - 候选、自动确认、自动排除、可选复核覆盖，以及 raw/canonical/portal-constrained semantic/T07 Road-surface/FRCSD 反向/SWSD 反向替代 carrier 空间证据。
-- Segment LineString 与 Junction Point 独立发布、独立计数守恒；Junction support Road、endpoint、projection 和冲突关系进入独立 evidence GPKG。
+- Segment 沿用 T01 Segment 线几何族（GeoPackage 可为 `LineString/MultiLineString`），Junction 使用 Point；两者独立发布、独立计数守恒，Junction support Road、endpoint、projection 和冲突关系进入独立 evidence GPKG。
 
 ### 3.2 当前非目标
 
@@ -49,7 +49,7 @@ T12 与 T06 分工明确：T06 继续负责 Segment 替换预检和 F-RCSD 生�
 | 输入 | T05 anchor audit / RCSDIntersection | 路口锚定、节点组和人工标准路口证据。 |
 | 输入 | T06 run root | Step2 失败与 Step3 对比证据，不参与 target 替换。 |
 | 可选输入 | T03 run root | 只读取正式 rejected Junction 审计链；T12 对原始 FRCSD 重新验证。 |
-| 可选输入 | T07 Step3 run root | 只读取正式关系基数失败；1:N/N:1 直接发布。 |
+| 可选输入 | T07 Step1/2 run root | 只读取 Step2 final `fail1/fail2` 及正式一致性证据；直接发布。 |
 | 可选输入 | DriveZone、Case manifest、review decisions | 参考面、裁剪边界和 Segment 外部 QA 覆盖。 |
 | 输出 | candidates CSV/GPKG、carrier evidence GPKG | 自动候选和可复核证据。 |
 | 输出 | confirmed/exclusions/manual CSV，confirmed GPKG | 自动决定与可选复核覆盖后的互斥结果；默认自动运行 manual=0。 |
@@ -71,7 +71,7 @@ T12 与 T06 分工明确：T06 继续负责 Segment 替换预检和 F-RCSD 生�
 11. 若提供 T03 run root，只读取 Step7 rejected 且完整的正式审计链。T12 优先使用 T03 正式发布的 support Road IDs；缺失时在原始 FRCSD 中从 target 最近 Road 的 endpoint 邻域重算局部 ownership carrier，不把同 endpoint 的其它 Segment Road 自动并入当前 Junction support。
 12. `shared_degree1_terminal_collapse` 要求 association class B/not established、无 required RCSDNode、至少两个 target、所有 target 在同一局部 support Road 的同一 terminal endpoint 投影且 support degree=1，同时无原始 FRCSD 替代局部 carrier、无无效几何或正式高置信跨层解释。
 13. `multi_component_unmatched_support` 要求 association class B/review、无 required RCSDNode、所有 target 只解释同一 support component、至少一个额外未匹配 component、正式 Step6 fragmented-surface reason、cleanup 前 meaningful component 至少 3、非 constraint split 且无局部替代 carrier或高置信跨层解释。
-14. 若提供 T07 Step3 root，`one_target_to_many_base` 每个 target 发布一行；`many_target_to_one_base` 每个 target 发布一行并共享稳定 conflict group；`duplicate_target_rows` 不生成 candidate。
+14. 若提供 T07 run root，T12 以 Step2 final `fail1/fail2` 为唯一真值，强校验 error GPKG 与 summary；`fail1` 每个语义路口发布 J03，`fail2` 每个冲突分量逐语义路口发布 J04 并共享稳定 conflict group。final/evidence/summary 不一致时 blocked。
 
 ## 6. 什么是对
 
@@ -92,13 +92,13 @@ T12 与 T06 分工明确：T06 继续负责 Segment 替换预检和 F-RCSD 生�
 - 只检查单一 base node、固定 30m 门户、canonical 零成本归并、无物理 Road 的 semantic path 或只看全图连通性。
 - 对 T07 使用 selected base canonical group 和标准路口面之外的任意邻近节点作为正式 portal；其它 grouped node 不递归扩组。Road-surface 规则只接受 Road 相交或锚点组一跳物理 Road frontier，不能退化为距离接边。
 - 把附近任意长绕行当作等价 carrier。
-- 未搜索 SWSD 全图反向替代路径就确认 `unexpected_reverse_carrier`，或把 T03/T03 弱锚点自动确认。
+- 未搜索 SWSD 全图反向替代路径就确认 `segment_unexpected_reverse_passability`，或把 T03/T03 弱锚点自动确认。
 - 把当前 Segment `50m` buffer 内的其它 Segment RCSD Road 当作当前 Segment 反向 carrier，或在锚点面接触和唯一归属不成立时自动确认。
 - 用 DriveZone 缺口静默否决拓扑异常，或用 Source 字段决定真伪。
 - 把 T06 Step3 F-RCSD 冒充原始 1V1 FRCSD target。
 - 根据局部样本固化上游字段新语义。
 - 直接把 T03 rejected 或 target 到 Road 的最近距离当作 Junction 错误，不复核原始 FRCSD 局部 support ownership、endpoint/component、Direction 与替代 carrier。
-- 把 T07 `duplicate_target_rows` 当作 1:N/N:1 Junction 正式错误，或在 T12 中重新裁决 T07 稳定失败。
+- 把 T07 Step3 relation cardinality 行当作 Junction 正式错误，或在 T12 中重新裁决 T07 Step2 稳定失败。
 
 ## 8. 当前治理缺口
 

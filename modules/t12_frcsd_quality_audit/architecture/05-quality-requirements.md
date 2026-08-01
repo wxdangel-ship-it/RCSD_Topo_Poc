@@ -7,7 +7,7 @@
 - 复合路口 canonical 节点组与 raw endpoint 物理通行必须分层；anchored alias 距离只作审计，非 anchored spatial/标准面 fallback 不放宽。既有 portal-constrained semantic 层继续拒绝非 anchored 标准面外 T07 alias 和超出 portal radius 的内部 alias；双端唯一 T07 标准面可由独立 Road-surface 层使用 Road 相交或 anchor→frontier 一跳 surface support Road 排除 node-portal 假断裂，support Road 使用 `1m` 拓扑容差且 carrier 至少一端必须实际接触标准面，其它距离指标仅作审计。两层都不能单独确认问题。
 - DriveZone 与 T06 只作证据，不能静默改变 verdict。
 - T03 rejected 只形成候选。正式 confirmed 必须在原始 1V1 FRCSD 重算 support ownership、target projection、endpoint/component 和局部替代 carrier，并满足 `shared_degree1_terminal_collapse` 或 `multi_component_unmatched_support` 的完整强门禁。
-- T07 `one_target_to_many_base` 与 `many_target_to_one_base` 直接发布；后者按受影响 Junction 逐 Point 输出并共享 conflict group。`duplicate_target_rows` 不进入 candidate。
+- T07 Step2 final `fail1/fail2` 分别发布 J03/J04；`fail2 > fail1`，J04 按受影响 Junction 逐 Point 输出并共享 conflict group。Step3 relation cardinality 不进入 candidate。
 - 距离只用于 `6m` endpoint 投影容差、`50m` 局部 carrier 查询和审计，不得单独形成 Junction verdict。
 
 ## 2. GIS 与拓扑
@@ -23,7 +23,7 @@
 - 无复核时也必须自动产生 confirmed/excluded，默认 manual=0。
 - confirmed/excluded/manual 三组互斥且计数守恒；manual 只允许由显式外部 override 产生。
 - Junction candidate/confirmed/excluded 独立互斥且计数守恒；Junction 本轮不接受 Segment review CSV 覆盖。
-- Segment 正式几何保持 LineString，Junction 正式几何必须是 SWSD 代表路口 Point，根因 Road/endpoint/projection/conflict link 只进入 evidence。
+- Segment 正式几何保持 T01 Segment 线几何族（`LineString/MultiLineString`），Junction 正式几何必须是 SWSD 代表路口 Point，根因 Road/endpoint/projection/conflict link 只进入 evidence。
 - 禁止高/中概率正式分类。
 
 ## 4. 观测与性能

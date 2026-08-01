@@ -25,7 +25,7 @@ def run_t12_stage(
     )
     t06_run_root = facade._path_from(handoffs.get("t06_run_root"))
     t03_run_root = facade._path_from(handoffs.get("t03_run_root"))
-    t07_step3_run_root = facade._path_from(handoffs.get("t07_step3_root"))
+    t07_run_root = facade._path_from(handoffs.get("t07_run_root"))
     inputs = {
         "swsd_segment": facade._path_from(handoffs.get("t01_segment")),
         "swsd_roads": facade._path_from(handoffs.get("t01_roads")),
@@ -38,7 +38,7 @@ def run_t12_stage(
         "rcsd_intersection": external_inputs.get("rcsd_intersection"),
         "t06_run_root": t06_run_root,
         "t03_run_root": t03_run_root,
-        "t07_step3_run_root": t07_step3_run_root,
+        "t07_run_root": t07_run_root,
         "drivezone": external_inputs.get("drivezone"),
         "case_manifest": case_manifest_path,
         "review_decisions": review_decisions_path,
@@ -50,7 +50,7 @@ def run_t12_stage(
         not in {
             "t06_run_root",
             "t03_run_root",
-            "t07_step3_run_root",
+            "t07_run_root",
             "drivezone",
             "case_manifest",
             "review_decisions",
@@ -61,8 +61,8 @@ def run_t12_stage(
         missing.append("t06_run_root")
     if t03_run_root is None or not t03_run_root.is_dir():
         missing.append("t03_run_root")
-    if t07_step3_run_root is not None and not t07_step3_run_root.is_dir():
-        missing.append("t07_step3_run_root")
+    if t07_run_root is None or not t07_run_root.is_dir():
+        missing.append("t07_run_root")
     for optional_file in (case_manifest_path, review_decisions_path):
         if optional_file is not None and not optional_file.is_file():
             missing.append(
@@ -106,10 +106,7 @@ def run_t12_stage(
         "--t03-run-root",
         str(inputs["t03_run_root"]),
     ]
-    if inputs["t07_step3_run_root"] is not None:
-        command.extend(
-            ["--t07-step3-run-root", str(inputs["t07_step3_run_root"])]
-        )
+    command.extend(["--t07-run-root", str(inputs["t07_run_root"])])
     if inputs["drivezone"] is not None:
         command.extend(["--drivezone", str(inputs["drivezone"])])
     if inputs["case_manifest"] is not None:

@@ -45,12 +45,27 @@ def write_outputs(
     _write_csv(paths["confirmed_csv"], confirmed_rows, _candidate_fields())
     _write_csv(paths["exclusions_csv"], exclusion_rows, _candidate_fields())
     _write_csv(paths["manual_csv"], manual_rows, _candidate_fields())
+    reviewed_by_id = {row["candidate_id"]: row for row in reviewed}
+    candidate_features = [
+        {
+            **feature,
+            **_review_feature_fields(reviewed_by_id[feature["candidate_id"]]),
+        }
+        for feature in layers.candidate_segments
+        if feature["candidate_id"] in reviewed_by_id
+    ]
     _write_single_layer(
         paths["candidates_gpkg"],
         "t12_frcsd_quality_candidates",
-        layers.candidate_segments,
+        candidate_features,
         processing_crs,
-        empty_columns=("candidate_id", "segment_id", "candidate_status"),
+        empty_columns=(
+            "candidate_id",
+            "segment_id",
+            "candidate_status",
+            "result_status",
+            "issue_code",
+        ),
     )
     confirmed_by_id = {row["candidate_id"]: row for row in confirmed}
     confirmed_features = [
@@ -95,6 +110,9 @@ def write_outputs(
             "review_exclusion_count": len(exclusions),
             "manual_review_required_count": len(manual),
             "by_issue_type": _count_by(confirmed, "issue_type"),
+            "by_issue_group": _count_by(confirmed, "issue_group"),
+            "by_issue_code": _count_by(confirmed, "issue_code"),
+            "by_result_status": _count_by(reviewed, "result_status"),
             "by_review_status": _count_by(reviewed, "review_status"),
             "by_decision_source": _count_by(reviewed, "decision_source"),
             "by_decision_rule": _count_by(reviewed, "decision_rule"),
@@ -155,7 +173,14 @@ def write_outputs(
         encoding="utf-8",
     )
     paths["report_md"].write_text(
-        _report(summary, confirmed_rows, exclusion_rows, manual_rows),
+        _report(
+            summary,
+            confirmed_rows,
+            exclusion_rows,
+            manual_rows,
+            junction_result.confirmed,
+            junction_result.exclusions,
+        ),
         encoding="utf-8",
     )
     return T12Artifacts(
@@ -235,9 +260,22 @@ def _candidate_fields() -> tuple[str, ...]:
         "candidate_id",
         "segment_id",
         "candidate_kind",
+        "object_type",
         "candidate_status",
+        "result_status",
+        "issue_group",
+        "issue_code",
         "suggested_issue_type",
         "issue_type",
+        "issue_name_zh",
+        "issue_description_zh",
+        "root_cause_type",
+        "source_module",
+        "source_failure_type",
+        "repair_domain",
+        "repair_hint_zh",
+        "legacy_issue_type",
+        "silent_fix",
         "required_directions",
         "raw_failed_directions",
         "failed_directions",
@@ -343,9 +381,22 @@ def _flatten_candidate(row: Mapping[str, Any]) -> dict[str, Any]:
         "candidate_kind": row.get(
             "candidate_kind", "missing_required_carrier"
         ),
+        "object_type": row.get("object_type", "segment"),
         "candidate_status": row.get("candidate_status", ""),
+        "result_status": row.get("result_status", ""),
+        "issue_group": row.get("issue_group", ""),
+        "issue_code": row.get("issue_code", ""),
         "suggested_issue_type": row.get("suggested_issue_type", ""),
         "issue_type": row.get("issue_type", ""),
+        "issue_name_zh": row.get("issue_name_zh", ""),
+        "issue_description_zh": row.get("issue_description_zh", ""),
+        "root_cause_type": row.get("root_cause_type", ""),
+        "source_module": row.get("source_module", ""),
+        "source_failure_type": row.get("source_failure_type", ""),
+        "repair_domain": row.get("repair_domain", ""),
+        "repair_hint_zh": row.get("repair_hint_zh", ""),
+        "legacy_issue_type": row.get("legacy_issue_type", ""),
+        "silent_fix": bool(row.get("silent_fix", False)),
         "required_directions": "|".join(row.get("required_directions") or []),
         "raw_failed_directions": "|".join(
             row.get("raw_failed_directions") or []
@@ -533,11 +584,23 @@ def _surface_carrier_details(
 def _review_feature_fields(row: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "review_status": row.get("review_status", ""),
+        "result_status": row.get("result_status", ""),
+        "issue_group": row.get("issue_group", ""),
+        "issue_code": row.get("issue_code", ""),
         "issue_type": row.get("issue_type", ""),
+        "issue_name_zh": row.get("issue_name_zh", ""),
+        "issue_description_zh": row.get("issue_description_zh", ""),
+        "root_cause_type": row.get("root_cause_type", ""),
+        "source_module": row.get("source_module", ""),
+        "source_failure_type": row.get("source_failure_type", ""),
+        "repair_domain": row.get("repair_domain", ""),
+        "repair_hint_zh": row.get("repair_hint_zh", ""),
+        "legacy_issue_type": row.get("legacy_issue_type", ""),
         "review_reason": row.get("review_reason", ""),
         "decision_source": row.get("decision_source", ""),
         "decision_rule": row.get("decision_rule", ""),
         "anchor_confidence": row.get("anchor_confidence", ""),
+        "silent_fix": bool(row.get("silent_fix", False)),
     }
 
 
@@ -664,6 +727,8 @@ def _report(
     confirmed: list[dict[str, Any]],
     exclusions: list[dict[str, Any]],
     manual: list[dict[str, Any]],
+    junction_confirmed: list[dict[str, Any]],
+    junction_exclusions: list[dict[str, Any]],
 ) -> str:
     counts = summary["counts"]
     lines = [
@@ -681,28 +746,58 @@ def _report(
         "",
         "## 已确认质量问题",
         "",
-        "| Segment | 类型 | 决定来源 | 证据理由 |",
-        "|---|---|---|---|",
+        "| Segment | 编码 | 中文类型 | issue_type | 业务说明 | 根因 | 来源 | 修复域 | 修复建议 |",
+        "|---|---|---|---|---|---|---|---|---|",
     ]
     for row in confirmed:
         lines.append(
-            f"| {row['segment_id']} | {row['issue_type']} | "
-            f"{row['decision_source']} | "
-            f"{str(row['review_reason']).replace('|', '/')} |"
+            f"| {row['segment_id']} | {row['issue_code']} | "
+            f"{row['issue_name_zh']} | {row['issue_type']} | "
+            f"{_report_cell(row['issue_description_zh'])} | "
+            f"{_report_cell(row['root_cause_type'])} | "
+            f"{_report_cell(row['source_module'])} | "
+            f"{_report_cell(row['repair_domain'])} | "
+            f"{_report_cell(row['repair_hint_zh'])} |"
         )
     if not confirmed:
-        lines.append("| - | - | - | 当前无已确认问题 |")
+        lines.append("| - | - | - | - | 当前无已确认问题 | - | - | - | - |")
+    lines.extend(
+        [
+            "",
+            "## 已确认 Junction 质量问题",
+            "",
+            "| Junction | 编码 | 中文类型 | issue_type | 业务说明 | 根因 | 来源 | 修复域 | 修复建议 |",
+            "|---|---|---|---|---|---|---|---|---|",
+        ]
+    )
+    for row in junction_confirmed:
+        lines.append(
+            f"| {row['junction_id']} | {row['issue_code']} | "
+            f"{row['issue_name_zh']} | {row['issue_type']} | "
+            f"{_report_cell(row['issue_description_zh'])} | "
+            f"{_report_cell(row['root_cause_type'])} | "
+            f"{_report_cell(row['source_module'])} | "
+            f"{_report_cell(row['repair_domain'])} | "
+            f"{_report_cell(row['repair_hint_zh'])} |"
+        )
+    if not junction_confirmed:
+        lines.append("| - | - | - | - | 当前无已确认问题 | - | - | - | - |")
     lines.extend(
         [
             "",
             "## 决定分层",
             "",
-            f"- 排除项：{len(exclusions)}",
+            f"- Segment 排除项：{len(exclusions)}",
             f"- 显式 QA 待定项：{len(manual)}",
+            f"- Junction 排除项：{len(junction_exclusions)}",
             "",
         ]
     )
     return "\n".join(lines)
+
+
+def _report_cell(value: Any) -> str:
+    return str(value or "").replace("|", "/").replace("\n", " ")
 
 
 def _json_safe(value: Any) -> Any:

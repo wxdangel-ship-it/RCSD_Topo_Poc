@@ -180,7 +180,7 @@ T10 的 nodes handoff 规则：
 - `t07` 阶段输出的 `t07_nodes` 是 T07 Step2 anchor recognition 后的 nodes，只作为 T03 输入和 T07 审计事实。
 - `t03` 阶段必须输出 `t03_nodes`，T04 必须消费该节点层，确保 T03 已确认的虚拟锚定状态继续传递。
 - `t04` 阶段必须输出 `t04_nodes`，并同步登记为 `final_swsd_nodes`；T05 / T06 / T11 / T12 / T09 必须消费该节点事实，不得回退到 T07 Step2 nodes。
-- `t12` 仅在显式启用时于 `t11` 后、`t09` 前运行；它消费原始 1V1 F-RCSD 和 SWSD/T05/T06/RCSDIntersection 审计证据，并必须接收当前 T03 run root；正式 T07 Step3 cardinality 工件存在时同时接收该 stage root。它不得消费 T11 输出，也不得消费或改写 T06 Step3 F-RCSD。
+- `t12` 仅在显式启用时于 `t11` 后、`t09` 前运行；它消费原始 1V1 F-RCSD 和 SWSD/T05/T06/RCSDIntersection 审计证据，并必须接收当前 T03 run root 与同次 T07 Step1/2 run root。T07 Junction 质量来源只允许是 Step2 代表路口 final `is_anchor=fail1/fail2`；不得消费 Step3 cardinality 工件。它不得消费 T11 输出，也不得消费或改写 T06 Step3 F-RCSD。
 - `t12` 至少发布 Segment candidates/confirmed/excluded/manual review/evidence、Junction candidates/confirmed/excluded/evidence 和 summary；命令返回 0 但任一必要输出缺失时仍判定为 failed。
 - `t11` 阶段必须在 `t06_step3` 后执行，调用既有 `scripts/t11_extract_relation_repair_candidates.py` 单用例模式；stage record 记录 Case root 与关键 T06 文件，T11 summary 记录完整 discovered inputs。
 - `t11` 至少发布 `t11_relation_repair_candidates.csv` 与 `t11_relation_repair_candidate_summary.json`；命令返回 0 但必要输出缺失时仍判定为 failed。
@@ -561,6 +561,7 @@ Segment 入口不得暴露 `RADIUS_M`；若调用环境中存在同名变量，S
 - `RUN_T08`：是否运行 T08 前置阶段，默认 `1`。
 - `RUN_T12`：是否在 T11 后、T09 前运行 T12，默认 `0`。
 - `T12_RUN_ID`：T12 子运行 ID，默认 `t12_full`；当 `T12_REVIEW_DECISIONS` 已绑定特定 run id 时必须显式一致。resume 未显式设置时复用总 manifest 的 `params.t12_run_id` 与既有 T12 输出；显式设置新值时必须使用 `<run_root>/t12_frcsd_quality_audit/<T12_RUN_ID>` 新目录并覆盖登记新的 T12 输出路径，禁止复用旧 run root 或覆盖旧审计结果。
+- 当 resume 明确执行 `t12` 且所选 `T12_RUN_ID` 的标准目录已存在时，runner 必须先将旧目录完整移动到 `<run_root>/history/t12_frcsd_quality_audit/<T12_RUN_ID>_<timestamp>`，并在 manifest 登记最近一次 `t12_archived_run_root`，随后才在原标准目录生成新结果；该操作不得删除或覆盖历史目录。新 T12 失败时，失败批次必须保留到 history，原批次恢复到标准目录；新 T12 通过后才提交目录切换。未执行 `t12` 的 resume/finalize 不移动任何 T12 目录。
 - `T12_REVIEW_DECISIONS`：可选外部决定覆盖 CSV；未提供时使用 T12 自动高置信决定，resume 时显式环境值优先，未设置才复用总 manifest 原值，实际值必须回写总 manifest 与 T12 stage 审计。需要补充外部覆盖决定时，必须同时显式设置新的 `T12_RUN_ID`。
 - `T12_PROCESSING_CRS`：可选；T12 输入 CRS 不一致时必须显式指定 projected metre CRS，并透传为 T12 `--processing-crs`。空值不得触发自动 CRS 推断；resume 时显式环境值优先，否则复用总 manifest 已记录值。实际值必须进入总 manifest `params.t12_processing_crs` 与 T12 stage `params.processing_crs`。
 - `RUN_T08_TOOL7` / `RUN_T08_TOOL8`：可选值 `1 / 0 / auto`，默认 `auto`，仅当原始 SW 输入齐全时自动生成 Tool7/Tool8 输出。
@@ -634,5 +635,5 @@ from rcsd_topo_poc.modules.t10_e2e_orchestration import (
 17. Case runner 必须输出 `t10_t06_visual_check_summary.csv/json`，用于固定 T06 目视叠加图层索引和提右快速审计指标。
 18. Segment replay 中 T07/T03/T04 合法无候选时必须输出 `segment_no_candidate_handoff=true` 的显式空 handoff 并继续执行；普通 Case 或非无候选失败不得使用该兜底。
 19. `t11` 必须位于 `t06_step3` 与 `t09_step12` 之间；T11 失败或 candidates/summary 缺失时，当前 Case 或 full pipeline 不得标记 passed，T09 不得消费 T11 部分产物。
-20. T12 默认关闭；显式启用时必须位于 `t11` 与 `t09_step12` 之间。T12 不得消费 T11 输出，不得改变 T06/T11/T09 业务 handoff。Segment 与 Junction 均可按 T12 高置信规则自动进入 confirmed；人工 review decisions 只作 Segment 可选覆盖。T10 必须传入当前 T03 run root，并在正式 T07 Step3 cardinality 工件存在时传入其 stage root。
+20. T12 默认关闭；显式启用时必须位于 `t11` 与 `t09_step12` 之间。T12 不得消费 T11 输出，不得改变 T06/T11/T09 业务 handoff。Segment 与 Junction 均可按 T12 高置信规则自动进入 confirmed；人工 review decisions 只作 Segment 可选覆盖。T10 必须传入当前 T03 run root 与 T07 Step1/2 run root；不得为了 T12 启用可选 T07 Step3，T12 的 T07 Junction 输出只允许来自 Step2 final `fail1/fail2`。
 21. F-RCSD 质量检查专用入口必须固定 `RUN_T08=0 / RUN_T12=1`，manifest stage order 必须为 `t01 / t07_step12 / t03 / t04 / t05 / t06_step12 / t06_step3 / t11 / t12 / t09`，不得登记未运行的 T08 stage。

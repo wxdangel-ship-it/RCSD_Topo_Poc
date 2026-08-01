@@ -87,6 +87,7 @@ fi
 LOG_ROOT="$RUN_ROOT/logs"
 MANIFEST_PATH="$RUN_ROOT/t10_innernet_full_pipeline_manifest.json"
 SUMMARY_PATH="$RUN_ROOT/t10_innernet_full_pipeline_summary.json"
+T12_ARCHIVE_ROOT="$RUN_ROOT/history/t12_frcsd_quality_audit"
 PIPELINE_STARTED_EPOCH="$(date +%s)"
 RESUME_FROM_STAGE="${RESUME_FROM_STAGE:-}"
 RUN_STAGES="${RUN_STAGES:-}"
@@ -388,6 +389,61 @@ payload = json.loads(path.read_text(encoding="utf-8"))
 payload.setdefault(section, {})[key] = value
 path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 PY
+}
+
+archive_existing_t12_run() {
+  local t12_run_root="$1"
+  T12_ARCHIVED_RUN_ROOT=""
+  if [[ ! -e "$t12_run_root" ]]; then
+    return 0
+  fi
+  if [[ ! -d "$t12_run_root" ]]; then
+    echo "[BLOCK] Existing T12 run root is not a directory: $t12_run_root" >&2
+    exit 2
+  fi
+  local expected_parent actual_parent archive_stamp archive_run_root
+  expected_parent="$(cd "$RUN_ROOT" && pwd)/t12_frcsd_quality_audit"
+  actual_parent="$(cd "$(dirname "$t12_run_root")" && pwd)"
+  if [[ "$actual_parent" != "$expected_parent" ]]; then
+    echo "[BLOCK] Refusing to archive T12 outside the current T10 run root: $t12_run_root" >&2
+    exit 2
+  fi
+  mkdir -p "$T12_ARCHIVE_ROOT"
+  archive_stamp="$(date +%Y%m%d_%H%M%S)"
+  archive_run_root="$T12_ARCHIVE_ROOT/$(basename "$t12_run_root")_$archive_stamp"
+  if [[ -e "$archive_run_root" ]]; then
+    echo "[BLOCK] T12 history target already exists: $archive_run_root" >&2
+    exit 2
+  fi
+  mv -- "$t12_run_root" "$archive_run_root"
+  T12_ARCHIVED_RUN_ROOT="$archive_run_root"
+  manifest_set outputs t12_archived_run_root "$archive_run_root"
+  echo "[HISTORY] archived_t12_run_root=$archive_run_root"
+}
+
+restore_archived_t12_run_on_failure() {
+  if [[ -z "${T12_ARCHIVED_RUN_ROOT:-}" || ! -d "$T12_ARCHIVED_RUN_ROOT" ]]; then
+    return 0
+  fi
+  if [[ -e "$T12_RUN_ROOT" ]]; then
+    local failed_stamp failed_run_root
+    failed_stamp="$(date +%Y%m%d_%H%M%S)"
+    failed_run_root="$T12_ARCHIVE_ROOT/${T12_RUN_ID}_failed_${failed_stamp}_$$"
+    if [[ -e "$failed_run_root" ]]; then
+      echo "[WARN] Cannot retain failed T12 run because history target exists: $failed_run_root" >&2
+      return 1
+    fi
+    mv -- "$T12_RUN_ROOT" "$failed_run_root"
+    echo "[HISTORY] retained_failed_t12_run_root=$failed_run_root" >&2
+  fi
+  if [[ -e "$T12_RUN_ROOT" ]]; then
+    echo "[WARN] Cannot restore archived T12 run; standard path still exists: $T12_RUN_ROOT" >&2
+    return 1
+  fi
+  mv -- "$T12_ARCHIVED_RUN_ROOT" "$T12_RUN_ROOT"
+  echo "[HISTORY] restored_t12_run_root=$T12_RUN_ROOT" >&2
+  manifest_set outputs t12_archived_run_root "" || true
+  T12_ARCHIVED_RUN_ROOT=""
 }
 
 manifest_get() {
@@ -721,8 +777,11 @@ PY
 
 pipeline_exit_trap() {
   local exit_code=$?
-  if [[ "$exit_code" -ne 0 && -f "$MANIFEST_PATH" ]]; then
-    manifest_finalize failed "$exit_code" || true
+  if [[ "$exit_code" -ne 0 ]]; then
+    restore_archived_t12_run_on_failure || true
+    if [[ -f "$MANIFEST_PATH" ]]; then
+      manifest_finalize failed "$exit_code" || true
+    fi
   fi
 }
 
@@ -1462,12 +1521,17 @@ if should_run_t12; then
     echo "[BLOCK] T03_RUN_ROOT does not exist: $T03_RUN_ROOT" >&2
     exit 2
   fi
+  if [[ ! -d "$T07_RUN_ROOT" ]]; then
+    echo "[BLOCK] T07_RUN_ROOT does not exist: $T07_RUN_ROOT" >&2
+    exit 2
+  fi
   if [[ -n "$T12_REVIEW_DECISIONS" ]]; then
     require_file T12_REVIEW_DECISIONS "$T12_REVIEW_DECISIONS"
   fi
   if [[ -n "$T12_CASE_MANIFEST" ]]; then
     require_file T12_CASE_MANIFEST "$T12_CASE_MANIFEST"
   fi
+  archive_existing_t12_run "$T12_RUN_ROOT"
   manifest_set inputs t12_review_decisions "$T12_REVIEW_DECISIONS"
   manifest_set inputs t12_case_manifest "$T12_CASE_MANIFEST"
   T12_ARGS=(
@@ -1483,12 +1547,10 @@ if should_run_t12; then
     --rcsd-intersection "$RCSD_INTERSECTION_PATH"
     --t06-run-root "$T06_RUN_ROOT"
     --t03-run-root "$T03_RUN_ROOT"
+    --t07-run-root "$T07_RUN_ROOT"
     --drivezone "$DRIVEZONE_PATH"
     --progress
   )
-  if [[ -f "$T07_STEP3_ROOT/relation_cardinality_errors.json" || -f "$T07_STEP3_ROOT/relation_cardinality_errors.csv" ]]; then
-    T12_ARGS+=(--t07-step3-run-root "$T07_STEP3_ROOT")
-  fi
   if [[ -n "$T12_REVIEW_DECISIONS" ]]; then
     T12_ARGS+=(--review-decisions "$T12_REVIEW_DECISIONS")
   fi
@@ -1528,7 +1590,7 @@ if should_run_t12; then
     "inputs.rcsd_intersection=$RCSD_INTERSECTION_PATH" \
     "inputs.t06_run_root=$T06_RUN_ROOT" \
     "inputs.t03_run_root=$T03_RUN_ROOT" \
-    "inputs.t07_step3_run_root=$T07_STEP3_ROOT" \
+    "inputs.t07_run_root=$T07_RUN_ROOT" \
     "inputs.drivezone=$DRIVEZONE_PATH" \
     "inputs.review_decisions=$T12_REVIEW_DECISIONS" \
     "inputs.case_manifest=$T12_CASE_MANIFEST" \
@@ -1546,6 +1608,7 @@ if should_run_t12; then
     "params.run_id=$T12_RUN_ID" \
     "params.processing_crs=$T12_PROCESSING_CRS" \
     "execution_context.run_root=$T12_RUN_ROOT"
+  T12_ARCHIVED_RUN_ROOT=""
 fi
 
 T09_OUT_ROOT="$RUN_ROOT/t09_swsd_field_rule_restoration"

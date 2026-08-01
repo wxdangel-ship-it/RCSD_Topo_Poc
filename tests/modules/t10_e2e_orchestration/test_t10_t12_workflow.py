@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import subprocess
 from pathlib import Path
 
 from rcsd_topo_poc.modules.t10_e2e_orchestration import case_runner
@@ -60,10 +62,10 @@ def test_t12_case_stage_invokes_entry_and_publishes_outputs(
         "t05_phase2_root": str(t05_phase2),
         "t06_run_root": str(t06_root),
         "t03_run_root": str(tmp_path / "case" / "t03"),
-        "t07_step3_root": str(tmp_path / "case" / "t07_step3"),
+        "t07_run_root": str(tmp_path / "case" / "t07"),
     }
     (tmp_path / "case" / "t03").mkdir(parents=True)
-    (tmp_path / "case" / "t07_step3").mkdir(parents=True)
+    (tmp_path / "case" / "t07").mkdir(parents=True)
     _touch(t05_phase2 / "intersection_match_all_audit.csv")
     case_manifest = _touch(tmp_path / "package" / "t10_case_evidence_manifest.json")
     review = _touch(tmp_path / "review.csv")
@@ -112,7 +114,8 @@ def test_t12_case_stage_invokes_entry_and_publishes_outputs(
     assert "--frcsd-roads" in command
     assert "--review-decisions" in command
     assert "--t03-run-root" in command
-    assert "--t07-step3-run-root" in command
+    assert "--t07-run-root" in command
+    assert "--t07-step3-run-root" not in command
     assert produced["t12_summary_json"].endswith("t12_frcsd_quality_audit_summary.json")
     assert produced["t12_junction_confirmed_csv"].endswith(
         "t12_frcsd_confirmed_junction_quality_issues.csv"
@@ -172,7 +175,8 @@ def test_full_runner_declares_t12_resume_manifest_and_finalize_contract() -> Non
     assert "manifest_stage_record t12 T12 passed" in t12_region
     assert '--frcsd-roads "$FRCSD_1V1_ROADS_PATH"' in t12_region
     assert '--t03-run-root "$T03_RUN_ROOT"' in t12_region
-    assert 'T12_ARGS+=(--t07-step3-run-root "$T07_STEP3_ROOT")' in t12_region
+    assert '--t07-run-root "$T07_RUN_ROOT"' in t12_region
+    assert 'T12_ARGS+=(--t07-step3-run-root "$T07_STEP3_ROOT")' not in t12_region
     assert "require_file T12_JUNCTION_EVIDENCE_GPKG" in t12_region
     assert "manifest_set outputs t12_junction_candidates_csv" in t12_region
     assert "manifest_set outputs t12_junction_confirmed_gpkg" in t12_region
@@ -184,6 +188,12 @@ def test_full_runner_declares_t12_resume_manifest_and_finalize_contract() -> Non
     assert 'T12_USE_MANIFEST_OUTPUTS=0' in t12_region
     assert '"$(basename "$T12_MANIFEST_RUN_ROOT")" == "$T12_RUN_ID"' in t12_region
     assert 'T12_RUN_ROOT="$T12_OUT_ROOT/$T12_RUN_ID"' in t12_region
+    assert 'archive_existing_t12_run "$T12_RUN_ROOT"' in t12_region
+    assert 'T12_ARCHIVE_ROOT="$RUN_ROOT/history/t12_frcsd_quality_audit"' in script
+    assert "restore_archived_t12_run_on_failure" in script
+    assert 'retained_failed_t12_run_root=$failed_run_root' in script
+    assert 'restored_t12_run_root=$T12_RUN_ROOT' in script
+    assert 'T12_ARCHIVED_RUN_ROOT=""' in t12_region
     assert '"params.run_id=$T12_RUN_ID"' in t12_region
     assert '"t12_enabled": os.environ.get("RUN_T12") == "1"' in script
     assert 'missing_final_outputs.append("t12_stage")' in script
@@ -201,3 +211,99 @@ def test_full_runner_explicit_review_resume_overrides_manifest_inputs() -> None:
     assert 'manifest_set inputs t12_review_decisions "$T12_REVIEW_DECISIONS"' in script
     assert 'if [[ -z "$T12_CASE_MANIFEST" ]]; then' in script
     assert 'manifest_set inputs t12_case_manifest "$T12_CASE_MANIFEST"' in script
+
+
+def test_t12_only_rerun_preserves_history_and_standard_t10_path() -> None:
+    repo_root = Path(__file__).resolve().parents[3]
+    script = (
+        repo_root / "scripts" / "t12_rerun_frcsd_junction_quality_innernet.sh"
+    ).read_text(encoding="utf-8")
+
+    assert "T10_RUN_ROOT" in script
+    assert 'OUT_ROOT="$T10_RUN_ROOT/t12_frcsd_quality_audit"' in script
+    assert 'RUN_ID="${RUN_ID:-t12_full}"' in script
+    assert 'HISTORY_ROOT="$T10_RUN_ROOT/history/t12_frcsd_quality_audit"' in script
+    assert 'mv -- "$RUN_ROOT" "$ARCHIVE_RUN_ROOT"' in script
+    assert "restore_archived_run_on_failure" in script
+    assert 'retained_failed_run_root=$failed_run_root' in script
+    assert 'restored_previous_run_root=$RUN_ROOT' in script
+    assert "trap - EXIT" in script
+    assert "t12_innernet_rerun" not in script
+
+
+def test_t12_only_rerun_restores_previous_standard_run_on_failure(
+    tmp_path: Path,
+) -> None:
+    repo_root = Path(__file__).resolve().parents[3]
+    script = repo_root / "scripts" / "t12_rerun_frcsd_junction_quality_innernet.sh"
+    t10_root = tmp_path / "t10_run"
+    previous_root = t10_root / "t12_frcsd_quality_audit" / "t12_full"
+    previous_root.mkdir(parents=True)
+    (previous_root / "previous.txt").write_text("previous", encoding="utf-8")
+    files = {
+        name: _touch(tmp_path / f"{name}.gpkg")
+        for name in (
+            "segment",
+            "roads",
+            "nodes",
+            "frcsd_roads",
+            "frcsd_nodes",
+            "t05_audit",
+            "rcsd_intersection",
+        )
+    }
+    directories = {
+        name: tmp_path / name for name in ("t06", "t03", "t07")
+    }
+    for path in directories.values():
+        path.mkdir()
+    fake_python = tmp_path / "fake_python.sh"
+    fake_python.write_text(
+        """#!/usr/bin/env bash
+out_root=""
+run_id=""
+while (( $# )); do
+  case "$1" in
+    --out-root) out_root="$2"; shift 2 ;;
+    --run-id) run_id="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+mkdir -p "$out_root/$run_id"
+printf partial > "$out_root/$run_id/partial.txt"
+exit 7
+""",
+        encoding="utf-8",
+    )
+    fake_python.chmod(0o755)
+    env = {
+        **os.environ,
+        "T10_RUN_ROOT": str(t10_root),
+        "SWSD_SEGMENT_PATH": str(files["segment"]),
+        "SWSD_ROADS_PATH": str(files["roads"]),
+        "SWSD_NODES_PATH": str(files["nodes"]),
+        "FRCSD_1V1_ROADS_PATH": str(files["frcsd_roads"]),
+        "FRCSD_1V1_NODES_PATH": str(files["frcsd_nodes"]),
+        "T05_ANCHOR_AUDIT_PATH": str(files["t05_audit"]),
+        "RCSD_INTERSECTION_PATH": str(files["rcsd_intersection"]),
+        "T06_RUN_ROOT": str(directories["t06"]),
+        "T03_RUN_ROOT": str(directories["t03"]),
+        "T07_RUN_ROOT": str(directories["t07"]),
+        "PYTHON_BIN": str(fake_python),
+    }
+
+    completed = subprocess.run(
+        ["bash", str(script)],
+        cwd=repo_root,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 7
+    assert (previous_root / "previous.txt").read_text(encoding="utf-8") == "previous"
+    assert not (previous_root / "partial.txt").exists()
+    failed_runs = list((t10_root / "history" / "t12_frcsd_quality_audit").glob("t12_full_failed_*"))
+    assert len(failed_runs) == 1
+    assert (failed_runs[0] / "partial.txt").read_text(encoding="utf-8") == "partial"

@@ -72,24 +72,31 @@ def _load_t03(
         raise T12ContractError(f"T03 run root does not exist: {root}")
     preflight_path = root / "preflight.json"
     preflight = _read_json(preflight_path) if preflight_path.is_file() else {}
+    internal_roots = _t03_internal_roots(root)
     internal_manifest_path = next(
         (
             path
+            for internal_root in internal_roots
             for path in (
-                root / "_internal" / "t03_internal_full_input_manifest.json",
-                root / "_internal" / "internal_full_input_manifest.json",
-                root / "_internal" / "manifest.json",
+                internal_root / "t03_internal_full_input_manifest.json",
+                internal_root / "internal_full_input_manifest.json",
+                internal_root / "manifest.json",
             )
             if path.is_file()
         ),
-        root / "_internal" / "t03_internal_full_input_manifest.json",
+        internal_roots[0] / "t03_internal_full_input_manifest.json",
     )
     internal_manifest = (
         _read_json(internal_manifest_path)
         if internal_manifest_path.is_file()
         else {}
     )
-    step3_root = _discover_step3_root(root, preflight, internal_manifest)
+    step3_root = _discover_step3_root(
+        root,
+        preflight,
+        internal_manifest,
+        internal_roots=internal_roots,
+    )
     cases_root = root / "cases"
     if not cases_root.is_dir():
         raise T12ContractError(f"T03 run root is missing cases/: {root}")
@@ -237,6 +244,8 @@ def _discover_step3_root(
     root: Path,
     preflight: dict[str, Any],
     internal_manifest: dict[str, Any],
+    *,
+    internal_roots: tuple[Path, ...],
 ) -> Path:
     candidates: list[Path] = []
     for value in (
@@ -248,14 +257,15 @@ def _discover_step3_root(
         if resolved is not None:
             candidates.append(resolved)
     candidates.extend((root, root.parent / "step3"))
-    internal_step3 = root / "_internal" / "step3_runs"
-    if internal_step3.is_dir():
-        candidates.extend(
-            sorted(
-                (entry for entry in internal_step3.iterdir() if entry.is_dir()),
-                key=lambda path: path.name,
+    for internal_root in internal_roots:
+        internal_step3 = internal_root / "step3_runs"
+        if internal_step3.is_dir():
+            candidates.extend(
+                sorted(
+                    (entry for entry in internal_step3.iterdir() if entry.is_dir()),
+                    key=lambda path: path.name,
+                )
             )
-        )
     for candidate in candidates:
         cases_dir = candidate / "cases"
         if cases_dir.is_dir() and any(
@@ -265,6 +275,13 @@ def _discover_step3_root(
         ):
             return candidate.resolve()
     raise T12ContractError(f"cannot discover T03 Step3 formal run root from {root}")
+
+
+def _t03_internal_roots(root: Path) -> tuple[Path, ...]:
+    return (
+        root.parent / "_internal" / root.name,
+        root / "_internal",
+    )
 
 
 def _resolve_declared_path(value: Any, root: Path) -> Path | None:

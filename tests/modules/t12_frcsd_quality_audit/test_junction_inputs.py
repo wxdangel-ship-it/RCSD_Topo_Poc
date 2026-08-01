@@ -74,6 +74,43 @@ def test_t03_rejected_formal_chain_and_t07_rows_are_loaded(
     assert sources.audit["silent_fix"] is False
 
 
+def test_t03_internal_full_input_sibling_step3_root_is_loaded(
+    tmp_path: Path,
+) -> None:
+    out_root = tmp_path / "t03_internal_full_input"
+    t03 = out_root / "t03_full"
+    _write_t03_chain(t03)
+    (t03 / "cases" / "100" / "step3_status.json").unlink()
+    internal_root = out_root / "_internal" / "t03_full"
+    step3_root = internal_root / "step3_runs" / "t03_full__step3"
+    _write_json(
+        step3_root / "cases" / "100" / "step3_status.json",
+        {
+            "case_id": "100",
+            "target_group_node_ids": ["100", "101"],
+        },
+    )
+    internal_manifest = internal_root / "t03_internal_full_input_manifest.json"
+    _write_json(
+        internal_manifest,
+        {
+            "run_root": str(t03),
+            "step3_run_root": str(step3_root),
+        },
+    )
+
+    sources = load_junction_sources(
+        t03_run_root=t03,
+        t07_step3_run_root=None,
+    )
+
+    assert [case.case_id for case in sources.t03_cases] == ["100"]
+    assert sources.audit["t03"]["step3_run_root"] == str(step3_root.resolve())
+    assert "t03_internal_full_input_manifest.json" in sources.audit["t03"][
+        "identity_artifacts"
+    ]
+
+
 def test_incomplete_t03_rejected_chain_is_blocked(tmp_path: Path) -> None:
     t03 = tmp_path / "t03"
     _write_t03_chain(t03, complete=False)

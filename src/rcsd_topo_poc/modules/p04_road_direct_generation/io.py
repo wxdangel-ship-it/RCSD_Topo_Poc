@@ -21,6 +21,11 @@ import pyproj
 import shapely
 
 from .geometry import to_2d
+from .segment_first_progress import (
+    advance_progress,
+    begin_progress_stage,
+    finish_progress_stage,
+)
 
 
 CORE_VECTOR_FILES = (
@@ -225,17 +230,58 @@ def write_csv(path: Path, rows: Iterable[Mapping[str, Any]], fieldnames: Iterabl
 
 
 def write_gpkg_layers(path: Path, layers: Mapping[str, gpd.GeoDataFrame]) -> None:
+    stage = "output_gpkg_layers"
+    begin_progress_stage(
+        stage,
+        len(layers),
+        detail=path.name,
+        counters={"written_layers": 0, "written_rows": 0},
+    )
     if path.exists():
         path.unlink()
     first = True
-    for layer_name, frame in layers.items():
+    written_layers = 0
+    written_rows = 0
+    skipped_layers = 0
+    for layer_index, (layer_name, frame) in enumerate(layers.items()):
         if frame.empty:
+            skipped_layers += 1
+            advance_progress(
+                stage,
+                completed=layer_index + 1,
+                last_unit=layer_name,
+                counters={
+                    "written_layers": written_layers,
+                    "written_rows": written_rows,
+                    "skipped_empty_layers": skipped_layers,
+                },
+            )
             continue
         sanitized = sanitize_for_vector(frame)
         sanitized.to_file(path, layer=layer_name, driver="GPKG", mode="w" if first else "a", index=False)
         first = False
+        written_layers += 1
+        written_rows += len(sanitized)
+        advance_progress(
+            stage,
+            completed=layer_index + 1,
+            last_unit=layer_name,
+            counters={
+                "written_layers": written_layers,
+                "written_rows": written_rows,
+                "skipped_empty_layers": skipped_layers,
+            },
+        )
     if first:
         raise ValueError(f"no nonempty layers to write: {path}")
+    finish_progress_stage(
+        stage,
+        counters={
+            "written_layers": written_layers,
+            "written_rows": written_rows,
+            "skipped_empty_layers": skipped_layers,
+        },
+    )
 
 
 def sanitize_for_vector(frame: gpd.GeoDataFrame) -> gpd.GeoDataFrame:

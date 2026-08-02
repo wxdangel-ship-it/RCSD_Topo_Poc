@@ -29,7 +29,7 @@ class AccessMembershipPolicy:
     ]
     completion_extends_outward: Callable[[dict[str, object], object], bool]
     smooth_surface_completion_supported: Callable[..., bool]
-    surface_coverage: Callable[[LineString, object | None], float]
+    surface_coverage_at_least: Callable[..., bool]
 
 
 def _is_usable_geometry(geometry: object | None) -> bool:
@@ -264,13 +264,14 @@ def materialize_missing_built_access_memberships(
                     ):
                         continue
                     connector = LineString([point, target_point])
-                    coverage = policy.surface_coverage(
-                        connector,
-                        completion_surface,
-                    )
                     if (
                         connector.length <= 1e-9
-                        or coverage + 1e-9 < minimum_surface_coverage
+                        or not policy.surface_coverage_at_least(
+                            connector,
+                            completion_surface,
+                            minimum_surface_coverage,
+                            epsilon=1e-9,
+                        )
                     ):
                         continue
                     endpoint_rows[index]["geometry"] = target_point
@@ -439,13 +440,14 @@ def materialize_missing_built_access_memberships(
                 ):
                     continue
                 connector = LineString([point, target_point])
-                coverage = policy.surface_coverage(
-                    connector,
-                    completion_surface,
-                )
                 if (
                     connector.length <= 1e-9
-                    or coverage + 1e-9 < minimum_surface_coverage
+                    or not policy.surface_coverage_at_least(
+                        connector,
+                        completion_surface,
+                        minimum_surface_coverage,
+                        epsilon=1e-9,
+                    )
                 ):
                     continue
                 endpoint_rows[index]["geometry"] = target_point

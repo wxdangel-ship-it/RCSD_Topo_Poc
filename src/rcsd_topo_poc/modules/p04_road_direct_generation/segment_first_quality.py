@@ -13,6 +13,11 @@ from shapely.geometry import Point
 
 from .io import write_gpkg_layers, write_json
 from .segment_first_junctions import endpoint_surface_geometry
+from .segment_first_progress import (
+    advance_progress,
+    begin_progress_stage,
+    finish_progress_stage,
+)
 
 
 @dataclass(frozen=True)
@@ -82,7 +87,18 @@ def run_independent_quality(
     }
 
     violations: list[dict[str, object]] = []
-    for road in roads.itertuples():
+    qa_object_total = len(roads) + len(rnr)
+    begin_progress_stage(
+        "independent_qa_objects",
+        qa_object_total,
+        detail="published Road/Node/RoadNextRoad readback gates",
+        counters={
+            "road_count": len(roads),
+            "node_count": len(nodes),
+            "road_next_road_count": len(rnr),
+        },
+    )
+    for road_index, road in enumerate(roads.itertuples()):
         if (
             _canonical_id(road.snodeid) not in node_ids
             or _canonical_id(road.enodeid) not in node_ids
@@ -103,7 +119,19 @@ def run_independent_quality(
                     road.geometry.centroid,
                 )
             )
-    for relation in rnr.itertuples():
+        advance_progress(
+            "independent_qa_objects",
+            completed=road_index + 1,
+            last_unit=f"Road:{road.id}",
+            counters={"violation_count": len(violations)},
+        )
+    for relation_index, relation in enumerate(rnr.itertuples()):
+        advance_progress(
+            "independent_qa_objects",
+            completed=len(roads) + relation_index,
+            last_unit=f"RoadNextRoad:{relation.Id}",
+            counters={"violation_count": len(violations)},
+        )
         source_road_id = _canonical_id(relation.RoadId)
         target_road_id = _canonical_id(relation.NextRoadId)
         if source_road_id not in road_ids or target_road_id not in road_ids:
@@ -195,6 +223,10 @@ def run_independent_quality(
                     relation.geometry,
                 )
             )
+    finish_progress_stage(
+        "independent_qa_objects",
+        counters={"violation_count": len(violations)},
+    )
     duplicate_states = 0
     segment_count = 0
     segment_without_road = 0

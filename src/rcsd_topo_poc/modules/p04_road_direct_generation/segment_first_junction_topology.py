@@ -6,6 +6,8 @@ import geopandas as gpd
 import pandas as pd
 from shapely.geometry import GeometryCollection, LineString, Point
 
+from .segment_first_geometry_metrics import surface_coverage_at_least
+
 from .segment_first_skeleton import canonical_id, parse_id_list
 from .segment_first_topology import (
     TopologyBuildResult,
@@ -872,13 +874,7 @@ def _complex_lane_topo_relation_rows(
                 if connector.length > maximum_surface_distance_m:
                     continue
                 surface = surfaces.get(group_id, GeometryCollection())
-                coverage = (
-                    1.0
-                    if connector.length <= 1e-9
-                    else float(connector.intersection(surface).length)
-                    / float(connector.length)
-                )
-                if coverage < 0.8:
+                if not surface_coverage_at_least(connector, surface, 0.8):
                     continue
                 candidates.append(
                     (

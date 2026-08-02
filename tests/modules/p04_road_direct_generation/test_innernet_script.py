@@ -9,6 +9,8 @@ import time
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT_PATH = REPO_ROOT / "scripts" / "p04_run_segment_first_innernet.py"
@@ -144,6 +146,11 @@ def test_innernet_script_maps_all_explicit_inputs_to_segment_first_config(
     assert payload["terminal_status"] == "failed"
     assert payload["core_gate_pass"] is False
     assert payload["patch_count"] == 1
+    progress_path = Path(payload["progress_path"])
+    assert progress_path.is_file()
+    assert '"event_type": "run_completed"' in progress_path.read_text(
+        encoding="utf-8"
+    )
     assert "[1/4] Input validation completed." in console.err
     assert "[1/4] Runtime resource contract:" in console.err
     assert "[2/4] Discovered 1 Patch directories: 5417631180197930." in console.err
@@ -198,6 +205,41 @@ def test_innernet_script_can_make_core_gate_failure_nonzero(tmp_path: Path) -> N
     assert module.main(argv, runner=fake_runner) == 2
 
 
+def test_innernet_script_rejects_unsafe_surface_reconstruction(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    module = _load_script()
+    argv, _ = _arguments(tmp_path)
+    monkeypatch.setattr(
+        module,
+        "surface_coverage_runtime_stats",
+        lambda: {"unsafe_local_reconstruction_count": 1},
+    )
+
+    def fake_runner(config):
+        return SimpleNamespace(
+            run_id=config.run_id,
+            output_dir=config.output_dir,
+            formal_gpkg=config.output_dir / "formal.gpkg",
+            audit_gpkg=config.output_dir / "audit.gpkg",
+            relations_gpkg=config.output_dir / "relations.gpkg",
+            summary_path=config.output_dir / "summary.json",
+            report_path=config.output_dir / "report.md",
+            independent_quality_path=config.output_dir / "quality.json",
+            qgis_project_path=None,
+            terminal_status="passed",
+            core_gate_pass=True,
+        )
+
+    assert module.main(argv, runner=fake_runner) == 3
+    console = capsys.readouterr()
+    payload = json.loads(console.out)
+    assert payload["performance_gate_pass"] is False
+    assert "exact surface coverage" in console.err
+
+
 def test_innernet_script_reports_heartbeat_during_long_run(
     tmp_path: Path,
     capsys,
@@ -208,6 +250,17 @@ def test_innernet_script_reports_heartbeat_during_long_run(
     monkeypatch.setattr(module, "PROGRESS_HEARTBEAT_SECONDS", 0.01)
 
     def slow_runner(config):
+        from rcsd_topo_poc.modules.p04_road_direct_generation.segment_first_progress import (
+            advance_progress,
+            begin_progress_stage,
+        )
+
+        begin_progress_stage("synthetic_units", 4, detail="heartbeat-test")
+        advance_progress(
+            "synthetic_units",
+            completed=1,
+            last_unit="segment-1",
+        )
         time.sleep(0.035)
         return SimpleNamespace(
             run_id=config.run_id,
@@ -227,7 +280,75 @@ def test_innernet_script_reports_heartbeat_during_long_run(
     console = capsys.readouterr()
     json.loads(console.out)
     assert "Segment-first Road generation is still running; elapsed=" in console.err
+    assert "stage=synthetic_units#1" in console.err
+    assert "units=1/4(25.0%)" in console.err
+    assert "coverage=queries=" in console.err
+    assert "corridor_cache=queries=" in console.err
     assert "active=test_innernet_script.py:slow_runner:" in console.err
+
+
+def test_innernet_script_warns_when_actual_unit_stalls(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    module = _load_script()
+    argv, _ = _arguments(tmp_path)
+    monkeypatch.setattr(module, "PROGRESS_HEARTBEAT_SECONDS", 0.005)
+    monkeypatch.setattr(module, "PROGRESS_STALL_WARNING_SECONDS", 0.01)
+
+    def stalled_runner(config):
+        from rcsd_topo_poc.modules.p04_road_direct_generation.segment_first_progress import (
+            begin_progress_stage,
+        )
+
+        begin_progress_stage("segment_carrier", 100, detail="stall-test")
+        time.sleep(0.04)
+        return SimpleNamespace(
+            run_id=config.run_id,
+            output_dir=config.output_dir,
+            formal_gpkg=config.output_dir / "formal.gpkg",
+            audit_gpkg=config.output_dir / "audit.gpkg",
+            relations_gpkg=config.output_dir / "relations.gpkg",
+            summary_path=config.output_dir / "summary.json",
+            report_path=config.output_dir / "report.md",
+            independent_quality_path=config.output_dir / "quality.json",
+            qgis_project_path=None,
+            terminal_status="failed",
+            core_gate_pass=False,
+        )
+
+    assert module.main(argv, runner=stalled_runner) == 0
+    console = capsys.readouterr()
+    assert "PROGRESS STALL WARNING" in console.err
+    assert "stage=segment_carrier#1" in console.err
+
+
+def test_innernet_script_preserves_failed_progress_event(
+    tmp_path: Path,
+) -> None:
+    module = _load_script()
+    argv, paths = _arguments(tmp_path)
+
+    def failing_runner(config):
+        from rcsd_topo_poc.modules.p04_road_direct_generation.segment_first_progress import (
+            begin_progress_stage,
+        )
+
+        begin_progress_stage("segment_carrier", 10, detail="failure-test")
+        raise RuntimeError("synthetic runner failure")
+
+    with pytest.raises(RuntimeError, match="synthetic runner failure"):
+        module.main(argv, runner=failing_runner)
+
+    progress_path = paths["output_dir"] / "p04_progress.jsonl"
+    assert progress_path.is_file()
+    events = [
+        json.loads(line)
+        for line in progress_path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert events[-1]["event_type"] == "run_failed"
+    assert events[-1]["counters"]["error_type"] == "RuntimeError"
 
 
 def test_innernet_script_help_exposes_only_parameterized_business_paths() -> None:

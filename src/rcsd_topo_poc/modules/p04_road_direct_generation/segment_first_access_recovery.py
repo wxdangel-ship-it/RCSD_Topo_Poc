@@ -6,6 +6,7 @@ from shapely.geometry import LineString
 from shapely.ops import nearest_points, substring, unary_union
 
 from .segment_first_geometry_cache import buffered_union
+from .segment_first_geometry_metrics import surface_coverage
 from .segment_first_junctions import endpoint_surface_geometry
 from .segment_first_skeleton import parse_id_list
 from .segment_first_surface_routing import interior_surface_target
@@ -167,11 +168,7 @@ def build_access_surface_recovery_candidates(
             clipped = _clip_between_surfaces(center.geometry, endpoint_surfaces)
             if clipped is None or clipped.length < minimum_length_m:
                 continue
-            coverage = (
-                float(clipped.intersection(drivezone_surface).length / clipped.length)
-                if drivezone_surface is not None
-                else 0.0
-            )
+            coverage = surface_coverage(clipped, drivezone_surface)
             if coverage + 1e-9 < minimum_drivezone_coverage:
                 continue
             row = center._asdict()

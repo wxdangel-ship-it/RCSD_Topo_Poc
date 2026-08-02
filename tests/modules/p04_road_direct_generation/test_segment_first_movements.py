@@ -5,6 +5,9 @@ import pandas as pd
 import pytest
 from shapely.geometry import LineString, Point, box
 
+from rcsd_topo_poc.modules.p04_road_direct_generation import (
+    segment_first_movements as movement_module,
+)
 from rcsd_topo_poc.modules.p04_road_direct_generation.segment_first_movements import (
     split_carriers_at_movement_anchors,
     split_carriers_at_segment_accesses,
@@ -72,6 +75,104 @@ def test_cross_road_internal_movement_splits_both_physical_roads() -> None:
     assert result.summary["rejected_anchor_count"] == 0
     assert "p:a1" in set(result.carriers["end_patch_road_keys"])
     assert "p:b1" in set(result.carriers["start_patch_road_keys"])
+
+
+def test_movement_carrier_selection_is_cached_per_patch_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    carriers = gpd.GeoDataFrame(
+        [
+            {
+                "carrier_id": "a",
+                "realization": "built",
+                "source_patch_road_keys": "p:a0,p:a1,p:a2",
+                "start_patch_road_keys": "p:a0",
+                "end_patch_road_keys": "p:a2",
+                "patch_road_key": "p:a0",
+                "geometry": LineString([(0, 0), (100, 0)]),
+            },
+            {
+                "carrier_id": "b",
+                "realization": "built",
+                "source_patch_road_keys": "p:b0,p:b1,p:b2",
+                "start_patch_road_keys": "p:b0",
+                "end_patch_road_keys": "p:b2",
+                "patch_road_key": "p:b0",
+                "geometry": LineString([(0, 5), (100, 5)]),
+            },
+        ],
+        crs="EPSG:32650",
+    )
+    assignments = gpd.GeoDataFrame(
+        [
+            {"patch_road_key": "p:a1", "geometry": LineString([(30, 0), (50, 0)])},
+            {"patch_road_key": "p:b1", "geometry": LineString([(50, 5), (70, 5)])},
+        ],
+        crs=carriers.crs,
+    )
+    pair = {
+        "source_patch_road_key": "p:a1",
+        "target_patch_road_key": "p:b1",
+        "source_relation_id": "lane:1",
+        "pair_source": "lane_topo",
+    }
+    calls: list[tuple[str, str]] = []
+    original = movement_module._select_movement_carrier
+
+    def counted_select(patch_key: str, endpoint_name: str, *args, **kwargs):
+        calls.append((patch_key, endpoint_name))
+        return original(patch_key, endpoint_name, *args, **kwargs)
+
+    monkeypatch.setattr(
+        movement_module,
+        "_select_movement_carrier",
+        counted_select,
+    )
+    result = split_carriers_at_movement_anchors(
+        carriers,
+        assignments,
+        pd.DataFrame([pair, pair]),
+        run_id="run",
+        maximum_anchor_distance_m=20.0,
+    )
+
+    assert calls == [("p:a1", "end"), ("p:b1", "start")]
+    assert len(result.carriers) == 4
+
+    calls.clear()
+    completion_counters: dict[str, object] = {}
+    monkeypatch.setattr(
+        movement_module,
+        "_MOVEMENT_CARRIER_SELECTION_CACHE_MAX_ENTRIES",
+        1,
+    )
+    monkeypatch.setattr(
+        movement_module,
+        "finish_progress_stage",
+        lambda _stage, *, counters=None: completion_counters.update(
+            counters or {}
+        ),
+    )
+    bounded = split_carriers_at_movement_anchors(
+        carriers,
+        assignments,
+        pd.DataFrame([pair, pair]),
+        run_id="run",
+        maximum_anchor_distance_m=20.0,
+    )
+
+    assert calls == [
+        ("p:a1", "end"),
+        ("p:b1", "start"),
+        ("p:a1", "end"),
+        ("p:b1", "start"),
+    ]
+    assert completion_counters["carrier_selection_cache_entries"] == 1
+    assert completion_counters["carrier_selection_cache_entries_max"] == 1
+    assert completion_counters["carrier_selection_cache_evictions"] == 3
+    assert bounded.carriers.geometry.to_wkb().tolist() == (
+        result.carriers.geometry.to_wkb().tolist()
+    )
 
 
 def test_lane_geometry_selects_directional_carrier_when_lane_key_is_not_lineage() -> None:

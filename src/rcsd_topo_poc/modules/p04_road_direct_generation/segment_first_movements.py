@@ -12,9 +12,15 @@ from shapely.ops import nearest_points
 from shapely.ops import substring, unary_union
 
 from .segment_first_junctions import endpoint_surface_geometry
+from .segment_first_progress import (
+    advance_progress,
+    begin_progress_stage,
+    finish_progress_stage,
+)
 from .segment_first_surface_routing import interior_surface_target
 
 _MIN_THROUGH_SPLIT_PART_LENGTH_M = 2.0
+_MOVEMENT_CARRIER_SELECTION_CACHE_MAX_ENTRIES = 32768
 _JUNCTION_SURFACE_CACHE: dict[
     int,
     tuple[weakref.ReferenceType[gpd.GeoDataFrame], int, dict[str, object]],
@@ -43,6 +49,16 @@ def split_carriers_at_movement_anchors(
             _empty_audit(carriers.crs),
             {"split_parent_count": 0, "split_part_count": 0, "rejected_anchor_count": 0},
         )
+    progress_stage = "movement_anchor_split"
+    begin_progress_stage(
+        progress_stage,
+        len(explicit_pairs) + len(carriers),
+        detail="cross-Road movement anchors and carrier materialization",
+        counters={
+            "pair_count": len(explicit_pairs),
+            "carrier_count": len(carriers),
+        },
+    )
     patch_geometry = {
         str(patch_road_key): max(
             group.geometry,
@@ -79,30 +95,55 @@ def split_carriers_at_movement_anchors(
         for key in _split_keys(carrier.get("source_patch_road_keys", "")):
             carrier_by_patch.setdefault(key, []).append(int(index))
 
+    carrier_selection_cache: dict[tuple[str, str], int | None] = {}
+    carrier_selection_query_count = 0
+    carrier_selection_cache_hit_count = 0
+    carrier_selection_cache_eviction_count = 0
+
+    def select_carrier(patch_key: str, endpoint_name: str) -> int | None:
+        nonlocal carrier_selection_query_count
+        nonlocal carrier_selection_cache_hit_count
+        nonlocal carrier_selection_cache_eviction_count
+        carrier_selection_query_count += 1
+        cache_key = (patch_key, endpoint_name)
+        if cache_key in carrier_selection_cache:
+            carrier_selection_cache_hit_count += 1
+            return carrier_selection_cache[cache_key]
+        selected = _select_movement_carrier(
+            patch_key,
+            endpoint_name,
+            carriers,
+            patch_geometry,
+            carrier_by_patch,
+            carriers_by_segment,
+            assignment_segments,
+        )
+        if (
+            len(carrier_selection_cache)
+            >= _MOVEMENT_CARRIER_SELECTION_CACHE_MAX_ENTRIES
+        ):
+            carrier_selection_cache.pop(next(iter(carrier_selection_cache)))
+            carrier_selection_cache_eviction_count += 1
+        carrier_selection_cache[cache_key] = selected
+        return selected
+
     split_requests: dict[int, list[dict[str, object]]] = {}
     audit_rows: list[dict[str, object]] = []
-    for pair in explicit_pairs.itertuples():
+    for pair_ordinal, pair in enumerate(explicit_pairs.itertuples(), start=1):
         source_key = str(pair.source_patch_road_key)
         target_key = str(pair.target_patch_road_key)
-        source_index = _select_movement_carrier(
-            source_key,
-            "end",
-            carriers,
-            patch_geometry,
-            carrier_by_patch,
-            carriers_by_segment,
-            assignment_segments,
-        )
-        target_index = _select_movement_carrier(
-            target_key,
-            "start",
-            carriers,
-            patch_geometry,
-            carrier_by_patch,
-            carriers_by_segment,
-            assignment_segments,
-        )
+        source_index = select_carrier(source_key, "end")
+        target_index = select_carrier(target_key, "start")
         if source_index is None or target_index is None or source_index == target_index:
+            advance_progress(
+                progress_stage,
+                completed=pair_ordinal,
+                last_unit=f"{source_key}->{target_key}",
+                counters={
+                    "anchor_rows": len(audit_rows),
+                    "split_request_parents": len(split_requests),
+                },
+            )
             continue
         surface_routing_peer = any(
             "endpoint_surface_constrained_routing"
@@ -157,10 +198,23 @@ def split_carriers_at_movement_anchors(
                         "surface_routing_peer": surface_routing_peer,
                     }
                 )
+        advance_progress(
+            progress_stage,
+            completed=pair_ordinal,
+            last_unit=f"{source_key}->{target_key}",
+            counters={
+                "anchor_rows": len(audit_rows),
+                "split_request_parents": len(split_requests),
+            },
+        )
 
     output_rows: list[dict[str, object]] = []
     split_parent_count = 0
-    for index, carrier in carriers.iterrows():
+    pair_count = len(explicit_pairs)
+    for carrier_ordinal, (index, carrier) in enumerate(
+        carriers.iterrows(),
+        start=1,
+    ):
         requests = _merge_requests(split_requests.get(int(index), []))
         if not requests:
             row = carrier.to_dict()
@@ -171,10 +225,30 @@ def split_carriers_at_movement_anchors(
                 row.get("inherit_source_enodeid")
             )
             output_rows.append(row)
+            advance_progress(
+                progress_stage,
+                completed=pair_count + carrier_ordinal,
+                last_unit=str(carrier.get("carrier_id", index)),
+                counters={
+                    "anchor_rows": len(audit_rows),
+                    "split_parent_count": split_parent_count,
+                    "output_rows": len(output_rows),
+                },
+            )
             continue
         split_parent_count += 1
         output_rows.extend(
             _split_carrier(carrier.to_dict(), requests, patch_geometry)
+        )
+        advance_progress(
+            progress_stage,
+            completed=pair_count + carrier_ordinal,
+            last_unit=str(carrier.get("carrier_id", index)),
+            counters={
+                "anchor_rows": len(audit_rows),
+                "split_parent_count": split_parent_count,
+                "output_rows": len(output_rows),
+            },
         )
     result = gpd.GeoDataFrame(output_rows, geometry="geometry", crs=carriers.crs)
     audit = (
@@ -182,16 +256,31 @@ def split_carriers_at_movement_anchors(
         if audit_rows
         else _empty_audit(carriers.crs)
     )
-    return MovementSplitResult(
-        result,
-        audit,
-        {
-            "split_parent_count": int(split_parent_count),
-            "split_part_count": int(len(result) - len(carriers) + split_parent_count),
-            "accepted_anchor_count": int(audit["split_decision"].eq("accepted").sum()) if not audit.empty else 0,
-            "rejected_anchor_count": int(audit["split_decision"].eq("rejected").sum()) if not audit.empty else 0,
+    summary = {
+        "split_parent_count": int(split_parent_count),
+        "split_part_count": int(len(result) - len(carriers) + split_parent_count),
+        "accepted_anchor_count": int(audit["split_decision"].eq("accepted").sum()) if not audit.empty else 0,
+        "rejected_anchor_count": int(audit["split_decision"].eq("rejected").sum()) if not audit.empty else 0,
+    }
+    finish_progress_stage(
+        progress_stage,
+        counters={
+            "accepted_anchor_count": summary["accepted_anchor_count"],
+            "rejected_anchor_count": summary["rejected_anchor_count"],
+            "split_parent_count": summary["split_parent_count"],
+            "split_part_count": summary["split_part_count"],
+            "carrier_selection_queries": carrier_selection_query_count,
+            "carrier_selection_cache_hits": carrier_selection_cache_hit_count,
+            "carrier_selection_cache_entries": len(carrier_selection_cache),
+            "carrier_selection_cache_entries_max": (
+                _MOVEMENT_CARRIER_SELECTION_CACHE_MAX_ENTRIES
+            ),
+            "carrier_selection_cache_evictions": (
+                carrier_selection_cache_eviction_count
+            ),
         },
     )
+    return MovementSplitResult(result, audit, summary)
 
 
 def _select_movement_carrier(
@@ -290,6 +379,16 @@ def split_carriers_at_segment_accesses(
     carriers = movement_result.carriers
     if carriers.empty or junction_units.empty:
         return movement_result
+    progress_stage = "segment_access_split"
+    begin_progress_stage(
+        progress_stage,
+        len(carriers),
+        detail="endpoint surface trim and THROUGH access carrier split",
+        counters={
+            "carrier_count": len(carriers),
+            "access_count": len(segment_accesses),
+        },
+    )
     surfaces = _junction_surfaces(junction_units)
     surface_sources = {
         str(group_id): str(
@@ -318,12 +417,21 @@ def split_carriers_at_segment_accesses(
         segment_accesses["access_type"].astype(str).eq("THROUGH")
     ].copy()
     if through.empty:
-        return _with_endpoint_trim_result(
+        result = _with_endpoint_trim_result(
             movement_result,
             carriers,
             endpoint_audit,
             endpoint_trimmed_count,
         )
+        finish_progress_stage(
+            progress_stage,
+            counters={
+                "endpoint_trimmed_carrier_count": endpoint_trimmed_count,
+                "through_access_count": 0,
+                "through_split_parent_count": 0,
+            },
+        )
+        return result
     accesses_by_segment = {
         str(segment_id): group.copy()
         for segment_id, group in through.groupby("segment_id")
@@ -332,13 +440,36 @@ def split_carriers_at_segment_accesses(
     audit_rows: list[dict[str, object]] = []
     split_parent_count = 0
     accepted_count = 0
-    for _, carrier in carriers.iterrows():
+    for carrier_ordinal, (carrier_index, carrier) in enumerate(
+        carriers.iterrows(),
+        start=1,
+    ):
         if str(carrier.get("realization", "")) != "built":
             output_rows.append(carrier.to_dict())
+            advance_progress(
+                progress_stage,
+                completed=carrier_ordinal,
+                last_unit=str(carrier.get("carrier_id", carrier_index)),
+                counters={
+                    "accepted_anchor_count": accepted_count,
+                    "split_parent_count": split_parent_count,
+                    "output_rows": len(output_rows),
+                },
+            )
             continue
         accesses = accesses_by_segment.get(str(carrier.get("segment_id", "")))
         if accesses is None or accesses.empty:
             output_rows.append(carrier.to_dict())
+            advance_progress(
+                progress_stage,
+                completed=carrier_ordinal,
+                last_unit=str(carrier.get("carrier_id", carrier_index)),
+                counters={
+                    "accepted_anchor_count": accepted_count,
+                    "split_parent_count": split_parent_count,
+                    "output_rows": len(output_rows),
+                },
+            )
             continue
         requests: list[dict[str, object]] = []
         for access in accesses.itertuples(index=False):
@@ -437,10 +568,30 @@ def split_carriers_at_segment_accesses(
         requests = _merge_requests(requests)
         if not requests:
             output_rows.append(carrier.to_dict())
+            advance_progress(
+                progress_stage,
+                completed=carrier_ordinal,
+                last_unit=str(carrier.get("carrier_id", carrier_index)),
+                counters={
+                    "accepted_anchor_count": accepted_count,
+                    "split_parent_count": split_parent_count,
+                    "output_rows": len(output_rows),
+                },
+            )
             continue
         split_parent_count += 1
         output_rows.extend(
             _split_carrier(carrier.to_dict(), requests, patch_geometry)
+        )
+        advance_progress(
+            progress_stage,
+            completed=carrier_ordinal,
+            last_unit=str(carrier.get("carrier_id", carrier_index)),
+            counters={
+                "accepted_anchor_count": accepted_count,
+                "split_parent_count": split_parent_count,
+                "output_rows": len(output_rows),
+            },
         )
     result = gpd.GeoDataFrame(output_rows, geometry="geometry", crs=carriers.crs)
     through_audit = (
@@ -473,6 +624,26 @@ def split_carriers_at_segment_accesses(
                 through_audit["split_decision"].eq("rejected").sum()
             ),
         }
+    )
+    finish_progress_stage(
+        progress_stage,
+        counters={
+            "endpoint_trimmed_carrier_count": summary[
+                "endpoint_trimmed_carrier_count"
+            ],
+            "through_accepted_anchor_count": summary[
+                "through_accepted_anchor_count"
+            ],
+            "through_rejected_anchor_count": summary[
+                "through_rejected_anchor_count"
+            ],
+            "through_split_parent_count": summary[
+                "through_split_parent_count"
+            ],
+            "through_split_part_count": summary[
+                "through_split_part_count"
+            ],
+        },
     )
     return MovementSplitResult(result, audit, summary)
 

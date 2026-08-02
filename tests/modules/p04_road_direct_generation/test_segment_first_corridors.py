@@ -4,12 +4,17 @@ import geopandas as gpd
 import pandas as pd
 from shapely.geometry import LineString, box
 
+from rcsd_topo_poc.modules.p04_road_direct_generation import (
+    segment_first_corridors as corridor_module,
+)
 from rcsd_topo_poc.modules.p04_road_direct_generation.segment_first_carriers import (
     plan_segment_carriers,
 )
 from rcsd_topo_poc.modules.p04_road_direct_generation.segment_first_corridors import (
     _max_sample_turn,
     assemble_directional_corridor,
+    corridor_assembly_cache_stats,
+    reset_corridor_assembly_cache,
 )
 
 
@@ -48,6 +53,110 @@ def test_member_fragments_are_assembled_as_one_directional_road() -> None:
     assert result.source_patch_road_keys == ("p:1", "p:2")
     assert result.geometry.length > 95.0
     assert 2.0 <= result.geometry.interpolate(0.5, normalized=True).y <= 4.0
+
+
+def test_corridor_assembly_cache_reuses_value_equivalent_evidence() -> None:
+    reset_corridor_assembly_cache()
+    reference = LineString([(0, 0), (100, 0)])
+    surface = box(-5, -5, 105, 10)
+    evidence = _evidence(
+        [
+            {
+                "patch_road_key": "p:1",
+                "source_patch_id": "p",
+                "center_lane_id": "l1",
+                "geometry": LineString([(0, 2), (60, 2)]),
+            },
+            {
+                "patch_road_key": "p:2",
+                "source_patch_id": "p",
+                "center_lane_id": "l2",
+                "geometry": LineString([(40, 4), (100, 4)]),
+            },
+        ]
+    )
+    first = assemble_directional_corridor(
+        evidence,
+        reference,
+        direction_role="forward",
+        drivezone_surface=surface,
+        minimum_coverage=0.60,
+        sample_spacing_m=2.0,
+        completion_min_coverage=0.90,
+    )
+    second = assemble_directional_corridor(
+        evidence.copy(),
+        reference,
+        direction_role="forward",
+        drivezone_surface=surface,
+        minimum_coverage=0.60,
+        sample_spacing_m=2.0,
+        completion_min_coverage=0.90,
+    )
+    changed_parameter = assemble_directional_corridor(
+        evidence.copy(),
+        reference,
+        direction_role="forward",
+        drivezone_surface=surface,
+        minimum_coverage=0.60,
+        sample_spacing_m=1.5,
+        completion_min_coverage=0.90,
+    )
+    stats = corridor_assembly_cache_stats()
+
+    assert first is not None
+    assert second is first
+    assert changed_parameter is not None
+    assert stats["query_count"] == 3
+    assert stats["hit_count"] == 1
+    assert stats["miss_count"] == 2
+    assert stats["entry_count"] == 2
+    assert stats["key_bytes"] > 0
+    reset_corridor_assembly_cache()
+
+
+def test_corridor_assembly_cache_evicts_at_configured_entry_bound(
+    monkeypatch,
+) -> None:
+    reset_corridor_assembly_cache()
+    monkeypatch.setattr(corridor_module, "_CORRIDOR_ASSEMBLY_CACHE_MAXSIZE", 1)
+    reference = LineString([(0, 0), (100, 0)])
+    surface = box(-5, -5, 105, 10)
+    evidence = _evidence(
+        [
+            {
+                "patch_road_key": "p:1",
+                "source_patch_id": "p",
+                "center_lane_id": "l1",
+                "geometry": LineString([(0, 2), (100, 2)]),
+            }
+        ]
+    )
+
+    assemble_directional_corridor(
+        evidence,
+        reference,
+        direction_role="forward",
+        drivezone_surface=surface,
+        minimum_coverage=0.60,
+        sample_spacing_m=2.0,
+        completion_min_coverage=0.90,
+    )
+    assemble_directional_corridor(
+        evidence,
+        reference,
+        direction_role="forward",
+        drivezone_surface=surface,
+        minimum_coverage=0.60,
+        sample_spacing_m=1.5,
+        completion_min_coverage=0.90,
+    )
+    stats = corridor_assembly_cache_stats()
+
+    assert stats["entry_count"] == 1
+    assert stats["entry_count_max"] == 1
+    assert stats["eviction_count"] == 1
+    reset_corridor_assembly_cache()
 
 
 def test_bidirectional_member_requires_both_observed_roles() -> None:

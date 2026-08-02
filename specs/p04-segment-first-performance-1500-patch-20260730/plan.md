@@ -19,6 +19,12 @@
 
 每个优化点单独提交基准与业务等价证据，不进行不可审计的批量重写。
 
+第三轮首先把数值和门槛覆盖热点改为“完整最终surface prepared终态谓词 + 边界样本精确求交”；
+最终`MultiPolygon`的数值覆盖率只索引其原生组件，不重组原始DriveZone分片。随后
+统一completion/corridor/junction/node覆盖调用，并依据查询计数和缓存命中率
+判断是否需要对多轮Segment carrier做dirty-set增量重算。后者若必须触碰超限的
+`segment_first_pipeline.py`，先按仓库体量规则提交拆分计划，不直接追加。
+
 ## 阶段 C：并发策略
 
 - 仅对 Patch 独立的 I/O/预处理启用并发。
@@ -33,6 +39,15 @@
 3. 合成 1500 Patch 输入发现/清单/读取微基准。
 4. 内网 1500 Patch 正式复跑。
 5. 记录 wall、CPU、RSS、I/O、热点分布、业务等价和 QGIS QA。
+
+## 阶段 E：真实进度
+
+1. 新增独立进度事件组件，不改变正式入口参数签名；
+2. 在Patch读取、Segment carrier、Junction/Node/Topology、QA和输出边界发布真实
+   `completed/total`；
+3. 正式入口每30秒输出阶段、吞吐、ETA、资源与覆盖快速判定/精确回退计数，并追加
+   `p04_progress.jsonl`；
+4. 测试进度单调性、阶段完成、停滞告警和异常退出后的最后事件可追溯性。
 
 ## 风险与回退
 

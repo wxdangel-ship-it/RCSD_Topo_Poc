@@ -9,6 +9,12 @@ import numpy as np
 import pandas as pd
 from shapely.geometry import Point
 
+from .segment_first_progress import (
+    advance_progress,
+    begin_progress_stage,
+    finish_progress_stage,
+)
+
 
 @dataclass(frozen=True)
 class TopologyBuildResult:
@@ -38,7 +44,19 @@ def compile_road_next_road(
     seen: set[tuple[object, object, str]] = set()
     by_end = _road_roles_by_node(roads)
     allowed = _allowed_pairs(explicit_pairs, roads)
-    for node_id, roles in sorted(by_end.items(), key=lambda item: str(item[0])):
+    shared_node_items = sorted(by_end.items(), key=lambda item: str(item[0]))
+    begin_progress_stage(
+        "topology_shared_nodes",
+        len(shared_node_items),
+        detail="RoadNextRoad actual shared Node compilation",
+    )
+    for node_index, (node_id, roles) in enumerate(shared_node_items):
+        advance_progress(
+            "topology_shared_nodes",
+            completed=node_index,
+            last_unit=node_id,
+            counters={"relation_count": len(rows)},
+        )
         meta = node_meta.get(str(node_id))
         if meta is None:
             continue
@@ -92,9 +110,26 @@ def compile_road_next_road(
                         run_id=run_id,
                     )
                 )
+    finish_progress_stage(
+        "topology_shared_nodes",
+        counters={"relation_count": len(rows)},
+    )
 
     semantic_groups = _semantic_ordinary_groups(node_meta)
-    for group_id, group in sorted(semantic_groups.items()):
+    semantic_group_items = sorted(semantic_groups.items())
+    begin_progress_stage(
+        "topology_semantic_junctions",
+        len(semantic_group_items),
+        detail="ordinary/retained semantic Junction relations",
+        counters={"relation_count": len(rows)},
+    )
+    for group_index, (group_id, group) in enumerate(semantic_group_items):
+        advance_progress(
+            "topology_semantic_junctions",
+            completed=group_index,
+            last_unit=group_id,
+            counters={"relation_count": len(rows)},
+        )
         node_ids = group["node_ids"]
         retained_evidence_only = (
             group["junction_kind"] == "retained"
@@ -152,6 +187,10 @@ def compile_road_next_road(
                         run_id=run_id,
                     )
                 )
+    finish_progress_stage(
+        "topology_semantic_junctions",
+        counters={"relation_count": len(rows)},
+    )
     existing_road_pairs = {
         (row["RoadId"], row["NextRoadId"])
         for row in rows
@@ -166,7 +205,19 @@ def compile_road_next_road(
         for roles in by_end.values()
         for role in roles["outgoing"]
     ]
-    for source in all_incoming:
+    begin_progress_stage(
+        "topology_advance_right",
+        len(all_incoming),
+        detail="explicit ADVANCE_RIGHT relations",
+        counters={"relation_count": len(rows)},
+    )
+    for source_index, source in enumerate(all_incoming):
+        advance_progress(
+            "topology_advance_right",
+            completed=source_index,
+            last_unit=source["id"],
+            counters={"relation_count": len(rows)},
+        )
         for target in all_outgoing:
             road_pair = (source["id"], target["id"])
             if (
@@ -218,6 +269,10 @@ def compile_road_next_road(
                 )
             )
             existing_road_pairs.add(road_pair)
+    finish_progress_stage(
+        "topology_advance_right",
+        counters={"relation_count": len(rows)},
+    )
     frame = _records(rows, roads.crs)
     return TopologyBuildResult(
         frame,

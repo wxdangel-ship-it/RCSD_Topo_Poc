@@ -8,6 +8,12 @@ import zipfile
 import fiona
 from pyproj import CRS
 
+from .segment_first_progress import (
+    advance_progress,
+    begin_progress_stage,
+    finish_progress_stage,
+)
+
 
 @dataclass(frozen=True)
 class QgisProjectResult:
@@ -104,7 +110,12 @@ def build_qgis_project(output_dir: Path, *, run_id: str) -> QgisProjectResult:
     }
     available = []
     missing = []
-    for group, name, filename, layer, visible in specs:
+    begin_progress_stage(
+        "qgis_layer_discovery",
+        len(specs),
+        detail="QGIS comparison layer inventory",
+    )
+    for spec_index, (group, name, filename, layer, visible) in enumerate(specs):
         path = output_dir / filename
         if path.is_file() and layer in fiona.listlayers(path):
             with fiona.open(path, layer=layer) as source:
@@ -127,6 +138,22 @@ def build_qgis_project(output_dir: Path, *, run_id: str) -> QgisProjectResult:
             )
         elif name not in optional_names:
             missing.append(name)
+        advance_progress(
+            "qgis_layer_discovery",
+            completed=spec_index + 1,
+            last_unit=name,
+            counters={
+                "available_layers": len(available),
+                "missing_required_layers": len(missing),
+            },
+        )
+    finish_progress_stage(
+        "qgis_layer_discovery",
+        counters={
+            "available_layers": len(available),
+            "missing_required_layers": len(missing),
+        },
+    )
     root = ET.Element("qgis", {"projectname": run_id, "version": "3.34.0"})
     project_crs = next(
         (item[6] for item in available if item[6] is not None),
@@ -137,6 +164,12 @@ def build_qgis_project(output_dir: Path, *, run_id: str) -> QgisProjectResult:
     tree_root = ET.SubElement(root, "layer-tree-group", {"name": "", "checked": "Qt::Checked", "expanded": "1"})
     project_layers = ET.SubElement(root, "projectlayers")
     groups: dict[str, ET.Element] = {}
+    begin_progress_stage(
+        "qgis_project_layers",
+        len(available),
+        detail="QGIS XML layer materialization",
+        counters={"missing_required_layers": len(missing)},
+    )
     for ordinal, (
         group,
         name,
@@ -192,6 +225,12 @@ def build_qgis_project(output_dir: Path, *, run_id: str) -> QgisProjectResult:
                 qgis_geometry,
                 *_layer_style(name),
             )
+        advance_progress(
+            "qgis_project_layers",
+            completed=ordinal + 1,
+            last_unit=name,
+            counters={"materialized_layers": ordinal + 1},
+        )
     ET.SubElement(root, "homePath", {"path": "."})
     qgs_path = output_dir / "p04_segment_first_comparison.qgs"
     ET.ElementTree(root).write(qgs_path, encoding="utf-8", xml_declaration=True)
@@ -199,6 +238,13 @@ def build_qgis_project(output_dir: Path, *, run_id: str) -> QgisProjectResult:
     with zipfile.ZipFile(qgz_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         archive.write(qgs_path, arcname=qgs_path.name)
     readback = _readback(qgz_path, len(available))
+    finish_progress_stage(
+        "qgis_project_layers",
+        counters={
+            "materialized_layers": len(available),
+            "readback_pass": str(readback and not missing).lower(),
+        },
+    )
     return QgisProjectResult(qgz_path, len(available), readback and not missing, tuple(missing))
 
 

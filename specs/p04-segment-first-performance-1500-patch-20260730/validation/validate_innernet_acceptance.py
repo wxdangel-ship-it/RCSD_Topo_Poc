@@ -20,6 +20,7 @@ REQUIRED_OUTPUTS = (
     "p04_segment_first_report.md",
     "p04_segment_first_summary.json",
     "p04_segment_first_comparison.qgz",
+    "p04_progress.jsonl",
 )
 BUSINESS_EQUIVALENCE_ARTIFACTS = (
     "p04_segment_first_rcsd.gpkg",
@@ -38,6 +39,23 @@ NATIVE_THREAD_LIMITS = (
     "NUMEXPR_MAX_THREADS",
     "GDAL_NUM_THREADS",
 )
+REQUIRED_PROGRESS_STAGE_GROUPS = {
+    "patch": {"input_patch_layer"},
+    "segment": {"segment_carrier"},
+    "junction": {"junction_portal"},
+    "node": {"node_topology_pairs", "node_materialization"},
+    "topology": {
+        "topology_shared_nodes",
+        "topology_semantic_junctions",
+        "topology_advance_right",
+    },
+    "qa": {"independent_qa_objects"},
+    "output": {
+        "output_gpkg_layers",
+        "qgis_layer_discovery",
+        "qgis_project_layers",
+    },
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -56,12 +74,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--expected-analysis-crs", default="EPSG:32650")
     parser.add_argument("--wall-target-hours", type=float, default=6.0)
     parser.add_argument("--wall-hard-hours", type=float, default=8.0)
+    parser.add_argument(
+        "--baseline-wall-seconds",
+        type=float,
+        default=45759.2,
+        help=(
+            "异常终止运行在中间日志中已观测的墙钟下界秒数；"
+            "候选必须不超过其50%%。"
+        ),
+    )
     parser.add_argument("--rss-target-gib", type=float, default=8.0)
     parser.add_argument("--rss-hard-gib", type=float, default=16.0)
     parser.add_argument(
         "--over-target-note",
         default="",
-        help="墙钟超过推荐目标但未超过硬上限时所需的书面说明。",
+        help="兼容保留参数；第三轮中超过6小时仍判定失败，说明不能绕过门槛。",
     )
     return parser.parse_args()
 
@@ -190,6 +217,133 @@ def timeline_assessment(
     return gates, advisory
 
 
+def progress_assessment(path: Path) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    parse_errors: list[str] = []
+    if path.is_file():
+        for line_number, raw_line in enumerate(
+            path.read_text(encoding="utf-8").splitlines(),
+            start=1,
+        ):
+            if not raw_line.strip():
+                continue
+            try:
+                event = json.loads(raw_line)
+            except json.JSONDecodeError as error:
+                parse_errors.append(f"line {line_number}: {error}")
+                continue
+            if isinstance(event, dict):
+                events.append(event)
+            else:
+                parse_errors.append(f"line {line_number}: not an object")
+
+    completed_stages = {
+        str(event.get("stage"))
+        for event in events
+        if event.get("event_type") == "stage_completed"
+        and int(event.get("completed") or 0) == int(event.get("total") or 0)
+    }
+    missing_stage_groups = sorted(
+        group
+        for group, stages in REQUIRED_PROGRESS_STAGE_GROUPS.items()
+        if not completed_stages.intersection(stages)
+    )
+    monotonic = True
+    previous: dict[tuple[str, int], tuple[int, int]] = {}
+    for event in events:
+        stage = str(event.get("stage") or "")
+        invocation = int(event.get("stage_invocation") or 0)
+        completed = int(event.get("completed") or 0)
+        total = int(event.get("total") or 0)
+        key = (stage, invocation)
+        prior = previous.get(key)
+        if completed < 0 or total < 0 or completed > total:
+            monotonic = False
+        if prior is not None and (
+            completed < prior[0] or total != prior[1]
+        ):
+            monotonic = False
+        previous[key] = (completed, total)
+    terminal_completed = any(
+        event.get("event_type") == "run_completed" for event in events
+    )
+    movement_cache_rows: list[dict[str, Any]] = []
+    movement_cache_violations: list[dict[str, Any]] = []
+    for event in events:
+        if (
+            event.get("event_type") != "stage_completed"
+            or event.get("stage") != "movement_anchor_split"
+        ):
+            continue
+        counters = dict(event.get("counters") or {})
+        row = {
+            "stage_invocation": int(event.get("stage_invocation") or 0),
+            "entry_count": counters.get(
+                "carrier_selection_cache_entries"
+            ),
+            "entry_count_max": counters.get(
+                "carrier_selection_cache_entries_max"
+            ),
+            "eviction_count": counters.get(
+                "carrier_selection_cache_evictions"
+            ),
+        }
+        movement_cache_rows.append(row)
+        try:
+            bounded = (
+                0 <= int(row["entry_count"]) <= int(row["entry_count_max"])
+                and int(row["entry_count_max"]) > 0
+                and int(row["eviction_count"]) >= 0
+            )
+        except (TypeError, ValueError):
+            bounded = False
+        if not bounded:
+            movement_cache_violations.append(row)
+    gates = [
+        gate(
+            "progress_jsonl_valid",
+            bool(events) and not parse_errors,
+            actual={"event_count": len(events), "errors": parse_errors},
+            expected="non-empty valid JSONL",
+        ),
+        gate(
+            "progress_units_monotonic",
+            monotonic,
+            actual=monotonic,
+            expected=True,
+        ),
+        gate(
+            "progress_stage_groups_complete",
+            not missing_stage_groups,
+            actual=missing_stage_groups,
+            expected=[],
+        ),
+        gate(
+            "progress_terminal_event_present",
+            terminal_completed,
+            actual=terminal_completed,
+            expected=True,
+        ),
+        gate(
+            "movement_carrier_selection_cache_bounded",
+            not movement_cache_violations,
+            actual={
+                "invocation_count": len(movement_cache_rows),
+                "violations": movement_cache_violations,
+            },
+            expected="each emitted invocation satisfies 0 <= entries <= max",
+        ),
+    ]
+    return gates, {
+        "event_count": len(events),
+        "completed_stages": sorted(completed_stages),
+        "missing_stage_groups": missing_stage_groups,
+        "parse_errors": parse_errors,
+        "terminal_completed": terminal_completed,
+        "movement_carrier_selection_cache": movement_cache_rows,
+    }
+
+
 def compare_business_artifacts(
     *,
     repo_root: Path,
@@ -255,6 +409,15 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
     performance = dict(summary.get("performance") or {})
     runtime_resources = dict(performance.get("runtime_resources") or {})
     native_limits = dict(runtime_resources.get("native_thread_limits") or {})
+    surface_coverage_stats = dict(
+        performance.get("surface_coverage") or {}
+    )
+    corridor_cache_stats = dict(
+        performance.get("corridor_assembly_cache") or {}
+    )
+    target_path_cache_stats = dict(
+        performance.get("target_path_cache") or {}
+    )
 
     from rcsd_topo_poc.modules.p04_road_direct_generation.segment_first_inputs import (
         SEGMENT_FIRST_PATCH_LAYER_FAMILIES,
@@ -269,6 +432,12 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
     peak_rss_bytes = int(performance.get("peak_rss_bytes") or 0)
     wall_target_seconds = args.wall_target_hours * 3600.0
     wall_hard_seconds = args.wall_hard_hours * 3600.0
+    baseline_wall_seconds = float(args.baseline_wall_seconds)
+    wall_reduction_ratio = (
+        wall_seconds / baseline_wall_seconds
+        if baseline_wall_seconds > 0.0
+        else math.inf
+    )
     rss_target_bytes = args.rss_target_gib * GIB
     rss_hard_bytes = args.rss_hard_gib * GIB
 
@@ -311,6 +480,18 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
                 "quality": quality.get("expected_crs"),
             },
             expected=args.expected_analysis_crs,
+        ),
+        gate(
+            "wall_target_limit",
+            0.0 < wall_seconds <= wall_target_seconds,
+            actual=wall_seconds,
+            expected=f"(0, {wall_target_seconds}]",
+        ),
+        gate(
+            "wall_reduction_at_least_50_percent",
+            0.0 < wall_reduction_ratio <= 0.5,
+            actual=wall_reduction_ratio,
+            expected="(0, 0.5]",
         ),
         gate(
             "wall_hard_limit",
@@ -359,6 +540,73 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
             expected="100",
         ),
         gate(
+            "surface_coverage_exactness_preserved",
+            performance.get("surface_coverage_exactness_pass") is True
+            and int(
+                surface_coverage_stats.get(
+                    "unsafe_local_reconstruction_count",
+                    -1,
+                    )
+                )
+                == 0,
+            actual={
+                "gate": performance.get(
+                    "surface_coverage_exactness_pass"
+                ),
+                "unsafe_local_reconstruction_count": surface_coverage_stats.get(
+                    "unsafe_local_reconstruction_count"
+                ),
+            },
+            expected={
+                "gate": True,
+                "unsafe_local_reconstruction_count": 0,
+            },
+        ),
+        gate(
+            "corridor_assembly_cache_bounded",
+            0
+            <= int(corridor_cache_stats.get("entry_count", -1))
+            <= int(corridor_cache_stats.get("entry_count_max", -2))
+            and 0
+            <= int(corridor_cache_stats.get("key_bytes", -1))
+            <= int(corridor_cache_stats.get("key_bytes_max", -2)),
+            actual={
+                "entry_count": corridor_cache_stats.get("entry_count"),
+                "entry_count_max": corridor_cache_stats.get(
+                    "entry_count_max"
+                ),
+                "key_bytes": corridor_cache_stats.get("key_bytes"),
+                "key_bytes_max": corridor_cache_stats.get("key_bytes_max"),
+                "eviction_count": corridor_cache_stats.get(
+                    "eviction_count"
+                ),
+            },
+            expected="0 <= current <= configured bound",
+        ),
+        gate(
+            "target_path_cache_bounded",
+            0
+            <= int(target_path_cache_stats.get("entry_count", -1))
+            <= int(target_path_cache_stats.get("entry_count_max", -2))
+            and 0
+            <= int(target_path_cache_stats.get("key_bytes", -1))
+            <= int(target_path_cache_stats.get("key_bytes_max", -2)),
+            actual={
+                "entry_count": target_path_cache_stats.get("entry_count"),
+                "entry_count_max": target_path_cache_stats.get(
+                    "entry_count_max"
+                ),
+                "key_bytes": target_path_cache_stats.get("key_bytes"),
+                "key_bytes_max": target_path_cache_stats.get(
+                    "key_bytes_max"
+                ),
+                "eviction_count": target_path_cache_stats.get(
+                    "eviction_count"
+                ),
+            },
+            expected="0 <= current <= configured bound",
+        ),
+        gate(
             "independent_quality_pass",
             quality.get("gate_pass") is True
             and int((quality.get("counts") or {}).get("violation", -1)) == 0
@@ -393,30 +641,23 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
     ]
     timeline_gates, rss_trend = timeline_assessment(performance)
     hard_gates.extend(timeline_gates)
+    progress_gates, progress_evidence = progress_assessment(
+        run_root / "p04_progress.jsonl"
+    )
+    hard_gates.extend(progress_gates)
 
     wall_target_pass = wall_seconds <= wall_target_seconds
-    over_target_note_present = bool(args.over_target_note.strip())
     time_acceptance = {
         "target_pass": wall_target_pass,
-        "hard_pass": 0.0 < wall_seconds <= wall_hard_seconds,
-        "written_note_required": (
-            not wall_target_pass and wall_seconds <= wall_hard_seconds
+        "reduction_50_percent_pass": wall_reduction_ratio <= 0.5,
+        "baseline_wall_seconds": baseline_wall_seconds,
+        "baseline_evidence_role": (
+            "observed_lower_bound_before_abnormal_termination"
         ),
-        "written_note_present": over_target_note_present,
-        "written_note": args.over_target_note.strip(),
+        "reduction_ratio": wall_reduction_ratio,
+        "hard_pass": 0.0 < wall_seconds <= wall_hard_seconds,
+        "eight_hour_role": "failure_diagnostic_line_only",
     }
-    if (
-        time_acceptance["written_note_required"]
-        and not over_target_note_present
-    ):
-        hard_gates.append(
-            gate(
-                "over_target_written_note",
-                False,
-                actual="",
-                expected="non-empty note for >6h and <=8h",
-            )
-        )
 
     reference_evidence: dict[str, Any]
     if reference_root is None:
@@ -477,15 +718,15 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
     elif reference_root is None:
         status = "EVIDENCE_READY"
         exit_code = 0
-    elif wall_target_pass:
+    elif wall_target_pass and wall_reduction_ratio <= 0.5:
         status = "ACCEPTED"
         exit_code = 0
     else:
-        status = "ACCEPTED_WITH_NOTE"
-        exit_code = 0
+        status = "FAILED"
+        exit_code = 2
 
     return {
-        "validator_version": "p04-innernet-acceptance-v1",
+        "validator_version": "p04-innernet-acceptance-v3",
         "status": status,
         "exit_code": exit_code,
         "run_root": str(run_root),
@@ -498,12 +739,17 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
         "hard_gates": hard_gates,
         "failed_gate_names": [item["name"] for item in failed_gates],
         "time_acceptance": time_acceptance,
+        "progress_evidence": progress_evidence,
+        "surface_coverage_evidence": surface_coverage_stats,
         "rss_trend_advisory": rss_trend,
         "core_gate_review": core_gate_review,
         "business_reference_evidence": reference_evidence,
         "acceptance_rule": (
-            "ACCEPTED requires all automated gates plus same-input business "
-            "reference equivalence; EVIDENCE_READY is not final acceptance."
+            "ACCEPTED requires <=6h, <=50% of the observed lower bound "
+            "before abnormal termination, all "
+            "automated gates, and same-input business reference equivalence; "
+            "8h is failure diagnostics only and EVIDENCE_READY is not final "
+            "acceptance."
         ),
     }
 

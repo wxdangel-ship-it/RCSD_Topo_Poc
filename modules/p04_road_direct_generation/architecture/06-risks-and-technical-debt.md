@@ -60,7 +60,7 @@ RoadNextRoad表达物理可达，不等于合法通行。T09语义未接入前�
 ## 6. 治理技术债
 
 - 当前P04历史文件和source-of-truth尚未形成提交基线，实施中必须保留工作区现有成果。
-- P04仍无官方入口；当前仅研究callable。
+- P04已具备`INTERFACE_CONTRACT.md`第12.1节和入口注册表登记的正式参数化内网入口；模块仍保持`Active POC`，生成callable与finalizer继续按契约分离。
 - `docs/repository-metadata/path-conventions.md`尚未建立。
 - 当前测试仍以单Case/有限Patch为主，生产正式化必须另行SpecKit。
 

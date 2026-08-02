@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
@@ -12,6 +12,11 @@ from .geometry import to_2d
 from .io import build_input_manifest, discover_patch_dirs, read_vector
 from .segment_first_config import SegmentFirstConfig
 from .segment_first_performance import PATCH_IO_WORKERS_MAX
+from .segment_first_progress import (
+    advance_progress,
+    begin_progress_stage,
+    finish_progress_stage,
+)
 
 
 PATCH_READ_WORKERS = PATCH_IO_WORKERS_MAX
@@ -202,20 +207,61 @@ def _load_patch_layer(
     geometry_optional: bool = False,
 ) -> gpd.GeoDataFrame:
     filenames = (filename,) if isinstance(filename, str) else filename
+    stage = "input_patch_layer"
+    detail = "/".join(filenames)
     requests = [
         (patch_dir, filenames, analysis_crs)
         for patch_dir in patch_dirs
     ]
+    begin_progress_stage(stage, len(requests), detail=detail)
     worker_count = min(PATCH_READ_WORKERS, max(1, len(requests)))
+    frames: list[gpd.GeoDataFrame | None] = [None] * len(requests)
+    row_count = 0
+    empty_geometry_count = 0
     with ThreadPoolExecutor(max_workers=worker_count) as executor:
-        frames = list(executor.map(_read_patch_layer_request, requests))
+        futures = {
+            executor.submit(_read_patch_layer_request, request): index
+            for index, request in enumerate(requests)
+        }
+        for completed_count, future in enumerate(
+            as_completed(futures),
+            start=1,
+        ):
+            index = futures[future]
+            frame = future.result()
+            frames[index] = frame
+            row_count += len(frame)
+            empty_geometry_count += int(
+                (frame.geometry.isna() | frame.geometry.is_empty).sum()
+            )
+            advance_progress(
+                stage,
+                completed=completed_count,
+                last_unit=requests[index][0].name,
+                counters={
+                    "rows": row_count,
+                    "empty_geometry": empty_geometry_count,
+                    "workers": worker_count,
+                },
+            )
     if not frames:
+        finish_progress_stage(stage)
         return gpd.GeoDataFrame(geometry=[], crs=analysis_crs)
-    combined = pd.concat(frames, ignore_index=True)
+    completed_frames = [frame for frame in frames if frame is not None]
+    combined = pd.concat(completed_frames, ignore_index=True)
     result = gpd.GeoDataFrame(combined, geometry="geometry", crs=analysis_crs)
     if not geometry_optional:
         result = result[result.geometry.notna() & ~result.geometry.is_empty].copy()
-    return result.reset_index(drop=True)
+    result = result.reset_index(drop=True)
+    finish_progress_stage(
+        stage,
+        counters={
+            "rows": len(result),
+            "empty_geometry": empty_geometry_count,
+            "workers": worker_count,
+        },
+    )
+    return result
 
 
 def _read_patch_layer_request(

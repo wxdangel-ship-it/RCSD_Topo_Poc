@@ -12,8 +12,14 @@ from shapely.ops import substring, unary_union
 
 from .segment_first_config import SegmentFirstConfig
 from .segment_first_geometry_cache import buffered_union
+from .segment_first_geometry_metrics import surface_coverage
 from .segment_first_lane_topo import LANE_TOPO_PAIR_SOURCES
 from .segment_first_nodes import resolve_road_endpoint_junctions
+from .segment_first_progress import (
+    advance_progress,
+    begin_progress_stage,
+    finish_progress_stage,
+)
 
 
 @dataclass(frozen=True)
@@ -54,6 +60,12 @@ def materialize_ordinary_junction_carriers(
         )
     ].copy()
     if segment_roads.empty or ordinary.empty:
+        begin_progress_stage(
+            "junction_portal",
+            0,
+            detail="distributed ordinary Junction portals",
+        )
+        finish_progress_stage("junction_portal")
         return _empty_result(segment_roads, ordinary.crs or segment_roads.crs)
 
     resolution = resolve_road_endpoint_junctions(
@@ -96,6 +108,17 @@ def materialize_ordinary_junction_carriers(
     materialized_groups: set[str] = set()
     fallback_segments: set[str] = set()
     rejected_groups = 0
+    accepted_portal_count = 0
+    rejected_portal_count = 0
+    begin_progress_stage(
+        "junction_portal",
+        len(endpoints_by_group),
+        detail="distributed ordinary Junction portals",
+        counters={
+            "endpoint_count": sum(map(len, endpoints_by_group.values())),
+            "group_count": len(endpoints_by_group),
+        },
+    )
 
     for group_id, endpoint_indexes in sorted(endpoints_by_group.items()):
         clusters = _portal_clusters(
@@ -114,6 +137,10 @@ def materialize_ordinary_junction_carriers(
                 and drivezone_surface.covers(portal)
             )
             supported = surface_supported or drivezone_supported
+            if supported:
+                accepted_portal_count += 1
+            else:
+                rejected_portal_count += 1
             built_segments = _built_segment_ids(
                 cluster,
                 resolution.endpoint_rows,
@@ -171,6 +198,28 @@ def materialize_ordinary_junction_carriers(
             rejected_groups += 1
         else:
             materialized_groups.add(group_id)
+        advance_progress(
+            "junction_portal",
+            last_unit=group_id,
+            counters={
+                "accepted_portals": accepted_portal_count,
+                "rejected_portals": rejected_portal_count,
+                "accepted_groups": len(materialized_groups),
+                "rejected_groups": rejected_groups,
+                "fallback_segments": len(fallback_segments),
+            },
+        )
+
+    finish_progress_stage(
+        "junction_portal",
+        counters={
+            "accepted_portals": accepted_portal_count,
+            "rejected_portals": rejected_portal_count,
+            "accepted_groups": len(materialized_groups),
+            "rejected_groups": rejected_groups,
+            "fallback_segments": len(fallback_segments),
+        },
+    )
 
     roads = _records_like([], segment_roads)
     sources = _records([], segment_roads.crs, ())
@@ -761,11 +810,7 @@ def _junction_center(portals: list[Point], surface: object) -> Point:
 
 
 def _coverage(line: LineString, surface: object | None) -> float:
-    if line.length <= 1e-9:
-        return 1.0
-    if surface is None or surface.is_empty:
-        return 0.0
-    return float(line.intersection(surface).length / line.length)
+    return surface_coverage(line, surface)
 
 
 def _route_inside_support(

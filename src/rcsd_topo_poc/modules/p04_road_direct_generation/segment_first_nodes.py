@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections import OrderedDict
 from dataclasses import dataclass
 import hashlib
 import math
@@ -18,8 +17,17 @@ from .segment_first_access_memberships import (
 )
 from .segment_first_config import SegmentFirstConfig
 from .segment_first_geometry_cache import buffered_union
-from .segment_first_geometry_metrics import max_sample_turn as _max_sample_turn
+from .segment_first_geometry_metrics import (
+    max_sample_turn as _max_sample_turn,
+    surface_coverage as _shared_surface_coverage,
+    surface_coverage_at_least as _surface_coverage_at_least,
+)
 from .segment_first_junctions import endpoint_surface_geometry
+from .segment_first_progress import (
+    advance_progress,
+    begin_progress_stage,
+    finish_progress_stage,
+)
 from .segment_first_skeleton import canonical_id
 from .segment_first_surface_routing import (
     interior_surface_target,
@@ -46,13 +54,6 @@ _COMPLETION_SURFACE_CACHE: dict[
         tuple[object, object, object],
     ],
 ] = {}
-_SURFACE_COVERAGE_CACHE_MAXSIZE = 32768
-_SURFACE_COVERAGE_CACHE: OrderedDict[
-    tuple[int, bytes],
-    tuple[weakref.ReferenceType[object], float],
-] = OrderedDict()
-
-
 @dataclass(frozen=True)
 class NodeBuildResult:
     roads: gpd.GeoDataFrame
@@ -243,7 +244,7 @@ def resolve_road_endpoint_junctions(
             smooth_surface_completion_supported=(
                 _smooth_surface_completion_supported
             ),
-            surface_coverage=_surface_coverage,
+            surface_coverage_at_least=_surface_coverage_at_least,
         ),
     )
     _distribute_colocated_built_portals(
@@ -399,7 +400,19 @@ def build_nodes_and_connect_roads(
         for patch_key in _split_keys(row["all_patch_road_keys"]):
             road_ids_by_patch_key.setdefault(patch_key, set()).add(row["road_id"])
     connection_rows: list[dict[str, object]] = []
-    for pair in explicit_pairs.itertuples():
+    begin_progress_stage(
+        "node_topology_pairs",
+        len(explicit_pairs),
+        detail="LaneTopo/Road relation endpoint pairs",
+        counters={"endpoint_count": len(endpoint_rows)},
+    )
+    for pair_index, pair in enumerate(explicit_pairs.itertuples()):
+        advance_progress(
+            "node_topology_pairs",
+            completed=pair_index,
+            last_unit=getattr(pair, "source_relation_id", pair_index),
+            counters={"connection_rows": len(connection_rows)},
+        )
         source_candidates = indexes_by_road_endpoint.get(
             (str(pair.source_patch_road_key), "end"), []
         )
@@ -553,6 +566,11 @@ def build_nodes_and_connect_roads(
                 "geometry": connector,
             }
         )
+
+    finish_progress_stage(
+        "node_topology_pairs",
+        counters={"connection_rows": len(connection_rows)},
+    )
 
     endpoints_by_source_node: dict[tuple[str, str], list[int]] = {}
     for index, row in enumerate(endpoint_rows):
@@ -732,7 +750,17 @@ def build_nodes_and_connect_roads(
     node_rows: list[dict[str, object]] = []
     endpoint_to_node: dict[int, tuple[int, Point, int]] = {}
     used_ids: set[int] = set()
-    for cluster_indexes in clusters.values():
+    node_stage_total = len(clusters) + len(endpoint_rows)
+    begin_progress_stage(
+        "node_materialization",
+        node_stage_total,
+        detail="stable Node clusters and Road endpoint handoff",
+        counters={
+            "cluster_count": len(clusters),
+            "endpoint_count": len(endpoint_rows),
+        },
+    )
+    for cluster_index, cluster_indexes in enumerate(clusters.values()):
         points = [endpoint_rows[index]["geometry"] for index in cluster_indexes]
         point = _cluster_node_point(
             cluster_indexes,
@@ -804,6 +832,12 @@ def build_nodes_and_connect_roads(
         )
         for index in cluster_indexes:
             endpoint_to_node[index] = (node_id, point, mainnode)
+        advance_progress(
+            "node_materialization",
+            completed=cluster_index + 1,
+            last_unit=f"cluster:{cluster_index + 1}",
+            counters={"node_count": len(node_rows)},
+        )
 
     updated = roads.copy()
     audit_rows: list[dict[str, object]] = []
@@ -921,6 +955,18 @@ def build_nodes_and_connect_roads(
                     "geometry": completion,
                 }
             )
+        advance_progress(
+            "node_materialization",
+            completed=len(clusters) + endpoint_index + 1,
+            last_unit=(
+                f"{endpoint['road_id']}:{endpoint['endpoint']}"
+            ),
+            counters={
+                "node_count": len(node_rows),
+                "road_endpoint_count": endpoint_index + 1,
+                "completion_count": len(completion_rows),
+            },
+        )
     recovered_junction_lineage_count = 0
     recovered_node_groups: dict[str, str] = {}
     for node_row in node_rows:
@@ -1116,6 +1162,15 @@ def build_nodes_and_connect_roads(
         if built_access_handoff_count
         else 0.0,
     }
+    finish_progress_stage(
+        "node_materialization",
+        counters={
+            "node_count": len(nodes),
+            "road_endpoint_count": len(endpoint_rows),
+            "completion_count": len(completions),
+            "connection_rows": len(connection_evidence),
+        },
+    )
     return NodeBuildResult(
         updated,
         nodes,
@@ -1464,21 +1519,7 @@ def _intersection_points(geometry: object) -> list[Point]:
 
 
 def _surface_coverage(connector: LineString, surface: object | None) -> float:
-    if connector.length <= 1e-9:
-        return 1.0
-    if surface is None or surface.is_empty:
-        return 0.0
-    key = (id(surface), connector.wkb)
-    cached = _SURFACE_COVERAGE_CACHE.get(key)
-    if cached is not None and cached[0]() is surface:
-        _SURFACE_COVERAGE_CACHE.move_to_end(key)
-        return cached[1]
-    coverage = float(connector.intersection(surface).length / connector.length)
-    _SURFACE_COVERAGE_CACHE[key] = (weakref.ref(surface), coverage)
-    _SURFACE_COVERAGE_CACHE.move_to_end(key)
-    if len(_SURFACE_COVERAGE_CACHE) > _SURFACE_COVERAGE_CACHE_MAXSIZE:
-        _SURFACE_COVERAGE_CACHE.popitem(last=False)
-    return coverage
+    return _shared_surface_coverage(connector, surface)
 
 
 def _records_geodataframe(
@@ -1833,9 +1874,12 @@ def _smooth_surface_completion_supported(
         and not completion.is_empty
         and candidate.is_valid
         and candidate.is_simple
-        and _surface_coverage(completion, completion_surface)
-        + 1e-9
-        >= minimum_surface_coverage
+        and _surface_coverage_at_least(
+            completion,
+            completion_surface,
+            minimum_surface_coverage,
+            epsilon=1e-9,
+        )
         and _max_sample_turn(completion, 1.0)
         <= maximum_turn_deg + 1e-9
         and _max_sample_turn(candidate, 2.0)

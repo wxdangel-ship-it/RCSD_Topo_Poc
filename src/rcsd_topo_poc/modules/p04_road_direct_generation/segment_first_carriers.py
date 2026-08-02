@@ -15,19 +15,27 @@ from .segment_first_corridors import (
     evidence_direction_role,
 )
 from .segment_first_geometry_cache import buffered_union
+from .segment_first_geometry_metrics import (
+    surface_coverage as _surface_coverage,
+    surface_coverage_at_least as _surface_coverage_at_least,
+)
 from .segment_first_member_recovery import recover_dual_target_member_carriers
 from .segment_first_partial_members import build_partial_member_carriers
-from .segment_first_path_scoring import (
-    build_target_path_metrics,
-    target_path_score,
-)
 from .segment_first_skeleton import canonical_id, parse_id_list
+from .segment_first_progress import (
+    advance_progress,
+    begin_progress_stage,
+    finish_progress_stage,
+)
 from .segment_first_surface_bridge import (
     build_endpoint_surface_bridge_assembly,
 )
 from .segment_first_surface_routing import (
     route_endpoint_to_surface,
     route_tangent_endpoint_to_surface,
+)
+from .segment_first_target_path_cache import (
+    select_directed_target_path as _select_directed_target_path_cached,
 )
 from .segment_first_types import ReplacementScope, SegmentState, validate_publication_state
 
@@ -198,6 +206,15 @@ def plan_segment_carriers(
     baseline_recovery_takeover_count = 0
     access_surface_recovery_takeover_count = 0
     access_support_carrier_count = 0
+    progress_stage = "segment_carrier"
+    progress_built_count = 0
+    progress_retained_count = 0
+    progress_review_count = 0
+    begin_progress_stage(
+        progress_stage,
+        len(segment_units),
+        detail="plan_segment_carriers",
+    )
     for segment in segment_units.itertuples():
         segment_id = str(segment.segment_id)
         carrier_start = len(carrier_rows)
@@ -659,6 +676,22 @@ def plan_segment_carriers(
                 "geometry": segment.geometry,
             }
         )
+        progress_built_count += built_count
+        progress_retained_count += retained_count
+        progress_review_count += sum(
+            bool(row.get("review_required", False))
+            for row in carrier_rows[carrier_start:]
+        )
+        advance_progress(
+            progress_stage,
+            last_unit=segment_id,
+            counters={
+                "built": progress_built_count,
+                "retained": progress_retained_count,
+                "review": progress_review_count,
+                "carrier_rows": len(carrier_rows),
+            },
+        )
     plans = gpd.GeoDataFrame(plan_rows, geometry="geometry", crs=segment_units.crs)
     carriers = gpd.GeoDataFrame(carrier_rows, geometry="geometry", crs=segment_units.crs)
     summary = {
@@ -694,6 +727,15 @@ def plan_segment_carriers(
             .sum()
         ),
     }
+    finish_progress_stage(
+        progress_stage,
+        counters={
+            "built": summary["built_carrier_count"],
+            "retained": summary["retained_carrier_count"],
+            "review": progress_review_count,
+            "carrier_rows": len(carriers),
+        },
+    )
     return CarrierPlanResult(plans, carriers, summary)
 
 
@@ -1447,8 +1489,11 @@ def _complete_access_support_row(
         completion = LineString([endpoint, target])
         if completion_surface is None or completion.length <= 1e-6:
             continue
-        covered = float(completion.intersection(completion_surface).length)
-        if covered / float(completion.length) < minimum_surface_coverage:
+        if not _surface_coverage_at_least(
+            completion,
+            completion_surface,
+            minimum_surface_coverage,
+        ):
             continue
         coords = list(geometry.coords)
         if endpoint.equals(start):
@@ -1826,74 +1871,13 @@ def _select_directed_target_path(
     required_surfaces: tuple[object, ...] = (),
     surface_max_distance_m: float = 20.0,
 ) -> gpd.GeoDataFrame:
-    if evidence.empty or explicit_pairs is None or explicit_pairs.empty:
-        return evidence
-    by_key = {
-        str(key): group.copy()
-        for key, group in evidence.groupby("patch_road_key", sort=True)
-    }
-    candidate_keys = set(by_key)
-    surface_mask_by_key = {
-        key: sum(
-            1 << index
-            for index, surface in enumerate(required_surfaces)
-            if float(group.geometry.distance(surface).min())
-            <= surface_max_distance_m
-        )
-        for key, group in by_key.items()
-    }
-    relevant = explicit_pairs[
-        explicit_pairs["source_patch_road_key"].astype(str).isin(candidate_keys)
-        & explicit_pairs["target_patch_road_key"].astype(str).isin(candidate_keys)
-    ]
-    adjacency: dict[str, set[str]] = {}
-    for pair in relevant.itertuples():
-        adjacency.setdefault(str(pair.source_patch_road_key), set()).add(
-            str(pair.target_patch_road_key)
-        )
-    paths: list[tuple[str, ...]] = []
-
-    def visit(path: tuple[str, ...]) -> None:
-        if len(paths) >= 10000:
-            return
-        paths.append(path)
-        for target in sorted(adjacency.get(path[-1], set())):
-            if target not in path:
-                visit((*path, target))
-
-    for key in sorted(candidate_keys):
-        visit((key,))
-    if not paths:
-        return evidence
-    path_metrics = build_target_path_metrics(by_key, reference)
-    best = max(
-        paths,
-        key=lambda path: target_path_score(
-            path,
-            path_metrics,
-            float(reference.length),
-            surface_mask_by_key,
-            len(required_surfaces),
-        ),
+    return _select_directed_target_path_cached(
+        evidence,
+        reference,
+        explicit_pairs,
+        required_surfaces=required_surfaces,
+        surface_max_distance_m=surface_max_distance_m,
     )
-    selected = evidence[
-        evidence["patch_road_key"].astype(str).isin(best)
-    ].copy()
-    if (
-        required_surfaces
-        and not _covers_required_surfaces(
-            selected,
-            required_surfaces,
-            maximum_distance_m=surface_max_distance_m,
-        )
-        and _covers_required_surfaces(
-            evidence,
-            required_surfaces,
-            maximum_distance_m=surface_max_distance_m,
-        )
-    ):
-        return evidence
-    return selected
 
 
 def _covers_required_surfaces(
@@ -1997,12 +1981,14 @@ def _complete_target_assembly_to_endpoint_surfaces(
         target = nearest_points(endpoint, surface)[1]
         if completion is None:
             completion = LineString([endpoint, target])
-        coverage = float(completion.intersection(completion_surface).length)
         if (
             completion.length <= 1e-9
-            or coverage / float(completion.length)
-            + 1e-9
-            < minimum_surface_coverage
+            or not _surface_coverage_at_least(
+                completion,
+                completion_surface,
+                minimum_surface_coverage,
+                epsilon=1e-9,
+            )
         ):
             completion = route_endpoint_to_surface(
                 endpoint,
@@ -2176,7 +2162,7 @@ def _surface_inferred_counterpart(
         geometry = _longest_line(observed.geometry.offset_curve(side * separation))
         if geometry is None or geometry.is_empty or not geometry.is_valid or not geometry.is_simple:
             continue
-        coverage = float(geometry.intersection(drivezone_surface).length / geometry.length)
+        coverage = _surface_coverage(geometry, drivezone_surface)
         if coverage + 1e-9 < completion_min_coverage:
             continue
         if missing_role != observed.direction_role:

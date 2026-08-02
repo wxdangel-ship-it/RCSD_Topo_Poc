@@ -6,6 +6,8 @@ import math
 from shapely.geometry import LineString, Point
 from shapely.ops import nearest_points, unary_union
 
+from .segment_first_geometry_metrics import surface_coverage_at_least
+
 
 def interior_surface_target(
     surface: object,
@@ -91,8 +93,12 @@ def route_tangent_endpoint_to_surface(
         or completion.length > maximum_distance_m + 1e-9
         or completion.length
         > direct_distance * maximum_detour_ratio + 1e-9
-        or _coverage(completion, completion_surface) + 1e-9
-        < minimum_coverage
+        or not _coverage_at_least(
+            completion,
+            completion_surface,
+            minimum_coverage,
+            epsilon=1e-9,
+        )
     ):
         return None
     return completion
@@ -129,7 +135,12 @@ def route_endpoint_to_surface(
     support = completion_surface.union(target_surface)
     direct_target = nearest_points(endpoint, target_surface)[1]
     direct = LineString([endpoint, direct_target])
-    if _coverage(direct, support) + 1e-9 >= minimum_coverage:
+    if _coverage_at_least(
+        direct,
+        support,
+        minimum_coverage,
+        epsilon=1e-9,
+    ):
         return direct
 
     scope_buffer = min(
@@ -165,7 +176,12 @@ def route_endpoint_to_surface(
             or not routed.is_valid
             or not routed.is_simple
             or float(routed.length) > maximum_route_length + 1e-9
-            or _coverage(routed, support) + 1e-9 < minimum_coverage
+            or not _coverage_at_least(
+                routed,
+                support,
+                minimum_coverage,
+                epsilon=1e-9,
+            )
         ):
             continue
         candidates.append((float(routed.length), routed))
@@ -191,7 +207,11 @@ def _inset_intermediate_vertices(
     if (
         not candidate.is_valid
         or not candidate.is_simple
-        or _coverage(candidate, support_component) < 1.0 - 1e-9
+        or not _coverage_at_least(
+            candidate,
+            support_component,
+            1.0 - 1e-9,
+        )
     ):
         return routed
     return candidate
@@ -278,10 +298,21 @@ def _unique_coordinates(
     return unique
 
 
-def _coverage(line: LineString, surface: object) -> float:
+def _coverage_at_least(
+    line: LineString,
+    surface: object,
+    minimum_coverage: float,
+    *,
+    epsilon: float = 0.0,
+) -> bool:
     if line.length <= 1e-9:
-        return 0.0
-    return float(line.intersection(surface).length) / float(line.length)
+        return epsilon >= minimum_coverage
+    return surface_coverage_at_least(
+        line,
+        surface,
+        minimum_coverage,
+        epsilon=epsilon,
+    )
 
 
 __all__ = [

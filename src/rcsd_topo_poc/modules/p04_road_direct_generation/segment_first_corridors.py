@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from itertools import repeat
 import json
 import math
+import threading
+import weakref
 
 import geopandas as gpd
 import numpy as np
@@ -18,10 +20,12 @@ from shapely.geometry import LineString
 
 from .segment_first_geometry_metrics import (
     max_sample_turn as _max_sample_turn,
-    surface_coverage as _surface_coverage,
+    surface_coverage_at_least as _surface_coverage_at_least,
 )
 
 _REFERENCE_METRIC_CACHE_MAXSIZE = 32768
+_CORRIDOR_ASSEMBLY_CACHE_MAXSIZE = 32768
+_CORRIDOR_ASSEMBLY_CACHE_MAX_KEY_BYTES = 64 * 1024**2
 _DIRECTION_ROLE_CACHE: OrderedDict[tuple[bytes, bytes], str] = OrderedDict()
 _EVIDENCE_REFERENCE_CACHE: OrderedDict[
     tuple[bytes, bytes],
@@ -42,6 +46,21 @@ class CorridorAssembly:
     source_lane_ids: tuple[str, ...]
     evidence_spans_json: str
     assembly_state: str
+
+
+_CORRIDOR_ASSEMBLY_CACHE: OrderedDict[
+    tuple[object, ...],
+    tuple[
+        weakref.ReferenceType[object] | None,
+        CorridorAssembly | None,
+        int,
+    ],
+] = OrderedDict()
+_CORRIDOR_ASSEMBLY_CACHE_LOCK = threading.RLock()
+_CORRIDOR_ASSEMBLY_CACHE_KEY_BYTES = 0
+_CORRIDOR_ASSEMBLY_CACHE_HITS = 0
+_CORRIDOR_ASSEMBLY_CACHE_MISSES = 0
+_CORRIDOR_ASSEMBLY_CACHE_EVICTIONS = 0
 
 
 def evidence_direction_role(geometry: LineString, reference: LineString) -> str:
@@ -85,6 +104,49 @@ def assemble_directional_corridor(
     if evidence.empty or reference is None or reference.is_empty or reference.length <= 0.0:
         return None
     ordered = evidence.sort_values("patch_road_key", kind="stable").reset_index(drop=True)
+    cache_key, cache_key_bytes = _corridor_assembly_cache_key(
+        ordered,
+        reference,
+        direction_role=direction_role,
+        drivezone_surface=drivezone_surface,
+        minimum_coverage=minimum_coverage,
+        sample_spacing_m=sample_spacing_m,
+        completion_min_coverage=completion_min_coverage,
+    )
+    cached, found = _cached_corridor_assembly(
+        cache_key,
+        drivezone_surface,
+    )
+    if found:
+        return cached
+    result = _assemble_directional_corridor_uncached(
+        ordered,
+        reference,
+        direction_role=direction_role,
+        drivezone_surface=drivezone_surface,
+        minimum_coverage=minimum_coverage,
+        sample_spacing_m=sample_spacing_m,
+        completion_min_coverage=completion_min_coverage,
+    )
+    _store_corridor_assembly(
+        cache_key,
+        drivezone_surface,
+        result,
+        cache_key_bytes,
+    )
+    return result
+
+
+def _assemble_directional_corridor_uncached(
+    ordered: gpd.GeoDataFrame,
+    reference: LineString,
+    *,
+    direction_role: str,
+    drivezone_surface: object | None,
+    minimum_coverage: float,
+    sample_spacing_m: float,
+    completion_min_coverage: float,
+) -> CorridorAssembly | None:
     records = [
         _evidence_record(
             geometry,
@@ -194,7 +256,11 @@ def assemble_directional_corridor(
         )
         if label == "hp_constrained_completion":
             connector = LineString([left["coord"], right["coord"]])
-            if _surface_coverage(connector, drivezone_surface) < completion_min_coverage:
+            if not _surface_coverage_at_least(
+                connector,
+                drivezone_surface,
+                completion_min_coverage,
+            ):
                 return None
         segment_labels.append(label)
 
@@ -251,6 +317,150 @@ def _column_values(
     column: str,
 ) -> object:
     return frame[column] if column in frame else repeat("")
+
+
+def _corridor_assembly_cache_key(
+    ordered: gpd.GeoDataFrame,
+    reference: LineString,
+    *,
+    direction_role: str,
+    drivezone_surface: object | None,
+    minimum_coverage: float,
+    sample_spacing_m: float,
+    completion_min_coverage: float,
+) -> tuple[tuple[object, ...], int]:
+    evidence_signature: list[tuple[str, str, str, str, bytes]] = []
+    key_bytes = 0
+    for geometry, patch_road_key, source_patch_id, center_lane_id, road_id in zip(
+        ordered.geometry,
+        ordered["patch_road_key"],
+        _column_values(ordered, "source_patch_id"),
+        _column_values(ordered, "center_lane_id"),
+        _column_values(ordered, "road_id"),
+    ):
+        geometry_wkb = geometry.wkb
+        values = (
+            str(patch_road_key),
+            str(source_patch_id),
+            str(center_lane_id or ""),
+            str(road_id or ""),
+            geometry_wkb,
+        )
+        evidence_signature.append(values)
+        key_bytes += len(geometry_wkb) + sum(
+            len(value.encode("utf-8")) for value in values[:-1]
+        )
+    reference_wkb = reference.wkb
+    key_bytes += len(reference_wkb)
+    return (
+        (
+            tuple(evidence_signature),
+            reference_wkb,
+            str(direction_role),
+            id(drivezone_surface) if drivezone_surface is not None else 0,
+            float(minimum_coverage),
+            float(sample_spacing_m),
+            float(completion_min_coverage),
+        ),
+        key_bytes,
+    )
+
+
+def _cached_corridor_assembly(
+    key: tuple[object, ...],
+    drivezone_surface: object | None,
+) -> tuple[CorridorAssembly | None, bool]:
+    global _CORRIDOR_ASSEMBLY_CACHE_HITS
+    global _CORRIDOR_ASSEMBLY_CACHE_KEY_BYTES
+    global _CORRIDOR_ASSEMBLY_CACHE_MISSES
+    global _CORRIDOR_ASSEMBLY_CACHE_EVICTIONS
+    with _CORRIDOR_ASSEMBLY_CACHE_LOCK:
+        entry = _CORRIDOR_ASSEMBLY_CACHE.get(key)
+        if entry is not None:
+            surface_ref, assembly, key_bytes = entry
+            same_surface = (
+                drivezone_surface is None
+                if surface_ref is None
+                else surface_ref() is drivezone_surface
+            )
+            if same_surface:
+                _CORRIDOR_ASSEMBLY_CACHE.move_to_end(key)
+                _CORRIDOR_ASSEMBLY_CACHE_HITS += 1
+                return assembly, True
+            _CORRIDOR_ASSEMBLY_CACHE.pop(key, None)
+            _CORRIDOR_ASSEMBLY_CACHE_KEY_BYTES -= key_bytes
+            _CORRIDOR_ASSEMBLY_CACHE_EVICTIONS += 1
+        _CORRIDOR_ASSEMBLY_CACHE_MISSES += 1
+        return None, False
+
+
+def _store_corridor_assembly(
+    key: tuple[object, ...],
+    drivezone_surface: object | None,
+    assembly: CorridorAssembly | None,
+    key_bytes: int,
+) -> None:
+    global _CORRIDOR_ASSEMBLY_CACHE_KEY_BYTES
+    global _CORRIDOR_ASSEMBLY_CACHE_EVICTIONS
+    surface_ref = (
+        weakref.ref(drivezone_surface)
+        if drivezone_surface is not None
+        else None
+    )
+    with _CORRIDOR_ASSEMBLY_CACHE_LOCK:
+        previous = _CORRIDOR_ASSEMBLY_CACHE.pop(key, None)
+        if previous is not None:
+            _CORRIDOR_ASSEMBLY_CACHE_KEY_BYTES -= previous[2]
+        _CORRIDOR_ASSEMBLY_CACHE[key] = (
+            surface_ref,
+            assembly,
+            int(key_bytes),
+        )
+        _CORRIDOR_ASSEMBLY_CACHE_KEY_BYTES += int(key_bytes)
+        while (
+            len(_CORRIDOR_ASSEMBLY_CACHE) > _CORRIDOR_ASSEMBLY_CACHE_MAXSIZE
+            or _CORRIDOR_ASSEMBLY_CACHE_KEY_BYTES
+            > _CORRIDOR_ASSEMBLY_CACHE_MAX_KEY_BYTES
+        ):
+            _, evicted = _CORRIDOR_ASSEMBLY_CACHE.popitem(last=False)
+            _CORRIDOR_ASSEMBLY_CACHE_KEY_BYTES -= evicted[2]
+            _CORRIDOR_ASSEMBLY_CACHE_EVICTIONS += 1
+
+
+def corridor_assembly_cache_stats() -> dict[str, int | float]:
+    with _CORRIDOR_ASSEMBLY_CACHE_LOCK:
+        query_count = (
+            _CORRIDOR_ASSEMBLY_CACHE_HITS
+            + _CORRIDOR_ASSEMBLY_CACHE_MISSES
+        )
+        return {
+            "query_count": query_count,
+            "hit_count": _CORRIDOR_ASSEMBLY_CACHE_HITS,
+            "miss_count": _CORRIDOR_ASSEMBLY_CACHE_MISSES,
+            "hit_ratio": (
+                _CORRIDOR_ASSEMBLY_CACHE_HITS / query_count
+                if query_count
+                else 0.0
+            ),
+            "eviction_count": _CORRIDOR_ASSEMBLY_CACHE_EVICTIONS,
+            "entry_count": len(_CORRIDOR_ASSEMBLY_CACHE),
+            "entry_count_max": _CORRIDOR_ASSEMBLY_CACHE_MAXSIZE,
+            "key_bytes": _CORRIDOR_ASSEMBLY_CACHE_KEY_BYTES,
+            "key_bytes_max": _CORRIDOR_ASSEMBLY_CACHE_MAX_KEY_BYTES,
+        }
+
+
+def reset_corridor_assembly_cache() -> None:
+    global _CORRIDOR_ASSEMBLY_CACHE_KEY_BYTES
+    global _CORRIDOR_ASSEMBLY_CACHE_HITS
+    global _CORRIDOR_ASSEMBLY_CACHE_MISSES
+    global _CORRIDOR_ASSEMBLY_CACHE_EVICTIONS
+    with _CORRIDOR_ASSEMBLY_CACHE_LOCK:
+        _CORRIDOR_ASSEMBLY_CACHE.clear()
+        _CORRIDOR_ASSEMBLY_CACHE_KEY_BYTES = 0
+        _CORRIDOR_ASSEMBLY_CACHE_HITS = 0
+        _CORRIDOR_ASSEMBLY_CACHE_MISSES = 0
+        _CORRIDOR_ASSEMBLY_CACHE_EVICTIONS = 0
 
 
 def _evidence_record(
@@ -357,7 +567,11 @@ def _observed_chain_assembly(
             previous = pieces[-1][2]
             connector = LineString([previous.coords[-1], observed.coords[0]])
             if connector.length > 1e-6:
-                if _surface_coverage(connector, drivezone_surface) < completion_min_coverage:
+                if not _surface_coverage_at_least(
+                    connector,
+                    drivezone_surface,
+                    completion_min_coverage,
+                ):
                     return None
                 pieces.append(
                     (
@@ -525,5 +739,7 @@ def _reverse_spans(spans: list[dict[str, object]]) -> list[dict[str, object]]:
 __all__ = [
     "CorridorAssembly",
     "assemble_directional_corridor",
+    "corridor_assembly_cache_stats",
     "evidence_direction_role",
+    "reset_corridor_assembly_cache",
 ]

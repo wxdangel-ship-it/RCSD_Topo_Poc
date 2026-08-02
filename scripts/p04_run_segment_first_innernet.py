@@ -40,11 +40,30 @@ from rcsd_topo_poc.modules.p04_road_direct_generation.segment_first_performance 
     merge_performance_into_summary,
     runtime_resource_contract,
 )
+from rcsd_topo_poc.modules.p04_road_direct_generation.segment_first_geometry_metrics import (  # noqa: E402
+    surface_coverage_runtime_stats,
+)
+from rcsd_topo_poc.modules.p04_road_direct_generation.segment_first_corridors import (  # noqa: E402
+    corridor_assembly_cache_stats,
+    reset_corridor_assembly_cache,
+)
+from rcsd_topo_poc.modules.p04_road_direct_generation.segment_first_progress import (  # noqa: E402
+    complete_progress,
+    configure_progress,
+    fail_progress,
+    format_progress_snapshot,
+    progress_snapshot,
+)
+from rcsd_topo_poc.modules.p04_road_direct_generation.segment_first_target_path_cache import (  # noqa: E402
+    reset_target_path_cache,
+    target_path_cache_stats,
+)
 
 
 Runner = Callable[[SegmentFirstConfig], Any]
 PROGRESS_HEARTBEAT_SECONDS = 30.0
 PERFORMANCE_SAMPLE_SECONDS = 5.0
+PROGRESS_STALL_WARNING_SECONDS = 600.0
 
 
 def main(
@@ -81,6 +100,19 @@ def main(
         f"[2/4] Discovered {len(patch_dirs)} Patch directories: "
         f"{_summarize_patch_ids(patch_dirs)}."
     )
+    progress_temp_path = (
+        config.output_dir.parent
+        / "_p04_progress_events"
+        / f".{config.run_id}.{os.getpid()}.jsonl"
+    )
+    configure_progress(config.run_id, progress_temp_path)
+    reset_corridor_assembly_cache()
+    reset_target_path_cache()
+    _log_progress(
+        "[2/4] Actual-work progress enabled; "
+        "console=stage units percentage rate ETA counters; "
+        f"event_stream={progress_temp_path}."
+    )
     if runner is None:
         from rcsd_topo_poc.modules.p04_road_direct_generation import (
             run_segment_first_road_direct,
@@ -90,12 +122,52 @@ def main(
 
     _log_progress("[3/4] Starting Segment-first Road generation.")
     started_at = time.monotonic()
-    result, performance = _run_with_progress_heartbeat(
-        runner,
-        config,
-        started_at=started_at,
-    )
+    try:
+        result, performance = _run_with_progress_heartbeat(
+            runner,
+            config,
+            started_at=started_at,
+        )
+    except BaseException as error:
+        fail_progress(error)
+        failed_progress_path = _finalize_progress_file(
+            progress_temp_path,
+            config.output_dir,
+        )
+        _log_progress(
+            "[3/4] Actual-work progress preserved after failure: "
+            f"{failed_progress_path}."
+        )
+        raise
     elapsed_seconds = time.monotonic() - started_at
+    coverage_stats = surface_coverage_runtime_stats()
+    corridor_cache_stats = corridor_assembly_cache_stats()
+    target_path_stats = target_path_cache_stats()
+    coverage_exactness_pass = int(
+        coverage_stats.get("unsafe_local_reconstruction_count", 0)
+    ) == 0
+    complete_progress(
+        counters={
+            "terminal_status": result.terminal_status,
+            "core_gate_pass": str(bool(result.core_gate_pass)).lower(),
+            "surface_coverage_exactness_pass": str(
+                coverage_exactness_pass
+            ).lower(),
+        }
+    )
+    final_progress_path = _finalize_progress_file(
+        progress_temp_path,
+        config.output_dir,
+    )
+    final_progress_snapshot = progress_snapshot()
+    final_progress_snapshot["event_path"] = str(final_progress_path)
+    performance["actual_work_progress"] = final_progress_snapshot
+    performance["surface_coverage"] = coverage_stats
+    performance["corridor_assembly_cache"] = corridor_cache_stats
+    performance["target_path_cache"] = target_path_stats
+    performance["surface_coverage_exactness_pass"] = (
+        coverage_exactness_pass
+    )
     performance["sample_interval_seconds"] = min(
         PERFORMANCE_SAMPLE_SECONDS,
         PROGRESS_HEARTBEAT_SECONDS,
@@ -120,6 +192,7 @@ def main(
         "output_dir": str(result.output_dir),
         "terminal_status": result.terminal_status,
         "core_gate_pass": result.core_gate_pass,
+        "performance_gate_pass": coverage_exactness_pass,
         "formal_gpkg": str(result.formal_gpkg),
         "audit_gpkg": str(result.audit_gpkg),
         "relations_gpkg": str(result.relations_gpkg),
@@ -131,13 +204,21 @@ def main(
             if result.qgis_project_path is not None
             else None
         ),
+        "progress_path": str(final_progress_path),
     }
     _log_progress(
         f"[4/4] Outputs completed. terminal_status={result.terminal_status}, "
         f"core_gate_pass={result.core_gate_pass}."
     )
     _log_progress(f"[4/4] Summary: {result.summary_path}")
+    _log_progress(f"[4/4] Actual-work progress: {final_progress_path}")
     print(json.dumps(payload, ensure_ascii=False, indent=2), flush=True)
+    if not coverage_exactness_pass:
+        _log_progress(
+            "Run finished with exit_code=3 because exact surface coverage "
+            "auditing detected an unsafe local-surface reconstruction."
+        )
+        return 3
     if args.require_core_pass and not result.core_gate_pass:
         _log_progress("Run finished with exit_code=2 because the core gate failed.")
         return 2
@@ -156,6 +237,9 @@ def _run_with_progress_heartbeat(
     monitor = SegmentFirstPerformanceMonitor()
 
     def report_progress() -> None:
+        last_signature: tuple[object, ...] | None = None
+        unchanged_since = time.monotonic()
+        stall_warned = False
         sample_seconds = min(
             PERFORMANCE_SAMPLE_SECONDS,
             PROGRESS_HEARTBEAT_SECONDS,
@@ -165,6 +249,30 @@ def _run_with_progress_heartbeat(
             elapsed_seconds = time.monotonic() - started_at
             active_location = active_p04_location(runner_thread_id)
             snapshot = monitor.sample(active_location=active_location)
+            actual_progress = progress_snapshot()
+            progress_signature = (
+                actual_progress.get("stage_sequence"),
+                actual_progress.get("completed"),
+                actual_progress.get("last_unit"),
+            )
+            if progress_signature != last_signature:
+                last_signature = progress_signature
+                unchanged_since = time.monotonic()
+                stall_warned = False
+            elif (
+                not stall_warned
+                and str(actual_progress.get("stage"))
+                not in {"initializing", "not_started"}
+                and time.monotonic() - unchanged_since
+                >= PROGRESS_STALL_WARNING_SECONDS
+            ):
+                _log_progress(
+                    "[3/4] PROGRESS STALL WARNING: no completed unit "
+                    f"for {time.monotonic() - unchanged_since:.1f}s; "
+                    f"{format_progress_snapshot(actual_progress)}; "
+                    f"active={active_location}."
+                )
+                stall_warned = True
             for warning in monitor.new_warnings(snapshot):
                 _log_progress(f"[3/4] PERFORMANCE WARNING: {warning}.")
             if time.monotonic() < next_heartbeat:
@@ -173,6 +281,10 @@ def _run_with_progress_heartbeat(
                 f"[3/4] Segment-first Road generation is still running; "
                 f"elapsed={elapsed_seconds:.1f}s; "
                 f"{format_resource_snapshot(snapshot)}; "
+                f"progress={format_progress_snapshot(actual_progress)}; "
+                f"coverage={_format_coverage_stats(surface_coverage_runtime_stats())}; "
+                f"corridor_cache={_format_corridor_cache_stats(corridor_assembly_cache_stats())}; "
+                f"path_cache={_format_target_path_cache_stats(target_path_cache_stats())}; "
                 f"active={active_location}."
             )
             next_heartbeat = time.monotonic() + PROGRESS_HEARTBEAT_SECONDS
@@ -201,6 +313,65 @@ def _format_optional_mib(value: object) -> str:
     if not isinstance(value, int):
         return "unavailable"
     return f"{value / (1024**2):.1f}MiB"
+
+
+def _format_coverage_stats(stats: dict[str, object]) -> str:
+    query_count = int(stats.get("query_count", 0))
+    cache_hits = int(stats.get("cache_hit_count", 0))
+    multipolygon = int(
+        stats.get("multipolygon_index_query_count", 0)
+    )
+    threshold_queries = int(stats.get("threshold_query_count", 0))
+    threshold_terminal = int(stats.get("threshold_covers_count", 0)) + int(
+        stats.get("threshold_disjoint_count", 0)
+    )
+    terminal_exact = int(stats.get("terminal_covers_count", 0)) + int(
+        stats.get("terminal_disjoint_count", 0)
+    )
+    return (
+        f"queries={query_count},"
+        f"cache_hit={float(stats.get('cache_hit_ratio', 0.0)):.1%},"
+        f"terminal_exact={terminal_exact},"
+        f"threshold={threshold_queries},"
+        f"threshold_cache={int(stats.get('threshold_cache_count', 0))},"
+        f"terminal_fast={threshold_terminal}"
+        f"({float(stats.get('threshold_terminal_ratio', 0.0)):.1%}),"
+        f"exact_fallback={int(stats.get('threshold_exact_fallback_count', 0))},"
+        f"multipolygon_index={multipolygon},"
+        f"direct={int(stats.get('direct_query_count', 0))},"
+        f"unsafe_local={int(stats.get('unsafe_local_reconstruction_count', 0))}"
+    )
+
+
+def _format_corridor_cache_stats(stats: dict[str, object]) -> str:
+    return (
+        f"queries={int(stats.get('query_count', 0))},"
+        f"hit={float(stats.get('hit_ratio', 0.0)):.1%},"
+        f"entries={int(stats.get('entry_count', 0))},"
+        f"evictions={int(stats.get('eviction_count', 0))},"
+        f"key_mib={int(stats.get('key_bytes', 0)) / (1024**2):.1f}"
+    )
+
+
+def _format_target_path_cache_stats(stats: dict[str, object]) -> str:
+    return (
+        f"queries={int(stats.get('query_count', 0))},"
+        f"hit={float(stats.get('hit_ratio', 0.0)):.1%},"
+        f"entries={int(stats.get('entry_count', 0))},"
+        f"evictions={int(stats.get('eviction_count', 0))},"
+        f"key_mib={int(stats.get('key_bytes', 0)) / (1024**2):.1f}"
+    )
+
+
+def _finalize_progress_file(temp_path: Path, output_dir: Path) -> Path:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    final_path = output_dir / "p04_progress.jsonl"
+    if final_path.exists():
+        raise FileExistsError(
+            f"progress output already exists: {final_path}"
+        )
+    temp_path.replace(final_path)
+    return final_path
 
 
 def _log_progress(message: str) -> None:

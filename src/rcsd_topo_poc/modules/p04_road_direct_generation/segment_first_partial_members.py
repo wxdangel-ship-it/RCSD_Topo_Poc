@@ -10,6 +10,8 @@ import pandas as pd
 from shapely.geometry import LineString
 from shapely.ops import substring
 
+from .segment_first_geometry_metrics import surface_coverage_at_least
+
 
 def build_partial_member_carriers(
     segment_id: str,
@@ -239,10 +241,11 @@ def _completion_supported(
         return True
     if connector.length > maximum_length_m or surface is None or surface.is_empty:
         return False
-    return (
-        float(connector.intersection(surface).length / connector.length)
-        + 1e-9
-        >= minimum_surface_coverage
+    return surface_coverage_at_least(
+        connector,
+        surface,
+        minimum_surface_coverage,
+        epsilon=1e-9,
     )
 
 

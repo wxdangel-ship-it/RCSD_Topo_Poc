@@ -93,7 +93,69 @@ P04 1500 Patch 规模设定以下任务级预算：
 
 1. `CODE_OPTIMIZED`：代码、测试、局部基准和业务等价通过；
 2. `INNERNET_CANDIDATE`：已生成完整内网脚本与性能审计能力，等待正式数据复跑；
-3. `ACCEPTED`：约 1500 Patch 内网正式复跑 `<=6h`，或在有书面说明时
-   `>6h 且 <=8h`，同时满足资源与业务零回退合同。
+3. `ACCEPTED`：约 1500 Patch 内网正式复跑同时满足`<=6h`、不高于
+   异常终止运行在12.7小时时已观测墙钟下界的50%、资源预算与业务零回退合同；
+   `>6h`即失败，
+   `8h`只作为失败诊断线，书面说明不能绕过门槛。
 
 未取得内网完整运行证据时，不得把 `CODE_OPTIMIZED` 表述为目标已完成。
+
+## 7. 2026-08-02 内网失败证据与第二轮热点合同
+
+用户提供的约 1500 Patch 正式运行日志在 `elapsed=45759.2s`
+（约 12.7 小时）时仍未结束，之后该进程异常终止；`45759.2s`只是异常终止前
+中间观测下界，不是完成耗时。它已经足以证明该次运行违反8小时硬上限。该时点：
+
+- `cpu=44516.7s`，接近墙钟时间，说明是持续单核计算而非等待磁盘；
+- `rss≈5.9GiB / peak_rss≈6.7GiB`，仍低于 8 GiB 推荐目标；
+- `read=40.8MiB / write=0.0MiB` 长时间不变；
+- 调用栈持续采样于 `segment_first_geometry_metrics.py:surface_coverage`
+  与 `segment_first_partial_members.py:_completion_supported`。
+
+因此本轮不得通过增加 Patch I/O worker 或扩大 CPU 订阅处理；第二轮只允许：
+
+1. 对最终 DriveZone `MultiPolygon` 的原生不相交组件建立有界、可释放的空间索引；
+2. Polygon/低组件surface的覆盖查询先对完整最终surface执行prepared
+   `covers/disjoint`：能够证明覆盖率为1或0时返回对应精确值，边界相交样本仍执行
+   原始精确`intersection.length / line.length`；
+3. 写入审计字段或参与排序的覆盖率同样只能返回上述精确数值；禁止重新union原始
+   DriveZone分片代替最终surface；
+4. 优化前后覆盖值、业务 gate、正式和审计成果必须满足第 5 节零回退合同。
+
+该日志未携带 commit、run summary 和最终产物，因此只作为真实性能失败和热点证据，
+不作为业务成果等价证据。
+
+## 8. 第三轮端到端减半与真实进度合同
+
+用户确认第三轮目标为：同一约1532 Patch输入、参数、CRS和运行环境下，正式入口
+端到端墙钟耗时不高于当前基线的50%，并以`<=6h`作为更严格的绝对通过线。
+2026-08-02异常终止运行在12.7小时仍未完成，因此即使没有完成耗时，也能证明：
+只有`<=6h`才可能同时满足绝对目标和已知下界的减半目标。`8h`只保留为失败诊断线，
+不再作为降级通过条件。
+
+第三轮性能策略：
+
+1. 对最终`MultiPolygon`的原生组件建立可复用索引；对Polygon或低组件surface采用
+   完整surface的prepared终态谓词，不能证明0/1的数值和门槛样本都回退精确求交；
+2. 全部道路面门槛判断和数值覆盖率统一复用共享精确实现；
+3. 扩大有界覆盖缓存并记录查询、命中、`terminal_fast`、`exact_fallback`、
+   `unsafe_local`和direct计数，验证多轮
+   carrier重算是否发生缓存抖动；
+4. 先做算法级消重，再决定是否对独立Patch预处理启用有界并发；不得用CPU或内存
+   过度订阅替代算法优化。
+
+正式控制台不得只报告elapsed和当前函数。必须以真实处理对象输出：
+
+- Patch发现/读取：`completed/total`、文件数、行数、空/非法几何数；
+- Segment构建：调用轮次、`completed/total`、built/retained/review累计数；
+- Junction/Node/Topology：`completed/total`及已生成对象数；
+- QA/输出：检查项或图层`completed/total`；
+- 覆盖热点：query/cache-hit/terminal-fast/exact-fallback/unsafe-local及吞吐；
+- 每30秒心跳、阶段切换和每完成1%输出；高频快速阶段的1%事件按最多每秒1条
+  节流，但内存快照仍按每个实际单位更新，阶段开始/完成事件不得丢失；10分钟
+  实际计数不增长时输出`STALL WARNING`；所有已发布事件同时写入输出目录
+  `p04_progress.jsonl`。
+
+进度中的阶段百分比必须由真实`completed/total`计算；跨阶段总体值只能标记为
+`overall_estimate`。ETA在样本不足时显示`estimating`，不得用虚假线性百分比替代实际
+处理计数。

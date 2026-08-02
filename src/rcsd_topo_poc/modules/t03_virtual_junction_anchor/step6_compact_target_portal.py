@@ -6,7 +6,10 @@ from shapely.geometry import LineString
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import unary_union
 
-from .step6_business_connectivity import build_business_connectivity_audit
+from .step6_business_connectivity import (
+    BusinessConnectivityCache,
+    build_business_connectivity_audit,
+)
 
 
 COMPACT_SEMANTIC_TARGET_MAX_SPAN_M = 12.0
@@ -87,6 +90,7 @@ def restore_compact_semantic_target_connectivity(
     input_geometry_invalid_feature_count: int,
     bridge_half_width_m: float,
     max_target_span_m: float = COMPACT_SEMANTIC_TARGET_MAX_SPAN_M,
+    connectivity_cache: BusinessConnectivityCache | None = None,
 ) -> tuple[BaseGeometry | None, BaseGeometry | None, dict[str, Any]]:
     """Restore a compact mainNode alias portal inside frozen legal space.
 
@@ -107,6 +111,7 @@ def restore_compact_semantic_target_connectivity(
         source_surface=raw,
         output_surface=current,
         terminals=terminals,
+        cache=connectivity_cache,
     )
     base_audit = {
         "mode": "compact_semantic_target_road_surface_portal",
@@ -170,6 +175,7 @@ def restore_compact_semantic_target_connectivity(
         source_surface=raw,
         output_surface=candidate,
         terminals=terminals,
+        cache=connectivity_cache,
     )
     if not after["equivalent"]:
         return current, None, {

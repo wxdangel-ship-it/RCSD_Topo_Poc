@@ -188,7 +188,10 @@ from .step6_geometry_context import (
     _single_sided_horizontal_pair_ids,
     _single_sided_vertical_exit_geometry,
 )
-from .step6_business_connectivity import build_business_connectivity_audit
+from .step6_business_connectivity import (
+    BusinessConnectivityCache,
+    build_business_connectivity_audit,
+)
 from .step6_compact_target_portal import (
     restore_compact_semantic_target_connectivity,
 )
@@ -248,6 +251,7 @@ def build_step6_result(
     step1 = association_context.step1_context
     template_class = association_case_result.template_class
     geometry_cache = _Step6GeometryCache() if use_step6_geometry_cache else None
+    business_connectivity_cache = BusinessConnectivityCache()
     allowed_space = _clean_geometry(association_context.step3_allowed_space_geometry)
     if allowed_space is None:
         return _step6_failure_result(
@@ -472,6 +476,7 @@ def build_step6_result(
         terminals=road_surface_portal_terminals,
         bridge_half_width_m=BRANCH_CLIP_HALF_WIDTH_M,
         seed_missing_terminals=False,
+        connectivity_cache=business_connectivity_cache,
     )
     local_required_nodes = _local_required_node_records(
         finalization_context,
@@ -557,6 +562,7 @@ def build_step6_result(
             terminals=road_surface_portal_terminals,
             bridge_half_width_m=BRANCH_CLIP_HALF_WIDTH_M,
             seed_missing_terminals=False,
+            connectivity_cache=business_connectivity_cache,
         )
     else:
         raw_polygon_portal_geometry = None
@@ -725,6 +731,7 @@ def build_step6_result(
         seed_missing_terminals=False,
         allow_geodesic_growth=True,
         geodesic_max_iterations=100,
+        connectivity_cache=business_connectivity_cache,
     )
     if (
         final_business_portal_audit.get("reason")
@@ -746,6 +753,7 @@ def build_step6_result(
             seed_missing_terminals=False,
             allow_geodesic_growth=True,
             geodesic_max_iterations=100,
+            connectivity_cache=business_connectivity_cache,
         )
         carrier_after = dict(carrier_portal_audit.get("after") or {})
         if carrier_portal_audit.get("applied") or carrier_after.get(
@@ -809,6 +817,7 @@ def build_step6_result(
             step1.drivezone_input_audit.get("invalid_feature_count") or 0
         ),
         bridge_half_width_m=BRANCH_CLIP_HALF_WIDTH_M,
+        connectivity_cache=business_connectivity_cache,
     )
     if compact_target_portal_audit.get("applied"):
         final_polygon, post_portal_component_cleanup_audit = (
@@ -843,21 +852,25 @@ def build_step6_result(
         source_surface=step1.drivezone_geometry,
         output_surface=final_polygon,
         terminals=business_connectivity_terminals,
+        cache=business_connectivity_cache,
     )
     step3_allowed_connectivity_audit = build_business_connectivity_audit(
         source_surface=allowed_space_tolerance_geometry,
         output_surface=final_polygon,
         terminals=business_connectivity_terminals,
+        cache=business_connectivity_cache,
     )
     direction_constrained_connectivity_audit = build_business_connectivity_audit(
         source_surface=direction_connectivity_source_surface,
         output_surface=final_polygon,
         terminals=business_connectivity_terminals,
+        cache=business_connectivity_cache,
     )
     constrained_connectivity_audit = build_business_connectivity_audit(
         source_surface=connectivity_source_surface,
         output_surface=final_polygon,
         terminals=business_connectivity_terminals,
+        cache=business_connectivity_cache,
     )
     full_terminal_connectivity_audit = (
         raw_road_surface_connectivity_audit
@@ -872,6 +885,7 @@ def build_step6_result(
         ),
         output_surface=final_polygon,
         terminals=business_carrier_terminals,
+        cache=business_connectivity_cache,
     )
     final_node_cover_geometry = _cached_boundary_buffer(
         final_polygon,

@@ -146,7 +146,7 @@ def _write_split_bundle(
         max_text_size_bytes=max_text_size_bytes,
     )
     for path, text, _size in parts:
-        path.write_text(text, encoding="utf-8")
+        path.write_bytes(text.encode("utf-8"))
     split_report = {
         "enabled": True,
         "part_count": len(parts),
@@ -316,7 +316,7 @@ def run_t03_export_text_bundle(
             }
 
             if bundle_size_bytes <= max_text_size_bytes:
-                out_txt_path.write_text(bundle_text, encoding="utf-8")
+                out_txt_path.write_bytes(bundle_text.encode("utf-8"))
                 _write_size_report(size_report_path, size_report)
                 return T03T04TextBundleExportArtifacts(
                     success=True,
@@ -396,7 +396,7 @@ def run_t03_decode_text_bundle(
         full_text, _size = _build_bundle_text(meta=meta, payload_bytes=payload_bytes)
         with tempfile.TemporaryDirectory() as temp_dir_text:
             temp_bundle_path = Path(temp_dir_text) / bundle_path.name
-            temp_bundle_path.write_text(full_text, encoding="utf-8")
+            temp_bundle_path.write_bytes(full_text.encode("utf-8"))
             artifacts = run_t02_decode_text_bundle(bundle_txt=temp_bundle_path, out_dir=out_dir)
     return T03T04TextBundleDecodeArtifacts(
         success=artifacts.success,

@@ -27,7 +27,7 @@ T12 与 T06 分工明确：T06 继续负责 Segment 替换预检和 F-RCSD 生�
 - `segment_required_direction_unavailable`、`segment_required_connection_missing` 与 `segment_unexpected_reverse_passability` 三类 Segment 确认问题；反向问题必须附带锚点区间和跨 Segment 唯一归属证据。
 - `junction_required_topology_missing`、`junction_unmatched_support_topology`、`junction_anchor_one_to_many` 与 `junction_anchor_many_to_one` 四类 Junction 确认问题。
 - T03 Junction 候选必须满足正式 eligibility：`has_evd=yes`、`is_anchor=no`、`kind_2 in {4,2048}`，并具有完整 Step3/association/Step6/Step7 rejected 审计链。
-- T03 准确率优先规则只确认 `shared_degree1_terminal_collapse` 与 `multi_component_unmatched_support`；`6m` endpoint tolerance 与 `50m` local Junction scope 必须进入 manifest，距离本身只作检索或审计，不能单独形成结论。
+- T03 的 `shared_degree1_terminal_collapse`、`multi_component_unmatched_support`、`compact_alias_directional_terminal_mismatch` 与 `connected_semantic_core_ambiguity` 均只提供 Junction 候选结构。T12 自动确认还必须在当前输入快照从 selected SWSD Road/Direction 枚举外部臂间必需 movement，并证明至少一个 movement 的两端 raw FRCSD boundary carrier 已在当前路口局部锚定、但缺少 Direction 合法的等价 carrier；`6m` alias endpoint、`50m` local scope、`10m` target ownership、`10m` boundary geometry retrieval 与 `25°` outward heading association 参数必须进入 manifest。后三者只决定证据是否足够进入自动确认，不能把未锚定候选反向判为数据正确或错误。
 - T07 只消费 Step2 `nodes.gpkg` 中代表路口 final `fail1/fail2`，并以 `node_error_1.gpkg`、`node_error_2.gpkg`、Step2 summary 与 relation evidence 做一致性校验；`fail2` 按冲突分量逐 SWSD Junction Point 输出并共享 `conflict_group_id`。Step3 `relation_cardinality_errors.csv/json` 导入数恒为 0。
 - 候选、自动确认、自动排除、可选复核覆盖，以及 raw/canonical/portal-constrained semantic/T07 Road-surface/FRCSD 反向/SWSD 反向替代 carrier 空间证据。
 - Segment 沿用 T01 Segment 线几何族（GeoPackage 可为 `LineString/MultiLineString`），Junction 使用 Point；两者独立发布、独立计数守恒，Junction support Road、endpoint、projection 和冲突关系进入独立 evidence GPKG。
@@ -68,10 +68,11 @@ T12 与 T06 分工明确：T06 继续负责 Segment 替换预检和 F-RCSD 生�
 8. 双端唯一 T07 还必须证明反向路径第一/最后 Road 分别接触反向 source/target 标准路口面，允许既有 `1m` Road-surface 拓扑容差。两端标准面及容差内的共享路口几何从归属区间剔除；区间内每条 raw RCSD Road 按正式 `20m coverage > 50m coverage > geometry distance` 排序，必须唯一归属于当前 Segment。其它 Segment 更强覆盖、并列、当前 Segment 缺失或区间内无实际 Road 均自动 excluded，并保留逐 Road 归属证据。
 9. 非预期反向 candidate 只有在双端正确且唯一 T07 标准面、锚点区间成立、区间内 Road 唯一归属于当前 Segment时才可自动 confirmed；T03/T03 等弱锚点自动 excluded。DriveZone 不参与该 verdict。
 10. 可选 review contract 可以覆盖自动决定，并完整保留原规则与外部来源。
-11. 若提供 T03 run root，只读取 Step7 rejected 且完整的正式审计链。T12 优先使用 T03 正式发布的 support Road IDs；缺失时在原始 FRCSD 中从 target 最近 Road 的 endpoint 邻域重算局部 ownership carrier，不把同 endpoint 的其它 Segment Road 自动并入当前 Junction support。
-12. `shared_degree1_terminal_collapse` 要求 association class B/not established、无 required RCSDNode、至少两个 target、所有 target 在同一局部 support Road 的同一 terminal endpoint 投影且 support degree=1，同时无原始 FRCSD 替代局部 carrier、无无效几何或正式高置信跨层解释。
-13. `multi_component_unmatched_support` 要求 association class B/review、无 required RCSDNode、所有 target 只解释同一 support component、至少一个额外未匹配 component、正式 Step6 fragmented-surface reason、cleanup 前 meaningful component 至少 3、非 constraint split 且无局部替代 carrier或高置信跨层解释。
-14. 若提供 T07 run root，T12 以 Step2 final `fail1/fail2` 为唯一真值，强校验 error GPKG 与 summary；`fail1` 每个语义路口发布 J03，`fail2` 每个冲突分量逐语义路口发布 J04 并共享稳定 conflict group。final/evidence/summary 不一致时 blocked。
+11. 若提供 T03 run root，只读取 Step7 rejected 且完整的正式审计链。T12 优先读取 T03 `raw_topology_guard_audit` 及正式 support Road IDs，并在当前原始 FRCSD 中逐 Road 重验存在性与 `Direction`；缺失 support 时才从 target 最近 Road 的 endpoint 邻域重算局部 ownership carrier，不把同 endpoint 的其它 Segment Road 自动并入当前 Junction support。
+12. T12 必须根据当前 SWSD 路口所选 Road 及其 Direction 建立外部 boundary arm，枚举 SWSD 图中真实存在的 `incoming arm -> outgoing arm` 必需 movement。每条 FRCSD boundary carrier 必须同时满足 target ownership、boundary geometry 与 outward heading 的局部高置信映射；heading 由当前路口内端点向外采样 `10m`，默认夹角不超过 `25°`，因此仅在路口内相交但属于垂直道路臂的 Road 不得互相替代。映射后逐 movement 在 raw identity endpoint 有向图中搜索实际 Road carrier。canonical alias membership 只在同组、`6m` gap、`10m` target ownership、原始 DriveZone 全覆盖且两端 incident Direction 角色分别满足 incoming/outgoing 时提供受限 portal，不创建通用零成本边。
+13. `shared_degree1_terminal_collapse` 与 `multi_component_unmatched_support` 继续作为历史快照候选结构，但 endpoint/component 形态本身不构成当前快照质量真值。只有 `required_junction_movement_audit.status=confirmed_missing`，且不存在无效输入、高置信跨层或 `constraint_induced_split` 阻断时，才允许按 `raw_frcsd_required_junction_movement_missing_confirmed` 自动 confirmed。全部 movement 等价时必须 exclusion；缺少局部 boundary ownership 时也必须 exclusion，不得用远端 role-compatible Road 补证。
+14. T03 正式 `association_raw_compact_alias_directional_terminal_mismatch` 与 `association_raw_connected_semantic_core_ambiguity` 只进入 candidate。前者只有证明具体 SWSD 必需方向无法由任何受信 raw portal 实现时才可确认；后者默认属于 ownership/现实变化候选，单凭 retained/dropped core 间存在连接不得自动确认。
+15. 若提供 T07 run root，T12 以 Step2 final `fail1/fail2` 为唯一真值，强校验 error GPKG 与 summary；`fail1` 每个语义路口发布 J03，`fail2` 每个冲突分量逐语义路口发布 J04 并共享稳定 conflict group。final/evidence/summary 不一致时 blocked。
 
 ## 6. 什么是对
 
@@ -86,6 +87,7 @@ T12 与 T06 分工明确：T06 继续负责 Segment 替换预检和 F-RCSD 生�
 - 无复核文件时也必须自动生成 confirmed/excluded；默认自动运行 manual 必须为 `0`。
 - 未提供 T03/T07 Junction 来源时，旧调用仍成功并发布结构完整的空 Junction 文件，既有 Segment 决定不变。
 - 最终结果不含高概率/中概率分类。
+- Junction 真值按输入快照隔离；同 CaseID 在不同数据根或输入指纹下不得复用 verdict。当前 QA 快照不预设 confirmed 数量。
 
 ## 7. 什么是错
 

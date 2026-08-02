@@ -105,10 +105,12 @@ def _loaded(
 def _case(
     *,
     association_state: str,
+    association_class: str = "B",
     support_ids: list[str] | None = None,
     step6_reason: str = "step6_blocked_by_association",
     constraint_induced_split: bool | None = None,
     meaningful_component_count: int = 0,
+    raw_topology_guard: dict | None = None,
 ) -> T03CaseEvidence:
     business_connectivity = {}
     if constraint_induced_split is not None:
@@ -125,17 +127,19 @@ def _case(
             "drivezone_input_invalid_feature_count": 0,
         },
         association_status={
-            "association_class": "B",
+            "association_class": association_class,
             "association_state": association_state,
             "required_rcsdnode_ids": [],
             "support_rcsdroad_ids": support_ids or [],
+            "raw_topology_guard_audit": raw_topology_guard or {},
         },
         step6_status={
-            "association_class": "B",
+            "association_class": association_class,
             "association_state": association_state,
             "reason": step6_reason,
             "required_rcsdnode_ids": [],
             "support_rcsdroad_ids": support_ids or [],
+            "raw_topology_guard_audit": raw_topology_guard or {},
         },
         step6_audit={
             "assembly": {
@@ -163,7 +167,89 @@ def _sources(
     )
 
 
-def test_shared_degree1_terminal_collapse_is_confirmed() -> None:
+def _loaded_required_movement(*, outgoing_direction: int) -> LoadedInputs:
+    swsd_nodes = gpd.GeoDataFrame(
+        {
+            "id": ["j", "t2", "sw_in", "sw_out"],
+            "mainnodeid": ["j", "j", "", ""],
+            "has_evd": ["yes", "", "", ""],
+            "is_anchor": ["no", "", "", ""],
+            "kind_2": [4, "", "", ""],
+            "geometry": [
+                Point(0, 0),
+                Point(0, 1),
+                Point(-10, 0),
+                Point(10, 1),
+            ],
+        },
+        crs=CRS,
+    )
+    swsd_roads = gpd.GeoDataFrame(
+        {
+            "id": ["s_in", "s_internal", "s_out"],
+            "snodeid": ["sw_in", "j", "t2"],
+            "enodeid": ["j", "t2", "sw_out"],
+            "direction": [2, 0, 2],
+            "patch_id": ["p1", "p1", "p1"],
+            "geometry": [
+                LineString([(-10, 0), (0, 0)]),
+                LineString([(0, 0), (0, 1)]),
+                LineString([(0, 1), (10, 1)]),
+            ],
+        },
+        crs=CRS,
+    )
+    frcsd_nodes = gpd.GeoDataFrame(
+        {
+            "id": ["fr_in", "portal", "fr_out"],
+            "mainnodeid": ["", "", ""],
+            "geometry": [Point(-10, 0), Point(0, 0.5), Point(10, 1)],
+        },
+        crs=CRS,
+    )
+    frcsd_roads = gpd.GeoDataFrame(
+        {
+            "id": ["fr_in", "fr_out"],
+            "snodeid": ["fr_in", "portal"],
+            "enodeid": ["portal", "fr_out"],
+            "direction": [2, outgoing_direction],
+            "geometry": [
+                LineString([(-10, 0), (0, 0.5)]),
+                LineString([(0, 0.5), (10, 1)]),
+            ],
+        },
+        crs=CRS,
+    )
+    loaded = _loaded(frcsd_roads=frcsd_roads, frcsd_nodes=frcsd_nodes)
+    return LoadedInputs(
+        segments=loaded.segments,
+        swsd_roads=swsd_roads,
+        swsd_nodes=swsd_nodes,
+        frcsd_roads=frcsd_roads,
+        frcsd_nodes=frcsd_nodes,
+        rcsd_intersections=loaded.rcsd_intersections,
+        drivezone=loaded.drivezone,
+        t05_anchor_audit=loaded.t05_anchor_audit,
+        t06_cross_evidence=loaded.t06_cross_evidence,
+        processing_crs=loaded.processing_crs,
+        crop_inner_geometry=loaded.crop_inner_geometry,
+        input_audit=loaded.input_audit,
+        topology_audit=loaded.topology_audit,
+        evidence_audit=loaded.evidence_audit,
+    )
+
+
+def _required_movement_case() -> T03CaseEvidence:
+    case = _case(association_state="not_established")
+    case.step3_status["selected_road_ids"] = [
+        "s_in",
+        "s_internal",
+        "s_out",
+    ]
+    return case
+
+
+def test_shared_degree1_terminal_collapse_is_candidate_only() -> None:
     result = audit_junction_quality(
         _loaded(),
         _sources(_case(association_state="not_established")),
@@ -171,9 +257,10 @@ def test_shared_degree1_terminal_collapse_is_confirmed() -> None:
         run_id="run",
     )
 
-    assert len(result.confirmed) == 1
-    row = result.confirmed[0]
-    assert row["issue_type"] == "junction_required_topology_missing"
+    assert not result.confirmed
+    row = result.exclusions[0]
+    assert row["decision_rule"] == "no_swsd_required_junction_movements"
+    assert row["t03_candidate_signals"]["legacy_rule_a"] is True
     assert row["shared_terminal_endpoint_id"] == "n1"
     assert row["shared_terminal_endpoint_degree"] == 1
     assert row["raw_frcsd_terminal_degree"] == 1
@@ -210,10 +297,13 @@ def test_one_terminal_and_one_interior_is_excluded() -> None:
     )
 
     assert not result.confirmed
-    assert result.exclusions[0]["decision_rule"] == "not_all_targets_terminal_endpoint"
+    assert (
+        result.exclusions[0]["decision_rule"]
+        == "no_swsd_required_junction_movements"
+    )
 
 
-def test_mainnode_alias_does_not_create_a_physical_carrier() -> None:
+def test_mainnode_alias_signal_without_required_movement_is_excluded() -> None:
     nodes = gpd.GeoDataFrame(
         {
             "id": ["n0", "n1", "alias"],
@@ -230,11 +320,11 @@ def test_mainnode_alias_does_not_create_a_physical_carrier() -> None:
         run_id="run",
     )
 
-    assert len(result.confirmed) == 1
-    assert result.confirmed[0]["raw_frcsd_terminal_degree"] == 1
+    assert not result.confirmed
+    assert result.exclusions[0]["raw_frcsd_terminal_degree"] == 1
 
 
-def test_multi_component_unmatched_support_is_confirmed() -> None:
+def test_multi_component_unmatched_support_is_candidate_only() -> None:
     roads = gpd.GeoDataFrame(
         {
             "id": ["r1", "r2"],
@@ -276,10 +366,169 @@ def test_multi_component_unmatched_support_is_confirmed() -> None:
         run_id="run",
     )
 
+    assert not result.confirmed
+    row = result.exclusions[0]
+    assert row["t03_candidate_signals"]["legacy_rule_b"] is True
+    assert row["unmatched_support_component_ids"]
+
+
+def test_formal_t03_unmatched_support_guard_remains_candidate_only() -> None:
+    roads = gpd.GeoDataFrame(
+        {
+            "id": ["r1", "r2"],
+            "snodeid": ["n0", "n2"],
+            "enodeid": ["n1", "n3"],
+            "direction": [2, 3],
+            "geometry": [
+                LineString([(0, 0), (10, 0)]),
+                LineString([(0, 30), (10, 30)]),
+            ],
+        },
+        crs=CRS,
+    )
+    nodes = gpd.GeoDataFrame(
+        {
+            "id": ["n0", "n1", "n2", "n3"],
+            "geometry": [
+                Point(0, 0),
+                Point(10, 0),
+                Point(0, 30),
+                Point(10, 30),
+            ],
+        },
+        crs=CRS,
+    )
+    guard = {
+        "blocked": True,
+        "reason": "association_raw_multi_component_unmatched_support",
+        "unmatched_support": True,
+    }
+    case = _case(
+        association_state="not_established",
+        association_class="A",
+        support_ids=["r1", "r2"],
+        raw_topology_guard=guard,
+    )
+
+    result = audit_junction_quality(
+        _loaded(frcsd_roads=roads, frcsd_nodes=nodes),
+        _sources(case),
+        AuditConfig(),
+        run_id="run",
+    )
+
+    assert not result.confirmed
+    row = result.exclusions[0]
+    assert row["t03_candidate_signals"]["formal_unmatched_support"] is True
+    assert row["decision_rule"] == "no_swsd_required_junction_movements"
+
+
+@pytest.mark.parametrize(
+    ("guard", "signal_field"),
+    [
+        (
+            {
+                "blocked": True,
+                "reason": (
+                    "association_raw_compact_alias_directional_terminal_mismatch"
+                ),
+                "compact_directional_terminal_mismatch": True,
+                "target_group_span_m": 0.5,
+                "source_incoming_count": 1,
+                "source_outgoing_count": 1,
+                "directional_terminal_rows": [
+                    {"one_sided_terminal": True}
+                ],
+                "published_support_rcsdroad_ids": ["r1"],
+            },
+            "formal_directional_terminal",
+        ),
+        (
+            {
+                "blocked": True,
+                "reason": "association_raw_connected_semantic_core_ambiguity",
+                "connected_semantic_core_ambiguity": True,
+                "connected_semantic_core_rows": [
+                    {"connecting_rcsdroad_ids": ["r1"]}
+                ],
+            },
+            "formal_connected_semantic_core",
+        ),
+    ],
+)
+def test_formal_t03_j01_topology_guards_are_reverified(
+    guard: dict,
+    signal_field: str,
+) -> None:
+    result = audit_junction_quality(
+        _loaded(),
+        _sources(
+            _case(
+                association_state="not_established",
+                association_class="A",
+                support_ids=["r1"],
+                raw_topology_guard=guard,
+            )
+        ),
+        AuditConfig(),
+        run_id="run",
+    )
+
+    assert not result.confirmed
+    row = result.exclusions[0]
+    assert row["t03_candidate_signals"][signal_field] is True
+    assert row["decision_rule"] == "no_swsd_required_junction_movements"
+
+
+def test_required_swsd_movement_direction_deficit_is_confirmed() -> None:
+    result = audit_junction_quality(
+        _loaded_required_movement(outgoing_direction=3),
+        _sources(_required_movement_case()),
+        AuditConfig(),
+        run_id="run",
+    )
+
     assert len(result.confirmed) == 1
-    assert result.confirmed[0]["issue_type"] == "junction_unmatched_support_topology"
-    assert result.confirmed[0]["unmatched_support_component_ids"]
-    assert result.confirmed[0]["direction_status"] == "valid_strict_direction"
+    row = result.confirmed[0]
+    assert row["decision_rule"] == (
+        "raw_frcsd_required_junction_movement_missing_confirmed"
+    )
+    movement = row["required_junction_movement_audit"][
+        "required_movements"
+    ][0]
+    assert movement["status"] == "missing"
+    assert movement["missing_reason"] == "boundary_direction_role_missing"
+
+
+def test_equivalent_required_swsd_movement_excludes_t03_signal() -> None:
+    result = audit_junction_quality(
+        _loaded_required_movement(outgoing_direction=2),
+        _sources(_required_movement_case()),
+        AuditConfig(),
+        run_id="run",
+    )
+
+    assert not result.confirmed
+    row = result.exclusions[0]
+    assert row["decision_rule"] == (
+        "all_required_junction_movements_equivalent"
+    )
+    movement_audit = row["required_junction_movement_audit"]
+    assert movement_audit["status"] == "equivalent"
+    # Crossing Roads have zero geometric distance at the Junction. They must
+    # still map only to the directionally aligned SWSD boundary arm.
+    assert movement_audit["boundary_arm_audits"]["s_in"][
+        "physical_candidate_count"
+    ] == 1
+    assert movement_audit["boundary_arm_audits"]["s_out"][
+        "physical_candidate_count"
+    ] == 1
+    assert movement_audit["boundary_arm_audits"]["s_in"]["candidates"][0][
+        "road_id"
+    ] == "fr_in"
+    assert movement_audit["boundary_arm_audits"]["s_out"]["candidates"][0][
+        "road_id"
+    ] == "fr_out"
 
 
 def test_constraint_split_and_cross_layer_are_precision_first_exclusions() -> None:
@@ -405,8 +654,8 @@ def test_junction_outputs_are_point_layers_and_counts_conserve(
     tmp_path: Path,
 ) -> None:
     result = audit_junction_quality(
-        _loaded(),
-        _sources(_case(association_state="not_established")),
+        _loaded_required_movement(outgoing_direction=3),
+        _sources(_required_movement_case()),
         AuditConfig(),
         run_id="run",
     )

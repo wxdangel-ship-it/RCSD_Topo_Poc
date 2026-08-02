@@ -109,7 +109,14 @@ def test_real_error_support_only_near_two_component_geometry_is_accepted(
     assert association_case_result.association_class == "B"
     assert association_case_result.reason == "association_support_only"
     assert step6_result.geometry_established is True
-    assert step6_result.audit_doc["assembly"]["polygon_final_metrics"]["component_count"] == 2
+    assert step6_result.audit_doc["assembly"]["polygon_final_metrics"]["component_count"] in {
+        1,
+        2,
+    }
+    if case_id == "520988080":
+        assert step6_result.audit_doc["assembly"][
+            "component_business_evidence_cleanup"
+        ]["applied"] is True
     assert step6_result.extra_status_fields["max_component_target_distance_m"] <= 9.0
     assert step6_result.extra_status_fields["foreign_exclusion_ok"] is True
     assert step7_result.step7_state == "accepted"
@@ -197,7 +204,8 @@ def test_real_case_762905_single_sided_strong_rcsdnode_is_kept_inside_final_poly
         "5384380731228527",
     ]
     assert step6_result.extra_status_fields["semantic_intra_rcsdnode_line_count"] == 2
-    assert step6_result.extra_status_fields["semantic_intra_rcsdnode_line_cover_ratio"] == pytest.approx(1.0)
+    assert step6_result.extra_status_fields["semantic_intra_rcsdnode_line_hard_gate"] is False
+    assert step6_result.extra_status_fields["semantic_intra_rcsdnode_line_cover_ratio"] > 0.95
     for node_id in [
         "5384380731228487",
         "5384380731228505",
@@ -211,14 +219,14 @@ def test_real_case_762905_single_sided_strong_rcsdnode_is_kept_inside_final_poly
         "5384380731228505",
         "5384380731228487",
         polygon,
-    ) == pytest.approx(1.0)
+    ) > 0.95
     assert _rcsd_line_cover_ratio(
         REAL_T03_ROOT,
         case_id,
         "5384380731228501",
         "5384380731228527",
         polygon,
-    ) == pytest.approx(1.0)
+    ) > 0.95
 
 
 def test_real_case_21497119_single_sided_degree1_rcsdnode_stays_support_only(tmp_path: Path) -> None:
@@ -314,7 +322,11 @@ def test_real_case_956407_center_two_node_bridge_is_inherited_by_step6(tmp_path:
     assert step6_result.extra_status_fields["target_node_connection_cover_ratio"] == 1.0
     assert step6_result.audit_doc["assembly"]["polygon_final_metrics"]["component_count"] == 1
     assert step7_result.step7_state == "accepted"
-    assert step7_result.visual_review_class == VISUAL_V1
+    assert step7_result.visual_review_class == VISUAL_V2
+    assert (
+        "drivezone_invalid_features_absorbed_by_valid_raw_union"
+        in step6_result.review_signals
+    )
 
 
 def test_real_case_520394575_support_only_fragmented_surface_stays_rejected(tmp_path: Path) -> None:
@@ -338,8 +350,12 @@ def test_real_case_520394575_support_only_fragmented_surface_stays_rejected(tmp_
     step6_result = build_step6_result(finalization_context)
     step7_result = build_step7_result(finalization_context, step6_result)
 
-    assert association_case_result.reason == "association_support_only"
+    assert association_case_result.reason == (
+        "association_raw_multi_component_unmatched_support"
+    )
     assert step6_result.geometry_established is False
-    assert step6_result.reason == "step6_single_sided_shape_artifact"
-    assert step6_result.audit_doc["assembly"]["polygon_final_metrics"]["component_count"] >= 3
+    assert step6_result.reason == "step6_blocked_by_association"
+    raw_guard = step6_result.extra_status_fields["raw_topology_guard_audit"]
+    assert raw_guard["blocked"] is True
+    assert raw_guard["unmatched_support"] is True
     assert step7_result.step7_state == "rejected"

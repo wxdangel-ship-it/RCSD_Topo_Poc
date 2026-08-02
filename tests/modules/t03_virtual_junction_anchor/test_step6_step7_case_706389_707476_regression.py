@@ -121,7 +121,15 @@ def test_real_cases_706389_707476_and_709431_remain_accepted_after_boundary_firs
     [
         ("724123", "B", ["5395796452837696"]),
         ("854878", "B", []),
-        ("948228", "B", ["5384370798601867"]),
+        (
+            "948228",
+            "B",
+            [
+                "5384370798601867",
+                "5384370798601887",
+                "5384370798601890",
+            ],
+        ),
         ("74232960", "B", ["5387984476901824", "5387984476901825"]),
         ("74419702", "A", []),
         ("941714", "A", []),
@@ -813,6 +821,9 @@ def test_real_case_520394575_remains_rejected_after_u_turn_filter_and_boundary_f
     step7_result = build_step7_result(finalization_context, step6_result)
 
     assert step6_result.geometry_established is False
-    assert step6_result.reason == "step6_single_sided_shape_artifact"
+    assert step6_result.reason == "step6_blocked_by_association"
+    assert step6_result.extra_status_fields["association_reason"] == (
+        "association_raw_multi_component_unmatched_support"
+    )
     assert step7_result.step7_state == "rejected"
     assert step7_result.visual_review_class == VISUAL_V5

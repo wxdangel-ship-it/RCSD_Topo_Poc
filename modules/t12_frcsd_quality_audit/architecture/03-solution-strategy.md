@@ -37,7 +37,7 @@ Junction 流程与 Segment 独立：T03 rejected 只提供候选，T12 在原始
 
 - `inputs.py`：输入、CRS、拓扑和证据派生链。
 - `junction_inputs.py`：T03/T07 正式工件发现、完整性、来源身份与指纹。
-- `junction_audit.py`：T03 原始 FRCSD 复核与 T07 稳定失败展开。
+- `junction_audit.py / junction_required_movements.py`：T03 候选编排、SWSD required movement、FRCSD boundary ownership/raw directed carrier 复核与 T07 稳定失败展开。
 - `junction_outputs.py`：独立 Junction Point 结果和根因 evidence。
 - `carrier_graph.py / anchor_portals.py`：图与门户。
 - `semantic_carrier.py`：semantic 物理路径、端点 portal 与内部 alias transition 门禁。
@@ -54,7 +54,11 @@ Junction source 未提供时走空源 fast path，不构建 Junction 索引。�
 
 ## 7. Junction 准确率优先决定
 
-- `shared_degree1_terminal_collapse`：仅对正式 eligible 的 class B/not established、无 required RCSDNode、至少两个 target 运行。优先使用 T03 正式 support IDs；缺失时从 target 最近 raw FRCSD Road 的 endpoint 邻域检索局部 ownership carrier。所有 target 必须投影到同一 support terminal endpoint、endpoint support degree=1，且无局部替代 carrier、无无效几何、无正式高置信跨层解释。
-- `multi_component_unmatched_support`：仅对 class B/review、无 required RCSDNode 运行。所有 target 必须只解释同一 support component，至少另有一个未解释 component；同时要求 Step6 fragmented-surface reason、cleanup 前 meaningful component 至少 3、`constraint_induced_split=false`，且无局部替代 carrier和高置信跨层解释。
+- `shared_degree1_terminal_collapse` 与 `multi_component_unmatched_support` 只形成候选结构。T12 从当前 SWSD selected Road/Direction 提取跨 target group 的 boundary arms，用 SWSD raw directed graph 枚举真实 `incoming arm -> outgoing arm` movement；再将每条 arm 映射到 `10m` target ownership、`10m` boundary geometry 与 `25°` outward heading 检索门禁内的原始 FRCSD Road。heading 从当前路口内端点沿 Road 向外采样 `10m`，用于阻止交叉点处零距离的垂直 Road 错配；随后逐 movement 在 `50m` raw identity endpoint 图中搜索有向 carrier。
+- `compact_alias_directional_terminal_mismatch` 只有在某个 SWSD 必需角色对全部受信 portal 都不存在时才允许确认；单个 alias 的 one-sided terminal 不能覆盖同 canonical group 其它 alias 的合法 carrier。
+- `multi_component_unmatched_support` 必须先排除 class A required carrier、同 canonical mainNode alias group 的合法 raw portal 和 DriveZone 内 Road-surface 连续性；未匹配 component 形态本身不能确认问题。
+- `connected_semantic_core_ambiguity` 默认归入 ownership/现实变化候选。retained/dropped core 之间存在 Direction 合法 Road 只能证明“有连接”，不能证明 SWSD 必需通行缺失；缺少独立缺失方向证据时必须 exclusion。
+- formal raw guard 只是候选证据，不按 T03 reason 直通。全部 required movement 等价时按 `all_required_junction_movements_equivalent` 排除；boundary carrier 无法局部锚定时按 `boundary_carrier_not_locally_anchored` 排除；任一 independently mapped movement 缺失只在 Direction 合法且无效输入、高置信跨层、`constraint_induced_split` 均不存在时确认。canonical membership 不创建通用 graph edge，只允许满足同组、`6m` gap、`10m` target ownership、DriveZone 全覆盖与两端入/出 Direction 角色的受限 portal。
 - raw FRCSD endpoint 的全局 incident Road 可以来自其它 Segment；它只进入全局 degree 审计，不自动成为当前 Junction support。support ownership 以明确路口锚定 target 的局部 carrier 为准。
 - Step2 `fail1` 每个语义路口发布一条 J03；`fail2` 按共享 RCSDIntersection 的冲突分量逐语义路口发布 J04 并共享 deterministic conflict group。final state、error GPKG 与 summary 不一致时 blocked；Step3 cardinality 导入数恒为 0。
+- T03 来源 verdict 必须按数据根与输入指纹隔离；QA 当前快照不继承历史 CaseID 结论，也不预设 confirmed 数量。

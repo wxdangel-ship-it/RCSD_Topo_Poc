@@ -58,6 +58,7 @@ class Step1Context:
     rcsd_nodes: tuple[NodeRecord, ...]
     drivezone_geometry: BaseGeometry
     target_road_ids: frozenset[str]
+    drivezone_input_audit: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

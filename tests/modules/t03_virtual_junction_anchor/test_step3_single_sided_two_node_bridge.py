@@ -90,7 +90,7 @@ def test_single_sided_target_near_drivezone_edge_keeps_inside_component(
     assert case_result.step3_state == "established"
     assert case_result.allowed_space_geometry is not None
     assert case_result.allowed_space_geometry.difference(context.drivezone_geometry).area <= 1e-6
-    assert case_result.audit_doc["target_edge_touch_enabled"] is True
-    assert case_result.audit_doc["target_edge_touch_reason"] == "single_sided_target_near_drivezone_with_incident_support"
-    assert case_result.audit_doc["target_edge_touch_tolerance_m"] == 1.5
+    assert case_result.audit_doc["target_edge_touch_enabled"] is False
+    assert case_result.audit_doc["target_edge_touch_reason"] == "target_inside_default_touch"
+    assert case_result.audit_doc["target_edge_touch_tolerance_m"] == 2.0
     assert case_result.audit_doc["must_cover_result"]["missing_node_ids"] == []

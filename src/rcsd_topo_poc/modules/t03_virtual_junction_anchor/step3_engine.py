@@ -43,6 +43,9 @@ from rcsd_topo_poc.modules.t03_virtual_junction_anchor.line_geometry import (
     nearest_line,
     substring_from_endpoint,
 )
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step6_road_surface_portal import (
+    build_road_surface_portal_boundary,
+)
 
 ROAD_BUFFER_M = 8.0
 
@@ -56,9 +59,9 @@ TARGET_NODE_COVER_TOLERANCE_M = 0.5
 
 TARGET_NODE_INCIDENT_ROAD_COVER_TOLERANCE_M = 10.0
 
-TARGET_COMPONENT_TOUCH_BUFFER_M = 1.0
+TARGET_COMPONENT_TOUCH_BUFFER_M = 2.0
 
-SINGLE_SIDED_TARGET_DRIVEZONE_EDGE_TOUCH_M = 1.5
+SINGLE_SIDED_TARGET_DRIVEZONE_EDGE_TOUCH_M = 2.0
 
 INTRUSION_AREA_TOLERANCE_M2 = 0.05
 
@@ -141,6 +144,7 @@ from .step3_engine_support import (
     _filter_opposite_rc_node_ids,
     _filter_opposite_rc_road_ids,
     _has_negative_intrusion,
+    _input_geometry_status_fields,
     _node_has_incident_allowed_support,
     _node_has_incident_drivezone_support,
     _reverse_mask_strip_in_drivezone,
@@ -586,8 +590,62 @@ def build_step3_case_result(
 
     hard_path_validation_started_perf = perf_counter()
     hard_path_geometry = _component_touching_target(hard_candidate_with_bridge, reference_target_geometry)
+    target_core_connectivity_portal_geometry: BaseGeometry | None = None
+    target_core_connectivity_portal_audit: dict[str, Any] = {
+        "mode": "road_surface_portal_boundary",
+        "applied": False,
+        "reason": "target_group_has_fewer_than_three_nodes",
+        "source_geometry_modified": False,
+        "silent_fix": False,
+    }
+    if len(context.target_group.nodes) >= 3:
+        (
+            hard_path_geometry,
+            target_core_connectivity_portal_geometry,
+            target_core_connectivity_portal_audit,
+        ) = build_road_surface_portal_boundary(
+            allowed_surface=context.drivezone_geometry,
+            direction_boundary=hard_path_geometry,
+            terminals={
+                f"target_node:{node.node_id}": node.geometry
+                for node in context.target_group.nodes
+            },
+            bridge_half_width_m=ROAD_BUFFER_M,
+        )
+        if target_core_connectivity_portal_geometry is not None:
+            hard_candidate_with_bridge = _extract_polygon_geometry(
+                unary_union(
+                    [
+                        geometry
+                        for geometry in (
+                            hard_candidate_with_bridge,
+                            target_core_connectivity_portal_geometry,
+                        )
+                        if geometry is not None
+                    ]
+                )
+            )
     drivezone_metrics = _drivezone_containment_metrics(hard_path_geometry, context.drivezone_geometry)
-    hard_intrusion = _has_negative_intrusion(hard_path_geometry, blocker_union)
+    effective_blocker_union = blocker_union
+    target_core_blocker_override_area_m2 = 0.0
+    if (
+        target_core_connectivity_portal_geometry is not None
+        and blocker_union is not None
+    ):
+        target_core_blocker_override_area_m2 = float(
+            target_core_connectivity_portal_geometry.intersection(blocker_union).area
+        )
+        effective_blocker_union = _clean_geometry(
+            blocker_union.difference(
+                target_core_connectivity_portal_geometry.buffer(
+                    TARGET_COMPONENT_TOUCH_BUFFER_M
+                )
+            )
+        )
+    hard_intrusion = _has_negative_intrusion(
+        hard_path_geometry,
+        effective_blocker_union,
+    )
     covered_node_ids = _covered_node_ids(
         context,
         hard_path_geometry,
@@ -731,6 +789,7 @@ def build_step3_case_result(
     }
     audit_doc = {
         "input_gate": input_gate,
+        "input_geometry": dict(context.drivezone_input_audit or {}),
         "rules": rules,
         **multipart_road_handling_fields(context.roads, context.rcsd_roads),
         "adjacent_junction_cuts": adjacent_records,
@@ -738,6 +797,18 @@ def build_step3_case_result(
         "foreign_object_masks": foreign_object_records,
         "foreign_mst_masks": foreign_mst_records,
         "rcsd_semantic_bridge_records": rcsd_semantic_bridge_hard_records,
+        "target_core_connectivity_portal": {
+            **target_core_connectivity_portal_audit,
+            "negative_mask_override_role": (
+                "target_core_connectivity_protection"
+                if target_core_connectivity_portal_geometry is not None
+                else "not_applied"
+            ),
+            "negative_mask_override_area_m2": round(
+                target_core_blocker_override_area_m2,
+                6,
+            ),
+        },
         "growth_limits": growth_limits,
         **rule_d_fallback_fields,
         "cleanup_dependency": cleanup_dependency,
@@ -790,9 +861,19 @@ def build_step3_case_result(
         "rule_d_fallback_applied": rule_d_fallback_fields["rule_d_fallback_applied"],
         "rcsd_opposite_fallback_enabled": rcsd_opposite_fallback["rcsd_opposite_fallback_enabled"],
         "two_node_t_bridge_applied": bridge_hard_fields["two_node_t_bridge_applied"],
+        "target_core_connectivity_portal_applied": bool(
+            target_core_connectivity_portal_audit.get("applied")
+        ),
+        "target_core_connectivity_portal_area_m2": round(
+            target_core_connectivity_portal_geometry.area,
+            6,
+        )
+        if target_core_connectivity_portal_geometry is not None
+        else 0.0,
         "shared_two_in_two_out_as_through_node": shared_two_in_two_out_fields["shared_two_in_two_out_as_through_node"],
         "single_sided_horizontal_pair_detected": single_sided_direction_resolution["single_sided_horizontal_pair_detected"],
         "target_edge_touch_enabled": target_edge_touch_fields["target_edge_touch_enabled"],
+        **_input_geometry_status_fields(context),
         **drivezone_metrics,
     }
     visual_review_class = _review_visual_class(step3_state, review_signals, reason)
@@ -828,8 +909,25 @@ def build_step3_case_result(
             "blocked_direction_reasons": blocked_direction_reasons,
             "cleanup_dependency": cleanup_dependency,
             "direction_mode": DIRECTION_MODE,
+            **_input_geometry_status_fields(context),
             **rule_d_fallback_fields,
             **bridge_hard_fields,
+            "target_core_connectivity_portal_applied": bool(
+                target_core_connectivity_portal_audit.get("applied")
+            ),
+            "target_core_connectivity_portal_area_m2": round(
+                target_core_connectivity_portal_geometry.area,
+                6,
+            )
+            if target_core_connectivity_portal_geometry is not None
+            else 0.0,
+            "target_core_connectivity_portal_reason": (
+                target_core_connectivity_portal_audit.get("reason")
+            ),
+            "target_core_connectivity_portal_negative_mask_override_area_m2": round(
+                target_core_blocker_override_area_m2,
+                6,
+            ),
             "rcsd_semantic_bridge_applied": bool(rcsd_semantic_bridge_hard_records),
             "rcsd_semantic_bridge_count": len(rcsd_semantic_bridge_hard_records),
             "rcsd_semantic_bridge_max_target_distance_m": RCSD_SEMANTIC_BRIDGE_MAX_TARGET_DISTANCE_M,

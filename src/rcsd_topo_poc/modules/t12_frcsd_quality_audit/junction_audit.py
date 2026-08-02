@@ -17,6 +17,7 @@ from .carrier_graph import field_name, normalize_id, parse_ids
 from .inputs import LoadedInputs
 from .issue_taxonomy import enrich_quality_result
 from .junction_inputs import JunctionSources, T03CaseEvidence
+from .junction_required_movements import audit_required_junction_movements
 from .models import AuditConfig, T12ContractError
 
 
@@ -249,8 +250,28 @@ def audit_junction_quality(
                     "kind_2": [4, 2048],
                 },
                 "target_projection_source": "original_1v1_frcsd_road_node",
-                "distance_role": "audit_only",
+                "automatic_confirmation": (
+                    "raw_directed_swsd_required_junction_movement_missing"
+                ),
+                "t03_reason_role": "candidate_only_not_confirmation",
+                "distance_role": (
+                    "retrieval_and_high_confidence_ownership_eligibility;"
+                    "audit_only_after_anchor"
+                ),
                 "alias_role": "semantic_group_only_no_graph_edge",
+                "junction_endpoint_tolerance_m": (
+                    config.junction_endpoint_tolerance_m
+                ),
+                "junction_local_radius_m": config.junction_local_radius_m,
+                "junction_target_anchor_tolerance_m": (
+                    config.junction_target_anchor_tolerance_m
+                ),
+                "junction_boundary_match_tolerance_m": (
+                    config.junction_boundary_match_tolerance_m
+                ),
+                "junction_boundary_heading_tolerance_deg": (
+                    config.junction_boundary_heading_tolerance_deg
+                ),
             },
             "t07_policy": {
                 "candidate_source": "t07_step2_final_anchor_failure",
@@ -280,6 +301,16 @@ def _evaluate_t03_case(
 ) -> tuple[dict[str, Any], dict[str, list[dict[str, Any]]]]:
     association = case.association_status
     step6 = case.step6_status
+    raw_guard_value = _find_first(
+        (association, step6, case.step6_audit),
+        "raw_topology_guard_audit",
+    )
+    raw_guard = (
+        dict(raw_guard_value)
+        if isinstance(raw_guard_value, Mapping)
+        else {}
+    )
+    raw_guard_reason = str(raw_guard.get("reason") or "")
     association_class = str(
         association.get("association_class")
         or step6.get("association_class")
@@ -398,7 +429,71 @@ def _evaluate_t03_case(
             and all(road_id in local_component_by_road for road_id in support_ids)
         )
     )
-    direction_status = _direction_status(support_rows)
+    raw_guard_connecting_ids = list(
+        dict.fromkeys(
+            road_id
+            for row in raw_guard.get("connected_semantic_core_rows") or []
+            if isinstance(row, Mapping)
+            for road_id in parse_ids(row.get("connecting_rcsdroad_ids"))
+        )
+    )
+    raw_guard_verification_ids = list(
+        dict.fromkeys(
+            [
+                *support_ids,
+                *parse_ids(
+                    raw_guard.get(
+                        "terminal_collapse_support_rcsdroad_ids"
+                    )
+                ),
+                *raw_guard_connecting_ids,
+            ]
+        )
+    )
+    raw_guard_missing_road_ids = [
+        road_id
+        for road_id in raw_guard_verification_ids
+        if road_id not in frcsd_roads
+    ]
+    verification_rows = [
+        frcsd_roads[road_id]
+        for road_id in raw_guard_verification_ids
+        if road_id in frcsd_roads
+    ]
+    direction_status = _direction_status(verification_rows or support_rows)
+    selected_swsd_road_ids = parse_ids(
+        case.step3_status.get("selected_road_ids")
+    )
+    required_movement_audit = audit_required_junction_movements(
+        swsd_roads=loaded.swsd_roads,
+        swsd_nodes=loaded.swsd_nodes,
+        frcsd_roads=loaded.frcsd_roads,
+        frcsd_nodes=loaded.frcsd_nodes,
+        drivezone=loaded.drivezone,
+        selected_road_ids=selected_swsd_road_ids,
+        target_node_ids=target_ids,
+        representative_geometry=Point(representative_geometry),
+        local_radius_m=config.junction_local_radius_m,
+        endpoint_tolerance_m=config.junction_endpoint_tolerance_m,
+        target_anchor_tolerance_m=(
+            config.junction_target_anchor_tolerance_m
+        ),
+        boundary_match_tolerance_m=(
+            config.junction_boundary_match_tolerance_m
+        ),
+        boundary_heading_tolerance_deg=(
+            config.junction_boundary_heading_tolerance_deg
+        ),
+    )
+    required_direction_status = (
+        "invalid_or_missing_direction"
+        if required_movement_audit["invalid_direction_road_ids"]
+        else (
+            "valid_strict_direction"
+            if required_movement_audit["required_movement_count"]
+            else "not_applicable_no_required_movement"
+        )
+    )
     local_invalid_drivezone = _local_invalid_drivezone_count(
         loaded.drivezone,
         representative_geometry,
@@ -448,7 +543,7 @@ def _evaluate_t03_case(
         ),
         default=0,
     )
-    rule_a = (
+    legacy_rule_a = (
         association_class == "B"
         and association_state == "not_established"
         and required_node_count == 0
@@ -458,7 +553,7 @@ def _evaluate_t03_case(
         and terminal_degree == 1
         and not alternate_raw_carrier
     )
-    rule_b = (
+    legacy_rule_b = (
         association_class == "B"
         and association_state == "review"
         and required_node_count == 0
@@ -472,40 +567,73 @@ def _evaluate_t03_case(
         and not constraint_induced_split
         and not alternate_raw_carrier
     )
+    formal_directional_terminal = bool(
+        raw_guard.get("blocked")
+        and raw_guard_reason
+        == "association_raw_compact_alias_directional_terminal_mismatch"
+        and raw_guard.get("compact_directional_terminal_mismatch")
+        and len(target_ids) >= 2
+        and float(raw_guard.get("target_group_span_m") or float("inf"))
+        <= config.junction_endpoint_tolerance_m
+        and _as_int(raw_guard.get("source_incoming_count"), default=0) > 0
+        and _as_int(raw_guard.get("source_outgoing_count"), default=0) > 0
+        and any(
+            _as_bool(row.get("one_sided_terminal"))
+            for row in raw_guard.get("directional_terminal_rows") or []
+            if isinstance(row, Mapping)
+        )
+        and bool(support_ids)
+        and not raw_guard_missing_road_ids
+    )
+    formal_connected_core = bool(
+        raw_guard.get("blocked")
+        and raw_guard_reason
+        == "association_raw_connected_semantic_core_ambiguity"
+        and raw_guard.get("connected_semantic_core_ambiguity")
+        and len(target_ids) >= 2
+        and bool(raw_guard_connecting_ids)
+        and not raw_guard_missing_road_ids
+    )
+    formal_unmatched_support = bool(
+        raw_guard.get("blocked")
+        and raw_guard_reason
+        == "association_raw_multi_component_unmatched_support"
+        and raw_guard.get("unmatched_support")
+        and len(target_ids) >= 2
+        and len(support_components) >= 2
+        and len(projection_components) == 1
+        and bool(unmatched_components)
+        and not alternate_raw_carrier
+        and not raw_guard_missing_road_ids
+    )
+    rule_a = legacy_rule_a or formal_directional_terminal or formal_connected_core
+    rule_b = legacy_rule_b or formal_unmatched_support
     blockers: list[str] = []
     if input_geometry_status != "valid_no_normalization":
         blockers.append("invalid_input_geometry")
     if cross_layer_status == "high_confidence_cross_layer":
         blockers.append("cross_layer_evidence")
-    if direction_status != "valid_strict_direction":
+    if required_direction_status == "invalid_or_missing_direction":
         blockers.append("invalid_road_direction")
-    confirmed = (rule_a or rule_b) and not blockers
-    if confirmed and rule_a:
-        detection_rule = "shared_degree1_terminal_collapse"
+    if constraint_value is not None and constraint_induced_split:
+        blockers.append("constraint_induced_split")
+    confirmed = bool(
+        required_movement_audit["status"] == "confirmed_missing"
+        and not blockers
+    )
+    if confirmed:
+        detection_rule = "required_junction_movement_missing"
         issue_type = "junction_required_topology_missing"
-        decision_rule = "raw_frcsd_shared_degree1_terminal_collapse_confirmed"
-        review_reason = (
-            "all SWSD targets collapse to one degree-1 raw FRCSD terminal; "
-            "no physical alternative carrier exists"
+        decision_rule = (
+            "raw_frcsd_required_junction_movement_missing_confirmed"
         )
-    elif confirmed:
-        detection_rule = "multi_component_unmatched_support"
-        issue_type = "junction_unmatched_support_topology"
-        decision_rule = "raw_frcsd_multi_component_unmatched_support_confirmed"
         review_reason = (
-            "all SWSD targets explain only one raw FRCSD support component while "
-            "other meaningful components remain unmatched"
+            "one or more SWSD-required incoming-to-outgoing Junction movements "
+            "have locally anchored boundary carriers but no equivalent raw "
+            "directed FRCSD carrier"
         )
     else:
-        detection_rule = (
-            "shared_degree1_terminal_collapse"
-            if rule_a
-            else (
-                "multi_component_unmatched_support"
-                if rule_b
-                else "t03_rejected_insufficient_junction_evidence"
-            )
-        )
+        detection_rule = "t03_rejected_candidate_rechecked"
         issue_type = ""
         decision_rule = _exclusion_rule(
             blockers=blockers,
@@ -514,6 +642,7 @@ def _evaluate_t03_case(
             meaningful_component_count=meaningful_component_count,
             projections=projections,
             alternate_raw_carrier=alternate_raw_carrier,
+            required_movement_audit=required_movement_audit,
         )
         review_reason = decision_rule
     row = {
@@ -564,8 +693,25 @@ def _evaluate_t03_case(
             if not alternate_raw_carrier
             else "equivalent_local_physical_carrier_exists"
         ),
-        "direction_status": direction_status,
+        "direction_status": required_direction_status,
+        "legacy_t03_signal_direction_status": direction_status,
         "step6_reason": step6_reason,
+        "t03_raw_topology_guard": raw_guard,
+        "t03_candidate_signals": {
+            "legacy_rule_a": legacy_rule_a,
+            "legacy_rule_b": legacy_rule_b,
+            "formal_directional_terminal": formal_directional_terminal,
+            "formal_connected_semantic_core": formal_connected_core,
+            "formal_unmatched_support": formal_unmatched_support,
+            "candidate_only_not_confirmation": True,
+        },
+        "required_junction_movement_audit": required_movement_audit,
+        "required_junction_movement_count": required_movement_audit[
+            "required_movement_count"
+        ],
+        "missing_required_junction_movement_ids": required_movement_audit[
+            "missing_movement_ids"
+        ],
         "pre_business_cleanup_meaningful_component_count": meaningful_component_count,
         "review_reason": review_reason,
         "decision_source": "automatic_high_confidence",
@@ -1067,6 +1213,7 @@ def _exclusion_rule(
     meaningful_component_count: int,
     projections: list[dict[str, Any]],
     alternate_raw_carrier: bool,
+    required_movement_audit: Mapping[str, Any],
 ) -> str:
     if "invalid_input_geometry" in blockers:
         return "invalid_input_geometry"
@@ -1076,6 +1223,21 @@ def _exclusion_rule(
         return "invalid_road_direction"
     if constraint_value is not None and constraint_induced_split:
         return "constraint_induced_split"
+    movement_blockers = set(required_movement_audit.get("blockers") or [])
+    if "invalid_required_movement_direction" in movement_blockers:
+        return "invalid_required_movement_direction"
+    if "boundary_carrier_not_locally_anchored" in movement_blockers:
+        return "boundary_carrier_not_locally_anchored"
+    if "target_group_geometry_missing" in movement_blockers:
+        return "target_group_geometry_missing"
+    if "invalid_local_frcsd_geometry" in movement_blockers:
+        return "invalid_local_frcsd_geometry"
+    if "no_swsd_required_junction_movements" in movement_blockers:
+        return "no_swsd_required_junction_movements"
+    if required_movement_audit.get("status") == "equivalent":
+        return "all_required_junction_movements_equivalent"
+    if required_movement_audit.get("status") == "insufficient":
+        return "insufficient_required_junction_movement_evidence"
     if meaningful_component_count and meaningful_component_count < 3:
         return "geometry_fragment_only"
     if alternate_raw_carrier:

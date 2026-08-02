@@ -72,6 +72,8 @@ UTURN_TRUNK_FLOW_OPPOSITE_DOT_MAX = -0.92
 
 COMPOSITE_RCSD_NODE_GROUP_MAX_SPAN_M = 9.0
 
+CANONICAL_COMPOSITE_RCSD_NODE_GROUP_MAX_SPAN_M = SELECTED_CORRIDOR_BUFFER_M
+
 def _u_turn_detection_mode(active_rcsd_roads: Iterable[RoadRecord]) -> str:
     return (
         "formway_bit"
@@ -247,9 +249,22 @@ def _compact_group_id_by_node(nodes: Iterable[NodeRecord]) -> dict[str, str]:
 
     group_id_by_node: dict[str, str] = {}
     for raw_group_id, group_nodes in raw_groups.items():
+        group_span_m = _max_node_group_span_m(group_nodes)
+        canonical_main_node_present = any(
+            normalize_id(node.node_id) == normalize_id(node.mainnodeid)
+            for node in group_nodes
+            if node.mainnodeid not in {None, "", "0"}
+        )
         compact = (
             len(group_nodes) > 1
-            and _max_node_group_span_m(group_nodes) <= COMPOSITE_RCSD_NODE_GROUP_MAX_SPAN_M
+            and (
+                group_span_m <= COMPOSITE_RCSD_NODE_GROUP_MAX_SPAN_M
+                or (
+                    canonical_main_node_present
+                    and group_span_m
+                    <= CANONICAL_COMPOSITE_RCSD_NODE_GROUP_MAX_SPAN_M
+                )
+            )
         )
         for node in group_nodes:
             group_id_by_node[node.node_id] = raw_group_id if compact else node.node_id

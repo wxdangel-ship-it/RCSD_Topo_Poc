@@ -37,8 +37,8 @@ T03/T07 Junction 参数均为可选；既有必选参数、默认值和 Segment-
 - Segment：`id/pair_nodes/roads`。反向路径扣除双端标准面及 `1m` 容差后的每条 raw RCSD Road，必须按 `20m coverage > 50m coverage > geometry distance` 唯一归属于当前 Segment；其它 Segment 更优或并列均不得自动确认。
 - Source 只进入审计证据，不参与 verdict。
 - T03 Junction eligibility 只使用正式 SWSD Node 字段 `has_evd=yes`、`is_anchor=no`、`kind_2 in {4,2048}`；`has_evd` 语义由 T03 输入事实提供，T12 不反推或改写。
-- T03 Junction target 到原始 FRCSD 的距离只用于 target projection、局部 support ownership 检索和审计。默认 endpoint tolerance 为 `6m`、local Junction scope 为 `50m`；二者不能单独确认或排除。
-- T03 support topology 的 main/subNode 只作分组和证据，不创建 graph edge。Direction 必须为正式值；无效几何、缺失 endpoint、正式高置信跨层解释或局部替代 carrier 阻止自动确认，禁止 snap、repair 或补点。
+- T03 Junction 当前 SWSD selected Road/Direction 必须派生 boundary arm 与有向 `incoming -> outgoing` required movement。默认 alias endpoint tolerance 为 `6m`、local Junction scope 为 `50m`、target ownership 与 boundary geometry 高置信检索门禁均为 `10m`，Road outward heading 采用从内端点向外 `10m` 采样且匹配夹角不超过 `25°`。这些门禁只控制未锚定/非同臂证据不得进入自动确认；一旦两端 carrier 已锚定，后续等价 carrier 不得再因距离被拒绝。每条自动确认必须公开两端 SWSD arm Road、FRCSD boundary Road/portal、heading 差、缺失原因和实际有向 Road 序列。
+- T03 support topology 的 main/subNode 只作分组和 portal membership，不创建 graph edge。每个 required role 必须在 raw identity endpoint 图或 Road-surface portal 图包含 Direction 合法的实际 Road carrier；无效几何、缺失 endpoint、正式高置信跨层解释、局部替代 carrier 或同 canonical group 的等价 alias carrier 阻止自动确认，禁止 snap、repair 或补点。
 
 ## 3. 状态和值域
 
@@ -67,9 +67,9 @@ T03/T07 Junction 参数均为可选；既有必选参数、默认值和 Segment-
 | `unexpected_reverse_segment_ownership_status` | 空 / `current_segment_unique_owner / rejection_reason` | 锚点间逐 raw RCSD Road 的当前 Segment 唯一归属状态。 |
 | `anchor_confidence` | `t07_standard_surface / t03_pair / insufficient` | 自动归因锚点信用。 |
 | run `status` | `passed / blocked / failed` | 契约完成、前置阻断或执行失败。 |
-| Junction `issue_type` | `junction_required_topology_missing / junction_unmatched_support_topology / junction_anchor_one_to_many / junction_anchor_many_to_one` | T03 两类高置信根因或 T07 Step2 `fail1/fail2`。 |
+| Junction `issue_type` | `junction_required_topology_missing / junction_unmatched_support_topology / junction_anchor_one_to_many / junction_anchor_many_to_one` | T03 候选经 required-role/carrier 独立复核后的高置信根因，或 T07 Step2 `fail1/fail2`。 |
 | Junction `decision_source` | `automatic_high_confidence / t07_step2_stable_failure_direct` | T03 由 T12 重验，T07 Step2 final failure 直接发布。 |
-| Junction `decision_rule` | `raw_frcsd_shared_degree1_terminal_collapse_confirmed / raw_frcsd_multi_component_unmatched_support_confirmed / t07_step2_fail1_direct_publish / t07_step2_fail2_direct_publish` 或可审计 exclusion rule | 独立 Junction 决定规则。 |
+| Junction `decision_rule` | `raw_frcsd_required_junction_movement_missing_confirmed`、`t07_step2_fail1_direct_publish / t07_step2_fail2_direct_publish` 或可审计 exclusion rule | 历史 T03 shape/guard 规则只保留为 candidate signal，不能直接成为决定规则；同 CaseID 不跨输入快照复用。 |
 | Junction geometry | `Point` | SWSD 代表路口；support Road、endpoint、projection 与 conflict link 进入 evidence layers。 |
 
 禁止使用 `high/medium confidence` 作为正式状态。
@@ -105,7 +105,7 @@ run_id,candidate_id,review_status,issue_type,review_reason,review_source,reviewe
 - `t12_frcsd_junction_quality_exclusions.csv`
 - `t12_frcsd_junction_carrier_evidence.gpkg`
 
-manifest/summary 至少记录输入绝对路径与 SHA-256、参数、CRS 转换、无效几何、endpoint 拓扑、canonical/raw 图分层、anchored canonical alias membership、Direction role、alias distance audit、非锚定 fallback、portal-constrained semantic carrier、T07 Road-surface carrier、FRCSD 反向载体、SWSD 反向替代路径、反向双端锚点区间、逐 raw RCSD Road Segment 唯一归属、其它 Segment 覆盖、surface 关联与 distance audit-only 指标、自动 decision、T05/T06 证据关系、T03/T07 来源 run identity 和工件指纹、Junction eligibility/projection/support/endpoint/component/替代 carrier/跨层/Direction 证据、Segment 与 Junction 独立计数、对象规模、分阶段耗时、输出路径和 `silent_fix=false`。
+manifest/summary 至少记录输入绝对路径与 SHA-256、参数、CRS 转换、无效几何、endpoint 拓扑、canonical/raw 图分层、anchored canonical alias membership、Direction role、alias distance audit、非锚定 fallback、portal-constrained semantic carrier、T07 Road-surface carrier、FRCSD 反向载体、SWSD 反向替代路径、反向双端锚点区间、逐 raw RCSD Road Segment 唯一归属、其它 Segment 覆盖、surface 关联与 distance audit-only 指标、自动 decision、T05/T06 证据关系、T03/T07 来源 run identity 和工件指纹、T03 formal raw topology guard 原文、required Junction movement、boundary carrier mapping、raw directed path、canonical alias portal、Junction eligibility/projection/support/endpoint/component/替代 carrier/跨层/Direction 证据、Segment 与 Junction 独立计数、对象规模、分阶段耗时、输出路径和 `silent_fix=false`。
 
 Segment candidates/confirmed GPKG 主几何保持 T01 Segment 线几何族，允许源数据对应的 `LineString/MultiLineString`；Junction candidates/confirmed GPKG 主几何只写 `Point`。两者不得合并成同一正式问题层。Segment review CSV 本轮不覆盖 Junction 自动决定。
 
@@ -136,4 +136,5 @@ T10 启用 T12 时必须传入当前 T03 run root 和已有 T07 Step1/2 run root
 - 不修改输入、不 silent fix。
 - 自动 confirmed/excluded/manual 三类计数守恒，默认无 review 时 manual=0，最终确认文件只含 confirmed。
 - Junction candidates/confirmed/exclusions 独立计数守恒，正式主几何为 Point；T03 结果必须来自原始 FRCSD 重验，T07 输出集合必须与 Step2 final `fail1/fail2` 集合精确一致，Step3 cardinality 导入数为 0。
+- T03 formal raw guard 不得按 reason 字符串直通；必须记录当前输入快照、SWSD required roles、全部 canonical raw alias portals 和逐角色实际 carrier。引用的 support/connecting Road 必须在当前 FRCSD 存在，Direction 必须属于 `0/1/2/3`；完整等价 carrier、输入几何无效或高置信跨层证据必须排除自动确认。
 - T12 关闭时 T10 旧 package 和 T06→T11→T09 handoff 保持兼容。

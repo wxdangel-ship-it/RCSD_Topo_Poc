@@ -34,12 +34,24 @@ class NodeRecord:
 
 class NodeLookup:
     def __init__(self, records: Iterable[NodeRecord]) -> None:
+        records = tuple(records)
         self.by_node_id: dict[str, NodeRecord] = {}
         self.by_mainnodeid: dict[str, NodeRecord] = {}
+        self.groups_by_mainnodeid: dict[str, tuple[NodeRecord, ...]] = {}
+        grouped_records: dict[str, list[NodeRecord]] = {}
         for record in records:
             self.by_node_id.setdefault(record.node_id, record)
             if record.mainnodeid:
-                self.by_mainnodeid.setdefault(record.mainnodeid, record)
+                grouped_records.setdefault(record.mainnodeid, []).append(record)
+        for mainnodeid, group_records in grouped_records.items():
+            direct_record = self.by_node_id.get(mainnodeid)
+            if direct_record is not None and direct_record not in group_records:
+                group_records.append(direct_record)
+            ordered = tuple(sorted(group_records, key=_node_record_sort_key))
+            self.groups_by_mainnodeid[mainnodeid] = ordered
+            canonical_records = [record for record in ordered if record.node_id == mainnodeid]
+            if canonical_records:
+                self.by_mainnodeid[mainnodeid] = canonical_records[0]
 
     @classmethod
     def from_features(cls, features: Iterable[LayerFeature]) -> "NodeLookup":
@@ -69,7 +81,7 @@ class NodeLookup:
             text = _normalize_id(value)
             if text is None:
                 continue
-            if text in self.by_mainnodeid:
+            if text in self.groups_by_mainnodeid:
                 return text
             record = self.by_node_id.get(text)
             if record is not None:
@@ -79,14 +91,43 @@ class NodeLookup:
     def kind_2_for(self, mainnodeid: str | None) -> int | None:
         if mainnodeid is None:
             return None
-        record = self.by_mainnodeid.get(mainnodeid) or self.by_node_id.get(mainnodeid)
-        return None if record is None else record.kind_2
+        return self._canonical_field_for(mainnodeid, "kind_2")
 
     def patch_id_for(self, mainnodeid: str | None) -> str | None:
         if mainnodeid is None:
             return None
-        record = self.by_mainnodeid.get(mainnodeid) or self.by_node_id.get(mainnodeid)
-        return None if record is None else record.patch_id
+        return self._canonical_field_for(mainnodeid, "patch_id")
+
+    def audit_notes_for(self, mainnodeid: str | None) -> tuple[str, ...]:
+        if mainnodeid is None:
+            return ()
+        group_records = self.groups_by_mainnodeid.get(mainnodeid)
+        if group_records is None:
+            return ("nodes_lookup=direct_node",) if mainnodeid in self.by_node_id else ()
+        canonical_records = [record for record in group_records if record.node_id == mainnodeid]
+        if not canonical_records:
+            return ("nodes_lookup=canonical_mainnode_missing",)
+        notes = ["nodes_lookup=canonical_mainnode"]
+        if _has_field_conflict(canonical_records, "kind_2"):
+            notes.append("nodes_lookup_kind_2_conflict")
+        if _has_field_conflict(canonical_records, "patch_id"):
+            notes.append("nodes_lookup_patch_id_conflict")
+        return tuple(notes)
+
+    def _canonical_field_for(self, mainnodeid: str, field: str) -> Any:
+        group_records = self.groups_by_mainnodeid.get(mainnodeid)
+        if group_records is None:
+            record = self.by_node_id.get(mainnodeid)
+            return None if record is None else getattr(record, field)
+        canonical_records = [record for record in group_records if record.node_id == mainnodeid]
+        if not canonical_records or _has_field_conflict(canonical_records, field):
+            return None
+        values = {
+            getattr(record, field)
+            for record in canonical_records
+            if getattr(record, field) is not None
+        }
+        return next(iter(values)) if values else None
 
 
 def normalize_t02_input(
@@ -119,6 +160,7 @@ def normalize_t02_input(
             patch_id=patch_id,
             kind_2=kind_2,
             junction_type="rcsd_intersection",
+            node_lookup_notes=nodes.audit_notes_for(mainnodeid),
         )
         surfaces.append(
             SourceSurface(
@@ -195,6 +237,7 @@ def _normalize_generated_surfaces(
             patch_id=patch_id,
             kind_2=kind_2,
             junction_type=junction_type,
+            node_lookup_notes=nodes.audit_notes_for(mainnodeid),
         )
         surfaces.append(
             SourceSurface(
@@ -337,6 +380,24 @@ def _truthy(value: Any) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "y", "accepted"}
 
 
+def _node_record_sort_key(record: NodeRecord) -> tuple[int, int, str, str]:
+    return (
+        0 if record.node_id == record.mainnodeid else 1,
+        0 if record.kind_2 not in (None, 0) else 1,
+        record.node_id,
+        record.patch_id or "",
+    )
+
+
+def _has_field_conflict(records: Iterable[NodeRecord], field: str) -> bool:
+    values = {
+        getattr(record, field)
+        for record in records
+        if getattr(record, field) is not None
+    }
+    return len(values) > 1
+
+
 def _field_notes(
     *,
     geometry_cleaned: bool,
@@ -344,8 +405,9 @@ def _field_notes(
     patch_id: str | None,
     kind_2: int | None,
     junction_type: str,
+    node_lookup_notes: Iterable[str] = (),
 ) -> list[str]:
-    notes: list[str] = []
+    notes = list(node_lookup_notes)
     if geometry_cleaned:
         notes.append("geometry_cleaned")
     if mainnodeid is None:

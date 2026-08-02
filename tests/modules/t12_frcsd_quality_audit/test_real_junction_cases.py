@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import os
 from pathlib import Path
 
@@ -26,20 +27,30 @@ def _host_path(value: str) -> Path:
     return Path(f"/mnt/{drive.lower()}{remainder.replace(chr(92), '/')}")
 
 
-T03_DATA = _host_path(r"E:\TestData\POC_Data\T03")
-T03_ERROR_DATA = _host_path(r"E:\TestData\POC_Data\T03_Error")
-T03_VALIDATION_WORK = _host_path(
-    r"E:\Work\RCSD_Topo_Poc__wt_t03_quality_closure_20260730"
-    r"\outputs\_work\t03_t05_ownership_surface_connectivity_20260731"
+QA_DATA = _host_path(r"E:\TestData\POC_QA\T03_Error")
+REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
+QA_T03_RUN = Path(
+    os.environ.get(
+        "T12_QA_T03_RUN",
+        str(
+            REPOSITORY_ROOT
+            / "outputs"
+            / "_work"
+            / "t03_accuracy_closure_20260801"
+            / "scheme_a_replay_v1"
+            / "qa_t03_error_final"
+        ),
+    )
 )
-T03_RUN = T03_VALIDATION_WORK / "final_replay_v3" / "t03" / "final"
-T03_ERROR_RUN = (
-    T03_VALIDATION_WORK / "final_replay_v3" / "t03_error" / "final"
+QA_TRUTH = (
+    Path(__file__).parent
+    / "data"
+    / "t12_qa_junction_truth_20260802.csv"
 )
-REAL_DATA_AVAILABLE = all(
-    path.exists()
-    for path in (T03_DATA, T03_ERROR_DATA, T03_RUN, T03_ERROR_RUN)
+QA_SNAPSHOT_SHA256 = (
+    "9bfea7042a5b208522b137099bc1ed35d6da8a03393819074c58e8f3d71be765"
 )
+REAL_DATA_AVAILABLE = QA_DATA.exists() and QA_T03_RUN.exists()
 
 
 def _audit_case(
@@ -93,86 +104,73 @@ def _audit_case(
     )
 
 
+def _load_truth() -> list[dict[str, str]]:
+    with QA_TRUTH.open("r", encoding="utf-8", newline="") as handle:
+        return list(csv.DictReader(handle))
+
+
+def test_current_qa_truth_registry_is_snapshot_scoped() -> None:
+    rows = _load_truth()
+    assert len(rows) == 11
+    assert len({row["case_id"] for row in rows}) == len(rows)
+    assert {row["dataset_snapshot"] for row in rows} == {"qa_t03_error"}
+    assert {row["input_aggregate_sha256"] for row in rows} == {
+        QA_SNAPSHOT_SHA256
+    }
+    assert {row["expected_verdict"] for row in rows} <= {
+        "confirmed",
+        "excluded",
+        "source_excluded",
+    }
+    assert sum(row["expected_verdict"] == "confirmed" for row in rows) == 1
+    assert all(row["decision_source"] == "current_raw_data_audit" for row in rows)
+    assert all(row["evidence_reason"] for row in rows)
+
+
 @pytest.mark.skipif(
     not REAL_DATA_AVAILABLE,
-    reason="local T03/T03_Error real-data evidence is unavailable",
+    reason="current QA T03 replay or source data is unavailable",
 )
-def test_four_positive_and_sixteen_negative_real_cases() -> None:
-    t03_source = load_junction_sources(
-        t03_run_root=T03_RUN,
+def test_current_qa_snapshot_junction_truth() -> None:
+    source = load_junction_sources(
+        t03_run_root=QA_T03_RUN,
         t07_step3_run_root=None,
     )
-    error_source = load_junction_sources(
-        t03_run_root=T03_ERROR_RUN,
-        t07_step3_run_root=None,
-    )
-    positive_ids = {
-        "520394575",
-        "622700016",
-        "522008569",
-        "522806716",
-    }
-    negative_ids = {
-        "40338648",
-        "613826647",
-        "12777955",
-        "523923800",
-        "991243",
-        "1514722",
-        "1881692",
-        "507831701",
-        "520691911",
-        "922217",
-        "54265667",
-        "502058682",
-        "950770",
-        "994202",
-        "53679574",
-        "620658564",
-    }
-    confirmed: set[str] = set()
-    confirmed_types: dict[str, str] = {}
-    evaluated: set[str] = set()
-    decisions: dict[str, str] = {}
-    for data_root, source in (
-        (T03_DATA, t03_source),
-        (T03_ERROR_DATA, error_source),
-    ):
-        for case in source.t03_cases:
-            if case.case_id not in positive_ids | negative_ids:
-                continue
-            result = _audit_case(
-                data_root=data_root,
-                source=source,
-                case=case,
+    truth_by_case = {row["case_id"]: row for row in _load_truth()}
+    actual: dict[str, tuple[str, str, str]] = {}
+    for case in source.t03_cases:
+        if case.case_id not in truth_by_case:
+            continue
+        result = _audit_case(
+            data_root=QA_DATA,
+            source=source,
+            case=case,
+        )
+        if result.confirmed:
+            row = result.confirmed[0]
+            actual[case.case_id] = (
+                "confirmed",
+                row["decision_rule"],
+                row["issue_type"],
             )
-            evaluated.add(case.case_id)
-            if result.confirmed:
-                confirmed.add(case.case_id)
-                confirmed_types[case.case_id] = result.confirmed[0]["issue_type"]
-            elif result.exclusions:
-                decisions[case.case_id] = result.exclusions[0]["decision_rule"]
-            else:
-                decisions[case.case_id] = next(
-                    iter(result.audit["source_exclusions"]),
-                    "not_a_rejected_candidate",
-                )
+        elif result.exclusions:
+            row = result.exclusions[0]
+            actual[case.case_id] = (
+                "excluded",
+                row["decision_rule"],
+                "",
+            )
+        else:
+            actual[case.case_id] = (
+                "source_excluded",
+                next(iter(result.audit["source_exclusions"]), ""),
+                "",
+            )
 
-    rejected_source_ids = {
-        case.case_id
-        for source in (t03_source, error_source)
-        for case in source.t03_cases
-    }
-    assert "523923800" not in rejected_source_ids
-    assert confirmed == positive_ids
-    assert confirmed_types == {
-        "520394575": "junction_unmatched_support_topology",
-        "622700016": "junction_unmatched_support_topology",
-        "522008569": "junction_required_topology_missing",
-        "522806716": "junction_required_topology_missing",
-    }
-    assert not (confirmed & negative_ids)
-    assert evaluated | {"523923800"} >= positive_ids | negative_ids
-    assert decisions["613826647"] == "constraint_induced_split"
-    assert decisions["950770"] == "invalid_input_geometry"
-    assert decisions["12777955"] == "not_all_targets_terminal_endpoint"
+    assert set(actual) == set(truth_by_case)
+    for case_id, truth in truth_by_case.items():
+        assert actual[case_id] == (
+            truth["expected_verdict"],
+            truth["expected_decision_rule"],
+            truth["expected_issue_type"],
+        )

@@ -56,9 +56,9 @@ TARGET_NODE_COVER_TOLERANCE_M = 0.5
 
 TARGET_NODE_INCIDENT_ROAD_COVER_TOLERANCE_M = 10.0
 
-TARGET_COMPONENT_TOUCH_BUFFER_M = 1.0
+TARGET_COMPONENT_TOUCH_BUFFER_M = 2.0
 
-SINGLE_SIDED_TARGET_DRIVEZONE_EDGE_TOUCH_M = 1.5
+SINGLE_SIDED_TARGET_DRIVEZONE_EDGE_TOUCH_M = 2.0
 
 INTRUSION_AREA_TOLERANCE_M2 = 0.05
 
@@ -851,6 +851,32 @@ def _target_component_touch_reference(
         target_drivezone_distances_m=rounded_distances,
     )
     if template_result.template_class != "single_sided_t_mouth":
+        if (
+            distances
+            and max(distances) > TARGET_NODE_COVER_TOLERANCE_M
+            and max(distances) <= TARGET_COMPONENT_TOUCH_BUFFER_M
+            and all(
+                _node_has_incident_drivezone_support(context, node)
+                for node in context.target_group.nodes
+            )
+        ):
+            edge_fields = _target_edge_touch_fields(
+                enabled=True,
+                reason="target_near_drivezone_with_incident_support",
+                tolerance_m=tolerance_m,
+                target_drivezone_distances_m=rounded_distances,
+            )
+        else:
+            edge_fields = _target_edge_touch_fields(
+                reason=(
+                    "target_inside_default_touch"
+                    if not distances
+                    or max(distances) <= TARGET_NODE_COVER_TOLERANCE_M
+                    else "target_lacks_confirmed_edge_access"
+                ),
+                tolerance_m=tolerance_m,
+                target_drivezone_distances_m=rounded_distances,
+            )
         return unary_union([node.geometry.buffer(tolerance_m) for node in context.target_group.nodes]), edge_fields
     if not distances or max(distances) <= TARGET_COMPONENT_TOUCH_BUFFER_M:
         edge_fields = _target_edge_touch_fields(
@@ -973,6 +999,25 @@ def _build_status_doc(case_result: Step3CaseResult) -> dict[str, Any]:
         **case_result.extra_status_fields,
     }
 
+
+def _input_geometry_status_fields(context: Step1Context) -> dict[str, Any]:
+    audit = context.drivezone_input_audit or {}
+    return {
+        "drivezone_input_invalid_feature_count": int(
+            audit.get("invalid_feature_count") or 0
+        ),
+        "drivezone_input_normalization_applied": bool(
+            audit.get("normalization_applied")
+        ),
+        "drivezone_input_normalization_mode": audit.get("normalization_mode"),
+        "drivezone_input_normalization_area_delta_m2": audit.get(
+            "normalization_area_delta_m2"
+        ),
+        "drivezone_source_modified": bool(audit.get("source_modified")),
+        "drivezone_silent_fix": bool(audit.get("silent_fix")),
+    }
+
+
 def _review_visual_class(step3_state: str, review_signals: list[str], reason: str) -> str:
     if step3_state == "established":
         return "V1 认可成功"
@@ -1003,6 +1048,7 @@ def _empty_audit_doc(
     rcsd_opposite_fallback = _rcsd_opposite_fallback_fields()
     return {
         "input_gate": input_gate,
+        "input_geometry": dict(context.drivezone_input_audit or {}),
         "rules": {key: {"passed": False, "reason": reason} for key in "ABCDEFGH"},
         "adjacent_junction_cuts": [],
         "foreign_object_masks": [],
@@ -1082,6 +1128,7 @@ def _status_for_unsupported_template(context: Step1Context, template_result: Ste
             "blocked_direction_reasons": [],
             "cleanup_dependency": False,
             "direction_mode": DIRECTION_MODE,
+            **_input_geometry_status_fields(context),
             **rule_d_fallback_fields,
             **single_sided_direction_resolution,
             **rcsd_opposite_fallback,
@@ -1131,6 +1178,7 @@ def _status_for_input_gate_failure(
             "blocked_direction_reasons": [],
             "cleanup_dependency": False,
             "direction_mode": DIRECTION_MODE,
+            **_input_geometry_status_fields(context),
             **rule_d_fallback_fields,
             **single_sided_direction_resolution,
             **rcsd_opposite_fallback,

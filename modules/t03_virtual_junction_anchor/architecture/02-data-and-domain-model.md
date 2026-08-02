@@ -38,6 +38,8 @@ T03 不把所有邻近 RCSD 对象都视为当前路口的一部分。RCSD 语�
 
 `related` 不等于全长 must-cover，`foreign_mask` 不得包含已判定为 `related` 的 RCSDRoad。`Step5` 不再向 `Step6` 提供 hard polygon foreign context；`Step6` 当前 hard negative mask 只消费 road-like `1m` 掩膜，不把 node 类 foreign 变成 hard subtract。
 
+canonical mainNode/alias group 是语义归组，不是零成本通行边。Step4 的原始拓扑证据必须回到各 raw node ID 与 `RCSDRoad.snodeid/enodeid/direction`；T05 同样只从 canonical mainNode 本体反查 `kind_2 / patch_id`，不得让 alias 行覆盖主节点事实。
+
 ## 4. 调头口与 connector 语义
 
 `RCSDNode.mainnodeid` 非空且非 `0` 只表示 RCSD 语义路口候选或 grouping 信号，不单独构成当前路口强关联。effective degree = `2` 的候选仍按非语义 connector 处理。
@@ -57,6 +59,8 @@ T03 不把所有邻近 RCSD 对象都视为当前路口的一部分。RCSD 语�
 `single_sided_t_mouth + association_class=A` 的横方向口门必须通过 tracing 求解。tracing seed 来自竖方向候选空间内的相关 `RCSDRoad / RCSDRoad chain`；最终确认的 terminal `RCSDNode` 必须落在横方向候选空间内；若 tracing 无法在横方向两侧都确认 terminal `RCSDNode`，横方向回到 generic directional boundary。
 
 若冻结 `Step3` 已对当前 `single_sided_t_mouth` case 应用 `two_node_t_bridge`，`Step6` 必须继承这条 bridge corridor 参与 directional boundary / polygon_seed 计算，不得在横方向截断后留下中心断开或多组件狭长残留。
+
+`compact_semantic_target_road_surface_portal` 是 Step6 的受限 ownership 证据：只面向跨度不超过 `12.0m` 的多 alias support-only 目标，在冻结 Step3 allowed surface 内恢复 raw DriveZone 端点连通分区。它产生显式 portal 几何与前后审计，不修改原始 DriveZone，也不授权长距离或跨层别名强连通。
 
 ## 6. internal full-input 数据形态
 

@@ -28,6 +28,9 @@ from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step6_geometry import (
     build_step6_result,
     build_step6_status_doc,
 )
+from rcsd_topo_poc.modules.t03_virtual_junction_anchor.step6_geometry_primitives import (
+    _prune_components_without_business_evidence,
+)
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.finalization_models import FinalizationContext
 from tests.modules.t03_virtual_junction_anchor._association_helpers import (
     build_center_case_a,
@@ -87,6 +90,66 @@ def test_support_only_tiny_fragment_cleanup_keeps_dominant_target_component() ->
     assert applied is True
     assert step6_geometry._component_count(pruned) == 1
     assert pruned.area == 100.0
+
+
+def test_component_cleanup_removes_only_evidence_free_and_numerical_parts() -> None:
+    target_component = box(-5.0, -5.0, 5.0, 5.0)
+    carrier_component = box(20.0, -5.0, 30.0, 5.0)
+    evidence_free_component = box(50.0, -5.0, 60.0, 5.0)
+    numerical_fragment = box(80.0, 0.0, 80.000001, 0.000001)
+    geometry = unary_union(
+        [
+            target_component,
+            carrier_component,
+            evidence_free_component,
+            numerical_fragment,
+        ]
+    )
+    business_evidence = unary_union([Point(0.0, 0.0), Point(25.0, 0.0)])
+
+    pruned, audit = _prune_components_without_business_evidence(
+        geometry,
+        business_evidence,
+    )
+
+    assert audit["applied"] is True
+    assert audit["component_count_before"] == 4
+    assert audit["component_count_after"] == 2
+    assert audit["removed_component_count"] == 2
+    assert audit["silent_fix"] is False
+    assert pruned.equals(unary_union([target_component, carrier_component]))
+
+
+def test_component_cleanup_is_fail_safe_without_business_evidence() -> None:
+    geometry = unary_union(
+        [
+            box(-5.0, -5.0, 5.0, 5.0),
+            box(20.0, -5.0, 30.0, 5.0),
+        ]
+    )
+
+    pruned, audit = _prune_components_without_business_evidence(geometry, None)
+
+    assert audit["applied"] is False
+    assert audit["fallback_reason"] == "business_evidence_empty_fail_safe"
+    assert pruned.equals(geometry)
+
+
+def test_component_cleanup_keeps_tiny_component_with_business_evidence() -> None:
+    dominant = box(-5.0, -5.0, 5.0, 5.0)
+    tiny_with_target = box(20.0, 0.0, 20.000001, 0.000001)
+    geometry = unary_union([dominant, tiny_with_target])
+    business_evidence = unary_union([Point(0.0, 0.0), Point(20.0, 0.0)])
+
+    pruned, audit = _prune_components_without_business_evidence(
+        geometry,
+        business_evidence,
+    )
+
+    assert audit["applied"] is False
+    assert audit["component_count_after"] == 2
+    assert all(row["kept"] for row in audit["components"])
+    assert pruned.equals(geometry)
 
 
 def test_finalization_accepts_case_a_when_step6_is_clean(tmp_path: Path) -> None:

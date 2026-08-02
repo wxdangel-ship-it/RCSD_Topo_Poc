@@ -4,8 +4,8 @@
   "scope": "Anchor default formal 58 + Anchor_F 7 after visual audit approval",
   "case_count": 65,
   "step7_state_counts": {
-    "accepted": 62,
-    "rejected": 3
+    "accepted": 64,
+    "rejected": 1
   },
   "association_class_counts": {
     "A": 15,
@@ -56,7 +56,7 @@
     {"dataset": "anchor", "case_id": "928223", "template_class": "single_sided_t_mouth", "step7_state": "accepted", "step7_reason": "step7_accepted_after_support_only_convergence", "step6_state": "established", "association_class": "B", "association_state": "review"},
     {"dataset": "anchor", "case_id": "941714", "template_class": "center_junction", "step7_state": "accepted", "step7_reason": "step7_accepted", "step6_state": "established", "association_class": "A", "association_state": "established"},
     {"dataset": "anchor", "case_id": "948228", "template_class": "center_junction", "step7_state": "accepted", "step7_reason": "step7_accepted_after_support_only_convergence", "step6_state": "established", "association_class": "B", "association_state": "review"},
-    {"dataset": "anchor", "case_id": "954218", "template_class": "single_sided_t_mouth", "step7_state": "rejected", "step7_reason": "step7_rejected_after_step6_failure", "step6_state": "not_established", "association_class": "B", "association_state": "review"},
+    {"dataset": "anchor", "case_id": "954218", "template_class": "single_sided_t_mouth", "step7_state": "accepted", "step7_reason": "step7_accepted_after_step6_success", "step6_state": "established", "association_class": "B", "association_state": "review"},
     {"dataset": "anchor", "case_id": "960599", "template_class": "single_sided_t_mouth", "step7_state": "accepted", "step7_reason": "step7_accepted_after_support_only_convergence", "step6_state": "established", "association_class": "B", "association_state": "review"},
     {"dataset": "anchor", "case_id": "967163", "template_class": "center_junction", "step7_state": "accepted", "step7_reason": "step7_accepted_after_support_only_convergence", "step6_state": "established", "association_class": "B", "association_state": "review"},
     {"dataset": "anchor", "case_id": "983405", "template_class": "single_sided_t_mouth", "step7_state": "accepted", "step7_reason": "step7_accepted_after_support_only_convergence", "step6_state": "established", "association_class": "B", "association_state": "review"},
@@ -77,9 +77,9 @@
     {"dataset": "anchor", "case_id": "500863721", "template_class": "single_sided_t_mouth", "step7_state": "accepted", "step7_reason": "step7_accepted_after_support_only_convergence", "step6_state": "established", "association_class": "B", "association_state": "review"},
     {"dataset": "anchor", "case_id": "506658745", "template_class": "single_sided_t_mouth", "step7_state": "accepted", "step7_reason": "step7_accepted_after_support_only_convergence", "step6_state": "established", "association_class": "B", "association_state": "review"},
     {"dataset": "anchor", "case_id": "513244637", "template_class": "center_junction", "step7_state": "accepted", "step7_reason": "step7_accepted_after_support_only_convergence", "step6_state": "established", "association_class": "B", "association_state": "review"},
-    {"dataset": "anchor", "case_id": "520394575", "template_class": "single_sided_t_mouth", "step7_state": "rejected", "step7_reason": "step7_rejected_after_step6_failure", "step6_state": "not_established", "association_class": "B", "association_state": "review"},
+    {"dataset": "anchor", "case_id": "520394575", "template_class": "single_sided_t_mouth", "step7_state": "rejected", "step7_reason": "step7_rejected_after_step6_failure", "step6_state": "not_established", "association_class": "B", "association_state": "not_established"},
     {"dataset": "anchor_f", "case_id": "989550", "template_class": "single_sided_t_mouth", "step7_state": "accepted", "step7_reason": "step7_accepted", "step6_state": "established", "association_class": "A", "association_state": "established"},
-    {"dataset": "anchor_f", "case_id": "991380", "template_class": "center_junction", "step7_state": "rejected", "step7_reason": "step7_rejected_after_step6_failure", "step6_state": "not_established", "association_class": "A", "association_state": "established"},
+    {"dataset": "anchor_f", "case_id": "991380", "template_class": "center_junction", "step7_state": "accepted", "step7_reason": "step7_accepted_after_step6_success", "step6_state": "established", "association_class": "A", "association_state": "established"},
     {"dataset": "anchor_f", "case_id": "14541521", "template_class": "center_junction", "step7_state": "accepted", "step7_reason": "step7_accepted", "step6_state": "established", "association_class": "C", "association_state": "established"},
     {"dataset": "anchor_f", "case_id": "21497084", "template_class": "single_sided_t_mouth", "step7_state": "accepted", "step7_reason": "step7_accepted", "step6_state": "established", "association_class": "A", "association_state": "established"},
     {"dataset": "anchor_f", "case_id": "42342021", "template_class": "center_junction", "step7_state": "accepted", "step7_reason": "step7_accepted_after_support_only_convergence", "step6_state": "established", "association_class": "B", "association_state": "review"},

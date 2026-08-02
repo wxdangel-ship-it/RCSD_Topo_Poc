@@ -66,7 +66,7 @@ run_t05_junction_surface_fusion(
 - `T02_INPUT`：`RCSDIntersection` 既有面；必须可解析到 `mainnodeid` 后才可单源发布。
 - `T03`：`virtual_intersection_polygons.gpkg`，只消费 formal accepted surface candidate。
 - `T04`：`divmerge_virtual_anchor_surface.gpkg`，只消费 `final_state = accepted` 的 feature。
-- `nodes.gpkg`：可选，只用于反查 `mainnodeid / kind_2 / patch_id`，不得被修改。若来源面与 `nodes.gpkg` 均无法提供 `mainnodeid`，该面必须跳过。
+- `nodes.gpkg`：可选，只用于反查 `mainnodeid / kind_2 / patch_id`，不得被修改。归组后必须优先且只从 `id = mainnodeid` 的 canonical mainNode 本体读取 `kind_2 / patch_id`；alias/subNode 不得覆盖。本体缺失或同一 canonical 本体非空值冲突时字段为空并写 `nodes_lookup=canonical_mainnode_missing / nodes_lookup_*_conflict`。若来源面与 `nodes.gpkg` 均无法提供 `mainnodeid`，该面必须跳过。
 
 ### 2.3 CRS
 

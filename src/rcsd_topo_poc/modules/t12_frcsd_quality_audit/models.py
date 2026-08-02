@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA_VERSION = "2026-08-01.t12_frcsd_quality_audit.v10"
+SCHEMA_VERSION = "2026-08-02.t12_frcsd_quality_audit.v12"
 
 REVIEW_STATUSES = frozenset(
     {
@@ -45,6 +45,9 @@ class AuditConfig:
     allow_unverified_t06_evidence: bool = False
     junction_endpoint_tolerance_m: float = 6.0
     junction_local_radius_m: float = 50.0
+    junction_target_anchor_tolerance_m: float = 10.0
+    junction_boundary_match_tolerance_m: float = 10.0
+    junction_boundary_heading_tolerance_deg: float = 25.0
 
     def validate(self) -> None:
         positive = {
@@ -57,10 +60,23 @@ class AuditConfig:
             "sample_spacing_m": self.sample_spacing_m,
             "junction_endpoint_tolerance_m": self.junction_endpoint_tolerance_m,
             "junction_local_radius_m": self.junction_local_radius_m,
+            "junction_target_anchor_tolerance_m": (
+                self.junction_target_anchor_tolerance_m
+            ),
+            "junction_boundary_match_tolerance_m": (
+                self.junction_boundary_match_tolerance_m
+            ),
+            "junction_boundary_heading_tolerance_deg": (
+                self.junction_boundary_heading_tolerance_deg
+            ),
         }
         invalid = [name for name, value in positive.items() if value <= 0]
         if invalid:
             raise T12ContractError(f"T12 parameters must be positive: {', '.join(invalid)}")
+        if self.junction_boundary_heading_tolerance_deg > 180.0:
+            raise T12ContractError(
+                "junction_boundary_heading_tolerance_deg must be <= 180"
+            )
         if self.portal_radius_m < self.local_corridor_m:
             raise T12ContractError(
                 "portal_radius_m must be greater than or equal to local_corridor_m"
@@ -79,6 +95,15 @@ class AuditConfig:
             "allow_unverified_t06_evidence": self.allow_unverified_t06_evidence,
             "junction_endpoint_tolerance_m": self.junction_endpoint_tolerance_m,
             "junction_local_radius_m": self.junction_local_radius_m,
+            "junction_target_anchor_tolerance_m": (
+                self.junction_target_anchor_tolerance_m
+            ),
+            "junction_boundary_match_tolerance_m": (
+                self.junction_boundary_match_tolerance_m
+            ),
+            "junction_boundary_heading_tolerance_deg": (
+                self.junction_boundary_heading_tolerance_deg
+            ),
         }
 
 

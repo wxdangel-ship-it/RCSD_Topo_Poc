@@ -20,13 +20,13 @@ case 级 formal 输出继续兼容现有 `association_*`、`step6_*`、`step7_fi
 
 ## 3. Step 级审计
 
-`Step3` 必须留下合法活动空间冻结证据，包括 `step3_status.json`、`step3_audit.json`、`step3_allowed_space.gpkg`，以及必要的 selected road、negative mask、target edge touch 和失败原因字段。
+`Step3` 必须留下合法活动空间冻结证据，包括 `step3_status.json`、`step3_audit.json`、`step3_allowed_space.gpkg`，以及必要的 selected road、negative mask、统一 `2.0m` target edge touch、实际目标距离和失败原因字段。
 
-`Step4` 必须解释 RCSD 关联语义，包括 `A / B / C`、required / support / foreign 来源、调头口判定、required core gate、降级原因和 dropped ids。
+`Step4` 必须解释 RCSD 关联语义，包括 `A / B / C`、required / support / foreign 来源、调头口判定、canonical group 外部臂、Class B ownership、required core gate、降级原因、dropped ids 与 `raw_topology_guard_audit`。canonical raw alias portal 还必须记录 alias gap、到当前 target 的最小锚定距离、`10.0m` ownership 门禁、DriveZone 覆盖率、两端 Direction 角色、是否只存在 nearby full-raw carrier，以及 `source_geometry_modified=false / silent_fix=false`。
 
 `Step5` 必须解释哪些对象进入 hard negative mask，哪些对象只是 audit-only foreign。已判定为 `related` 的 RCSDRoad 不得进入 hard mask。
 
-`Step6` 必须解释 directional boundary、候选 polygon、几何风险和失败原因。几何 cleanup 不得静默补救拓扑或边界违反。
+`Step6` 必须解释 directional boundary、候选 polygon、无业务证据组件清理、raw/allowed/constrained business connectivity、各级 Road-surface portal、紧凑 alias `12.0m` 门禁、局部 constraint ownership 豁免、几何风险和失败原因。几何 cleanup 不得静默补救拓扑或边界违反；每个处理必须记录前后面积/组件与 `source_geometry_modified=false / silent_fix=false`。
 
 `Step7` 必须把结果压缩为 `accepted / rejected`；批量执行另需显式区分 `runtime_failed`。review 结论不得反写成正式机器状态。
 

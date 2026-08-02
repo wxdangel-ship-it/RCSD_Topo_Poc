@@ -208,9 +208,16 @@ def _local_required_semantic_member_records(
     seen_ids: set[str] = set()
     members: list[NodeRecord] = []
 
-    def add_member_id(node_id: object, *, group_id: str) -> None:
+    def add_member_id(
+        node_id: object,
+        *,
+        group_id: str,
+        retained_group_audit_only: bool = False,
+    ) -> None:
         node_key = str(node_id)
-        if node_key in seen_ids or node_key in overflow_ids:
+        if node_key in seen_ids:
+            return
+        if node_key in overflow_ids and not retained_group_audit_only:
             return
         if group_id in terminal_group_ids and node_key not in local_required_ids:
             return
@@ -240,7 +247,11 @@ def _local_required_semantic_member_records(
                 if node_id is not None and str(node_id) != ""
             }
         for node_id in member_ids:
-            add_member_id(node_id, group_id=group_key)
+            add_member_id(
+                node_id,
+                group_id=group_key,
+                retained_group_audit_only=row.get("gate_decision") == "retained",
+            )
 
     for group_id, row in related_group_audit.items():
         group_key = str(group_id)

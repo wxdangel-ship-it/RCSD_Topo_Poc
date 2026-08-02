@@ -29,6 +29,8 @@ T05 必须解释每个 surface 来源、每个 relation 成功或失败的原因
 
 T03 handoff backfill 只为旧 T03 evidence 兼容服务，读取 T03 已输出的 relation evidence 与 case 级 Step6 状态，输出独立 backfilled evidence、audit 和 summary。它不能新增 T03 业务语义，也不能覆盖原始 T03 输出。
 
+Node 字段反查必须在 surface notes 中记录 `nodes_lookup=canonical_mainnode / canonical_mainnode_missing / direct_node`，并对 `kind_2 / patch_id` 冲突分别记录。该审计证明 alias 没有覆盖 canonical 主节点字段。
+
 ## 5. T10 Feedback 审计
 
 T10 side-group endpoint candidates 与 pair-anchor endpoint clusters 只作为 Phase 2 补充证据。它们只能依附已有成功 relation 或 T03/T04 road-only split 决策补充 RCSDNode grouping，不单独创建 relation，不覆盖 road-only split 主决策。

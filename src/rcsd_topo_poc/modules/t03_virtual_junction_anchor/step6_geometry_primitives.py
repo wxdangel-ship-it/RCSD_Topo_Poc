@@ -598,6 +598,101 @@ def _retain_components_touching_keep_geometry(
         return None
     return _clean_geometry(unary_union(kept))
 
+
+def _meaningful_component_count(geometry: BaseGeometry | None) -> int:
+    polygons = list(_iter_polygons(_clean_geometry(geometry)))
+    total_area = sum(polygon.area for polygon in polygons)
+    area_epsilon = max(1e-4, total_area * 1e-8)
+    return sum(polygon.area > area_epsilon for polygon in polygons)
+
+
+def _prune_components_without_business_evidence(
+    geometry: BaseGeometry | None,
+    business_evidence_geometry: BaseGeometry | None,
+) -> tuple[BaseGeometry | None, dict[str, Any]]:
+    cleaned = _clean_geometry(geometry)
+    polygons = sorted(_iter_polygons(cleaned), key=lambda item: item.area, reverse=True)
+    total_area = sum(polygon.area for polygon in polygons)
+    area_epsilon = max(1e-4, total_area * 1e-8)
+    audit_rows: list[dict[str, Any]] = []
+    kept: list[Polygon] = []
+    evidence = _clean_geometry(business_evidence_geometry)
+
+    for component_index, polygon in enumerate(polygons, start=1):
+        meaningful = polygon.area > area_epsilon
+        has_business_evidence = bool(
+            evidence is not None
+            and polygon.buffer(LINE_COVER_BUFFER_M).intersects(evidence)
+        )
+        keep = has_business_evidence
+        if keep:
+            kept.append(polygon)
+        audit_rows.append(
+            {
+                "component_index": component_index,
+                "area_m2": round(float(polygon.area), 9),
+                "area_ratio": round(
+                    float(polygon.area / total_area) if total_area > 0.0 else 0.0,
+                    9,
+                ),
+                "meaningful": meaningful,
+                "has_business_evidence": has_business_evidence,
+                "kept": keep,
+                "decision": (
+                    "kept_business_evidence"
+                    if keep
+                    else "removed_numerical_fragment"
+                    if not meaningful
+                    else "removed_evidence_free_component"
+                ),
+            }
+        )
+
+    fallback_reason = None
+    if cleaned is None:
+        result = None
+        fallback_reason = "input_geometry_empty"
+    elif len(polygons) <= 1:
+        result = cleaned
+        fallback_reason = "single_component_no_prune"
+    elif evidence is None:
+        result = cleaned
+        fallback_reason = "business_evidence_empty_fail_safe"
+    elif not kept:
+        result = cleaned
+        fallback_reason = "no_component_matches_evidence_fail_safe"
+    else:
+        result = _clean_geometry(unary_union(kept))
+
+    result_polygons = list(_iter_polygons(result))
+    result_area = sum(polygon.area for polygon in result_polygons)
+    applied = bool(
+        cleaned is not None
+        and result is not None
+        and (
+            len(result_polygons) < len(polygons)
+            or result_area < total_area - 1e-9
+        )
+    )
+    return result, {
+        "mode": "component_business_evidence_filter",
+        "applied": applied,
+        "silent_fix": False,
+        "source_geometry_modified": False,
+        "area_epsilon_m2": round(area_epsilon, 9),
+        "component_count_before": len(polygons),
+        "meaningful_component_count_before": sum(
+            bool(row["meaningful"]) for row in audit_rows
+        ),
+        "component_count_after": len(result_polygons),
+        "meaningful_component_count_after": _meaningful_component_count(result),
+        "removed_component_count": max(len(polygons) - len(result_polygons), 0),
+        "removed_area_m2": round(max(total_area - result_area, 0.0), 9),
+        "fallback_reason": fallback_reason,
+        "components": audit_rows,
+    }
+
+
 def _prune_support_only_tiny_fragments(
     finalization_context: FinalizationContext,
     geometry: BaseGeometry | None,

@@ -36,6 +36,8 @@
 
 `Step4~Step7` 必须消费冻结的 Step3 工件，不得回写 Step3，也不得在 Step3 关键前提缺失时静默 fallback。
 
+`single_sided_t_mouth` 的目标组件触达统一采用 `2.0m` 门禁；`target_edge_touch_enabled / reason / tolerance_m / target_drivezone_distances_m` 必须保留。该门禁只决定 Step3 组件是否可解释，不允许把结果推出 DriveZone。
+
 ### 2.2 internal full-input 输入
 
 internal full-input 从共享图层中发现候选 case 并构建局部上下文。共享层至少包括：
@@ -102,15 +104,29 @@ RCSD 语义分层固定为：
 
 `related` 不等于全长 must-cover，`foreign_mask` 不得包含已判定为 `related` 的 RCSDRoad。
 
+Step4 必须发布 `class_b_support_ownership_audit` 与 `raw_topology_guard_audit`。正式原始拓扑阻断理由只允许来自可复算的 Road/Node/Direction 证据，包括：
+
+- `association_raw_multi_component_unmatched_support`
+- `association_raw_compact_alias_directional_terminal_mismatch`
+- `association_raw_connected_semantic_core_ambiguity`
+
+canonical mainNode/alias 仅定义 membership；所有方向证据仍必须沿 raw Road endpoint，并按 `direction=0/1` 双向、`2` snode→enode、`3` enode→snode处理。任一正式 guard 都必须记录引用 Road ID、Direction、输入几何状态和 `silent_fix=false`。
+
+Class B 的 canonical raw alias portal 只有在 alias 端点到当前 SWSD target group 的最小距离 `<=10.0m`、alias 间隙 `<=6.0m`、连接线完全位于原始 DriveZone、两端 incident Road 的 `Direction` 角色合法时，才能作为当前路口的 ownership 证据。这里的 `10.0m` 是“是否属于当前路口”的前置锚定门禁；一旦该 portal 已锚定，后续 Step6 构面距离仍只作审计，不得据此二次拒绝。附近完整 raw 图存在路径、但没有上述局部 ownership 证据时，只能记录为 audit，不得解除 `association_raw_multi_component_unmatched_support`。
+
 ### 3.4 Step6 geometry
 
 Step6 必须在以下条件内生成候选几何：
 
 - 不突破 Step3 legal space
-- 不纳入 Step5 hard negative mask
+- 不纳入 Step5 hard negative mask；唯一例外是已审计的紧凑语义目标 Road-surface portal 对自身新增区域的局部 ownership 豁免
 - 满足 Step1 semantic junction must-cover
 - 满足条件性 `local required RC must-cover`
 - 先确定 directional boundary，再在边界内构面
+
+`association_support_only` 且目标数不少于 2 时，若目标最大跨度不超过 `12.0m`、DriveZone 输入几何有效、原始 Road-surface 端点分区可比较但当前结果不等价，Step6 可在冻结 Step3 allowed surface 内尝试 `compact_semantic_target_road_surface_portal`。候选只有在恢复完整 raw 端点分区等价时采用；新增区域同时成为 directional/foreign 局部门禁的显式审计豁免。长距离 alias、无效输入、不可比较或仍不等价的候选必须保守拒绝。
+
+`MultiPolygon` 仅为 review 信号。Step6 必须删除没有 target、selected Road、required/support Road/Node 等业务证据的组件；不得仅按组件数、形状指标或视觉平整度拒绝，也不得跨越原始不连通 Road-surface 强制单 Polygon。
 
 Step6 不冻结 solver 常量、阈值、buffer 或具体构面参数。
 
@@ -207,9 +223,9 @@ Release / `DEBUG_VISUAL != 1` 默认不生成最终审计图片；Debug / `DEBUG
 
 ## 6. 最小审计字段
 
-`association_status.json` 至少覆盖 case/template、association result、Step3 prerequisite、RCSD evidence、u-turn audit、connector/group audit 六组信息，核心字段包括 `case_id`、`template_class`、`association_class`、`association_state`、`reason`、`step3_state`、`selected_road_ids`、`required_*`、`support_*`、`excluded_*`、`related_*`、`foreign_mask_source_rcsdroad_ids`、`u_turn_*`、`nonsemantic_connector_rcsdnode_ids`、`true_foreign_rcsdnode_ids`、`degree2_merged_rcsdroad_groups`。
+`association_status.json` 至少覆盖 case/template、association result、Step3 prerequisite、RCSD evidence、u-turn audit、connector/group audit 六组信息，核心字段包括 `case_id`、`template_class`、`association_class`、`association_state`、`reason`、`step3_state`、`selected_road_ids`、`required_*`、`support_*`、`excluded_*`、`related_*`、`foreign_mask_source_rcsdroad_ids`、`u_turn_*`、`nonsemantic_connector_rcsdnode_ids`、`true_foreign_rcsdnode_ids`、`degree2_merged_rcsdroad_groups`、`class_b_support_ownership_audit`、`raw_topology_guard_audit`。
 
-`step6_status.json` 至少覆盖几何结果、must-cover、legal space、direction boundary、foreign exclusion、related/local-required/foreign-mask 和 Step3 bridge 继承信息，核心字段包括 `step6_state`、`geometry_established`、`reason`、`semantic_junction_cover_ok`、`required_rc_cover_ok`、`within_legal_space_ok`、`within_direction_boundary_ok`、`foreign_exclusion_ok`、`related_*`、`local_required_*`、`foreign_mask_source_rcsdroad_ids`、`step3_two_node_t_bridge_inherited`。
+`step6_status.json` 至少覆盖几何结果、must-cover、legal space、direction boundary、foreign exclusion、related/local-required/foreign-mask、Step3 bridge、输入几何和 business connectivity 信息，核心字段包括 `step6_state`、`geometry_established`、`reason`、`semantic_junction_cover_ok`、`required_rc_cover_ok`、`within_legal_space_ok`、`within_direction_boundary_ok`、`foreign_exclusion_ok`、`related_*`、`local_required_*`、`foreign_mask_source_rcsdroad_ids`、`step3_two_node_t_bridge_inherited`、`drivezone_input_*`、`business_connectivity_*`、`raw_topology_guard_audit`。`step6_audit.json` 还必须记录 `component_business_evidence_cleanup`、各级 Road-surface portal、`compact_target_road_surface_portal`、阈值、前后端点分区及 `silent_fix=false`；若输入合法化被显式采用，`input_geometry` 必须同时记录 `raw_union_polygon_component_count`、`normalized_polygon_component_count` 与 `normalization_polygon_component_delta`，不能只记录面积变化。
 
 `step7_status.json` 至少覆盖 case/template、association、Step6、Step7、accepted、reason、root cause 和 note。不得包含 `visual_review_class`、`visual_audit_class`、`visual_audit_family`、`manual_review_recommended`。
 
@@ -252,5 +268,7 @@ Release / `DEBUG_VISUAL != 1` 默认不生成最终审计图片；Debug / `DEBUG
 - Step5 / Step6 hard foreign exclusion
 - Step6 geometry established
 - 若 `two_node_t_bridge_applied = true`，几何不得因横方向截断破坏 bridge 连通性
+- 若应用紧凑语义目标 portal，raw Road-surface 与最终结果的业务端点连通分区必须完全等价，且新增面积必须完全位于冻结 Step3 allowed surface 内
+- 仅有 `MultiPolygon` 或形状风险不得构成拒绝；存在原始同组件业务端点被最终面切断时不得 accepted
 
 `Step7 rejected` 表示当前冻结约束下不成立；视觉审计类只用于人工复核分型。

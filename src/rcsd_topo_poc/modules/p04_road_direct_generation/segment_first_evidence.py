@@ -29,6 +29,25 @@ class SegmentEvidenceResult:
     summary: dict[str, object]
 
 
+def _ensure_assignment_source(
+    frame: gpd.GeoDataFrame,
+) -> gpd.GeoDataFrame:
+    """Keep the internal assignment-source contract stable across empty branches."""
+
+    result = frame.copy()
+    if "assignment_source" not in result:
+        result["assignment_source"] = pd.Series(
+            "member_assignment",
+            index=result.index,
+            dtype="object",
+        )
+    else:
+        result["assignment_source"] = result["assignment_source"].fillna(
+            "member_assignment"
+        )
+    return result
+
+
 def build_segment_evidence(
     patch_roads: gpd.GeoDataFrame,
     patch_lanes: gpd.GeoDataFrame,
@@ -76,7 +95,7 @@ def build_segment_evidence(
             else set()
         ),
     )
-    assignments = target_assignment.assignments
+    assignments = _ensure_assignment_source(target_assignment.assignments)
     rejections = target_assignment.rejections
     lane_centers = _target_lane_centers(patch_lanes, config.run_id)
     geometry_sources = gpd.GeoDataFrame(
@@ -227,6 +246,8 @@ def build_segment_evidence(
         target_fragment_summary["baseline_recovery_candidate_count"] = int(
             len(recovery_candidates)
         )
+    carrier_assignments = _ensure_assignment_source(carrier_assignments)
+    target_fragment_audit = _ensure_assignment_source(target_fragment_audit)
     summary = {
         "patch_road_count": int(len(centers)),
         "assigned_patch_road_count": int(len(assignments)),
@@ -524,6 +545,7 @@ def assign_patch_roads_to_segments(
                 "carrier_role": "local_connector" if local_structure else "directional_corridor",
                 "takeover_eligible": True,
                 "assignment_state": "assigned_local_structure" if local_structure else "assigned",
+                "assignment_source": "member_assignment",
                 "reason_codes": "segment_member_search_primitive",
             }
         )

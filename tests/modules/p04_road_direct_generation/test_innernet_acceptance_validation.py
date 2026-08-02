@@ -135,6 +135,7 @@ def _write_complete_run(tmp_path: Path, *, patch_workers: int | None) -> Path:
     progress_events = []
     progress_stages = (
         "input_patch_layer",
+        "patch_road_center",
         "segment_carrier",
         "junction_portal",
         "node_materialization",

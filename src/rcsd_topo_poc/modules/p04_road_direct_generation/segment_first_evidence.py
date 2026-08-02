@@ -6,9 +6,15 @@ import math
 import geopandas as gpd
 import numpy as np
 import pandas as pd
+from shapely import line_interpolate_point, line_locate_point
 from shapely.geometry import LineString, Point
 
 from .segment_first_config import SegmentFirstConfig
+from .segment_first_progress import (
+    advance_progress,
+    begin_progress_stage,
+    finish_progress_stage,
+)
 from .segment_first_skeleton import canonical_id, parse_id_list
 from .segment_first_target_assignment import apply_target_segment_anchors
 from .segment_first_target_fragments import build_target_carrier_fragments
@@ -439,9 +445,18 @@ def build_patch_road_centers(
     lane_groups = {key: group for key, group in lane_frame.groupby("patch_road_key")}
     center_rows: list[dict[str, object]] = []
     relation_rows: list[dict[str, object]] = []
+    progress_stage = "patch_road_center"
+    centered_count = 0
+    without_lane_count = 0
+    begin_progress_stage(
+        progress_stage,
+        len(road_frame),
+        detail="build_patch_road_centers",
+    )
     for road in road_frame.itertuples():
         group = lane_groups.get(road.patch_road_key)
         if group is None or group.empty:
+            without_lane_count += 1
             center_rows.append(
                 {
                     **road._asdict(),
@@ -452,6 +467,15 @@ def build_patch_road_centers(
                     "evidence_quality_state": "patch_road_without_lane",
                     "geometry": road.geometry,
                 }
+            )
+            advance_progress(
+                progress_stage,
+                last_unit=road.patch_road_key,
+                counters={
+                    "centered": centered_count,
+                    "without_lane": without_lane_count,
+                    "relations": len(relation_rows),
+                },
             )
             continue
         center = _medoid_lane(group)
@@ -477,6 +501,7 @@ def build_patch_road_centers(
                 "geometry": centered_geometry,
             }
         )
+        centered_count += 1
         for lane in group.itertuples():
             relation_rows.append(
                 {
@@ -490,6 +515,23 @@ def build_patch_road_centers(
                     "geometry": lane.geometry,
                 }
             )
+        advance_progress(
+            progress_stage,
+            last_unit=road.patch_road_key,
+            counters={
+                "centered": centered_count,
+                "without_lane": without_lane_count,
+                "relations": len(relation_rows),
+            },
+        )
+    finish_progress_stage(
+        progress_stage,
+        counters={
+            "centered": centered_count,
+            "without_lane": without_lane_count,
+            "relations": len(relation_rows),
+        },
+    )
     centers = gpd.GeoDataFrame(center_rows, geometry="geometry", crs=roads.crs)
     relations = gpd.GeoDataFrame(relation_rows, geometry="geometry", crs=roads.crs)
     return centers.reset_index(drop=True), relations.reset_index(drop=True)
@@ -633,14 +675,24 @@ def _centered_patch_road_geometry(
     span_ratio = float(medoid_lane.length / source_road.length)
     sample_count = max(3, int(math.ceil(source_road.length / 5.0)) + 1)
     sample_distances = np.linspace(0.0, source_road.length, sample_count)
+    sample_points, sample_tangents = _sample_points_and_tangents(
+        source_road,
+        sample_distances,
+    )
+    nearest_points_by_lane = [
+        line_interpolate_point(
+            lane,
+            line_locate_point(lane, sample_points),
+        )
+        for lane in lanes.geometry
+    ]
     sample_offsets: list[float] = []
-    for distance in sample_distances:
-        point = source_road.interpolate(float(distance))
-        tangent = _local_tangent(source_road, float(distance))
+    for sample_index, point in enumerate(sample_points):
+        tangent = sample_tangents[sample_index]
         normal = np.array([-tangent[1], tangent[0]])
         offsets: list[float] = []
-        for lane in lanes.geometry:
-            nearest = lane.interpolate(lane.project(point))
+        for nearest_points in nearest_points_by_lane:
+            nearest = nearest_points[sample_index]
             vector = np.array([nearest.x - point.x, nearest.y - point.y])
             longitudinal = abs(float(np.dot(vector, tangent)))
             lateral = float(np.dot(vector, normal))
@@ -681,12 +733,36 @@ def _local_tangent(line: LineString, distance: float) -> np.ndarray:
     return vector / norm
 
 
+def _sample_points_and_tangents(
+    line: LineString,
+    distances: np.ndarray,
+) -> tuple[np.ndarray, list[np.ndarray]]:
+    delta = min(1.0, max(line.length / 100.0, 0.10))
+    points = line_interpolate_point(line, distances)
+    starts = line_interpolate_point(
+        line,
+        np.maximum(0.0, distances - delta),
+    )
+    ends = line_interpolate_point(
+        line,
+        np.minimum(line.length, distances + delta),
+    )
+    tangents: list[np.ndarray] = []
+    for start, end in zip(starts, ends):
+        vector = np.array([end.x - start.x, end.y - start.y])
+        norm = float(np.linalg.norm(vector))
+        tangents.append(
+            np.array([1.0, 0.0]) if norm <= 1e-9 else vector / norm
+        )
+    return points, tangents
+
+
 def _sampled_offset_line(line: LineString, offset: float) -> LineString:
     count = max(3, int(math.ceil(line.length / 2.0)) + 1)
+    distances = np.linspace(0.0, line.length, count)
+    points, tangents = _sample_points_and_tangents(line, distances)
     coords: list[tuple[float, float]] = []
-    for distance in np.linspace(0.0, line.length, count):
-        point = line.interpolate(float(distance))
-        tangent = _local_tangent(line, float(distance))
+    for point, tangent in zip(points, tangents):
         normal = np.array([-tangent[1], tangent[0]])
         coords.append(
             (

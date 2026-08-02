@@ -283,6 +283,7 @@ def test_innernet_script_reports_heartbeat_during_long_run(
     assert "stage=synthetic_units#1" in console.err
     assert "units=1/4(25.0%)" in console.err
     assert "coverage=queries=" in console.err
+    assert "prepared_parts=" in console.err
     assert "corridor_cache=queries=" in console.err
     assert "active=test_innernet_script.py:slow_runner:" in console.err
 

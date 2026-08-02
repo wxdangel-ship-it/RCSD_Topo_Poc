@@ -41,6 +41,7 @@ NATIVE_THREAD_LIMITS = (
 )
 REQUIRED_PROGRESS_STAGE_GROUPS = {
     "patch": {"input_patch_layer"},
+    "evidence": {"patch_road_center"},
     "segment": {"segment_carrier"},
     "junction": {"junction_portal"},
     "node": {"node_topology_pairs", "node_materialization"},

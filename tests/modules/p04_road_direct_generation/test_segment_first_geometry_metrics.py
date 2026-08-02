@@ -86,6 +86,40 @@ def test_surface_coverage_indexes_large_multipolygon_without_value_drift() -> No
     assert actual == expected
 
 
+def test_surface_coverage_uses_native_component_terminal_predicates() -> None:
+    surface = union_all(
+        [
+            box(index * 4.0, -1.0, index * 4.0 + 2.0, 1.0)
+            for index in range(32)
+        ]
+    )
+    lines = [
+        LineString([(0.25, 0.0), (1.75, 0.0)]),
+        LineString([(2.25, 0.0), (3.75, 0.0)]),
+        LineString([(-1.0, 0.0), (3.0, 0.0)]),
+    ]
+    expected = [
+        float(line.intersection(surface).length / line.length)
+        for line in lines
+    ]
+    before = surface_coverage_runtime_stats()
+
+    actual = [surface_coverage(line, surface) for line in lines]
+    after = surface_coverage_runtime_stats()
+
+    assert actual == expected
+    assert after["terminal_covers_count"] == before["terminal_covers_count"] + 1
+    assert after["terminal_disjoint_count"] == (
+        before["terminal_disjoint_count"] + 1
+    )
+    assert after["multipolygon_index_query_count"] == (
+        before["multipolygon_index_query_count"] + 1
+    )
+    assert after["native_component_prepare_count"] >= (
+        before["native_component_prepare_count"] + 1
+    )
+
+
 def test_surface_coverage_preserves_buffered_union_numeric_value() -> None:
     frame = gpd.GeoDataFrame(
         {

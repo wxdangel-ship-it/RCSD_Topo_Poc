@@ -8,7 +8,7 @@ import time
 
 import numpy as np
 from shapely import union_all
-from shapely.geometry import LineString, box
+from shapely.geometry import LineString, MultiPolygon, Point, box
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO_ROOT / "src"))
@@ -27,39 +27,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--component-count", type=int, default=1500)
     parser.add_argument("--query-count", type=int, default=2000)
     parser.add_argument("--minimum-speedup", type=float, default=10.0)
+    parser.add_argument(
+        "--scenario",
+        choices=("separated-components", "complex-component"),
+        default="separated-components",
+    )
+    parser.add_argument("--complex-quad-segments", type=int, default=25000)
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
-    polygons = np.asarray(
-        [
-            box(
-                (index % 50) * 100.0,
-                (index // 50) * 100.0,
-                (index % 50) * 100.0 + 20.0,
-                (index // 50) * 100.0 + 20.0,
-            )
-            for index in range(args.component_count)
-        ],
-        dtype=object,
-    )
-    surface = union_all(polygons).buffer(1.0)
-    lines = [
-        LineString(
-            [
-                (
-                    (index % 500) * 10.0 + (index // 500) * 0.123,
-                    ((index * 17) % 300) * 10.0 + 10.0,
-                ),
-                (
-                    (index % 500) * 10.0 + (index // 500) * 0.123 + 15.0,
-                    ((index * 17) % 300) * 10.0 + 10.0,
-                ),
-            ]
-        )
-        for index in range(args.query_count)
-    ]
+    surface, lines = _scenario_inputs(args)
 
     started = time.perf_counter()
     expected = [
@@ -92,6 +71,7 @@ def main() -> int:
     runtime_stats = surface_coverage_runtime_stats()
     payload = {
         "status": "passed" if passed else "failed",
+        "scenario": args.scenario,
         "component_count": args.component_count,
         "surface_geometry_type": surface.geom_type,
         "query_count": args.query_count,
@@ -109,6 +89,67 @@ def main() -> int:
         args.report_path.parent.mkdir(parents=True, exist_ok=True)
         args.report_path.write_text(rendered + "\n", encoding="utf-8")
     return 0 if passed else 1
+
+
+def _scenario_inputs(args: argparse.Namespace) -> tuple[object, list[LineString]]:
+    if args.scenario == "complex-component":
+        if args.component_count < 8:
+            raise ValueError("complex-component requires at least 8 components")
+        if args.complex_quad_segments < 4:
+            raise ValueError("complex-quad-segments must be at least 4")
+        primary = Point(0.0, 0.0).buffer(
+            1000.0,
+            quad_segs=args.complex_quad_segments,
+        )
+        parts = [primary]
+        parts.extend(
+            box(
+                3000.0 + index * 30.0,
+                0.0,
+                3010.0 + index * 30.0,
+                10.0,
+            )
+            for index in range(args.component_count - 1)
+        )
+        surface = MultiPolygon(parts)
+        generator = np.random.default_rng(2406)
+        starts = generator.uniform(-600.0, 600.0, size=(args.query_count, 2))
+        deltas = generator.uniform(-20.0, 20.0, size=(args.query_count, 2))
+        lines = [
+            LineString([tuple(start), tuple(start + delta)])
+            for start, delta in zip(starts, deltas, strict=True)
+        ]
+        return surface, lines
+
+    polygons = np.asarray(
+        [
+            box(
+                (index % 50) * 100.0,
+                (index // 50) * 100.0,
+                (index % 50) * 100.0 + 20.0,
+                (index // 50) * 100.0 + 20.0,
+            )
+            for index in range(args.component_count)
+        ],
+        dtype=object,
+    )
+    surface = union_all(polygons).buffer(1.0)
+    lines = [
+        LineString(
+            [
+                (
+                    (index % 500) * 10.0 + (index // 500) * 0.123,
+                    ((index * 17) % 300) * 10.0 + 10.0,
+                ),
+                (
+                    (index % 500) * 10.0 + (index // 500) * 0.123 + 15.0,
+                    ((index * 17) % 300) * 10.0 + 10.0,
+                ),
+            ]
+        )
+        for index in range(args.query_count)
+    ]
+    return surface, lines
 
 
 if __name__ == "__main__":

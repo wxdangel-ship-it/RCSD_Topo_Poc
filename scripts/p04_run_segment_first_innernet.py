@@ -338,6 +338,7 @@ def _format_coverage_stats(stats: dict[str, object]) -> str:
         f"({float(stats.get('threshold_terminal_ratio', 0.0)):.1%}),"
         f"exact_fallback={int(stats.get('threshold_exact_fallback_count', 0))},"
         f"multipolygon_index={multipolygon},"
+        f"prepared_parts={int(stats.get('native_component_prepare_count', 0))},"
         f"direct={int(stats.get('direct_query_count', 0))},"
         f"unsafe_local={int(stats.get('unsafe_local_reconstruction_count', 0))}"
     )

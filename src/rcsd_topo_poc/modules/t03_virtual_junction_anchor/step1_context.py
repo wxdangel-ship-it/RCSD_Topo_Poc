@@ -3,7 +3,9 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Iterable
 
+from shapely.geometry.base import BaseGeometry
 from shapely.ops import unary_union
+from shapely.validation import explain_validity
 
 from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import LayerFeature, read_vector_layer
 from rcsd_topo_poc.modules.t03_virtual_junction_anchor.case_models import (
@@ -31,6 +33,16 @@ def _coerce_int(value: object) -> int | None:
         return int(float(normalized))
     except (TypeError, ValueError):
         return None
+
+
+def _polygon_component_count(geometry: BaseGeometry) -> int:
+    if geometry.geom_type == "Polygon":
+        return 1
+    if geometry.geom_type == "MultiPolygon":
+        return len(geometry.geoms)
+    if hasattr(geometry, "geoms"):
+        return sum(_polygon_component_count(part) for part in geometry.geoms)
+    return 0
 
 
 def _parse_nodes(features: Iterable[LayerFeature]) -> tuple[NodeRecord, ...]:
@@ -154,6 +166,60 @@ def _resolve_target_road_ids(roads: tuple[RoadRecord, ...], target_group: Semant
     )
 
 
+def _normalize_drivezone_with_audit(
+    drivezone_geometries: list[BaseGeometry],
+) -> tuple[BaseGeometry, dict[str, object]]:
+    invalid_features = [
+        {
+            "feature_index": feature_index,
+            "geometry_type": geometry.geom_type,
+            "validity_reason": explain_validity(geometry),
+        }
+        for feature_index, geometry in enumerate(drivezone_geometries)
+        if not geometry.is_valid
+    ]
+    raw_union = unary_union(drivezone_geometries)
+    normalization_required = not raw_union.is_valid
+    normalized = raw_union.buffer(0) if normalization_required else raw_union
+    raw_component_count = _polygon_component_count(raw_union)
+    normalized_component_count = _polygon_component_count(normalized)
+    return normalized, {
+        "feature_count": len(drivezone_geometries),
+        "invalid_feature_count": len(invalid_features),
+        "invalid_features": invalid_features,
+        "raw_union_valid": bool(raw_union.is_valid),
+        "raw_union_validity_reason": explain_validity(raw_union),
+        "invalid_features_absorbed_by_valid_raw_union": bool(
+            invalid_features and raw_union.is_valid
+        ),
+        "normalization_applied": normalization_required,
+        "normalization_mode": (
+            "in_memory_buffer_zero"
+            if normalization_required
+            else (
+                "valid_raw_union_no_repair"
+                if invalid_features
+                else "not_required"
+            )
+        ),
+        "normalized_valid": bool(normalized.is_valid),
+        "normalized_validity_reason": explain_validity(normalized),
+        "raw_union_area_m2": round(float(raw_union.area), 6),
+        "normalized_area_m2": round(float(normalized.area), 6),
+        "normalization_area_delta_m2": round(
+            abs(float(normalized.area) - float(raw_union.area)),
+            9,
+        ),
+        "raw_union_polygon_component_count": raw_component_count,
+        "normalized_polygon_component_count": normalized_component_count,
+        "normalization_polygon_component_delta": (
+            normalized_component_count - raw_component_count
+        ),
+        "source_modified": False,
+        "silent_fix": False,
+    }
+
+
 def build_step1_context_from_features(
     *,
     case_spec: CaseSpec,
@@ -171,6 +237,9 @@ def build_step1_context_from_features(
     drivezone_geometries = [feature.geometry for feature in drivezone_features if feature.geometry is not None]
     if not drivezone_geometries:
         raise ValueError(f"drivezone is empty for case_id={case_spec.case_id}")
+    drivezone_geometry, drivezone_input_audit = _normalize_drivezone_with_audit(
+        drivezone_geometries
+    )
     representative_node = _resolve_representative_node(nodes, case_spec.case_id)
     target_group = _build_target_group(nodes, representative_node, case_spec.case_id)
     foreign_groups = _build_foreign_groups(nodes, target_group)
@@ -183,8 +252,9 @@ def build_step1_context_from_features(
         roads=roads,
         rcsd_roads=rcsd_roads,
         rcsd_nodes=rcsd_nodes,
-        drivezone_geometry=unary_union(drivezone_geometries).buffer(0),
+        drivezone_geometry=drivezone_geometry,
         target_road_ids=_resolve_target_road_ids(roads, target_group),
+        drivezone_input_audit=drivezone_input_audit,
     )
 
 

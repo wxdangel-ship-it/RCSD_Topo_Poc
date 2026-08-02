@@ -43,6 +43,11 @@ def test_real_case_520394575_stays_rejected_when_step3_and_anchor_data_exist() -
     step7_result = build_step7_result(finalization_context, step6_result)
 
     assert step6_result.geometry_established is False
-    assert step6_result.audit_doc["assembly"]["directional_cut_rule"]["mode"] == "directional_selected_road_cut"
-    assert step6_result.audit_doc["assembly"]["directional_cut_rule"]["branch_count"] >= 1
+    assert step6_result.reason == "step6_blocked_by_association"
+    assert step6_result.extra_status_fields["association_reason"] == (
+        "association_raw_multi_component_unmatched_support"
+    )
+    raw_guard = step6_result.extra_status_fields["raw_topology_guard_audit"]
+    assert raw_guard["unmatched_support"] is True
+    assert raw_guard["unmatched_support_component_ids"]
     assert step7_result.step7_state == "rejected"

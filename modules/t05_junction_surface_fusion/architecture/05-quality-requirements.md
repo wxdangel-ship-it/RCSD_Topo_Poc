@@ -14,6 +14,7 @@
 - 一个 SWSD `target_id` 在主表中最多一条成功 relation。
 - 多个 RCSD 候选可合并时先 grouping，再输出唯一 relation；无法合并时输出 blocking error。
 - T03/T04 road-only 场景才进入 RCSDRoad split；`kind_2=64` 环岛只归组已有 RCSDNode，不 split RCSDRoad。
+- `mainnodeid` group 的 `kind_2 / patch_id` 必须来自 canonical mainNode 本体；不得依赖图层行序选择 alias 字段。canonical 缺失或字段冲突必须显式审计，不得 silent fallback。
 - T07 relation-only target 即使没有 Phase 1 surface，也可以进入最终 relation。
 
 ## 3. GIS 与拓扑要求

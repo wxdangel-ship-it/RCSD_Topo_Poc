@@ -13,6 +13,7 @@ T05 是项目“路口 1:1 关系层”的统一发布模块。它汇总 T07 / T
 - 用 cardinality audit 阻断同一 SWSD 多 RCSD 或重复 success target 的错误成功关系；同一 RCSD 可对应多个 SWSD 语义路口时保留关系并审计 `many_target_to_one_base`。
 - 将 T07/T03/T04 的多来源证据收口为 T06 可消费的单一关系主表，确保每个 SWSD target 在主表中最多只有一个成功 RCSD base。
 - 输出路口级锚定漏斗，面向 T07/T03/T04/T05 全链路汇总 `kind_2 in {4,8,16,64,128,2048}` 的语义路口处理、证据、发布、成功和拓扑可消费情况。
+- 对 `mainnodeid` 归组的 SWSD Node，`kind_2 / patch_id` 必须从 `id = mainnodeid` 的 canonical mainNode 本体读取；alias/subNode 仅用于 membership，不能因读取顺序覆盖主节点字段。canonical 本体缺失或本体字段冲突时保留为空并进入审计，不做猜测。
 
 ## 3. 当前范围
 

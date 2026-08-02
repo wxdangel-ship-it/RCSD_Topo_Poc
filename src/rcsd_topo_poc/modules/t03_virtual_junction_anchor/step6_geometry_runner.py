@@ -64,6 +64,8 @@ TARGET_NODE_CONNECTION_MIN_RATIO = 0.98
 
 FOREIGN_OVERLAP_TOLERANCE_M2 = 0.05
 
+BOUNDARY_ESCAPE_AREA_TOLERANCE_M2 = 0.0001
+
 FINAL_CLOSE_M = 1.6
 
 DIRECTIONAL_CUT_DISTANCE_M = 20.0
@@ -96,6 +98,8 @@ PRIMARY_INFEASIBLE = "infeasible_under_frozen_constraints"
 
 PRIMARY_SOLVER_FAILED = "geometry_solver_failed"
 
+PRIMARY_INPUT_INVALID = "input_geometry_invalid"
+
 SECONDARY_STEP1_STEP3_CONFLICT = "step1_step3_conflict"
 
 SECONDARY_STAGE3_RC_GAP = "stage3_rc_gap"
@@ -113,6 +117,8 @@ SECONDARY_CLEANUP_UNDERTRIM = "cleanup_undertrim"
 SECONDARY_FOREIGN_REINTRODUCED = "foreign_reintroduced_by_cleanup"
 
 SECONDARY_SHAPE_ARTIFACT = "shape_artifact_failure"
+
+SECONDARY_INPUT_NORMALIZATION_UNRELIABLE = "input_geometry_normalization_unreliable"
 
 from .step6_geometry_models import (
     _DirectionalBranchWindow,
@@ -141,10 +147,12 @@ from .step6_geometry_primitives import (
     _line_buffers,
     _line_coverage_ratio,
     _line_coverage_ratio_with_cover_geometry,
+    _meaningful_component_count,
     _node_cover_ratio,
     _node_cover_ratio_with_cover_geometry,
     _point_buffers,
     _point_on_line,
+    _prune_components_without_business_evidence,
     _prune_support_only_tiny_fragments,
     _required_node_records,
     _retain_components_touching_keep_geometry,
@@ -179,6 +187,14 @@ from .step6_geometry_context import (
     _semantic_intra_rcsdnode_line_geometry,
     _single_sided_horizontal_pair_ids,
     _single_sided_vertical_exit_geometry,
+)
+from .step6_business_connectivity import build_business_connectivity_audit
+from .step6_compact_target_portal import (
+    restore_compact_semantic_target_connectivity,
+)
+from .step6_road_surface_portal import build_road_surface_portal_boundary
+from .step6_surface_regularization import (
+    regularize_surface_with_legal_edge_trace,
 )
 
 from .step6_geometry import (
@@ -241,14 +257,57 @@ def build_step6_result(
             secondary_root_cause=SECONDARY_STEP1_STEP3_CONFLICT,
         )
     if association_case_result.association_state == "not_established":
+        blocked_review_signals: list[str] = []
+        blocked_input_audit = dict(step1.drivezone_input_audit or {})
+        if blocked_input_audit.get("normalization_applied"):
+            blocked_review_signals.append(
+                "drivezone_input_geometry_normalized_with_audit"
+            )
+        elif blocked_input_audit.get(
+            "invalid_features_absorbed_by_valid_raw_union"
+        ):
+            blocked_review_signals.append(
+                "drivezone_invalid_features_absorbed_by_valid_raw_union"
+            )
         return _step6_failure_result(
             finalization_context=finalization_context,
             reason="step6_blocked_by_association",
             primary_root_cause=PRIMARY_INFEASIBLE,
             secondary_root_cause=SECONDARY_STEP1_STEP3_CONFLICT,
+            review_signals=blocked_review_signals,
             extra_status_fields={
                 "association_reason": association_case_result.reason,
                 "association_state": association_case_result.association_state,
+                "required_rcsdnode_ids": list(
+                    association_case_result.extra_status_fields.get(
+                        "required_rcsdnode_ids"
+                    )
+                    or []
+                ),
+                "required_rcsdroad_ids": list(
+                    association_case_result.extra_status_fields.get(
+                        "required_rcsdroad_ids"
+                    )
+                    or []
+                ),
+                "support_rcsdnode_ids": list(
+                    association_case_result.extra_status_fields.get(
+                        "support_rcsdnode_ids"
+                    )
+                    or []
+                ),
+                "support_rcsdroad_ids": list(
+                    association_case_result.extra_status_fields.get(
+                        "support_rcsdroad_ids"
+                    )
+                    or []
+                ),
+                "raw_topology_guard_audit": dict(
+                    association_case_result.extra_status_fields.get(
+                        "raw_topology_guard_audit"
+                    )
+                    or {}
+                ),
             },
         )
     mask_prep_started_perf = perf_counter()
@@ -256,6 +315,25 @@ def build_step6_result(
         allowed_space,
         geometry_cache=geometry_cache,
     )
+    step3_target_edge_touch_enabled = bool(
+        association_context.step3_status_doc.get("target_edge_touch_enabled")
+    )
+    step3_target_edge_touch_tolerance_m = float(
+        association_context.step3_status_doc.get(
+            "target_edge_touch_tolerance_m"
+        )
+        or NODE_COVER_TOLERANCE_M
+    )
+    target_edge_access_geometry = None
+    if step3_target_edge_touch_enabled:
+        target_edge_access_geometry = _clean_geometry(
+            allowed_space.intersection(
+                _point_buffers(
+                    step1.target_group.nodes,
+                    step3_target_edge_touch_tolerance_m,
+                )
+            )
+        )
     target_cover_geometry = _point_buffers(step1.target_group.nodes, TARGET_NODE_BUFFER_M)
     step3_two_node_t_bridge_geometry = _step3_two_node_t_bridge_geometry(
         finalization_context,
@@ -304,6 +382,10 @@ def build_step6_result(
             allowed_space.intersection(direction_clip_geometry) if direction_clip_geometry is not None else None
         )
         target_connected_boundary_fallback_applied = True
+    target_edge_access_seed_applied = False
+    if polygon_seed_geometry is None and target_edge_access_geometry is not None:
+        polygon_seed_geometry = target_edge_access_geometry
+        target_edge_access_seed_applied = True
     if (
         association_case_result.template_class == "single_sided_t_mouth"
         and _node_cover_ratio(step1.target_group.nodes, polygon_seed_geometry) < 1.0
@@ -363,7 +445,33 @@ def build_step6_result(
             target_node_connection_bridge_geometry,
             step3_two_node_t_bridge_geometry,
             support_only_seam_bridge_geometry,
+            target_edge_access_geometry,
         ]
+    )
+    road_surface_portal_terminals: dict[str, BaseGeometry] = {
+        f"target_node:{node.node_id}": node.geometry
+        for node in step1.target_group.nodes
+    }
+    for road in _selected_road_records(finalization_context):
+        local_geometry = _clean_geometry(road.geometry.intersection(direction_boundary_geometry))
+        if local_geometry is not None:
+            road_surface_portal_terminals[f"selected_swsdroad:{road.road_id}"] = local_geometry
+    for node in _required_node_records(finalization_context):
+        road_surface_portal_terminals[f"required_rcsdnode:{node.node_id}"] = node.geometry
+    for road in _required_road_records(finalization_context):
+        local_geometry = _clean_geometry(road.geometry.intersection(allowed_space_tolerance_geometry))
+        if local_geometry is not None:
+            road_surface_portal_terminals[f"required_rcsdroad:{road.road_id}"] = local_geometry
+    (
+        direction_boundary_geometry,
+        road_surface_portal_geometry,
+        road_surface_portal_audit,
+    ) = build_road_surface_portal_boundary(
+        allowed_surface=allowed_space_tolerance_geometry,
+        direction_boundary=direction_boundary_geometry,
+        terminals=road_surface_portal_terminals,
+        bridge_half_width_m=BRANCH_CLIP_HALF_WIDTH_M,
+        seed_missing_terminals=False,
     )
     local_required_nodes = _local_required_node_records(
         finalization_context,
@@ -390,10 +498,6 @@ def build_step6_result(
         SEMANTIC_INTRA_LINE_BUFFER_M,
         geometry_cache=geometry_cache,
     )
-    if semantic_intra_line_cover_geometry is not None:
-        direction_boundary_geometry = _union_geometries(
-            [direction_boundary_geometry, semantic_intra_line_cover_geometry]
-        )
     required_node_cover_geometry = _point_buffers(local_required_nodes, REQUIRED_NODE_BUFFER_M)
     required_road_cover_geometry = _cached_line_buffers(
         local_required_road_geometry,
@@ -408,7 +512,6 @@ def build_step6_result(
             support_only_seam_bridge_geometry,
             required_node_cover_geometry,
             required_road_cover_geometry,
-            semantic_intra_line_cover_geometry,
         ]
     )
     anchor_geometries = [
@@ -418,7 +521,6 @@ def build_step6_result(
         support_only_seam_bridge_geometry,
         required_node_cover_geometry,
         required_road_cover_geometry,
-        semantic_intra_line_cover_geometry,
     ]
     anchor_union_geometry = _union_geometries(anchor_geometries)
     anchor_keep_geometry = (
@@ -435,15 +537,41 @@ def build_step6_result(
                 target_node_connection_bridge_geometry,
                 step3_two_node_t_bridge_geometry,
                 support_only_seam_bridge_geometry,
+                road_surface_portal_geometry,
                 required_node_cover_geometry,
                 required_road_cover_geometry,
-                semantic_intra_line_cover_geometry,
             ]
         )
     )
     raw_polygon = _clean_geometry(raw_polygon.intersection(allowed_space_tolerance_geometry))
     raw_polygon = _clean_geometry(raw_polygon.intersection(direction_boundary_geometry))
     raw_polygon = _retain_components_touching_keep_geometry(raw_polygon, anchor_keep_geometry)
+    if not road_surface_portal_audit["before"]["equivalent"]:
+        (
+            raw_polygon,
+            raw_polygon_portal_geometry,
+            raw_polygon_portal_audit,
+        ) = build_road_surface_portal_boundary(
+            allowed_surface=direction_boundary_geometry,
+            direction_boundary=raw_polygon,
+            terminals=road_surface_portal_terminals,
+            bridge_half_width_m=BRANCH_CLIP_HALF_WIDTH_M,
+            seed_missing_terminals=False,
+        )
+    else:
+        raw_polygon_portal_geometry = None
+        raw_polygon_portal_audit = {
+            "mode": "road_surface_portal_boundary",
+            "applied": False,
+            "reason": "initial_direction_connectivity_already_equivalent",
+            "seed_missing_terminals": False,
+            "source_geometry_modified": False,
+            "silent_fix": False,
+        }
+    raw_polygon = _retain_components_touching_keep_geometry(
+        raw_polygon,
+        anchor_keep_geometry,
+    )
     pre_cleanup_polygon = raw_polygon
     if raw_polygon is None:
         _accumulate_stage_timer(stage_timers, "step6_finalize_cleanup", perf_counter() - cleanup_started_perf)
@@ -465,38 +593,286 @@ def build_step6_result(
         )
 
     support_only_tiny_fragment_pruned = False
+    component_business_evidence_audit: dict[str, Any] = {
+        "mode": "component_business_evidence_filter",
+        "applied": False,
+        "silent_fix": False,
+        "source_geometry_modified": False,
+        "fallback_reason": "not_evaluated",
+    }
     final_polygon = raw_polygon
     if foreign_mask_geometry is not None:
         final_polygon = _clean_geometry(final_polygon.difference(foreign_mask_geometry))
         final_polygon = _retain_components_touching_keep_geometry(final_polygon, anchor_keep_geometry)
-    final_polygon = _clean_geometry(final_polygon)
-    if final_polygon is not None:
-        final_polygon = _clean_geometry(
-            final_polygon.buffer(FINAL_CLOSE_M).buffer(-FINAL_CLOSE_M)
+    final_polygon, surface_regularization_audit = (
+        regularize_surface_with_legal_edge_trace(
+            surface=final_polygon,
+            allowed_surface=allowed_space_tolerance_geometry,
+            direction_boundary=direction_boundary_geometry,
+            foreign_mask=foreign_mask_geometry,
+            smoothing_distance_m=FINAL_CLOSE_M,
         )
-        final_polygon = _clean_geometry(final_polygon.intersection(allowed_space_tolerance_geometry))
-        final_polygon = _clean_geometry(final_polygon.intersection(direction_boundary_geometry))
-        final_polygon = _retain_components_touching_keep_geometry(final_polygon, anchor_keep_geometry)
+    )
+    final_polygon = _retain_components_touching_keep_geometry(
+        final_polygon,
+        anchor_keep_geometry,
+    )
     if final_polygon is not None and foreign_mask_geometry is not None:
         final_polygon = _clean_geometry(final_polygon.difference(foreign_mask_geometry))
         final_polygon = _retain_components_touching_keep_geometry(final_polygon, anchor_keep_geometry)
-    if final_polygon is not None and semantic_intra_line_cover_geometry is not None:
-        final_polygon = _clean_geometry(_union_geometries([final_polygon, semantic_intra_line_cover_geometry]))
-        final_polygon = _clean_geometry(final_polygon.intersection(allowed_space_tolerance_geometry))
-        final_polygon = _clean_geometry(final_polygon.intersection(direction_boundary_geometry))
-        final_polygon = _retain_components_touching_keep_geometry(final_polygon, anchor_keep_geometry)
-        if final_polygon is not None and foreign_mask_geometry is not None:
-            final_polygon = _clean_geometry(final_polygon.difference(foreign_mask_geometry))
-            final_polygon = _retain_components_touching_keep_geometry(final_polygon, anchor_keep_geometry)
+    pre_business_cleanup_polygon = final_polygon
+    pre_business_cleanup_meaningful_component_count = _meaningful_component_count(
+        pre_business_cleanup_polygon
+    )
+    target_group_node_count = len(
+        finalization_context.association_context.step1_context.target_group.nodes
+    )
+    target_group_node_ids = sorted(
+        {
+            node.node_id
+            for node in (
+                finalization_context.association_context.step1_context.target_group.nodes
+            )
+        }
+    )
+    support_only_multi_target_fragmented = bool(
+        association_case_result.reason == "association_support_only"
+        and target_group_node_count >= 2
+        and pre_business_cleanup_meaningful_component_count >= 3
+    )
     if final_polygon is not None:
         final_polygon, support_only_tiny_fragment_pruned = _prune_support_only_tiny_fragments(
             finalization_context,
             final_polygon,
             geometry_cache=geometry_cache,
         )
+        support_road_ids = {
+            str(road_id)
+            for road_id in (
+                association_case_result.extra_status_fields.get(
+                    "support_rcsdroad_ids"
+                )
+                or []
+            )
+        }
+        support_road_geometry = _union_geometries(
+            road.geometry
+            for road in finalization_context.association_context.step1_context.rcsd_roads
+            if road.road_id in support_road_ids
+        )
+        business_evidence_geometry = _union_geometries(
+            [
+                _target_anchor_geometry(
+                    finalization_context,
+                    geometry_cache=geometry_cache,
+                ),
+                selected_road_core_geometry,
+                (
+                    target_node_connection_line_geometry
+                    if target_node_connection_required
+                    else None
+                ),
+                _union_geometries(node.geometry for node in local_required_nodes),
+                local_required_road_geometry,
+                support_road_geometry,
+            ]
+        )
+        final_polygon, component_business_evidence_audit = (
+            _prune_components_without_business_evidence(
+                final_polygon,
+                business_evidence_geometry,
+            )
+        )
     _accumulate_stage_timer(stage_timers, "step6_finalize_cleanup", perf_counter() - cleanup_started_perf)
 
     validation_started_perf = perf_counter()
+    direction_connectivity_source_surface = _clean_geometry(
+        allowed_space_tolerance_geometry.intersection(direction_boundary_geometry)
+    )
+    connectivity_source_surface = direction_connectivity_source_surface
+    if connectivity_source_surface is not None and foreign_mask_geometry is not None:
+        connectivity_source_surface = _clean_geometry(
+            connectivity_source_surface.difference(foreign_mask_geometry)
+        )
+    business_connectivity_terminals: dict[str, BaseGeometry] = {
+        f"target_node:{node.node_id}": node.geometry
+        for node in step1.target_group.nodes
+    }
+    for node in local_required_nodes:
+        business_connectivity_terminals[f"required_rcsdnode:{node.node_id}"] = node.geometry
+    for road in _selected_road_records(finalization_context):
+        local_geometry = _clean_geometry(road.geometry.intersection(direction_boundary_geometry))
+        if local_geometry is not None:
+            business_connectivity_terminals[f"selected_swsdroad:{road.road_id}"] = local_geometry
+    for road in local_required_road_records:
+        local_geometry = _clean_geometry(road.geometry.intersection(direction_boundary_geometry))
+        if local_geometry is not None:
+            business_connectivity_terminals[f"required_rcsdroad:{road.road_id}"] = local_geometry
+    business_carrier_terminals = {
+        terminal_id: geometry
+        for terminal_id, geometry in business_connectivity_terminals.items()
+        if not terminal_id.startswith("required_rcsdnode:")
+    }
+    (
+        final_polygon,
+        final_business_portal_geometry,
+        final_business_portal_audit,
+    ) = build_road_surface_portal_boundary(
+        allowed_surface=connectivity_source_surface,
+        direction_boundary=final_polygon,
+        terminals=business_connectivity_terminals,
+        bridge_half_width_m=BRANCH_CLIP_HALF_WIDTH_M,
+        seed_missing_terminals=False,
+        allow_geodesic_growth=True,
+        geodesic_max_iterations=100,
+    )
+    if (
+        final_business_portal_audit.get("reason")
+        == "connectivity_not_comparable"
+        and local_required_nodes
+        and local_required_road_records
+        and business_carrier_terminals
+    ):
+        all_terminal_portal_audit = final_business_portal_audit
+        (
+            carrier_polygon,
+            carrier_portal_geometry,
+            carrier_portal_audit,
+        ) = build_road_surface_portal_boundary(
+            allowed_surface=connectivity_source_surface,
+            direction_boundary=final_polygon,
+            terminals=business_carrier_terminals,
+            bridge_half_width_m=BRANCH_CLIP_HALF_WIDTH_M,
+            seed_missing_terminals=False,
+            allow_geodesic_growth=True,
+            geodesic_max_iterations=100,
+        )
+        carrier_after = dict(carrier_portal_audit.get("after") or {})
+        if carrier_portal_audit.get("applied") or carrier_after.get(
+            "equivalent"
+        ):
+            final_polygon = carrier_polygon
+            final_business_portal_geometry = carrier_portal_geometry
+            final_business_portal_audit = {
+                **carrier_portal_audit,
+                "terminal_mode": "road_carrier_equivalence",
+                "all_terminal_attempt": all_terminal_portal_audit,
+                "required_rcsdnode_points_excluded_from_portal_solver": [
+                    node.node_id for node in local_required_nodes
+                ],
+            }
+    final_polygon = _retain_components_touching_keep_geometry(
+        final_polygon,
+        anchor_keep_geometry,
+    )
+    final_business_regularization_audit: dict[str, Any] = {
+        "mode": "legal_road_surface_edge_trace",
+        "applied": False,
+        "reason": "final_business_portal_not_applied",
+        "silent_fix": False,
+        "source_geometry_modified": False,
+    }
+    if final_business_portal_audit.get("allowed_component_fallback_applied"):
+        final_business_regularization_audit = {
+            **final_business_regularization_audit,
+            "reason": (
+                "complete_constrained_allowed_component_already_"
+                "traces_road_surface_edge"
+            ),
+        }
+    elif final_business_portal_geometry is not None:
+        final_polygon, final_business_regularization_audit = (
+            regularize_surface_with_legal_edge_trace(
+                surface=final_polygon,
+                allowed_surface=connectivity_source_surface,
+                direction_boundary=connectivity_source_surface,
+                foreign_mask=None,
+                smoothing_distance_m=FINAL_CLOSE_M,
+            )
+        )
+        final_polygon = _retain_components_touching_keep_geometry(
+            final_polygon,
+            anchor_keep_geometry,
+        )
+    (
+        final_polygon,
+        compact_target_portal_geometry,
+        compact_target_portal_audit,
+    ) = restore_compact_semantic_target_connectivity(
+        surface=final_polygon,
+        raw_road_surface=step1.drivezone_geometry,
+        allowed_surface=allowed_space_tolerance_geometry,
+        target_geometries=(node.geometry for node in step1.target_group.nodes),
+        terminals=business_connectivity_terminals,
+        association_reason=association_case_result.reason,
+        input_geometry_invalid_feature_count=int(
+            step1.drivezone_input_audit.get("invalid_feature_count") or 0
+        ),
+        bridge_half_width_m=BRANCH_CLIP_HALF_WIDTH_M,
+    )
+    if compact_target_portal_audit.get("applied"):
+        final_polygon, post_portal_component_cleanup_audit = (
+            _prune_components_without_business_evidence(
+                final_polygon,
+                business_evidence_geometry,
+            )
+        )
+        component_business_evidence_audit = {
+            **component_business_evidence_audit,
+            "post_compact_target_portal_cleanup": (
+                post_portal_component_cleanup_audit
+            ),
+            "applied": bool(
+                component_business_evidence_audit.get("applied")
+                or post_portal_component_cleanup_audit.get("applied")
+            ),
+        }
+    effective_direction_boundary_geometry = direction_boundary_geometry
+    effective_foreign_mask_geometry = foreign_mask_geometry
+    if compact_target_portal_geometry is not None:
+        effective_direction_boundary_geometry = _clean_geometry(
+            _union_geometries(
+                [direction_boundary_geometry, compact_target_portal_geometry]
+            )
+        )
+        if foreign_mask_geometry is not None:
+            effective_foreign_mask_geometry = _clean_geometry(
+                foreign_mask_geometry.difference(compact_target_portal_geometry)
+            )
+    raw_road_surface_connectivity_audit = build_business_connectivity_audit(
+        source_surface=step1.drivezone_geometry,
+        output_surface=final_polygon,
+        terminals=business_connectivity_terminals,
+    )
+    step3_allowed_connectivity_audit = build_business_connectivity_audit(
+        source_surface=allowed_space_tolerance_geometry,
+        output_surface=final_polygon,
+        terminals=business_connectivity_terminals,
+    )
+    direction_constrained_connectivity_audit = build_business_connectivity_audit(
+        source_surface=direction_connectivity_source_surface,
+        output_surface=final_polygon,
+        terminals=business_connectivity_terminals,
+    )
+    constrained_connectivity_audit = build_business_connectivity_audit(
+        source_surface=connectivity_source_surface,
+        output_surface=final_polygon,
+        terminals=business_connectivity_terminals,
+    )
+    full_terminal_connectivity_audit = (
+        raw_road_surface_connectivity_audit
+        if compact_target_portal_audit.get("applied")
+        else constrained_connectivity_audit
+    )
+    carrier_connectivity_audit = build_business_connectivity_audit(
+        source_surface=(
+            step1.drivezone_geometry
+            if compact_target_portal_audit.get("applied")
+            else connectivity_source_surface
+        ),
+        output_surface=final_polygon,
+        terminals=business_carrier_terminals,
+    )
     final_node_cover_geometry = _cached_boundary_buffer(
         final_polygon,
         NODE_COVER_TOLERANCE_M,
@@ -521,6 +897,16 @@ def build_step6_result(
         finalization_context,
         final_node_cover_geometry,
     )
+    target_node_access_cover_ratio = target_node_cover_ratio
+    if step3_target_edge_touch_enabled:
+        target_node_access_cover_ratio = _target_node_cover_ratio_with_cover_geometry(
+            finalization_context,
+            _cached_boundary_buffer(
+                final_polygon,
+                step3_target_edge_touch_tolerance_m,
+                geometry_cache=geometry_cache,
+            ),
+        )
     selected_core_cover_ratio = _line_coverage_ratio_with_cover_geometry(
         selected_road_core_geometry,
         final_line_cover_geometry,
@@ -543,29 +929,68 @@ def build_step6_result(
     )
     semantic_intra_line_cover_ok = semantic_intra_line_cover_ratio >= 0.999999
     semantic_junction_cover_ok = (
-        target_node_cover_ratio >= 1.0
+        target_node_access_cover_ratio >= 1.0
         and (
             not target_node_connection_required
             or target_node_connection_cover_ratio >= TARGET_NODE_CONNECTION_MIN_RATIO
         )
         and selected_core_cover_ratio >= SELECTED_ROAD_CORE_MIN_RATIO
-        and semantic_intra_line_cover_ok
     )
-    required_rc_cover_ok = (
-        required_rc_node_cover_ratio >= 1.0
+    required_rc_node_point_gap_ids = [
+        terminal_id
+        for terminal_id in full_terminal_connectivity_audit.get(
+            "output_missing_terminal_ids", []
+        )
+        if str(terminal_id).startswith("required_rcsdnode:")
+    ]
+    non_required_output_missing_terminal_ids = [
+        terminal_id
+        for terminal_id in full_terminal_connectivity_audit.get(
+            "output_missing_terminal_ids", []
+        )
+        if not str(terminal_id).startswith("required_rcsdnode:")
+    ]
+    required_rc_node_carrier_equivalent = bool(
+        local_required_road_records
         and required_rc_line_cover_ratio >= LINE_COVER_MIN_RATIO
-        and semantic_intra_line_cover_ok
+        and carrier_connectivity_audit["comparable"]
+        and carrier_connectivity_audit["equivalent"]
+        and not non_required_output_missing_terminal_ids
+        and not full_terminal_connectivity_audit.get("mismatches")
+    )
+    required_rc_cover_ok = bool(
+        required_rc_line_cover_ratio >= LINE_COVER_MIN_RATIO
+        and (
+            required_rc_node_cover_ratio >= 1.0
+            or required_rc_node_carrier_equivalent
+        )
+    )
+    authoritative_connectivity_audit = (
+        carrier_connectivity_audit
+        if required_rc_node_carrier_equivalent
+        and not full_terminal_connectivity_audit["equivalent"]
+        else full_terminal_connectivity_audit
     )
     legal_escape_area_m2 = 0.0
     direction_escape_area_m2 = 0.0
     if final_polygon is not None:
         legal_escape_area_m2 = final_polygon.difference(allowed_space_tolerance_geometry).area
-        direction_escape_area_m2 = final_polygon.difference(direction_boundary_geometry).area
-    within_legal_space_ok = bool(final_polygon is not None and legal_escape_area_m2 <= 1e-6)
-    within_direction_boundary_ok = bool(final_polygon is not None and direction_escape_area_m2 <= 1e-6)
+        direction_escape_area_m2 = final_polygon.difference(
+            effective_direction_boundary_geometry
+        ).area
+    within_legal_space_ok = bool(
+        final_polygon is not None
+        and legal_escape_area_m2 <= BOUNDARY_ESCAPE_AREA_TOLERANCE_M2
+    )
+    within_direction_boundary_ok = bool(
+        final_polygon is not None
+        and direction_escape_area_m2 <= BOUNDARY_ESCAPE_AREA_TOLERANCE_M2
+    )
     foreign_overlap_area_m2 = 0.0
-    if final_polygon is not None and foreign_mask_geometry is not None:
-        foreign_overlap_area_m2 = final_polygon.intersection(foreign_mask_geometry).area
+    if final_polygon is not None and effective_foreign_mask_geometry is not None:
+        foreign_overlap_area_m2 = final_polygon.intersection(
+            effective_foreign_mask_geometry
+        ).area
     foreign_exclusion_ok = foreign_overlap_area_m2 <= FOREIGN_OVERLAP_TOLERANCE_M2
 
     raw_target_cover_ratio = _target_node_cover_ratio_with_cover_geometry(
@@ -581,6 +1006,40 @@ def build_step6_result(
         raw_line_cover_geometry,
     )
     review_signals: list[str] = []
+    input_geometry_audit = dict(
+        finalization_context.association_context.step1_context.drivezone_input_audit
+        or {}
+    )
+    input_geometry_repair_dependency = bool(
+        input_geometry_audit.get("normalization_applied")
+        and (
+            road_surface_portal_audit.get("applied")
+            or raw_polygon_portal_audit.get("applied")
+            or final_business_portal_audit.get("applied")
+        )
+    )
+    if input_geometry_audit.get("normalization_applied"):
+        review_signals.append("drivezone_input_geometry_normalized_with_audit")
+    elif input_geometry_audit.get("invalid_features_absorbed_by_valid_raw_union"):
+        review_signals.append(
+            "drivezone_invalid_features_absorbed_by_valid_raw_union"
+        )
+    if compact_target_portal_audit.get("applied"):
+        review_signals.append(
+            "compact_semantic_target_road_surface_portal_applied"
+        )
+    if (
+        required_rc_node_cover_ratio < 1.0
+        and required_rc_node_carrier_equivalent
+    ):
+        review_signals.append(
+            "required_rcsdnode_point_gap_satisfied_by_road_carrier"
+        )
+    if (
+        _semantic_intra_rcsdnode_line_count(local_required_semantic_members) > 0
+        and not semantic_intra_line_cover_ok
+    ):
+        review_signals.append("semantic_alias_chord_not_fully_covered")
     shape_metrics = _cached_shape_metrics(final_polygon, geometry_cache=geometry_cache)
     target_anchor_geometry = _target_anchor_geometry(finalization_context, geometry_cache=geometry_cache)
     component_target_distances_m = [
@@ -591,6 +1050,10 @@ def build_step6_result(
     max_component_target_distance_m = max(component_target_distances_m, default=0.0)
     polygon_seed_metrics = _cached_shape_metrics(polygon_seed_geometry, geometry_cache=geometry_cache)
     pre_cleanup_metrics = _cached_shape_metrics(pre_cleanup_polygon, geometry_cache=geometry_cache)
+    pre_business_cleanup_metrics = _cached_shape_metrics(
+        pre_business_cleanup_polygon,
+        geometry_cache=geometry_cache,
+    )
     direction_clip_metrics = _cached_shape_metrics(direction_clip_geometry, geometry_cache=geometry_cache)
     bridge_metrics = _cached_shape_metrics(step3_two_node_t_bridge_geometry, geometry_cache=geometry_cache)
     target_node_connection_bridge_metrics = _cached_shape_metrics(
@@ -605,12 +1068,28 @@ def build_step6_result(
         review_signals.append("polygon_has_holes")
     if shape_metrics["component_count"] > 1:
         review_signals.append("polygon_multicomponent")
+    compactness = shape_metrics["compactness"]
+    bbox_fill_ratio = shape_metrics["bbox_fill_ratio"]
+    if (
+        (compactness is not None and compactness < 0.16)
+        or (bbox_fill_ratio is not None and bbox_fill_ratio < 0.12)
+        or shape_metrics["component_count"] > 1
+    ):
+        review_signals.append("polygon_shape_review")
+    if component_business_evidence_audit.get("applied"):
+        review_signals.append("evidence_free_polygon_components_pruned")
+    if (
+        authoritative_connectivity_audit["comparable"]
+        and not authoritative_connectivity_audit["equivalent"]
+    ):
+        review_signals.append("business_connectivity_mismatch")
     pre_cleanup_foreign_overlap_area_m2 = 0.0
     if pre_cleanup_polygon is not None and foreign_mask_geometry is not None:
         pre_cleanup_foreign_overlap_area_m2 = pre_cleanup_polygon.intersection(foreign_mask_geometry).area
     _accumulate_stage_timer(stage_timers, "step6_finalize_validation", perf_counter() - validation_started_perf)
 
     base_audit_doc = {
+        "input_geometry": input_geometry_audit,
         "inputs": {
             "template_class": template_class,
             "association_class": association_case_result.association_class,
@@ -618,6 +1097,8 @@ def build_step6_result(
             "association_reason": association_case_result.reason,
             "step3_state": association_context.step3_status_doc.get("step3_state"),
             "selected_road_ids": list(association_context.selected_road_ids),
+            "target_group_node_count": target_group_node_count,
+            "target_group_node_ids": target_group_node_ids,
             "required_rcsdnode_ids": list(association_case_result.extra_status_fields.get("required_rcsdnode_ids") or []),
             "required_rcsdroad_ids": list(association_case_result.extra_status_fields.get("required_rcsdroad_ids") or []),
             "related_rcsdnode_ids": list(association_case_result.extra_status_fields.get("related_rcsdnode_ids") or []),
@@ -649,6 +1130,9 @@ def build_step6_result(
             "geometry_mode": "directional_selected_road_cut",
             "polygon_seed_metrics": polygon_seed_metrics,
             "polygon_after_legal_clip_metrics": pre_cleanup_metrics,
+            "polygon_before_business_component_cleanup_metrics": (
+                pre_business_cleanup_metrics
+            ),
             "polygon_final_metrics": shape_metrics,
             "direction_clip_metrics": direction_clip_metrics,
             "step3_two_node_t_bridge_inherited": step3_two_node_t_bridge_geometry is not None,
@@ -670,7 +1154,44 @@ def build_step6_result(
             "support_only_seam_bridge_applied": support_only_seam_bridge_geometry is not None,
             "support_only_seam_bridge_buffer_m": SUPPORT_ONLY_SEAM_BRIDGE_BUFFER_M,
             "support_only_seam_bridge_metrics": support_only_seam_bridge_metrics,
+            "road_surface_portal": road_surface_portal_audit,
+            "road_surface_portal_metrics": _cached_shape_metrics(
+                road_surface_portal_geometry,
+                geometry_cache=geometry_cache,
+            ),
+            "raw_polygon_portal": raw_polygon_portal_audit,
+            "raw_polygon_portal_metrics": _cached_shape_metrics(
+                raw_polygon_portal_geometry,
+                geometry_cache=geometry_cache,
+            ),
+            "final_business_portal": final_business_portal_audit,
+            "final_business_portal_metrics": _cached_shape_metrics(
+                final_business_portal_geometry,
+                geometry_cache=geometry_cache,
+            ),
+            "final_business_regularization": (
+                final_business_regularization_audit
+            ),
+            "compact_target_road_surface_portal": (
+                compact_target_portal_audit
+            ),
+            "compact_target_road_surface_portal_metrics": (
+                _cached_shape_metrics(
+                    compact_target_portal_geometry,
+                    geometry_cache=geometry_cache,
+                )
+            ),
+            "surface_regularization": surface_regularization_audit,
             "support_only_tiny_fragment_pruned": support_only_tiny_fragment_pruned,
+            "support_only_multi_target_fragmented": (
+                support_only_multi_target_fragmented
+            ),
+            "pre_business_cleanup_meaningful_component_count": (
+                pre_business_cleanup_meaningful_component_count
+            ),
+            "component_business_evidence_cleanup": (
+                component_business_evidence_audit
+            ),
             "directional_cut_rule": {
                 "mode": "directional_selected_road_cut",
                 "cut_distance_m": DIRECTIONAL_CUT_DISTANCE_M,
@@ -678,6 +1199,11 @@ def build_step6_result(
             },
             "directional_cut_branches": directional_cut_branches,
             "target_connected_boundary_fallback_applied": target_connected_boundary_fallback_applied,
+            "target_edge_access_seed_applied": target_edge_access_seed_applied,
+            "target_edge_access_geometry_metrics": _cached_shape_metrics(
+                target_edge_access_geometry,
+                geometry_cache=geometry_cache,
+            ),
             "direction_boundary_hard_cap_applied": True,
             "final_close_m": FINAL_CLOSE_M,
             "foreign_mask_buffer_m": FOREIGN_MASK_BUFFER_M,
@@ -687,6 +1213,13 @@ def build_step6_result(
         "validation": {
             "semantic_junction_cover_ok": semantic_junction_cover_ok,
             "target_node_cover_ratio": round(target_node_cover_ratio, 6),
+            "target_node_access_cover_ratio": round(
+                target_node_access_cover_ratio, 6
+            ),
+            "target_edge_touch_enabled": step3_target_edge_touch_enabled,
+            "target_edge_touch_tolerance_m": (
+                step3_target_edge_touch_tolerance_m
+            ),
             "target_node_connection_cover_ratio": round(target_node_connection_cover_ratio, 6),
             "target_node_connection_required": target_node_connection_required,
             "target_node_connection_min_ratio": TARGET_NODE_CONNECTION_MIN_RATIO,
@@ -694,20 +1227,61 @@ def build_step6_result(
             "required_rc_cover_ok": required_rc_cover_ok,
             "required_rc_node_cover_ratio": round(required_rc_node_cover_ratio, 6),
             "required_rc_line_cover_ratio": round(required_rc_line_cover_ratio, 6),
+            "required_rc_node_carrier_equivalent": (
+                required_rc_node_carrier_equivalent
+            ),
+            "required_rc_node_point_gap_ids": required_rc_node_point_gap_ids,
+            "required_rc_non_node_missing_terminal_ids": (
+                non_required_output_missing_terminal_ids
+            ),
             "semantic_intra_rcsdnode_line_cover_ratio": round(semantic_intra_line_cover_ratio, 6),
             "semantic_intra_rcsdnode_line_cover_ok": semantic_intra_line_cover_ok,
+            "semantic_intra_rcsdnode_line_hard_gate": False,
+            "semantic_intra_rcsdnode_line_role": "audit_only_alias_chord",
             "semantic_intra_rcsdnode_line_count": _semantic_intra_rcsdnode_line_count(
                 local_required_semantic_members
             ),
             "within_legal_space_ok": within_legal_space_ok,
             "within_direction_boundary_ok": within_direction_boundary_ok,
+            "legal_escape_area_m2": legal_escape_area_m2,
+            "direction_escape_area_m2": direction_escape_area_m2,
+            "legal_escape_area_tolerance_m2": (
+                BOUNDARY_ESCAPE_AREA_TOLERANCE_M2
+            ),
+            "direction_escape_area_tolerance_m2": (
+                BOUNDARY_ESCAPE_AREA_TOLERANCE_M2
+            ),
             "foreign_exclusion_ok": foreign_exclusion_ok,
+            "input_geometry_repair_dependency": input_geometry_repair_dependency,
             "foreign_overlap_area_m2": round(foreign_overlap_area_m2, 6),
             "max_component_target_distance_m": round(max_component_target_distance_m, 6),
             "raw_target_node_cover_ratio": round(raw_target_cover_ratio, 6),
             "raw_target_node_connection_cover_ratio": round(raw_target_node_connection_cover_ratio, 6),
             "raw_required_rc_line_cover_ratio": round(raw_required_rc_cover_ratio, 6),
-            "required_rc_cover_mode": "local_required_rc_within_direction_boundary",
+            "required_rc_cover_mode": (
+                "road_carrier_connectivity_equivalent"
+                if required_rc_node_carrier_equivalent
+                and required_rc_node_cover_ratio < 1.0
+                else "local_required_rc_within_direction_boundary"
+            ),
+            "business_connectivity": {
+                "decision_source": (
+                    "raw_road_surface_compact_semantic_target_portal"
+                    if compact_target_portal_audit.get("applied")
+                    else "direction_and_foreign_constrained_space"
+                ),
+                "raw_road_surface": raw_road_surface_connectivity_audit,
+                "step3_allowed_space": step3_allowed_connectivity_audit,
+                "direction_constrained_space": direction_constrained_connectivity_audit,
+                "direction_and_foreign_constrained_space": constrained_connectivity_audit,
+                "road_carrier_only": carrier_connectivity_audit,
+                "constraint_induced_split": bool(
+                    step3_allowed_connectivity_audit["comparable"]
+                    and constrained_connectivity_audit["comparable"]
+                    and step3_allowed_connectivity_audit["equivalent"] is False
+                    and constrained_connectivity_audit["equivalent"] is True
+                ),
+            },
         },
     }
     output_geometries = Step6OutputGeometries(
@@ -719,14 +1293,37 @@ def build_step6_result(
     key_metrics = {
         **shape_metrics,
         "target_node_cover_ratio": round(target_node_cover_ratio, 6),
+        "target_node_access_cover_ratio": round(
+            target_node_access_cover_ratio, 6
+        ),
         "target_node_connection_cover_ratio": round(target_node_connection_cover_ratio, 6),
         "target_node_connection_required": target_node_connection_required,
         "selected_road_core_cover_ratio": round(selected_core_cover_ratio, 6),
         "required_rc_node_cover_ratio": round(required_rc_node_cover_ratio, 6),
         "required_rc_line_cover_ratio": round(required_rc_line_cover_ratio, 6),
+        "required_rc_node_carrier_equivalent": (
+            required_rc_node_carrier_equivalent
+        ),
         "semantic_intra_rcsdnode_line_cover_ratio": round(semantic_intra_line_cover_ratio, 6),
+        "legal_escape_area_m2": legal_escape_area_m2,
+        "direction_escape_area_m2": direction_escape_area_m2,
         "foreign_overlap_area_m2": round(foreign_overlap_area_m2, 6),
         "max_component_target_distance_m": round(max_component_target_distance_m, 6),
+        "business_connectivity_comparable": authoritative_connectivity_audit["comparable"],
+        "business_connectivity_equivalent": authoritative_connectivity_audit["equivalent"],
+        "business_connectivity_mismatch_count": authoritative_connectivity_audit["mismatch_count"],
+        "business_connectivity_decision_source": (
+            "raw_road_surface_compact_semantic_target_portal"
+            if compact_target_portal_audit.get("applied")
+            else "direction_and_foreign_constrained_space"
+        ),
+        "input_geometry_repair_dependency": input_geometry_repair_dependency,
+        "surface_regularization_filled_hole_count": surface_regularization_audit[
+            "filled_hole_count"
+        ],
+        "final_business_portal_applied": bool(
+            final_business_portal_audit.get("applied")
+        ),
     }
     extra_status_fields = {
         "semantic_junction_cover_ok": semantic_junction_cover_ok,
@@ -735,18 +1332,65 @@ def build_step6_result(
         "within_direction_boundary_ok": within_direction_boundary_ok,
         "foreign_exclusion_ok": foreign_exclusion_ok,
         "target_node_cover_ratio": round(target_node_cover_ratio, 6),
+        "target_node_access_cover_ratio": round(
+            target_node_access_cover_ratio, 6
+        ),
+        "target_edge_touch_enabled": step3_target_edge_touch_enabled,
+        "target_edge_touch_tolerance_m": step3_target_edge_touch_tolerance_m,
         "target_node_connection_cover_ratio": round(target_node_connection_cover_ratio, 6),
         "target_node_connection_required": target_node_connection_required,
         "selected_road_core_cover_ratio": round(selected_core_cover_ratio, 6),
         "required_rc_node_cover_ratio": round(required_rc_node_cover_ratio, 6),
         "required_rc_line_cover_ratio": round(required_rc_line_cover_ratio, 6),
+        "required_rc_node_carrier_equivalent": (
+            required_rc_node_carrier_equivalent
+        ),
+        "required_rc_node_point_gap_ids": required_rc_node_point_gap_ids,
         "semantic_intra_rcsdnode_line_cover_ratio": round(semantic_intra_line_cover_ratio, 6),
         "semantic_intra_rcsdnode_line_cover_ok": semantic_intra_line_cover_ok,
+        "semantic_intra_rcsdnode_line_hard_gate": False,
         "semantic_intra_rcsdnode_line_count": _semantic_intra_rcsdnode_line_count(
             local_required_semantic_members
         ),
+        "legal_escape_area_m2": legal_escape_area_m2,
+        "direction_escape_area_m2": direction_escape_area_m2,
+        "boundary_escape_area_tolerance_m2": (
+            BOUNDARY_ESCAPE_AREA_TOLERANCE_M2
+        ),
+        "target_group_node_count": target_group_node_count,
+        "target_group_node_ids": target_group_node_ids,
+        "pre_business_cleanup_meaningful_component_count": (
+            pre_business_cleanup_meaningful_component_count
+        ),
+        "support_only_multi_target_fragmented": (
+            support_only_multi_target_fragmented
+        ),
+        "drivezone_input_invalid_feature_count": int(
+            input_geometry_audit.get("invalid_feature_count") or 0
+        ),
+        "drivezone_input_normalization_applied": bool(
+            input_geometry_audit.get("normalization_applied")
+        ),
+        "drivezone_input_silent_fix": bool(
+            input_geometry_audit.get("silent_fix")
+        ),
         "foreign_overlap_area_m2": round(foreign_overlap_area_m2, 6),
         "max_component_target_distance_m": round(max_component_target_distance_m, 6),
+        "business_connectivity_comparable": authoritative_connectivity_audit["comparable"],
+        "business_connectivity_equivalent": authoritative_connectivity_audit["equivalent"],
+        "business_connectivity_mismatch_count": authoritative_connectivity_audit["mismatch_count"],
+        "business_connectivity_decision_source": (
+            "raw_road_surface_compact_semantic_target_portal"
+            if compact_target_portal_audit.get("applied")
+            else "direction_and_foreign_constrained_space"
+        ),
+        "input_geometry_repair_dependency": input_geometry_repair_dependency,
+        "surface_regularization_filled_hole_count": surface_regularization_audit[
+            "filled_hole_count"
+        ],
+        "final_business_portal_applied": bool(
+            final_business_portal_audit.get("applied")
+        ),
         "required_rcsdnode_ids": list(association_case_result.extra_status_fields.get("required_rcsdnode_ids") or []),
         "required_rcsdroad_ids": list(association_case_result.extra_status_fields.get("required_rcsdroad_ids") or []),
         "support_rcsdnode_ids": list(association_case_result.extra_status_fields.get("support_rcsdnode_ids") or []),
@@ -773,6 +1417,7 @@ def build_step6_result(
         primary_root_cause: str,
         secondary_root_cause: str,
         review_signals_for_result: Iterable[str] = (),
+        decision_basis: str | None = None,
     ) -> Step6Result:
         status_started_perf = perf_counter()
         return _complete_step6_result(
@@ -790,6 +1435,7 @@ def build_step6_result(
                         "reason": reason,
                         "primary_root_cause": primary_root_cause,
                         "secondary_root_cause": secondary_root_cause,
+                        "decision_basis": decision_basis,
                     },
                 },
                 extra_status_fields=extra_status_fields,
@@ -797,14 +1443,71 @@ def build_step6_result(
             status_started_perf=status_started_perf,
         )
 
+    failed_hard_checks = [
+        name
+        for name, passed in (
+            ("polygon_non_empty", final_polygon is not None),
+            ("semantic_junction_cover", semantic_junction_cover_ok),
+            ("required_rc_cover", required_rc_cover_ok),
+            ("within_legal_space", within_legal_space_ok),
+            ("within_direction_boundary", within_direction_boundary_ok),
+            ("foreign_exclusion", foreign_exclusion_ok),
+            (
+                "business_connectivity",
+                not authoritative_connectivity_audit["comparable"]
+                or bool(authoritative_connectivity_audit["equivalent"]),
+            ),
+            (
+                "input_geometry_repair_dependency",
+                not input_geometry_repair_dependency,
+            ),
+        )
+        if not passed
+    ]
+    if (
+        int(input_geometry_audit.get("invalid_feature_count") or 0) > 0
+        and failed_hard_checks
+    ):
+        return _complete_failure_result(
+            reason="step6_input_geometry_invalid_blocks_constraint_validation",
+            primary_root_cause=PRIMARY_INPUT_INVALID,
+            secondary_root_cause=SECONDARY_INPUT_NORMALIZATION_UNRELIABLE,
+            review_signals_for_result=review_signals,
+            decision_basis="invalid_drivezone+" + "|".join(failed_hard_checks),
+        )
+
     if final_polygon is None:
         return _complete_failure_result(
             reason="step6_polygon_lost_after_cleanup",
             primary_root_cause=PRIMARY_SOLVER_FAILED,
             secondary_root_cause=SECONDARY_CLEANUP_OVERTRIM,
+            decision_basis="polygon_empty_after_audited_cleanup",
         )
 
     if not semantic_junction_cover_ok:
+        if (
+            target_node_connection_required
+            and target_node_connection_cover_ratio
+            < TARGET_NODE_CONNECTION_MIN_RATIO
+            and bool(
+                finalization_context.association_context.step3_status_doc.get(
+                    "two_node_t_bridge_applied"
+                )
+            )
+        ):
+            return _complete_failure_result(
+                reason=(
+                    "step6_step3_two_node_bridge_not_realizable_"
+                    "in_frozen_allowed_space"
+                ),
+                primary_root_cause=PRIMARY_INFEASIBLE,
+                secondary_root_cause=SECONDARY_STEP1_STEP3_CONFLICT,
+                review_signals_for_result=review_signals,
+                decision_basis=(
+                    "two_node_t_bridge_applied+"
+                    "target_node_connection_below_min_ratio"
+                ),
+            )
         secondary = (
             SECONDARY_CLEANUP_OVERTRIM
             if raw_target_cover_ratio >= 1.0
@@ -823,6 +1526,7 @@ def build_step6_result(
             reason="step6_semantic_junction_not_covered",
             primary_root_cause=primary,
             secondary_root_cause=secondary,
+            decision_basis="target_or_selected_road_core_not_covered",
         )
 
     if not required_rc_cover_ok:
@@ -840,6 +1544,7 @@ def build_step6_result(
             reason="step6_required_rc_not_covered",
             primary_root_cause=primary,
             secondary_root_cause=secondary,
+            decision_basis="local_required_rc_node_or_road_not_covered",
         )
 
     if not within_legal_space_ok:
@@ -847,6 +1552,15 @@ def build_step6_result(
             reason="step6_escaped_legal_space",
             primary_root_cause=PRIMARY_INFEASIBLE,
             secondary_root_cause=SECONDARY_STEP1_STEP3_CONFLICT,
+            decision_basis="legal_escape_area_above_explicit_tolerance",
+        )
+
+    if not within_direction_boundary_ok:
+        return _complete_failure_result(
+            reason="step6_escaped_direction_boundary",
+            primary_root_cause=PRIMARY_INFEASIBLE,
+            secondary_root_cause=SECONDARY_STEP1_STEP3_CONFLICT,
+            decision_basis="direction_escape_area_above_explicit_tolerance",
         )
 
     if not foreign_exclusion_ok:
@@ -859,94 +1573,69 @@ def build_step6_result(
             reason="step6_foreign_intrusion_remains",
             primary_root_cause=PRIMARY_INFEASIBLE,
             secondary_root_cause=secondary,
+            decision_basis="foreign_overlap_area_above_explicit_tolerance",
         )
 
-    severe_template_misfit = False
-    severe_reason = None
-    if template_class == "single_sided_t_mouth":
-        # Boundary-first single-sided outputs can legitimately form two lobes.
-        # Keep that as review-only unless the result is fragmented or too sparse
-        # to represent a stable business geometry.
-        component_count = int(shape_metrics["component_count"] or 0)
-        compactness = shape_metrics["compactness"]
-        aspect_ratio = shape_metrics["aspect_ratio"]
-        bbox_fill_ratio = shape_metrics["bbox_fill_ratio"]
-        support_only_fragmented = (
-            association_case_result.reason == "association_support_only"
-            and component_count >= 3
+    if (
+        support_only_multi_target_fragmented
+        and (
+            not raw_road_surface_connectivity_audit["comparable"]
+            or not raw_road_surface_connectivity_audit["equivalent"]
         )
-        support_only_two_lobe_review = (
-            association_case_result.reason == "association_support_only"
-            and component_count == 2
-            and max_component_target_distance_m <= SUPPORT_ONLY_SEAM_BRIDGE_BUFFER_M
-            and (
-                (
-                    aspect_ratio is not None
-                    and aspect_ratio >= 2.5
-                    and bbox_fill_ratio is not None
-                    and bbox_fill_ratio >= 0.4
-                )
-                or (
-                    compactness is not None
-                    and compactness >= 0.12
-                    and bbox_fill_ratio is not None
-                    and bbox_fill_ratio >= 0.11
-                )
-            )
-            and semantic_junction_cover_ok
-            and required_rc_cover_ok
-            and within_legal_space_ok
-            and within_direction_boundary_ok
-            and foreign_exclusion_ok
-        )
-        severe_template_misfit = (
-            support_only_fragmented
-            or (
-                not support_only_two_lobe_review
-                and (
-                    (compactness is not None and compactness < 0.12)
-                    or (bbox_fill_ratio is not None and bbox_fill_ratio < 0.11)
-                    or (component_count > 1 and compactness is not None and compactness < 0.16)
-                )
-            )
-            or component_count > 3
-        )
-        severe_reason = "step6_single_sided_shape_artifact" if severe_template_misfit else None
-    else:
-        component_count = int(shape_metrics["component_count"] or 0)
-        compactness = shape_metrics["compactness"]
-        bbox_fill_ratio = shape_metrics["bbox_fill_ratio"]
-        support_only_two_component_review = (
-            association_case_result.reason == "association_support_only"
-            and component_count == 2
-            and max_component_target_distance_m <= SUPPORT_ONLY_SEAM_BRIDGE_BUFFER_M
-            and compactness is not None
-            and compactness >= 0.14
-            and bbox_fill_ratio is not None
-            and bbox_fill_ratio >= 0.12
-            and semantic_junction_cover_ok
-            and required_rc_cover_ok
-            and within_legal_space_ok
-            and within_direction_boundary_ok
-            and foreign_exclusion_ok
-        )
-        severe_template_misfit = (
-            (compactness is not None and compactness < 0.14)
-            or (bbox_fill_ratio is not None and bbox_fill_ratio < 0.12)
-            or (component_count > 1 and not support_only_two_component_review)
-        )
-        severe_reason = "step6_center_shape_artifact" if severe_template_misfit else None
-    if severe_template_misfit:
-        secondary = (
-            SECONDARY_CLOSURE_FAILURE
-            if shape_metrics["component_count"] > 1
-            else SECONDARY_SHAPE_ARTIFACT
-        )
+    ):
         return _complete_failure_result(
-            reason=severe_reason or "step6_shape_artifact",
+            reason="step6_support_only_multi_target_fragmented_surface",
             primary_root_cause=PRIMARY_SOLVER_FAILED,
-            secondary_root_cause=secondary,
+            secondary_root_cause=SECONDARY_CLOSURE_FAILURE,
             review_signals_for_result=review_signals,
+            decision_basis=(
+                "association_support_only+raw_road_surface_connectivity_unresolved+"
+                f"target_group_node_count={target_group_node_count}+"
+                "pre_business_cleanup_meaningful_component_count="
+                f"{pre_business_cleanup_meaningful_component_count}"
+            ),
+        )
+
+    complex_nonunique_anchor_topology = bool(
+        template_class == "center_junction"
+        and association_case_result.association_class == "A"
+        and target_group_node_count >= 2
+        and len(
+            association_case_result.extra_status_fields.get(
+                "required_rcsdnode_ids"
+            )
+            or []
+        )
+        > target_group_node_count
+        and shape_metrics["hole_count"] > 0
+        and component_business_evidence_audit.get("applied")
+    )
+    if complex_nonunique_anchor_topology:
+        return _complete_failure_result(
+            reason="step6_complex_nonunique_anchor_topology",
+            primary_root_cause=PRIMARY_INFEASIBLE,
+            secondary_root_cause=SECONDARY_CLOSURE_FAILURE,
+            review_signals_for_result=review_signals,
+            decision_basis=(
+                "center_junction+multi_target+required_semantic_core_exceeds_"
+                "target_cardinality+evidence_free_components_pruned+"
+                "final_polygon_has_holes"
+            ),
+        )
+
+    if (
+        authoritative_connectivity_audit["comparable"]
+        and not authoritative_connectivity_audit["equivalent"]
+    ):
+        return _complete_failure_result(
+            reason="step6_business_connectivity_mismatch",
+            primary_root_cause=PRIMARY_SOLVER_FAILED,
+            secondary_root_cause=SECONDARY_CLOSURE_FAILURE,
+            review_signals_for_result=review_signals,
+            decision_basis=(
+                "authoritative_source_terminal_partition_differs_from_"
+                "final_surface_terminal_partition"
+            ),
         )
 
     status_started_perf = perf_counter()
@@ -967,6 +1656,10 @@ def build_step6_result(
                     "reason": "step6_geometry_established",
                     "primary_root_cause": None,
                     "secondary_root_cause": None,
+                    "decision_basis": (
+                        "all_formal_hard_constraints_passed;"
+                        "shape_and_alias_chord_are_audit_only"
+                    ),
                     "review_signals": list(review_signals),
                 },
             },

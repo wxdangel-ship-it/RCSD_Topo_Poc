@@ -2,7 +2,7 @@
 
 ## 范围
 
-- 主审计日期：2026-06-12；T09 增量审计：2026-07-10；T10 性能与 60KB 治理增量审计：2026-07-11；T01/T06 ownership 增量审计：2026-07-12；T10 增加 T11 工作流增量审计：2026-07-13；T06 性能恢复与 Step3 修复性拆分增量审计：2026-07-14；T06 全量性能恢复增量审计：2026-07-16；T12 F-RCSD 质检、T10 可选接入及专用流水线增量审计：2026-07-18；T12 reviewed resume 与 false-positive hardening 增量审计：2026-07-19；T12 Road-surface portal 增量审计：2026-07-20；T12 anchored canonical alias raw portal 增量审计：2026-07-27；T12 反向路径 Segment 范围增量审计：2026-07-31；T12 T03/T07 Junction 质量输出与 T12-only 内网入口增量审计：2026-07-31；P04 Road 直出第二里程碑、冻结 Directional Road V2、High-Precision Road V3 与独立几何/拓扑 QA 增量审计：2026-07-21；P04 Segment-first Road直出增量审计：2026-07-22；P04 Segment-first LaneTopo 投影拆分增量审计：2026-07-23；P05 M0/M1/M2R/R2/PTO-P0/JSG-PTO-P0 神经 Road POC 增量审计：2026-07-21；P05 JSG-PTO-P1/P2/P3、方案 A baseline、Scheme-A-P1、Scheme-A-P2-P0 与 Scheme-A-Dataset-P0 增量审计：2026-07-22；P05 Scheme-A-P2-P1/P2-P2-P0/P2-P2-P1/P2-P2-P2-P0/P2-P2-P2-P1/P2-P2-P2-P2/P2-P3-P0/P2-P3-P1 增量审计：2026-07-23；P05 Scheme-A-P2-P3-P6/P9/P10/P11/P12R/P12R-R1/P13-P0 增量审计：2026-07-24
+- 主审计日期：2026-06-12；T09 增量审计：2026-07-10；T10 性能与 60KB 治理增量审计：2026-07-11；T01/T06 ownership 增量审计：2026-07-12；T10 增加 T11 工作流增量审计：2026-07-13；T06 性能恢复与 Step3 修复性拆分增量审计：2026-07-14；T06 全量性能恢复增量审计：2026-07-16；T12 F-RCSD 质检、T10 可选接入及专用流水线增量审计：2026-07-18；T12 reviewed resume 与 false-positive hardening 增量审计：2026-07-19；T12 Road-surface portal 增量审计：2026-07-20；T12 anchored canonical alias raw portal 增量审计：2026-07-27；T12 反向路径 Segment 范围增量审计：2026-07-31；T12 T03/T07 Junction 质量输出与 T12-only 内网入口增量审计：2026-07-31；T03 Scheme A 当前快照与 T12 required movement 增量审计：2026-08-02；P04 Road 直出第二里程碑、冻结 Directional Road V2、High-Precision Road V3 与独立几何/拓扑 QA 增量审计：2026-07-21；P04 Segment-first Road直出增量审计：2026-07-22；P04 Segment-first LaneTopo 投影拆分增量审计：2026-07-23；P05 M0/M1/M2R/R2/PTO-P0/JSG-PTO-P0 神经 Road POC 增量审计：2026-07-21；P05 JSG-PTO-P1/P2/P3、方案 A baseline、Scheme-A-P1、Scheme-A-P2-P0 与 Scheme-A-Dataset-P0 增量审计：2026-07-22；P05 Scheme-A-P2-P1/P2-P2-P0/P2-P2-P1/P2-P2-P2-P0/P2-P2-P2-P1/P2-P2-P2-P2/P2-P3-P0/P2-P3-P1 增量审计：2026-07-23；P05 Scheme-A-P2-P3-P6/P9/P10/P11/P12R/P12R-R1/P13-P0 增量审计：2026-07-24
 - P04主干物理交接、局部平滑与显式LaneTopo关系增量审计：2026-07-26。
 - 阈值：单文件超过 `100 KB`
 - 口径：按 `code-boundaries-and-entrypoints.md`，审计纳入版本管理的 `src/`、`scripts/`、`tests/`、`tools/` 下源码 / 脚本文件。
@@ -19,6 +19,8 @@
 - 2026-07-27 T12 anchored canonical alias raw portal 轮次扫描全部 `5` 个修改源码/测试文件：`>=100KB` 与 `>=60KiB` 均为 `0`；最大为 `candidate_audit.py`（`31453` bytes），`anchor_portals.py` 为 `14338` bytes，两个专项测试分别为 `15403` 与 `13184` bytes。变更只把 T05 选中 `base_id` mainNode 的 canonical raw alias group 展开为 Direction 严格的 raw portal；不递归展开其它 grouped node 的 group，未新增入口、CLI 参数、依赖或 Case/Segment 特判，`entrypoint-registry.md` 无需改变。
 - 2026-07-31 T12 反向路径 Segment 范围轮次扫描全部 `9` 个新增/修改源码与测试文件：`>=100000 bytes` 与 `>=61440 bytes` 均为 `0`；最大为 `candidate_audit.py`（`52472` bytes），新增独立归属 helper `reverse_segment_scope.py` 为 `13467` bytes。变更复用 T06 已确认的 `20m / 50m / distance` ownership 排序，只在 T12 内增加双端标准面区间、逐 raw RCSD Road 唯一 Segment 归属及 additive 审计证据；未新增入口、CLI 参数或依赖，`entrypoint-registry.md` 无需改变。
 - 2026-07-31 T12 T03/T07 Junction 质量输出轮次扫描全部 `17` 个新增/修改源码、脚本、测试和 SpecKit QGIS validation 文件：`>=100000 bytes` 为 `0`，`>=61440 bytes` 为 `1`。最大为既有 full runner `t10_run_innernet_full_pipeline.sh`（`67248` bytes），继续低于 100KB 硬阈值且只增加 T03/T07 handoff 与 Junction 输出登记；T12 最大既有文件 `candidate_audit.py` 为 `52638` bytes，新 Junction 主审计 `junction_audit.py` 为 `42074` bytes，QGIS validation 为 `10741` bytes。新增正式入口 `t12_rerun_frcsd_junction_quality_innernet.sh` 为 `6795` bytes，并已同步 `entrypoint-registry.md`；所有新职责拆入 `junction_inputs.py / junction_audit.py / junction_outputs.py`，未回填已超软线的 full runner 算法职责，仓库 `>=100KB` 集合不变。
+- 2026-08-01 T03 全量 Case 准确性闭环轮次扫描全部 `38` 个新增/修改源码、脚本和测试文件：`>=100000 bytes` 为 `0`，`>=61440 bytes` 为 `1`。最大为 `step6_geometry_runner.py`（`66268` bytes）；新增 raw topology guard、ownership、业务连通性、Road-surface portal、compact target portal 与 surface regularization 均拆为独立内部模块，一次性 QGIS validation 为 `12006` bytes，未新增正式入口、CLI 参数或依赖，`entrypoint-registry.md` 无需改变。`step6_geometry_runner.py` 已超过 60KiB 观察线但仍低于 100KB 硬阈值，后续新增职责前应优先拆出 summary/result publication 编排。
+- 2026-08-02 Scheme A 当前快照重建与 T12 required Junction movement 轮次扫描全部 `41` 个新增/修改源码、脚本和测试文件：`>=100000 bytes` 为 `0`，`>=61440 bytes` 为 `1`。最大仍为 `step6_geometry_runner.py`（`72857` bytes）；T12 新 required movement helper `junction_required_movements.py` 为 `25132` bytes，主审计 `junction_audit.py` 为 `52978` bytes。新增逻辑独立承接 boundary arm heading、raw Direction carrier 与 snapshot-scoped QA 真值回归，未新增正式入口、CLI 参数或依赖，`entrypoint-registry.md` 无需改变。`step6_geometry_runner.py` 继续登记为下一轮新增职责前必须优先拆分的观察项。
 - 2026-07-21 P04 Road 直出第二里程碑、冻结 Directional Road V2、High-Precision Road V3、双向证据塌缩降级、物理走廊、三类几何来源及独立几何/拓扑 QA 扫描 P04 `src/`、`tests/` 与 V3 SpecKit `validation/` 共 `56` 个 `.py` 文件：`>=61440 bytes` 与 `>=100KB` 均为 0；最大为 `directional_evidence.py`（`42766` bytes），V3 最大为 `high_precision_geometry.py`（`37608` bytes），新增 V2 对照 helper 为 `6170` bytes，性能 replay validation 为 `2179` bytes。directional/high-precision 的 evidence、geometry、comparison、movement、quality、topology、pipeline、QGIS 与测试按职责隔离。新增/修改均为模块内研究 callable、测试和一次性验证工件，不新增 repo CLI/root script，不修改 M2、冻结 V2、T00-T12 V1、`scripts/` 或入口 registry，仓库超阈值集合不变。
 - 2026-07-22 P04 Segment-first 目标覆盖迭代扫描 `24` 个源码与 `19` 个专项测试：`>=61440 bytes` 与 `>=100KB` 均为0；最大源码为`segment_first_pipeline.py`（`57688` bytes），其次为`segment_first_nodes.py`（`52055` bytes），最大测试为`test_segment_first_nodes.py`（`14890` bytes）。本轮新增 JunctionUnit endpoint surface 恢复候选及已发布 carrier 几何重叠冲突保护，未新增 repo CLI/root script，未修改 T01–T12、`scripts/`或入口 registry。
 - 2026-07-23 P04 Segment-first LaneTopo 投影与 endpoint surface 定向救援迭代后扫描 `25` 个 `segment_first*.py` 源码与 `19` 个专项测试：`>=61440 bytes` 为 `1`、`>=100KB` 为 `0`。主编排 `segment_first_pipeline.py` 为 `88766` bytes；LaneTopo 正式 Road 投影、父 Road 同载体识别、Lane 级拒绝归集、已接受物理交接复用和 Junction carrier path 查询保持在 `segment_first_lane_topo.py`（`10857` bytes）。Endpoint 候选只使用 T07/T03/T04 accepted surface，且仅在普通构图产生 Junction rejected spoke、同时存在贯通两端面的 Patch 候选时定向重选；不完整方向先剔除，再复用既有 DriveZone 约束反向推导，未进入救援的 Segment 保持原候选选择。Road-Lane 正式关系同时按 Patch Road lineage 与 Road `source_lane_ids` 编译，覆盖 Lane fragment 直出 Road。本轮未新增正式入口，未修改 T01–T12、`scripts/` 或入口 registry；主编排后续仍应继续拆出 network rebuild/summary职责，不得回填投影算法。
@@ -105,20 +107,26 @@
 
 | 原路径 / 新模块 | 体量 | 当前判断 | 建议 |
 |---|---:|---|---|
-| `src/rcsd_topo_poc/modules/t03_virtual_junction_anchor/step3_engine.py` | `101033 -> 36056` bytes | T10 性能治理中保留 Step3 public API、graph/dijkstra monkeypatch 点、reachable cache 与主编排；geometry/status 支撑已下沉 | 保持 graph 可测试替换点与主状态编排，不回填基础几何 helper |
-| `src/rcsd_topo_poc/modules/t03_virtual_junction_anchor/step3_engine_support.py` | `47907` bytes | 新拆出的 Step3 mask、single-sided、foreign object、containment 与状态构建支撑 | 达到 50KB 前继续按 mask/status 职责拆分 |
-| `src/rcsd_topo_poc/modules/t03_virtual_junction_anchor/step3_engine_primitives.py` | `20730` bytes | 新拆出的 Step3 geometry/vector/road primitive 与默认审计字段 helper | 保持无 Case 主编排职责 |
+| `src/rcsd_topo_poc/modules/t03_virtual_junction_anchor/step3_engine.py` | `101033 -> 40782` bytes | T10 性能治理中保留 Step3 public API、graph/dijkstra monkeypatch 点、reachable cache 与主编排；geometry/status 支撑已下沉 | 保持 graph 可测试替换点与主状态编排，不回填基础几何 helper |
+| `src/rcsd_topo_poc/modules/t03_virtual_junction_anchor/step3_engine_support.py` | `49911` bytes | 新拆出的 Step3 mask、single-sided、foreign object、containment 与状态构建支撑 | 达到 50KB 前继续按 mask/status 职责拆分 |
+| `src/rcsd_topo_poc/modules/t03_virtual_junction_anchor/step3_engine_primitives.py` | `21280` bytes | 新拆出的 Step3 geometry/vector/road primitive 与默认审计字段 helper | 保持无 Case 主编排职责 |
 | `src/rcsd_topo_poc/modules/t03_virtual_junction_anchor/step3_engine_models.py` | `984` bytes | 新拆出的 reachable-road cache 内部模型 | 保持仅定义 dataclass |
 | `src/rcsd_topo_poc/modules/t03_virtual_junction_anchor/step6_geometry.py` | `100384 -> 26180` bytes | 保留 Step6 directional-cut、single-sided trace monkeypatch 点与兼容 public API；正式 build/status 通过惰性 wrapper 调用 runner | 保持测试替换点和兼容签名，不回填主几何编排 |
-| `src/rcsd_topo_poc/modules/t03_virtual_junction_anchor/step6_geometry_runner.py` | `43403` bytes | 新拆出的 Step6 正式 geometry build 与 status 编排 | 保持只承接 Step6 主流程；达到 50KB 前再拆 summary/result 分支 |
-| `src/rcsd_topo_poc/modules/t03_virtual_junction_anchor/step6_geometry_primitives.py` | `26733` bytes | 新拆出的 geometry、buffer、coverage、shape metric 与缓存 primitive | 保持无 Case 主编排职责 |
-| `src/rcsd_topo_poc/modules/t03_virtual_junction_anchor/step6_geometry_context.py` | `13680` bytes | 新拆出的 required node/road、semantic member 与 allowed-space context helper | 保持 context 选择职责 |
+| `src/rcsd_topo_poc/modules/t03_virtual_junction_anchor/step6_geometry_runner.py` | `72857` bytes | Step6 正式 geometry build 与 status 编排；本轮只挂接独立 portal/connectivity/regularization helper | 已超过 60KiB 观察线；下一轮新增职责前优先拆 summary/result publication |
+| `src/rcsd_topo_poc/modules/t03_virtual_junction_anchor/step6_geometry_primitives.py` | `31050` bytes | 新拆出的 geometry、buffer、coverage、shape metric 与缓存 primitive | 保持无 Case 主编排职责 |
+| `src/rcsd_topo_poc/modules/t03_virtual_junction_anchor/step6_geometry_context.py` | `14338` bytes | 新拆出的 required node/road、semantic member 与 allowed-space context helper | 保持 context 选择职责 |
+| `src/rcsd_topo_poc/modules/t03_virtual_junction_anchor/step6_business_connectivity.py` | `4521` bytes | raw/output 业务终端连通分区等价审计 | 仅承接可解释连通性 oracle |
+| `src/rcsd_topo_poc/modules/t03_virtual_junction_anchor/step6_road_surface_portal.py` | `14965` bytes | 基于 Road-surface 与冻结 legal space 的受约束 portal | 不放宽 Direction、foreign object 或 source ownership |
+| `src/rcsd_topo_poc/modules/t03_virtual_junction_anchor/step6_compact_target_portal.py` | `6508` bytes | 紧凑 canonical alias target 的 Road-surface 连通门廊 | 保持 12m 通用门禁与 no-silent-fix |
+| `src/rcsd_topo_poc/modules/t03_virtual_junction_anchor/step6_surface_regularization.py` | `6800` bytes | 受约束 surface regularization、无效派生几何显式阻断与审计 | 不修改输入源几何，不允许 `buffer(0)` 静默修复 |
 | `src/rcsd_topo_poc/modules/t03_virtual_junction_anchor/step6_geometry_models.py` | `4229` bytes | 新拆出的 directional/cache 内部 dataclass | 保持仅定义模型 |
 | `src/rcsd_topo_poc/modules/t03_virtual_junction_anchor/step4_association.py` | `99337 -> 247` bytes | 已降为兼容 facade，保留 association case/status 两个既有 public callable | 禁止回填实现 |
-| `src/rcsd_topo_poc/modules/t03_virtual_junction_anchor/step4_association_runner.py` | `42239` bytes | 新拆出的 Step4 association 正式主编排 | 保持只承接 Case 结果编排 |
+| `src/rcsd_topo_poc/modules/t03_virtual_junction_anchor/step4_association_runner.py` | `48545` bytes | 新拆出的 Step4 association 正式主编排 | 保持只承接 Case 结果编排；继续避免回填 raw guard/ownership 算法 |
 | `src/rcsd_topo_poc/modules/t03_virtual_junction_anchor/step4_association_uturn.py` | `25703` bytes | 新拆出的 U-turn、degree-2 chain 与 related-scope 支撑 | 保持 U-turn/chain 职责 |
-| `src/rcsd_topo_poc/modules/t03_virtual_junction_anchor/step4_association_gates.py` | `23466` bytes | 新拆出的 required-node gate、support fragment、failure/status helper | 保持 gate 与 fragment 职责 |
-| `src/rcsd_topo_poc/modules/t03_virtual_junction_anchor/step4_association_primitives.py` | `14747` bytes | 新拆出的 geometry、direction、group 与 corridor primitive | 保持无 Case 主编排职责 |
+| `src/rcsd_topo_poc/modules/t03_virtual_junction_anchor/step4_association_gates.py` | `24754` bytes | 新拆出的 required-node gate、support fragment、failure/status helper | 保持 gate 与 fragment 职责 |
+| `src/rcsd_topo_poc/modules/t03_virtual_junction_anchor/step4_association_primitives.py` | `15683` bytes | 新拆出的 geometry、direction、group 与 corridor primitive | 保持无 Case 主编排职责 |
+| `src/rcsd_topo_poc/modules/t03_virtual_junction_anchor/step4_raw_topology_guard.py` | `20162` bytes | Direction 严格的 unmatched support、compact alias terminal 与 semantic core 守门 | 保持 raw evidence 只读重验与明确拒绝职责 |
+| `src/rcsd_topo_poc/modules/t03_virtual_junction_anchor/step4_support_ownership.py` | `7588` bytes | Class B junction ownership 判定与审计 | 不承接 CaseID 或距离放宽特例 |
 | `src/rcsd_topo_poc/modules/t04_divmerge_virtual_polygon/step4_road_surface_fork_binding.py` | `5617` bytes | 已降为 road-surface fork binding facade，保留原 public entrypoint；本轮仅接入 complex SWSD shared RCSDRoad policy | 后续策略扩展优先落到对应 policy 模块，不回填 facade |
 | `src/rcsd_topo_poc/modules/t04_divmerge_virtual_polygon/step4_road_surface_fork_binding_swsd_rcsdroad.py` | `20445` bytes | 新增的 complex SWSD shared RCSDRoad fallback policy，负责无主证据复杂路口整体唯一 RCSDRoad 对齐 | 保持只承接 shared RCSDRoad 消歧与审计更新，不回填 facade |
 | `src/rcsd_topo_poc/modules/t04_divmerge_virtual_polygon/step4_road_surface_fork_binding_promotions.py` | `77694 -> 1010` bytes | 已降为 promotion policy 兼容 facade，保留既有私有 callable 导入面 | 禁止回填实现；按 base / relaxed / partial policy 继续维护 |
@@ -614,19 +622,20 @@ Access 几何同时缺失时不猜测，继续由
 | `scripts/t12_run_frcsd_quality_audit.py` | `5234` bytes | 既有 T12 CLI；增加可选 T07 Step1/2 根参数 |
 | `src/rcsd_topo_poc/modules/t10_e2e_orchestration/case_runner_t12.py` | `6722` bytes | T10→T12 Step1/2 handoff |
 | `src/rcsd_topo_poc/modules/t12_frcsd_quality_audit/issue_taxonomy.py` | `9156` bytes | 三组七类、中文描述、状态与兼容映射唯一真相 |
-| `src/rcsd_topo_poc/modules/t12_frcsd_quality_audit/junction_audit.py` | `46109` bytes | T03 重验与 T07 Step2 J03/J04 发布；不得承接 T07 算法 |
+| `src/rcsd_topo_poc/modules/t12_frcsd_quality_audit/junction_audit.py` | `52978` bytes | T03 raw topology guard 与 required movement 重验、T07 Step2 J03/J04 发布；不得承接 T03/T07 算法 |
+| `src/rcsd_topo_poc/modules/t12_frcsd_quality_audit/junction_required_movements.py` | `25132` bytes | SWSD required movement、FRCSD boundary arm heading/ownership、raw Direction carrier 与受限 alias portal | 保持只读重验，不读取 CaseID，不创建通用 canonical graph edge |
 | `src/rcsd_topo_poc/modules/t12_frcsd_quality_audit/junction_inputs.py` | `26005` bytes | T03/T07 Step2 只读来源、final/error/summary/relation evidence 强一致性和指纹审计 |
 | `src/rcsd_topo_poc/modules/t12_frcsd_quality_audit/junction_outputs.py` | `6992` bytes | Junction CSV/GPKG 发布 |
-| `src/rcsd_topo_poc/modules/t12_frcsd_quality_audit/models.py` | `4623` bytes | v10 schema 与统一字段模型 |
+| `src/rcsd_topo_poc/modules/t12_frcsd_quality_audit/models.py` | `5739` bytes | v12 schema、统一字段模型与 Junction movement 参数 |
 | `src/rcsd_topo_poc/modules/t12_frcsd_quality_audit/outputs.py` | `31626` bytes | Segment 输出、中文分类报告与内部根因保留 |
 | `src/rcsd_topo_poc/modules/t12_frcsd_quality_audit/review_publish.py` | `14167` bytes | Segment 分类迁移、决定和候选唯一性门禁 |
 | `src/rcsd_topo_poc/modules/t12_frcsd_quality_audit/runner.py` | `6649` bytes | T12 编排与 T07 Step1/2 可选输入传递 |
 | `tests/modules/t10_e2e_orchestration/test_t10_t12_workflow.py` | `13161` bytes | Step1/2 handoff、标准目录归档与失败恢复合同 |
 | `tests/modules/t12_frcsd_quality_audit/test_issue_taxonomy.py` | `3365` bytes | 七类、状态和兼容映射合同 |
-| `tests/modules/t12_frcsd_quality_audit/test_junction_audit.py` | `13007` bytes | J01-J04 决定、误报排除和唯一性合同 |
+| `tests/modules/t12_frcsd_quality_audit/test_junction_audit.py` | `20784` bytes | J01-J04、T03 raw guard/required movement 重验、交叉道路 heading 防错配和唯一性合同 |
 | `tests/modules/t12_frcsd_quality_audit/test_junction_inputs.py` | `10005` bytes | Step2 final/error/summary/relation evidence 一致性和 Step3 零导入合同 |
 | `tests/modules/t12_frcsd_quality_audit/test_outputs.py` | `3243` bytes | Segment/Junction 分类字段和报告合同 |
-| `tests/modules/t12_frcsd_quality_audit/test_real_junction_cases.py` | `5558` bytes | T03 4 正 16 负真实 Case 回归 |
+| `tests/modules/t12_frcsd_quality_audit/test_real_junction_cases.py` | `5248` bytes | 当前 QA 指纹绑定的 11 个残留候选真值回归；不再跨快照固定 4 正 16 负 |
 | `tests/modules/t12_frcsd_quality_audit/test_review_publish.py` | `10676` bytes | Segment 决定、兼容和候选唯一性合同 |
 | `specs/t12-quality-taxonomy-step2-source-20260801/validation/build_real_audit_bundle.py` | `16081` bytes | 一次性真实 Case/QGIS 自包含证据包构建，不登记为正式入口 |
 | `specs/t12-quality-taxonomy-step2-source-20260801/validation/create_qgis_project.py` | `16838` bytes | 一次性 PyQGIS 工程、渲染和图层门禁，不登记为正式入口 |

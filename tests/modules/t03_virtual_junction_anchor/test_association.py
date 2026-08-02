@@ -360,7 +360,9 @@ def test_association_center_two_node_offset_group_stays_support_only(tmp_path: P
     assert gate_rows["rc_pair"]["gate_reason"] == "center_required_core_missing_anchor_local_semantic_group"
 
 
-def test_association_single_sided_degree1_node_stays_support_only(tmp_path: Path) -> None:
+def test_association_single_sided_degree1_node_keeps_dual_component_support_review(
+    tmp_path: Path,
+) -> None:
     case_root = tmp_path / "cases"
     step3_root = tmp_path / "step3"
     case_id = "100015"
@@ -402,6 +404,7 @@ def test_association_single_sided_degree1_node_stays_support_only(tmp_path: Path
 
     assert result.association_class == "B"
     assert result.association_state == "review"
+    assert result.reason == "association_support_only"
     assert result.extra_status_fields["required_rcsdnode_ids"] == []
     assert result.extra_status_fields["support_rcsdnode_ids"] == []
     assert set(result.extra_status_fields["support_rcsdroad_ids"]) == {"rc_degree1_road", "rc_support_exit_side"}
@@ -410,9 +413,14 @@ def test_association_single_sided_degree1_node_stays_support_only(tmp_path: Path
         gate_rows["rc_degree1"]["gate_reason"]
         == "single_sided_required_core_singleton_degree_below_semantic_threshold"
     )
+    ownership = result.audit_doc["step4"]["class_b_support_ownership_audit"]
+    assert ownership["owned"] is True
+    assert ownership["support_component_count"] == 2
 
 
-def test_association_single_sided_direction_mismatch_keeps_road_only_support(tmp_path: Path) -> None:
+def test_association_single_sided_direction_mismatch_keeps_auditable_class_b_support(
+    tmp_path: Path,
+) -> None:
     case_root = tmp_path / "cases"
     step3_root = tmp_path / "step3"
     case_id = "100016"
@@ -455,6 +463,7 @@ def test_association_single_sided_direction_mismatch_keeps_road_only_support(tmp
 
     assert result.association_class == "B"
     assert result.reason == "association_support_only"
+    assert result.association_state == "review"
     assert result.extra_status_fields["required_rcsdnode_ids"] == []
     assert result.extra_status_fields["support_rcsdnode_ids"] == []
     assert result.extra_status_fields["support_rcsdroad_ids"] == ["rc_h_left"]
@@ -463,3 +472,6 @@ def test_association_single_sided_direction_mismatch_keeps_road_only_support(tmp
         gate_rows["rc_horizontal_only"]["gate_reason"]
         == "single_sided_required_core_direction_signature_mismatch"
     )
+    ownership = result.audit_doc["step4"]["class_b_support_ownership_audit"]
+    assert ownership["owned"] is True
+    assert ownership["issue_codes"] == []

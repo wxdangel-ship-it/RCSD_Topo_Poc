@@ -5,6 +5,7 @@
 - `Step1` 必须可追溯当前 case 的代表节点、语义路口集合、道路集合、DriveZone、RCSDRoad 与 RCSDNode。
 - `Step2` 只允许当前正式模板：`center_junction / single_sided_t_mouth`。
 - `Step3` 必须保持冻结前置语义：道路归属、DriveZone 约束、邻近路口切断、foreign 屏蔽、foreign MST 补充切断、must-cover、single-sided opposite-side guard、no-silent-fallback。
+- `Step3` 目标组件触达门禁固定为 `2.0m`，CRS 必须为米制 `EPSG:3857`；门禁只影响组件解释，不得扩张 DriveZone。
 - `Step4` 必须稳定解释 `A / B / C` 三类 RCSD 关联结果，并可审计区分同路径 `RCSDRoad` chain、最终调头口、suspect 调头口、被同路径保护拒绝的调头候选；当 `RCSDRoad.formway` 存在时，`(formway & 1024) != 0` 是唯一调头口判定条件，未提供该字段时只允许 strict 几何 fallback，且方向不可用 / 不可信的几何候选只能审计不得过滤；同路径保护可被 strict 调头连接覆盖，短分段不再作为覆盖失败的独立条件；tentative 调头过滤后新增的同路径证据也必须在最终调头过滤前复核。
 - `Step4 / Step5 / Step6` 必须可审计区分 `related / local_required / foreign_mask` 三层 RCSD 语义；`related` 不得被误作为全长 must-cover，`foreign_mask` 不得包含 related road。
 - `related_outside_scope_rcsdroad_ids` 不得跨越有效 RCSD 语义路口边界；只能从 required core 经 allowed/candidate 范围内的非语义 connector 做一跳延伸，不得从 support/group related road 或远端 / 未打包节点继续外扩。非空且非 `0` 的 `mainnodeid` 只是候选 / grouping 信号，不单独构成停止条件。
@@ -13,7 +14,9 @@
 - `RCSDNode` 的 required/support 关联必须有 incident `RCSDRoad` 证据，避免无拓扑连接的邻近点误升格为 related。
 - `single_sided_t_mouth` 的强相关 RCSD 语义路口最多两个；远端下一语义路口只能作为道路延伸终点，不得把远端之后的 incident road 纳入当前 related；Step6 必须优先使用可完成两侧确认的 Step4 强相关集合，强相关集合不足以确认两侧时保留既有 endpoint tracing。
 - `Step5` 必须区分正式 hard negative 对象与 audit-only foreign 对象。
-- `Step6` 不得突破合法空间、directional boundary 或 excluded hard mask；B 类 support-only 的中心 seam bridge 只能在上述约束内修补目标节点附近缝隙，不得成为跨路口扩张。
+- `Step6` 不得突破合法空间。directional boundary 或 excluded hard mask 只有在 `compact_semantic_target_road_surface_portal` 的新增区域内可以被显式局部豁免；该 portal 要求 support-only、多目标、目标跨度 `<=12.0m`、输入几何有效、raw Road-surface 可比较且采用后端点分区完全等价，不能成为长距离或跨层扩张。
+- `MultiPolygon`、compactness、bbox fill 只属于 review；无业务证据碎片必须删除，raw Road-surface 同组件业务端点被最终面拆开必须失败。不得为了强制单 Polygon 跨越原始不连通道路面。
+- 无效 DriveZone 要素、raw union、内存归一化、面积差及其实际依赖必须显式审计；不得修改输入文件或 silent fix。
 - `Step7` 机器状态只允许 `accepted / rejected`；批量运行另需显式区分 `runtime_failed`。
 
 ## 2. 输出与契约稳定性

@@ -8,7 +8,9 @@ T03 是项目“路口 1:1 关系层”的常规虚拟锚定模块。它在 T07 
 
 - 将 `center_junction` 与 `single_sided_t_mouth` 类型路口转化为可审计的虚拟锚定面。
 - 通过 Step1-Step7 把局部上下文、合法空间、RCSD 关联、负向约束、几何生成和最终发布分离。
-- 对 `single_sided_t_mouth` 中目标语义节点贴近 DriveZone 边界的轻微偏移，允许在 incident road 支撑和审计字段齐备时扩大组件触达判定参考；最终面仍必须完全受 DriveZone 约束。
+- 对 `single_sided_t_mouth` 中目标语义节点贴近 DriveZone 边界的轻微偏移，统一使用 `2.0m` 组件触达门禁；最终面仍必须完全受 DriveZone 约束，并输出实际距离与门禁角色。
+- 以原始 SWSD/RCSD Road endpoint、严格 `Direction` 和 canonical mainNode/alias 归组为正式拓扑证据，保守拒绝未匹配 support 分量、紧凑 alias 单侧方向终点和直接相连的歧义语义核心；canonical alias 归组只证明 membership，Class B raw portal 还必须在 `10.0m` 内局部锚定当前 SWSD 目标组，远端同组 alias 不得替当前路口解除 ownership 拒绝；不得从 CaseID 或历史标签推导规则。
+- 对原始 Road-surface 连通的紧凑目标 alias 组，允许在冻结 Step3 合法空间内建立可审计 portal；仅当目标最大跨度不超过 `12.0m`、输入几何有效且完整端点连通分区恢复等价时采用。该 portal 不修改源数据，也不授权长距离或跨层强连通。
 - 为 T05 提供 T03 surface 与 `t03_swsd_rcsd_relation_evidence.*`。
 - 为 T04 提供 downstream `nodes.gpkg` 状态，不把 T03 surface 作为 T04 输入。
 - 将常规路口的虚拟构面结果压缩为“一个 SWSD 语义路口对应一个 RCSD 关系基点”的下游候选，交由 T05 统一做 relation 发布和基数质检。
@@ -73,9 +75,9 @@ T03 是项目“路口 1:1 关系层”的常规虚拟锚定模块。它在 T07 
 | Step1 | 建立当前 case 的代表 node、局部 roads、DriveZone、RCSDRoad、RCSDNode 上下文。 |
 | Step2 | 将 case 限定到 `center_junction / single_sided_t_mouth` 正式模板。 |
 | Step3 | 冻结合法活动空间，后续步骤不得反向篡改。 |
-| Step4 | 识别 RCSD 关联语义，区分 `A / B / C` 与 required/support/excluded。 |
+| Step4 | 识别 RCSD 关联语义，区分 `A / B / C` 与 required/support/excluded，并以原始 Road/Node/Direction 执行可审计拓扑门禁。 |
 | Step5 | 建立 foreign / excluded 负向约束，形成 hard negative mask。 |
-| Step6 | 在合法空间、方向边界、local required RC 与 hard negative mask 内生成受约束几何。 |
+| Step6 | 在合法空间、方向边界、local required RC 与 hard negative mask 内生成受约束几何；清理无业务证据碎片，并在紧凑 alias 门禁成立时沿原始 Road-surface 恢复端点连通。 |
 | Step7 | 压缩为 `accepted / rejected`，发布 surface、nodes 更新、relation evidence 和审计；surface accepted 不等于 SWSD-RCSD relation 成功。 |
 
 ## 8. 核心场景概念：A / B / C
@@ -104,11 +106,13 @@ T03 的状态字段必须分工解释：
 ## 9. 什么是对
 
 - `Step4~Step7` 必须消费冻结的 Step3 allowed space/status/audit。
-- `single_sided_t_mouth` 的 DriveZone 边界微偏移只影响 Step3 组件触达参考，不允许把 `allowed_space` 推出 DriveZone；触发时必须输出 `target_edge_touch_*` 审计字段。
+- `single_sided_t_mouth` 的 DriveZone 边界微偏移只影响 Step3 `2.0m` 组件触达参考，不允许把 `allowed_space` 推出 DriveZone；必须输出 `target_edge_touch_*` 审计字段。
 - `association_class` 是业务关联解释，不是最终视觉等级。
 - `B / review` 是保守策略，不等价于算法失败。
 - surface accepted 与 relation 成功必须分开判断；只有 `association_class = A`、`Step7 accepted` 且存在 required RCSD 语义路口证据时，才能成为成功 relation 候选。
 - `Step6` 先确定 directional boundary，再在 boundary 内构面。
+- 合理与否由业务端点连通、must-cover、合法空间和 foreign 证据共同决定；`MultiPolygon` 本身只属于 review 信号。无业务证据碎片必须清理，原始 Road-surface 已连通但最终业务端点被切开的结果不得 accepted。
+- DriveZone 无效要素、内存归一化、面积变化、源数据未修改及 `silent_fix=false` 必须显式审计。
 - `Step7` 只发布 `accepted / rejected`，不新增第三最终态。
 
 ## 10. 什么是错
@@ -118,6 +122,8 @@ T03 的状态字段必须分工解释：
 - 把 `V1~V5` review 结果当作机器正式状态。
 - 把 `association_state = established` 直接理解为 SWSD-RCSD relation 成功。
 - 用 cleanup 静默补救几何或拓扑不一致。
+- 仅因 `MultiPolygon`、compactness、bbox fill 或视觉不平整直接拒绝；也不得为强制单 Polygon 跨越不连通 Road-surface。
+- 把 canonical alias membership 当作零成本图边，或忽略 `RCSDRoad.direction` 构造 topology guard。
 - 将 `fail3` 回写为上游输入语义。
 
 ## 11. 当前治理缺口

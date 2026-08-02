@@ -7,6 +7,7 @@ from shapely.geometry import box
 from rcsd_topo_poc.modules.t00_utility_toolbox.common import write_vector
 from rcsd_topo_poc.modules.t01_data_preprocess.io_utils import read_vector_layer
 from rcsd_topo_poc.modules.t05_junction_surface_fusion.models import MAIN_SURFACE_FIELDS
+from rcsd_topo_poc.modules.t05_junction_surface_fusion.normalizer import NodeLookup, NodeRecord
 from rcsd_topo_poc.modules.t05_junction_surface_fusion.runner import run_t05_junction_surface_fusion
 
 
@@ -44,6 +45,49 @@ def _run(
         nodes_path=nodes_path,
         out_root=tmp_path / "out",
         run_id="run",
+    )
+
+
+def test_node_lookup_prefers_canonical_mainnode_over_alias_regardless_of_order() -> None:
+    alias = NodeRecord(node_id="1013540", mainnodeid="1013539", kind_2=0, patch_id="alias_patch")
+    main = NodeRecord(node_id="1013539", mainnodeid="1013539", kind_2=2048, patch_id="main_patch")
+
+    for records in ((alias, main), (main, alias)):
+        lookup = NodeLookup(records)
+        assert lookup.resolve_mainnodeid(("1013540",)) == "1013539"
+        assert lookup.kind_2_for("1013539") == 2048
+        assert lookup.patch_id_for("1013539") == "main_patch"
+        assert lookup.audit_notes_for("1013539") == ("nodes_lookup=canonical_mainnode",)
+
+
+def test_node_lookup_does_not_infer_canonical_fields_from_alias_only_group() -> None:
+    lookup = NodeLookup(
+        (
+            NodeRecord(node_id="201", mainnodeid="200", kind_2=4, patch_id="p1"),
+            NodeRecord(node_id="202", mainnodeid="200", kind_2=4, patch_id="p1"),
+        )
+    )
+
+    assert lookup.resolve_mainnodeid(("201",)) == "200"
+    assert lookup.kind_2_for("200") is None
+    assert lookup.patch_id_for("200") is None
+    assert lookup.audit_notes_for("200") == ("nodes_lookup=canonical_mainnode_missing",)
+
+
+def test_node_lookup_reports_conflicting_canonical_fields_without_guessing() -> None:
+    lookup = NodeLookup(
+        (
+            NodeRecord(node_id="300", mainnodeid="300", kind_2=4, patch_id="p1"),
+            NodeRecord(node_id="300", mainnodeid="300", kind_2=2048, patch_id="p2"),
+        )
+    )
+
+    assert lookup.kind_2_for("300") is None
+    assert lookup.patch_id_for("300") is None
+    assert lookup.audit_notes_for("300") == (
+        "nodes_lookup=canonical_mainnode",
+        "nodes_lookup_kind_2_conflict",
+        "nodes_lookup_patch_id_conflict",
     )
 
 

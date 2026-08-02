@@ -72,6 +72,8 @@ UTURN_TRUNK_FLOW_OPPOSITE_DOT_MAX = -0.92
 
 COMPOSITE_RCSD_NODE_GROUP_MAX_SPAN_M = 9.0
 
+CANONICAL_COMPOSITE_RCSD_NODE_GROUP_MAX_SPAN_M = SELECTED_CORRIDOR_BUFFER_M
+
 from .step4_association_primitives import (
     _build_node_degree_map,
     _build_selected_corridor,
@@ -131,15 +133,34 @@ def _apply_required_rcsdnode_template_gate(
             continue
         required_groups[group_id] = group_required_ids
         group_span_m = _max_node_group_span_m(group_nodes)
+        canonical_main_node_present = any(
+            normalize_id(node.node_id) == normalize_id(node.mainnodeid)
+            for node in group_nodes
+            if node.mainnodeid not in {None, "", "0"}
+        )
+        compact_multi_node_semantic_group = len(group_nodes) > 1 and (
+            group_span_m <= COMPOSITE_RCSD_NODE_GROUP_MAX_SPAN_M
+            or (
+                canonical_main_node_present
+                and group_span_m
+                <= CANONICAL_COMPOSITE_RCSD_NODE_GROUP_MAX_SPAN_M
+            )
+        )
         gate_audit[group_id] = {
             "member_rcsdnode_ids": _sorted_ids(node.node_id for node in group_nodes),
             "required_member_rcsdnode_ids": _sorted_ids(group_required_ids),
             "effective_degree": max((int(node_degree_map.get(node.node_id, 0)) for node in group_nodes), default=0),
             "group_span_m": round(group_span_m, 6),
-            "group_max_span_m": COMPOSITE_RCSD_NODE_GROUP_MAX_SPAN_M,
+            "group_max_span_m": (
+                CANONICAL_COMPOSITE_RCSD_NODE_GROUP_MAX_SPAN_M
+                if canonical_main_node_present
+                else COMPOSITE_RCSD_NODE_GROUP_MAX_SPAN_M
+            ),
+            "canonical_main_node_present": canonical_main_node_present,
             "compact_group_member_count": len(group_nodes),
-            "compact_multi_node_semantic_group": len(group_nodes) > 1
-            and group_span_m <= COMPOSITE_RCSD_NODE_GROUP_MAX_SPAN_M,
+            "compact_multi_node_semantic_group": (
+                compact_multi_node_semantic_group
+            ),
             "intersects_current_swsd_surface": bool(
                 current_swsd_scope is not None and any(node.geometry.intersects(current_swsd_scope) for node in group_nodes)
             ),
@@ -275,7 +296,7 @@ def _build_support_fragment(
 ) -> BaseGeometry | None:
     allowed_fragment = road.geometry.intersection(allowed_space.buffer(RCSD_ALLOWED_BUFFER_M))
     corridor_fragment = allowed_fragment.intersection(selected_corridor.buffer(SUPPORT_CORRIDOR_BUFFER_M))
-    fragment = _extract_line_geometry(corridor_fragment) or _extract_line_geometry(allowed_fragment)
+    fragment = _extract_line_geometry(corridor_fragment)
     if fragment is None:
         return None
     if fragment.length >= road.geometry.length * 0.95:

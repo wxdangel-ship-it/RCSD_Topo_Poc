@@ -73,7 +73,7 @@ T03 当前处理策略按正式业务主链 `Step1~Step7` 组织：
 - `allowed_space` 必须受 DriveZone 约束。
 - own-group nodes 是 must-cover 目标，但不能为了覆盖它们突破合法空间。
 - `single_sided_t_mouth` 的 DriveZone 边界微偏移只允许影响组件触达判定参考，最终面仍必须完全落在 DriveZone 内。
-- 当目标语义节点仅以小容差贴近 DriveZone 边界，且每个目标节点均有进入 DriveZone 的 incident road 支撑时，Step3 可扩大“候选组件触达目标”的参考容差；该规则只解决贴边目标点误判，不放宽最终 `allowed_space` 必须完全落在 DriveZone 内的硬约束。
+- 当目标语义节点仅以小容差贴近 DriveZone 边界时，“候选组件触达目标”统一采用 `2.0m`；该规则只解决贴边目标点误判，不放宽最终 `allowed_space` 必须完全落在 DriveZone 内的硬约束，并保留实际距离与门禁角色审计。
 - Step3 的冻结结果必须能被 Step4-Step7 直接消费，后续步骤不得重写 Step3 规则。
 - 合法空间、负向掩膜、must-cover 与 no-silent-fallback 语义必须保持冻结，不由后续步骤回写。
 
@@ -134,6 +134,8 @@ T03 当前处理策略按正式业务主链 `Step1~Step7` 组织：
 - `related_outside_scope_rcsdroad_ids` 只能从 `required_rcsdroad_ids` 经 allowed/candidate 范围内的非语义 connector 做一跳延伸；不得从 support/group related road 外扩，不得递归多跳吞入远端 road；遇到有效 RCSD 语义路口边界、远端节点未打包 / 非 active 或 connector 不在当前 allowed/candidate 口径内时必须停止。
 - 共享同一非空 `mainnodeid` 且空间紧凑的多点 RCSD 候选组必须按 group 计算 connector degree；若 group effective degree = `2`，仍按非语义 connector 处理；若 group 非 degree-2 且至少两个 incident road 已进入 related，同组 active node 进入 related，但其他同组 incident road 不得仅因 group 成立自动进入 related。
 - Step4 的 required core 需要额外通过模板相关 gate：`center_junction` 需要 anchor-local、近邻成对或结构一致且偏移受限的紧凑高阶 RCSD 复合语义组；`single_sided_t_mouth` 需要 anchor-local、横向成对、代表点近处紧凑复合组或 allowed-only 紧凑复合组。
+- compact mainNode 组的外部臂数按跨 group 的 raw Road 统计，组内 alias Road 不冒充外部臂；Class B support ownership 必须解释 target 到 support 的局部归属。
+- Step4 在 association 分类之后执行原始拓扑 guard：未匹配的多 Road support 分量、跨度受限 alias 组的严格 Direction 单侧终点、以及 retained semantic core 与被丢弃高阶 core 的直接 raw Road 连接，均可形成 `not_established`。Class B canonical raw alias portal 只有在 `10.0m` 内局部锚定当前 target、alias gap `<=6.0m`、DriveZone 全覆盖且 incident Road Direction 合法时才能解释 support ownership；远端同组 alias 或附近完整 raw 图连通只作审计。所有引用 Road 与 Direction 必须可在原始输入重验。
 - 已落在当前 SWSD surface 内但不满足 anchor-local / 成对条件的 single-sided compact group，不得仅凭 compact 身份升格为 A 类。
 - 远端下一语义路口只能作为道路延伸终点，不得把远端之后的 incident road 纳入当前 related。
 
@@ -152,7 +154,7 @@ T03 当前处理策略按正式业务主链 `Step1~Step7` 组织：
 关键要求：
 
 - 已判定为 `related` 的 RCSDRoad 不进入 hard negative mask。
-- 当前 hard negative mask 仅由 `foreign_mask_source_rcsdroad_ids / excluded_rcsdroad -> road-like 1m mask` 进入 Step6。
+- 当前 hard negative mask 由 `foreign_mask_source_rcsdroad_ids / excluded_rcsdroad -> road-like 1m mask` 进入 Step6。紧凑语义目标 portal 只对自身新增区域建立局部、可审计 ownership 豁免，不改变原 mask 或源数据。
 - `foreign_mask` 是 Step6 的硬边界，不是 review 颜色表达。
 - audit-only foreign 只能用于解释风险，不得参与几何硬裁剪。
 
@@ -175,6 +177,9 @@ T03 当前处理策略按正式业务主链 `Step1~Step7` 组织：
 - 强相关集合能覆盖横向两侧且不缩短已确认 terminal extent 时用于收敛 tracing，否则保留既有可达 endpoint tracing。
 - Step4 已标记的 overflow / remote terminal node 不得被 fallback tracing 再次提升为 terminal。
 - 对冻结 Step3 已应用 `two_node_t_bridge` 的 case，后续几何必须继承该中心桥接支撑，不能由横向裁剪引入中心断开或桥位空洞。
+- Step6 先移除没有 target、selected Road、required/support Road/Node 业务证据的碎片；`MultiPolygon` 与形状指标只产生 review，不单独构成拒绝。
+- 对 `association_support_only` 的多 alias 目标，若 alias 最大跨度 `<=12.0m`、输入几何有效且 raw DriveZone 证明端点同组件，Step6 可在冻结 allowed surface 内沿 alias 最小生成树建立 Road-surface portal。候选只有在最终业务端点分区与 raw DriveZone 完全等价时采用；否则不修改当前结果并保守拒绝。
+- Road-surface portal 采用时，新增区域作为 directional/foreign 校验的显式局部豁免，审计必须记录阈值、added area、前后 component membership、source geometry unchanged 与 `silent_fix=false`。
 
 输出与审计：
 

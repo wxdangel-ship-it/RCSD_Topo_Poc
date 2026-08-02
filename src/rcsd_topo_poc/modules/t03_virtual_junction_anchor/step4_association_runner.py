@@ -133,6 +133,8 @@ from .step4_association_gates import (
     _visual_review_class,
     build_association_status_doc,
 )
+from .step4_support_ownership import evaluate_class_b_support_ownership
+from .step4_raw_topology_guard import evaluate_raw_topology_guard
 
 def build_association_case_result(context: AssociationContext) -> AssociationCaseResult:
     step1 = context.step1_context
@@ -179,6 +181,20 @@ def build_association_case_result(context: AssociationContext) -> AssociationCas
         "t_mouth_strong_related_overflow_rcsdnode_ids": [],
         "required_rcsdnode_gate_dropped_ids": [],
         "required_rcsdnode_gate_audit": {},
+        "class_b_support_ownership_audit": {
+            "mode": "not_evaluated",
+            "owned": None,
+            "issue_codes": [],
+            "silent_fix": False,
+            "source_geometry_modified": False,
+        },
+        "raw_topology_guard_audit": {
+            "mode": "not_evaluated",
+            "blocked": False,
+            "reason": None,
+            "silent_fix": False,
+            "source_geometry_modified": False,
+        },
     }
     if not template_result.supported:
         return _build_gate_failure_case_result(
@@ -390,28 +406,84 @@ def build_association_case_result(context: AssociationContext) -> AssociationCas
     for node in candidate_nodes:
         grouped_candidate_nodes[compact_group_id_by_node.get(node.node_id, node.node_id)].append(node)
 
-    for group_nodes in grouped_candidate_nodes.values():
-        eligible_group_nodes = [
+    semantic_incident_road_audit: dict[str, dict[str, Any]] = {}
+    for group_id, group_nodes in grouped_candidate_nodes.items():
+        connected_group_nodes = [
             node
             for node in group_nodes
-            if node.node_id not in degree2_connector_candidate_node_ids
-            and node_degree_map.get(node.node_id, 0) > 0
+            if node_degree_map.get(node.node_id, 0) > 0
         ]
-        required_min_degree = 1 if template_result.template_class == "single_sided_t_mouth" else 3
-        eligible_group_nodes = [
-            node
-            for node in eligible_group_nodes
-            if node_degree_map.get(node.node_id, 0) >= required_min_degree
-        ]
+        compact_semantic_group = len(group_nodes) > 1
+        eligible_group_nodes = (
+            connected_group_nodes
+            if compact_semantic_group
+            else [
+                node
+                for node in connected_group_nodes
+                if node.node_id not in degree2_connector_candidate_node_ids
+            ]
+        )
+        required_min_degree = (
+            1 if template_result.template_class == "single_sided_t_mouth" else 3
+        )
         if not eligible_group_nodes:
+            semantic_incident_road_audit[group_id] = {
+                "compact_group_member_ids": _sorted_ids(
+                    node.node_id for node in group_nodes
+                ),
+                "external_incident_rcsdroad_ids": [],
+                "external_incident_road_count": 0,
+                "required_min_external_road_count": required_min_degree,
+                "decision": "not_eligible",
+            }
             continue
-        group_incident_roads: list[RoadRecord] = []
-        for node in eligible_group_nodes:
-            group_incident_roads.extend(_incident_roads(candidate_roads, node))
-        group_incident_roads = list({road.road_id: road for road in group_incident_roads}.values())
-        if not group_incident_roads:
+        group_node_ids = {node.node_id for node in group_nodes}
+        group_incident_roads = [
+            road
+            for road in candidate_roads
+            if set(_endpoint_node_ids(road)) & group_node_ids
+        ]
+        group_incident_roads = list(
+            {road.road_id: road for road in group_incident_roads}.values()
+        )
+        external_incident_roads = [
+            road
+            for road in group_incident_roads
+            if len(set(_endpoint_node_ids(road)) & group_node_ids) == 1
+        ]
+        enough_semantic_arms = (
+            len(external_incident_roads) >= required_min_degree
+        )
+        semantic_incident_road_audit[group_id] = {
+            "compact_group_member_ids": _sorted_ids(group_node_ids),
+            "canonical_main_node_present": bool(
+                len(group_nodes) > 1
+                and any(
+                    normalize_id(node.node_id) == normalize_id(node.mainnodeid)
+                    for node in group_nodes
+                    if node.mainnodeid not in {None, "", "0"}
+                )
+            ),
+            "external_incident_rcsdroad_ids": _sorted_ids(
+                road.road_id for road in external_incident_roads
+            ),
+            "external_incident_road_count": len(external_incident_roads),
+            "required_min_external_road_count": required_min_degree,
+            "decision": (
+                "eligible_semantic_junction_core"
+                if enough_semantic_arms
+                else "insufficient_external_semantic_arms"
+            ),
+        }
+        if not enough_semantic_arms:
             continue
-        overlap_count = sum(1 for road in group_incident_roads if road.geometry.intersects(selected_corridor.buffer(REQUIRED_NODE_CORRIDOR_BUFFER_M)))
+        overlap_count = sum(
+            1
+            for road in external_incident_roads
+            if road.geometry.intersects(
+                selected_corridor.buffer(REQUIRED_NODE_CORRIDOR_BUFFER_M)
+            )
+        )
         if overlap_count <= 0 and not any(node.geometry.buffer(6.0).intersects(selected_corridor) for node in eligible_group_nodes):
             continue
         for node in eligible_group_nodes:
@@ -570,6 +642,34 @@ def build_association_case_result(context: AssociationContext) -> AssociationCas
         "B": "support_only_hook_zone",
         "C": "no_related_rcsd",
     }[association_class]
+    class_b_support_ownership_audit: dict[str, Any] = {
+        "mode": "not_applicable",
+        "owned": None,
+        "issue_codes": [],
+        "silent_fix": False,
+        "source_geometry_modified": False,
+    }
+    distributed_canonical_group_ids: list[str] = []
+    distributed_canonical_group_node_ids: set[str] = set()
+    if association_class == "B":
+        distributed_canonical_group_ids = [
+            group_id
+            for group_id, row in semantic_incident_road_audit.items()
+            if row.get("decision") == "eligible_semantic_junction_core"
+            and row.get("canonical_main_node_present")
+        ]
+        distributed_canonical_group_node_ids = {
+            node.node_id
+            for group_id in distributed_canonical_group_ids
+            for node in grouped_candidate_nodes.get(group_id, [])
+        }
+        class_b_support_ownership_audit = evaluate_class_b_support_ownership(
+            target_nodes=list(step1.target_group.nodes),
+            support_roads=support_roads,
+            target_distance_tolerance_m=SELECTED_CORRIDOR_BUFFER_M,
+            endpoint_tolerance_m=INCIDENT_NODE_DISTANCE_M,
+            distributed_canonical_group_ids=distributed_canonical_group_ids,
+        )
 
     for node in candidate_nodes:
         if node.node_id in required_node_ids:
@@ -578,7 +678,10 @@ def build_association_case_result(context: AssociationContext) -> AssociationCas
             continue
         if node.node_id in degree2_connector_candidate_node_ids:
             continue
-        if node.node_id in set(required_rcsdnode_gate_dropped_ids):
+        if (
+            node.node_id in set(required_rcsdnode_gate_dropped_ids)
+            and node.node_id not in distributed_canonical_group_node_ids
+        ):
             continue
         if node_degree_map.get(node.node_id, 0) <= 0:
             continue
@@ -633,7 +736,10 @@ def build_association_case_result(context: AssociationContext) -> AssociationCas
     if hook_zone_geometry is not None:
         hook_zone_geometry = _clean_geometry(hook_zone_geometry.intersection(allowed_space.buffer(RCSD_ALLOWED_BUFFER_M)))
 
-    if association_class == "B" and hook_zone_geometry is None:
+    if association_class == "B" and not class_b_support_ownership_audit["owned"]:
+        association_state = "not_established"
+        reason = "association_support_ownership_unresolved"
+    elif association_class == "B" and hook_zone_geometry is None:
         association_state = "not_established"
         reason = "association_missing_hook_zone"
     elif association_class == "B":
@@ -645,6 +751,23 @@ def build_association_case_result(context: AssociationContext) -> AssociationCas
     else:
         association_state = "review" if step3_state == "review" else "established"
         reason = "association_upstream_step3_review" if step3_state == "review" else "association_established"
+
+    raw_topology_guard_audit = evaluate_raw_topology_guard(
+        template_class=template_result.template_class,
+        association_class=association_class,
+        target_nodes=step1.target_group.nodes,
+        swsd_roads=step1.roads,
+        rcsd_roads=step1.rcsd_roads,
+        rcsd_nodes=step1.rcsd_nodes,
+        support_road_ids=support_road_ids,
+        required_road_ids=required_road_ids,
+        required_node_gate_audit=required_rcsdnode_gate_audit,
+        drivezone_input_audit=step1.drivezone_input_audit,
+        drivezone_geometry=step1.drivezone_geometry,
+    )
+    if raw_topology_guard_audit["blocked"]:
+        association_state = "not_established"
+        reason = str(raw_topology_guard_audit["reason"])
 
     output_geometries = AssociationOutputGeometries(
         required_rcsdnode_geometry=_union_points(node.geometry for node in candidate_nodes if node.node_id in required_node_ids),
@@ -688,6 +811,10 @@ def build_association_case_result(context: AssociationContext) -> AssociationCas
         "step3_allowed_area_m2": round(allowed_space.area, 6),
         "current_swsd_surface_area_m2": round(current_swsd_surface.area, 6),
         "parallel_support_duplicate_drop_count": len(dropped_parallel_support_road_ids),
+        "class_b_support_ownership_owned": class_b_support_ownership_audit["owned"],
+        "class_b_support_ownership_issue_count": len(
+            class_b_support_ownership_audit["issue_codes"]
+        ),
     }
     audit_doc = {
         "step3_prerequisite": {
@@ -742,6 +869,8 @@ def build_association_case_result(context: AssociationContext) -> AssociationCas
             "required_rcsdroad_ids": _sorted_ids(required_road_ids),
             "support_rcsdnode_ids": _sorted_ids(support_node_ids),
             "support_rcsdroad_ids": _sorted_ids(support_road_ids),
+            "class_b_support_ownership_audit": class_b_support_ownership_audit,
+            "raw_topology_guard_audit": raw_topology_guard_audit,
             "related_rcsdnode_ids": _sorted_ids(related_node_ids),
             "related_rcsdroad_ids": _sorted_ids(related_road_ids),
             "related_local_rcsdroad_ids": _sorted_ids(related_local_road_ids),
@@ -788,6 +917,10 @@ def build_association_case_result(context: AssociationContext) -> AssociationCas
             "grouped_candidate_node_ids": {
                 group_id: [node.node_id for node in nodes]
                 for group_id, nodes in sorted(grouped_candidate_nodes.items())
+            },
+            "semantic_incident_road_audit": {
+                group_id: semantic_incident_road_audit[group_id]
+                for group_id in _sorted_ids(semantic_incident_road_audit)
             },
         },
         "step5": {
@@ -843,6 +976,12 @@ def build_association_case_result(context: AssociationContext) -> AssociationCas
         ],
         "required_rcsdnode_gate_dropped_ids": audit_doc["step4"]["required_rcsdnode_gate_dropped_ids"],
         "required_rcsdnode_gate_audit": audit_doc["step4"]["required_rcsdnode_gate_audit"],
+        "class_b_support_ownership_audit": audit_doc["step4"][
+            "class_b_support_ownership_audit"
+        ],
+        "raw_topology_guard_audit": audit_doc["step4"][
+            "raw_topology_guard_audit"
+        ],
         "association_executed": True,
         "association_reason": association_reason,
         "association_blocker": None,

@@ -27,7 +27,7 @@ T05 Phase 1 使用“标准化 -> 分组 -> 融合 -> 发布”的轻量链路�
 ## 3. 字段归一策略
 
 - `mainnodeid` 优先取来源面字段，其次通过 `case_id / anchor_id / representative_node_id` 和 `nodes.gpkg` 反查。
-- `kind_2` 优先取来源面字段，其次从 `nodes.gpkg` 反查。
+- `kind_2` 优先取来源面字段，其次从 `nodes.gpkg` 反查；反查以 canonical `id = mainnodeid` 本体为唯一字段事实，alias/subNode 只参与 group membership。本体缺失或冲突不回退到任意 alias。
 - `patch_id` 优先取来源面字段，其次从 `nodes.gpkg` 反查。
 - `mainnodeid` 无法反查时不进入主图层。
 - `patch_id / kind_2` 无法反查时允许为空，但必须进入 audit 与 summary 计数。

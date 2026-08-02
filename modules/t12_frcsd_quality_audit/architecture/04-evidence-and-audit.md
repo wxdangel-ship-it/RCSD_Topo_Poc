@@ -7,7 +7,7 @@
 - review-only：可选外部 QA 覆盖、来源和时间。
 - formal：confirmed CSV/GPKG 与 summary 中的确认计数。
 - internal：raw/canonical/portal-constrained semantic/FRCSD 反向/SWSD 反向 carrier/portal GPKG、`unexpected_reverse_rcsd_ownership` 逐 Road 空间证据、T06/DriveZone 交叉证据和运行日志。
-- Junction candidate：T03/T07 来源身份、正式 eligibility、association/Step6/Step7 状态、support 来源、target projection、endpoint support/global degree、support component、未匹配 component、Direction、局部替代 carrier、跨层与几何状态。
+- Junction candidate：数据根与输入指纹、T03/T07 来源身份、正式 eligibility、association/Step6/Step7 状态、T03 raw topology guard 原文、SWSD boundary arm 与 required movement、每条 arm 的 FRCSD physical/Direction-compatible candidate、target/boundary gap、逐 movement raw directed Road 序列或缺失原因、受限 canonical alias portal、support 来源、target projection、endpoint support/global degree、support component、未匹配 component、紧凑 alias span、retained/dropped semantic core、局部替代 carrier、跨层与几何状态。
 - Junction formal：独立 Point candidates/confirmed/exclusions；T07 N:1 逐 Junction 行共享 conflict group。
 - Junction internal：support Road、FRCSD endpoint、target projection 与 T07 conflict link 空间层。
 
@@ -15,7 +15,7 @@
 
 `t12_frcsd_confirmed_quality_issues.*` 只含自动高置信或外部 override confirmed。任何仅 canonical 候选、概率标签或锚点信用不足行都不得进入。
 
-`t12_frcsd_confirmed_junction_quality_issues.*` 只含 T03 原始 FRCSD 高置信复核通过或 T07 Step2 final `fail1/fail2` 稳定失败直接发布。T03 rejected 本身、最近距离、Step3 relation cardinality、无效几何、正式高置信跨层解释或证据不足不得进入。
+`t12_frcsd_confirmed_junction_quality_issues.*` 只含 T03 候选经当前原始 FRCSD 高置信复核后证明具体 SWSD 必需接入角色缺失，或 T07 Step2 final `fail1/fail2` 稳定失败直接发布。T03 rejected/reason、unmatched component、connected core、最近距离、Step3 relation cardinality、无效几何、正式高置信跨层解释或证据不足不得单独进入。
 
 ## 3. 运行审计
 
@@ -24,7 +24,7 @@
 - 拓扑：Road/Node 数量、缺失 endpoint、`silent_fix=false`。
 - 证据关系：T06 Step2 指向的 T05 Phase2 目录必须与所给 anchor audit 同批。
 - Junction 来源：T03/T07 run root、正式工件绝对路径与 SHA-256、T03 rejected case 列表、T07 Step2 final fail1/fail2 集合及其 evidence/summary 一致性。
-- Junction 参数与拓扑：`6m` endpoint tolerance、`50m` local scope、support/global endpoint degree、component、Direction、替代 carrier 与 `silent_fix=false`。
+- Junction 参数与拓扑：`6m` alias endpoint tolerance、`50m` local scope、`10m` target ownership、`10m` boundary geometry retrieval、`25°` outward heading association、`10m` heading sample、support/global endpoint degree、component、Direction、formal raw guard candidate signal、required movement、每个候选的 SWSD/FRCSD heading 与夹角、boundary mapping、替代 carrier 与 `silent_fix=false`。
 - 性能：对象规模、分阶段和总耗时、Python/GIS 库环境。
 
 ## 4. 下游交接

@@ -6,7 +6,10 @@ from shapely.geometry import LineString, MultiPolygon, Polygon
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import nearest_points, unary_union
 
-from .step6_business_connectivity import build_business_connectivity_audit
+from .step6_business_connectivity import (
+    BusinessConnectivityCache,
+    build_business_connectivity_audit,
+)
 
 
 def _polygon_components(geometry: BaseGeometry | None) -> list[BaseGeometry]:
@@ -62,6 +65,7 @@ def build_road_surface_portal_boundary(
     allow_geodesic_growth: bool = False,
     geodesic_step_m: float = 2.0,
     geodesic_max_iterations: int = 25,
+    connectivity_cache: BusinessConnectivityCache | None = None,
 ) -> tuple[BaseGeometry | None, BaseGeometry | None, dict[str, Any]]:
     allowed = _clean_polygonal(allowed_surface)
     boundary = _clean_polygonal(direction_boundary)
@@ -69,6 +73,7 @@ def build_road_surface_portal_boundary(
         source_surface=allowed,
         output_surface=boundary,
         terminals=terminals,
+        cache=connectivity_cache,
     )
     base_audit = {
         "mode": "road_surface_portal_boundary",
@@ -125,6 +130,7 @@ def build_road_surface_portal_boundary(
         source_surface=allowed,
         output_surface=augmented,
         terminals=terminals,
+        cache=connectivity_cache,
     )
     direct_bridge_count = 0
     for mismatch in bridge_input_audit["mismatches"]:
@@ -137,6 +143,7 @@ def build_road_surface_portal_boundary(
             source_surface=allowed,
             output_surface=augmented,
             terminals=terminals,
+            cache=connectivity_cache,
         )
         pair = _nearest_component_pair(
             components,
@@ -171,6 +178,7 @@ def build_road_surface_portal_boundary(
         source_surface=allowed,
         output_surface=augmented,
         terminals=terminals,
+        cache=connectivity_cache,
     )
     methods_attempted = []
     if missing_terminal_seed_geometries:
@@ -211,6 +219,7 @@ def build_road_surface_portal_boundary(
         source_surface=allowed,
         output_surface=augmented,
         terminals=terminals,
+        cache=connectivity_cache,
     )
     geodesic_growth_applied = False
     geodesic_growth_iterations = 0
@@ -266,6 +275,7 @@ def build_road_surface_portal_boundary(
                     source_surface=allowed,
                     output_surface=candidate,
                     terminals=terminals,
+                    cache=connectivity_cache,
                 )
                 if candidate_audit["equivalent"]:
                     augmented = candidate
@@ -279,6 +289,7 @@ def build_road_surface_portal_boundary(
         source_surface=allowed,
         output_surface=augmented,
         terminals=terminals,
+        cache=connectivity_cache,
     )
     if (
         allow_geodesic_growth
@@ -318,6 +329,7 @@ def build_road_surface_portal_boundary(
                 source_surface=allowed,
                 output_surface=candidate,
                 terminals=terminals,
+                cache=connectivity_cache,
             )
             relevant_component_missing_area_m2 = (
                 relevant_allowed_geometry.difference(candidate).area
@@ -361,6 +373,7 @@ def build_road_surface_portal_boundary(
         source_surface=allowed,
         output_surface=augmented,
         terminals=terminals,
+        cache=connectivity_cache,
     )
     portal_geometry = _clean_polygonal(
         unary_union(added_geometries).difference(boundary)

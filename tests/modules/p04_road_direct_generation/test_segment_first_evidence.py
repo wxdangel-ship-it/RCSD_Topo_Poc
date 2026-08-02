@@ -7,7 +7,9 @@ from rcsd_topo_poc.modules.p04_road_direct_generation.segment_first_carriers imp
     plan_segment_carriers,
 )
 from rcsd_topo_poc.modules.p04_road_direct_generation.segment_first_evidence import (
+    _ensure_assignment_source,
     _explicit_road_pairs,
+    assign_patch_roads_to_segments,
     build_patch_road_centers,
     orient_patch_road_centers,
 )
@@ -56,6 +58,72 @@ def test_centered_patch_road_keeps_full_longitudinal_span_when_medoid_lane_is_sh
     assert center["center_lane_span_ratio"] == 0.2
     assert center.geometry.length > 99.0
     assert abs(center.geometry.interpolate(0.5, normalized=True).y - 3.0) < 0.1
+
+
+def test_member_assignment_declares_internal_source_contract() -> None:
+    centers = gpd.GeoDataFrame(
+        [
+            {
+                "patch_road_key": "p:1",
+                "source_patch_id": "p",
+                "road_id": "1",
+                "geometry": LineString([(0, 1), (20, 1)]),
+            },
+            {
+                "patch_road_key": "p:2",
+                "source_patch_id": "p",
+                "road_id": "2",
+                "geometry": LineString([(100, 100), (120, 100)]),
+            },
+        ],
+        crs="EPSG:32650",
+    )
+    swsd = gpd.GeoDataFrame(
+        [
+            {
+                "id": "r1",
+                "segmentid": "s1",
+                "geometry": LineString([(0, 0), (20, 0)]),
+            }
+        ],
+        crs=centers.crs,
+    )
+
+    assignments, rejections = assign_patch_roads_to_segments(
+        centers,
+        swsd,
+        max_distance_m=10.0,
+        max_angle_deg=45.0,
+        run_id="assignment-source",
+    )
+
+    assert rejections["patch_road_key"].tolist() == ["p:2"]
+    assert assignments.iloc[0]["assignment_source"] == "member_assignment"
+
+
+def test_assignment_source_normalization_preserves_specialized_sources() -> None:
+    missing_source = gpd.GeoDataFrame(
+        [{"patch_road_key": "p:1", "geometry": Point(0, 0)}],
+        crs="EPSG:32650",
+    )
+    specialized_source = gpd.GeoDataFrame(
+        [
+            {
+                "patch_road_key": "p:2",
+                "assignment_source": "target_access_surface_candidate",
+                "geometry": Point(1, 0),
+            }
+        ],
+        crs=missing_source.crs,
+    )
+
+    normalized_missing = _ensure_assignment_source(missing_source)
+    normalized_specialized = _ensure_assignment_source(specialized_source)
+
+    assert normalized_missing.iloc[0]["assignment_source"] == "member_assignment"
+    assert normalized_specialized.iloc[0]["assignment_source"] == (
+        "target_access_surface_candidate"
+    )
 
 
 def test_t04_topology_uses_t07_human_surface_for_same_mainnode() -> None:

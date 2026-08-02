@@ -1,17 +1,29 @@
 from __future__ import annotations
 
+import json
+import math
+from pathlib import Path
+
 import geopandas as gpd
+import numpy as np
 from shapely.geometry import LineString, Point
 
 from rcsd_topo_poc.modules.p04_road_direct_generation.segment_first_carriers import (
     plan_segment_carriers,
 )
 from rcsd_topo_poc.modules.p04_road_direct_generation.segment_first_evidence import (
+    _local_tangent,
+    _sample_points_and_tangents,
+    _sampled_offset_line,
     _ensure_assignment_source,
     _explicit_road_pairs,
     assign_patch_roads_to_segments,
     build_patch_road_centers,
     orient_patch_road_centers,
+)
+from rcsd_topo_poc.modules.p04_road_direct_generation.segment_first_progress import (
+    configure_progress,
+    reset_progress,
 )
 from rcsd_topo_poc.modules.p04_road_direct_generation.segment_first_junctions import (
     build_junction_units,
@@ -58,6 +70,101 @@ def test_centered_patch_road_keeps_full_longitudinal_span_when_medoid_lane_is_sh
     assert center["center_lane_span_ratio"] == 0.2
     assert center.geometry.length > 99.0
     assert abs(center.geometry.interpolate(0.5, normalized=True).y - 3.0) < 0.1
+
+
+def test_vectorized_line_sampling_preserves_scalar_geometry_contract() -> None:
+    line = LineString([(0.0, 0.0), (4.0, 1.0), (8.0, 6.0), (14.0, 7.0)])
+    distances = np.linspace(0.0, line.length, 17)
+
+    points, tangents = _sample_points_and_tangents(line, distances)
+    expected_points = [line.interpolate(float(value)) for value in distances]
+    expected_tangents = [
+        _local_tangent(line, float(value)) for value in distances
+    ]
+
+    assert [point.wkb for point in points] == [
+        point.wkb for point in expected_points
+    ]
+    assert all(
+        np.array_equal(actual, expected)
+        for actual, expected in zip(tangents, expected_tangents)
+    )
+
+    offset = 3.25
+    count = max(3, int(math.ceil(line.length / 2.0)) + 1)
+    legacy_coords = []
+    for distance in np.linspace(0.0, line.length, count):
+        point = line.interpolate(float(distance))
+        tangent = _local_tangent(line, float(distance))
+        normal = np.array([-tangent[1], tangent[0]])
+        legacy_coords.append(
+            (
+                float(point.x + normal[0] * offset),
+                float(point.y + normal[1] * offset),
+            )
+        )
+    expected_offset = LineString(legacy_coords).simplify(
+        0.05,
+        preserve_topology=True,
+    )
+
+    assert _sampled_offset_line(line, offset).wkb == expected_offset.wkb
+
+
+def test_patch_road_center_reports_real_progress(tmp_path: Path) -> None:
+    progress_path = tmp_path / "p04_progress.jsonl"
+    roads = gpd.GeoDataFrame(
+        [
+            {
+                "Id": 10,
+                "source_patch_id": "p",
+                "geometry": LineString([(0, 0), (20, 0)]),
+            },
+            {
+                "Id": 11,
+                "source_patch_id": "p",
+                "geometry": LineString([(30, 0), (50, 0)]),
+            },
+        ],
+        crs="EPSG:32650",
+    )
+    lanes = gpd.GeoDataFrame(
+        [
+            {
+                "Id": 1,
+                "RoadId": 10,
+                "Width": 3.5,
+                "IsLeftmost": True,
+                "source_patch_id": "p",
+                "geometry": LineString([(0, 2), (20, 2)]),
+            }
+        ],
+        crs=roads.crs,
+    )
+    configure_progress("progress-test", progress_path)
+    try:
+        build_patch_road_centers(roads, lanes, run_id="progress-test")
+    finally:
+        reset_progress()
+
+    events = [
+        json.loads(line)
+        for line in progress_path.read_text(encoding="utf-8").splitlines()
+    ]
+    completed = [
+        event
+        for event in events
+        if event.get("event_type") == "stage_completed"
+        and event.get("stage") == "patch_road_center"
+    ]
+    assert len(completed) == 1
+    assert completed[0]["completed"] == 2
+    assert completed[0]["total"] == 2
+    assert completed[0]["counters"] == {
+        "centered": 1,
+        "without_lane": 1,
+        "relations": 1,
+    }
 
 
 def test_member_assignment_declares_internal_source_contract() -> None:

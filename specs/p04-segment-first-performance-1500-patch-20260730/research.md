@@ -357,3 +357,62 @@ run11的`132.878s`，而同一阶段为`9.225s`；这组波动再次说明不能
 本地总体墙钟仍会受到输出I/O和机器并发波动影响，因此只把单阶段下降、CPU下降和
 同输入指纹一致作为该优化的技术证据。它仍不能替代约1532 Patch正式内网终态，
 也不能将异常终止前`45759.2s`中间观测下界解释为已完成基线。
+
+## 15. 1532 Patch首轮carrier热点与高组件终态优化
+
+用户停止的第二次1532 Patch正式运行在`elapsed=12069s`时仍处于首轮
+`segment_carrier#1`，实际完成`8662/46399=18.7%`，阶段ETA约`6h33m`。
+该时点RSS约`6.25–6.39GiB`、峰值约`6.70GiB`，没有超过资源预算；但覆盖统计为
+`queries=15722`、`cache_hit=35.3%`、`exact_fallback=10165`、
+`terminal_fast=0`，活动栈持续落在`_surface_intersection_length`。这证明大范围
+最终DriveZone进入高组件`MultiPolygon`索引后，旧实现跳过了完整终态快速判定，
+使本可由原生组件严格证明为全覆盖或完全不相交的样本也进入昂贵精确叠加。
+
+本轮只增加业务等价路径：空间索引仍只来自最终`MultiPolygon`的原生组件；候选
+原生组件经prepared `covers/disjoint`严格证明覆盖率为1或0时提前返回，不能证明时
+仍执行原有精确`intersection.length`。没有重组原始DriveZone分片，没有近似覆盖率，
+`unsafe_local_reconstruction_count`保持0。8组件、其中一个组件约50001坐标的固定
+压力样本中，2000条线的直接精确叠加为`8.0787s`，优化路径为`0.0338s`，加速
+`238.97x`；逐值最大绝对差为`0.0`。该收益对应全量日志暴露的“少量超复杂原生
+组件”形态，不以简单1500矩形微基准替代。
+
+现有`validation/benchmark_surface_coverage.py`已增加可重复的
+`complex-component`场景。正式复跑使用1500个最终原生组件、其中主组件约50001个
+坐标、2000条固定随机线：direct为`5.6874s`，候选为`0.0366s`，加速
+`155.40x`，逐值差异数和最大绝对差均为0；原有`separated-components`场景为
+`1.2241s -> 0.0288s`，加速`42.54x`，同样逐值零差异。两类报告保存在本地
+`outputs/_work/p04_road_direct_generation/perf_v2_benchmarks/`，不作为正式发布工件。
+扩大到与全量首轮`46399`个Segment同量级的50000次复杂组件查询后，direct为
+`142.5982s`，候选为`0.6822s`，加速`209.03x`；50000个覆盖值逐项一致、最大绝对
+差为0，仅准备1个实际命中的复杂原生组件，覆盖缓存WKB约`2.05MB`，远低于
+`256MiB`预算。
+
+Patch Road居中阶段此前被包含在已显示100%的输入阶段之后，控制台无法判断真实
+进度。现新增`patch_road_center`阶段，按Patch Road输出`completed/total`、
+`centered/without_lane/relations`与当前`patch_road_key`。中心横断面仍按5米采样、
+相同切向量、相同Lane投影、相同中位数和相同2米偏移线采样，仅把Shapely逐点调用
+改为同一GEOS函数的数组调用。固定曲线样本中偏移值和最终几何WKB逐位一致，热点
+约加速`1.45x`。
+
+同时验证过最多6线程并行居中，但在同一120条复杂Road样本中，串行为`4.0100s`，
+6线程为`64.9119s`，性能下降约16倍；结果WKB虽完全一致，但GEOS/线程争用会增加
+CPU与内存风险，因此该并行路径未进入正式实现。Patch读取仍使用既有最多6 worker，
+几何居中保持单进程批量GEOS计算。
+
+最终完整重放`artifact_replay_run14_perf_v2_final_1885118_20260802`与最新P04 schema基线
+`artifact_replay_schema_baseline_1885118_20260802`使用相同6-Patch输入：
+
+- 基线wall为`140.5s`，候选wall为`135.0109s`，候选peak RSS为`543195136 bytes`；
+- 正式Road/Node/RoadNextRoad仍为`887/1134/1939`，独立QA为0 violation，
+  QGIS 50层回读通过；
+- 正式、审计、关系、比较、独立QA GPKG、独立QA JSON和summary共7类业务工件
+  规范化指纹全部一致；
+- 进度事件包含`patch_road_center 1015/1015`；覆盖审计记录
+  `native_component_prepare_count=2`，控制台同步显示`prepared_parts`；验收器已将
+  Patch Road居中阶段列为必需门禁；
+- P04专项测试为`305 passed`。
+
+6-Patch最终DriveZone只有5个大型组件，旧实现已经走完整surface prepared路径，
+因此其约`2.4%`墙钟变化只用于业务零回退和端到端可运行性验证，不能衡量新的
+高组件路径。当前结论仍为`INNERNET_CANDIDATE`；只有同一1532 Patch正式输入完成
+全程且`<=6h`、资源受控、业务指纹一致，才能升级为`ACCEPTED`。

@@ -45,6 +45,7 @@ _SURFACE_COVERAGE_STATS = {
     "threshold_disjoint_count": 0,
     "threshold_exact_fallback_count": 0,
     "unsafe_local_reconstruction_count": 0,
+    "native_component_prepare_count": 0,
 }
 
 
@@ -152,10 +153,29 @@ def _terminal_surface_coverage(
     line: object,
     surface: object,
 ) -> tuple[float, str] | None:
-    if _surface_part_index(surface) is not None:
-        return None
     if not _surface_is_valid(surface):
         return None
+    indexed = _surface_part_index(surface)
+    if indexed is not None:
+        parts, tree = indexed
+        candidate_indices = tuple(int(index) for index in tree.query(line))
+        if not candidate_indices:
+            return 0.0, "disjoint"
+
+        any_intersection = False
+        for index in candidate_indices:
+            part = parts[index]
+            if not is_prepared(part):
+                prepare(part)
+                _SURFACE_COVERAGE_STATS["native_component_prepare_count"] += 1
+            if part.covers(line):
+                return 1.0, "covers"
+            if not part.disjoint(line):
+                any_intersection = True
+        if not any_intersection:
+            return 0.0, "disjoint"
+        return None
+
     if not is_prepared(surface):
         prepare(surface)
     if surface.covers(line):
@@ -245,7 +265,9 @@ def surface_coverage_runtime_stats() -> dict[str, int | float | str]:
     )
     stats["multipolygon_index_count"] = len(_SURFACE_PART_INDEX_CACHE)
     stats["surface_validity_cache_entries"] = len(_SURFACE_VALIDITY_CACHE)
-    stats["exactness_mode"] = "full_surface_predicate_or_exact_intersection"
+    stats["exactness_mode"] = (
+        "full_or_native_component_predicate_or_exact_intersection"
+    )
     return stats
 
 

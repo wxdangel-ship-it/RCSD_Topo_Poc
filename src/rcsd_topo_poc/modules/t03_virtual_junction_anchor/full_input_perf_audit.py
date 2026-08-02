@@ -369,6 +369,18 @@ class T03PerfAuditRecorder:
         self.sample_count_written += 1
         return True
 
+    def _routine_sample_capacity_available(self) -> bool:
+        if self.samples_truncated:
+            return False
+        if self.sample_count_written >= self.max_samples:
+            self.samples_truncated = True
+            return False
+        current_size = self.samples_path.stat().st_size if self.samples_path.exists() else 0
+        if current_size >= self.sample_budget_bytes:
+            self.samples_truncated = True
+            return False
+        return True
+
     def _summary_payload(self, snapshot: dict[str, Any]) -> dict[str, Any]:
         return {
             "run_id": self.run_id,
@@ -448,12 +460,24 @@ class T03PerfAuditRecorder:
             return
         now_perf = perf_counter()
         should_sample = False
-        if self.sample_count_written == 0:
-            should_sample = True
-        elif force_sample:
-            should_sample = True
-        elif self._last_sample_perf is not None and now_perf - self._last_sample_perf >= self.sample_interval_sec:
-            should_sample = True
+        if self._routine_sample_capacity_available():
+            if self.sample_count_written == 0:
+                should_sample = True
+            elif force_sample:
+                should_sample = True
+            elif (
+                self._last_sample_perf is not None
+                and now_perf - self._last_sample_perf >= self.sample_interval_sec
+            ):
+                should_sample = True
+
+        # Storage footprint collection recursively scans every file under both
+        # run roots.  Building it for a gated-out observation makes the audit
+        # cost grow with all previously written cases, even though no sample or
+        # summary is emitted.  Return before that scan; terminal summaries still
+        # force one final exact snapshot.
+        if not should_sample and not force_summary:
+            return
 
         snapshot = self._build_snapshot(
             phase=phase,

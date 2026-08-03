@@ -33,7 +33,7 @@
 | `t12_frcsd_quality_audit` | `Active` | `modules/t12_frcsd_quality_audit` | 原始 1V1 F-RCSD 质量审计模块；以 SWSD 方向可达性等价为待验证假设，使用 raw endpoint topology、标准路口 portal、反向双端锚点区间、逐 raw RCSD Road Segment 唯一归属、SWSD 反向替代路径和锚点可信度检查必需方向缺失与非预期反向载体，自动发布高置信确认与排除证据，人工复核仅作可选 QA 覆盖，不修改 T06 或输入路网。 |
 | `p01_arm_build` | `Active POC / 成果模块` | `modules/p01_arm_build` | 异构路口通行能力 POC / 成果模块，当前历史 P10 口径统一改称 P01。 |
 | `p02_wuhan_local_experiment` | `Active POC / 成果模块` | `modules/p02_wuhan_local_experiment` | 武汉局部人工锚定实验模块，复用 T08/T01/T05/T06 并收口关系转换与验证证据。 |
-| `p04_road_direct_generation` | `Active POC / 成果模块` | `modules/p04_road_direct_generation` | 当前执行独立 Segment-first Road 直出：T01 Segment 为顶层业务单元，复用 T07/T03/T04/T08 accepted surface 与 Patch Vector/Patch Road/LaneTopo 构建 Road/Node/RoadNextRoad。冻结 Directional V2 和 High-Precision V3 保留为历史回归基线；无正式入口，尚未生产正式化。 |
+| `p04_road_direct_generation` | `Active POC / 成果模块` | `modules/p04_road_direct_generation` | 当前执行独立 Segment-first Road 直出：T01 Segment 为顶层业务单元，复用 T07/T03/T04/T08 accepted surface 与 Patch Vector/Patch Road/LaneTopo 构建 Road/Node/RoadNextRoad。冻结 Directional V2 和 High-Precision V3 保留为历史回归基线；已有正式参数化内网入口 `scripts/p04_run_segment_first_innernet.py`，仍未生产正式化。 |
 | `p05_neural_road_generation` | `Active POC / 成果模块` | `modules/p05_neural_road_generation` | 当前采用方案A；P12R-R1候选可达性为GO，P13-P0的candidate-set scorer完成3 seeds × 5 Case folds，但选择能力与自动发布安全门未通过，正式`P05_SCHEME_A_P2_P3_P13_P0_SELECTION_NO_GO`。冻结骨架与fallback合同继续有效；Movement冻结，未接正式主链或生产。旧M1/M2R/R2/PTO/JSG-PTO只作历史实验。 |
 | `_template` | `Template` | `modules/_template` | 新模块启动模板，不是业务模块。 |
 

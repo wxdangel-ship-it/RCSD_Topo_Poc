@@ -101,6 +101,27 @@ def _write_complete_run(tmp_path: Path, *, patch_workers: int | None) -> Path:
                 "key_bytes_max": 64 * 1024**2,
                 "eviction_count": 0,
             },
+            "interior_target_cache": {
+                "entry_count": 24,
+                "entry_count_max": 8192,
+                "key_bytes": 4096,
+                "key_bytes_max": 32 * 1024**2,
+                "eviction_count": 0,
+            },
+            "incremental_carrier_planner": {
+                "invocation_count": 13,
+                "full_recompute_invocation_count": 1,
+                "incremental_recompute_invocation_count": 8,
+                "no_change_invocation_count": 4,
+                "segment_units_seen": 1300,
+                "segment_units_recomputed": 220,
+                "segment_units_reused": 1080,
+                "segment_reuse_ratio": 1080 / 1300,
+                "carrier_context_cache_hit_count": 50,
+                "carrier_context_cache_miss_count": 14,
+                "carrier_context_prepare_seconds": 0.5,
+                "carrier_context_cache_entry_count": 0,
+            },
         },
     }
     quality = {
@@ -135,8 +156,13 @@ def _write_complete_run(tmp_path: Path, *, patch_workers: int | None) -> Path:
     progress_events = []
     progress_stages = (
         "input_patch_layer",
+        "input_manifest",
+        "segment_skeleton_access",
         "patch_road_center",
+        "target_fragment_assignment",
+        "access_surface_recovery",
         "segment_carrier",
+        "junction_unit_retained_groups",
         "junction_portal",
         "node_materialization",
         "topology_shared_nodes",
@@ -257,6 +283,38 @@ def test_target_path_cache_must_remain_within_configured_bounds(
 
     assert result["status"] == "FAILED"
     assert "target_path_cache_bounded" in result["failed_gate_names"]
+
+
+def test_incremental_carrier_reuse_must_be_active(tmp_path: Path) -> None:
+    validator = _load_validator()
+    run_root = _write_complete_run(tmp_path, patch_workers=6)
+    summary_path = run_root / "p04_segment_first_summary.json"
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    planner = summary["performance"]["incremental_carrier_planner"]
+    planner["segment_units_recomputed"] = planner["segment_units_seen"]
+    planner["segment_units_reused"] = 0
+    planner["segment_reuse_ratio"] = 0.0
+    summary_path.write_text(json.dumps(summary), encoding="utf-8")
+
+    result = validator.evaluate(_args(run_root))
+
+    assert result["status"] == "FAILED"
+    assert "incremental_carrier_reuse_active" in result["failed_gate_names"]
+
+
+def test_carrier_static_context_cache_must_be_active(tmp_path: Path) -> None:
+    validator = _load_validator()
+    run_root = _write_complete_run(tmp_path, patch_workers=6)
+    summary_path = run_root / "p04_segment_first_summary.json"
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    planner = summary["performance"]["incremental_carrier_planner"]
+    planner["carrier_context_cache_hit_count"] = 0
+    summary_path.write_text(json.dumps(summary), encoding="utf-8")
+
+    result = validator.evaluate(_args(run_root))
+
+    assert result["status"] == "FAILED"
+    assert "carrier_static_context_cache_active" in result["failed_gate_names"]
 
 
 def test_movement_selection_cache_must_remain_within_configured_bounds(

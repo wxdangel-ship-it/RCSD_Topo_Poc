@@ -8,14 +8,18 @@ import numpy as np
 import pandas as pd
 from shapely import (
     distance as geometry_distance,
-    get_x,
-    get_y,
+    get_coordinates,
     line_interpolate_point,
     line_locate_point,
 )
-from shapely.geometry import LineString, Point
+from shapely.geometry import LineString, Point, box
 from shapely.ops import substring
 
+from .segment_first_progress import (
+    advance_progress,
+    begin_progress_stage,
+    finish_progress_stage,
+)
 from .segment_first_skeleton import canonical_id, parse_id_list
 
 
@@ -41,7 +45,27 @@ def build_target_carrier_fragments(
     required = target_segments[
         target_segments["target_required"].fillna(False).astype(bool)
     ].copy()
+    begin_progress_stage(
+        "target_fragment_assignment",
+        len(centers),
+        detail="Patch Road/Lane target Segment fragmentation",
+        counters={
+            "source_rows": len(centers),
+            "required_segments": len(required),
+            "fragment_rows": 0,
+            "matched_source_rows": 0,
+        },
+    )
     if required.empty:
+        finish_progress_stage(
+            "target_fragment_assignment",
+            counters={
+                "source_rows": len(centers),
+                "required_segments": 0,
+                "fragment_rows": 0,
+                "matched_source_rows": 0,
+            },
+        )
         return TargetFragmentResult(
             baseline_assignments.copy(),
             _empty_audit(centers.crs),
@@ -69,6 +93,15 @@ def build_target_carrier_fragments(
     }
     axes = _target_axes(required, target_anchors, member_frame)
     if axes.empty:
+        finish_progress_stage(
+            "target_fragment_assignment",
+            counters={
+                "source_rows": len(centers),
+                "required_segments": len(required),
+                "fragment_rows": 0,
+                "matched_source_rows": 0,
+            },
+        )
         return TargetFragmentResult(
             baseline_assignments.copy(),
             _empty_audit(centers.crs),
@@ -78,13 +111,42 @@ def build_target_carrier_fragments(
     spacing = max(1.0, float(sample_spacing_m))
     fragments: list[dict[str, object]] = []
     axes_sindex = axes.sindex
-    for center in centers.itertuples(index=False):
+    axis_rows = list(axes.itertuples(index=False))
+    matched_source_rows = 0
+    source_count = len(centers)
+    for source_index, center in enumerate(
+        centers.itertuples(index=False),
+        start=1,
+    ):
+        source_id = str(getattr(center, "patch_road_key", source_index))
         if center.geometry is None or center.geometry.is_empty:
+            _advance_fragment_progress(
+                source_index,
+                source_count,
+                source_id,
+                fragments,
+                matched_source_rows,
+            )
             continue
-        axis_indexes = list(axes_sindex.query(center.geometry.buffer(max_distance_m)))
+        minimum_x, minimum_y, maximum_x, maximum_y = center.geometry.bounds
+        distance = float(max_distance_m)
+        search_envelope = box(
+            minimum_x - distance,
+            minimum_y - distance,
+            maximum_x + distance,
+            maximum_y + distance,
+        )
+        axis_indexes = list(axes_sindex.query(search_envelope))
         if not axis_indexes:
+            _advance_fragment_progress(
+                source_index,
+                source_count,
+                source_id,
+                fragments,
+                matched_source_rows,
+            )
             continue
-        candidates = axes.iloc[axis_indexes].copy()
+        candidates = [axis_rows[int(index)] for index in axis_indexes]
         labels = _station_labels(
             center.geometry,
             candidates,
@@ -93,9 +155,14 @@ def build_target_carrier_fragments(
             max_distance_m=max_distance_m,
             max_angle_deg=max_angle_deg,
         )
-        for fragment_index, fragment in enumerate(
-            _labelled_fragments(center.geometry, labels, minimum_length_m=spacing * 2.0)
-        ):
+        labelled_fragments = _labelled_fragments(
+            center.geometry,
+            labels,
+            minimum_length_m=spacing * 2.0,
+        )
+        if labelled_fragments:
+            matched_source_rows += 1
+        for fragment_index, fragment in enumerate(labelled_fragments):
             row = center._asdict()
             row.update(
                 {
@@ -120,6 +187,23 @@ def build_target_carrier_fragments(
                 }
             )
             fragments.append(row)
+        _advance_fragment_progress(
+            source_index,
+            source_count,
+            source_id,
+            fragments,
+            matched_source_rows,
+        )
+
+    finish_progress_stage(
+        "target_fragment_assignment",
+        counters={
+            "source_rows": source_count,
+            "required_segments": len(required),
+            "fragment_rows": len(fragments),
+            "matched_source_rows": matched_source_rows,
+        },
+    )
 
     if not fragments:
         return TargetFragmentResult(
@@ -164,6 +248,26 @@ def build_target_carrier_fragments(
     return TargetFragmentResult(combined, audit, summary)
 
 
+def _advance_fragment_progress(
+    completed: int,
+    total: int,
+    source_id: str,
+    fragments: list[dict[str, object]],
+    matched_source_rows: int,
+) -> None:
+    if completed % 64 != 0 and completed != total:
+        return
+    advance_progress(
+        "target_fragment_assignment",
+        completed=completed,
+        last_unit=source_id,
+        counters={
+            "fragment_rows": len(fragments),
+            "matched_source_rows": matched_source_rows,
+        },
+    )
+
+
 def _target_axes(
     required: gpd.GeoDataFrame,
     target_anchors: gpd.GeoDataFrame,
@@ -200,7 +304,7 @@ def _target_axes(
 
 def _station_labels(
     geometry: LineString,
-    candidates: gpd.GeoDataFrame,
+    candidates: list[object],
     members_by_segment: dict[str, tuple[tuple[LineString, str], ...]],
     *,
     spacing: float,
@@ -209,7 +313,7 @@ def _station_labels(
 ) -> list[dict[str, object]]:
     count = max(2, int(math.ceil(float(geometry.length) / spacing)) + 1)
     measures = np.linspace(0.0, float(geometry.length), count)
-    axis_rows = list(candidates.itertuples(index=False))
+    axis_rows = candidates
     axis_geometries = np.asarray(
         [axis.geometry for axis in axis_rows],
         dtype=object,
@@ -222,12 +326,27 @@ def _station_labels(
         [float(axis.geometry.length) for axis in axis_rows],
         dtype=float,
     )
+    points = line_interpolate_point(geometry, measures)
+    source_delta = _bearing_delta(geometry)
+    source_starts = line_interpolate_point(
+        geometry,
+        np.maximum(0.0, measures - source_delta),
+    )
+    source_ends = line_interpolate_point(
+        geometry,
+        np.minimum(float(geometry.length), measures + source_delta),
+    )
+    source_bearings = _bearings_between_points(source_starts, source_ends)
+    distance_matrix = geometry_distance(
+        axis_geometries[:, None],
+        points[None, :],
+    )
     labels: list[dict[str, object]] = []
-    for measure in measures:
-        point = geometry.interpolate(float(measure))
-        source_bearing = _local_bearing(geometry, float(measure))
+    for station_index, measure in enumerate(measures):
+        point = points[station_index]
+        source_bearing = source_bearings[station_index]
         segment_candidates: dict[str, tuple[float, float, float, pd.Series]] = {}
-        distances = geometry_distance(axis_geometries, point)
+        distances = distance_matrix[:, station_index]
         target_metrics = {
             axis.geometry: (float(distances[index]), None)
             for index, axis in enumerate(axis_rows)
@@ -247,16 +366,7 @@ def _station_labels(
                 target_measures + target_deltas,
             ),
         )
-        target_bearings = [
-            math.degrees(
-                math.atan2(
-                    float(get_y(end) - get_y(start)),
-                    float(get_x(end) - get_x(start)),
-                )
-            )
-            % 180.0
-            for start, end in zip(target_starts, target_ends)
-        ]
+        target_bearings = _bearings_between_points(target_starts, target_ends)
         for position, axis_index in enumerate(eligible_indexes):
             axis = axis_rows[int(axis_index)]
             distance = float(distances[int(axis_index)])
@@ -303,6 +413,24 @@ def _station_labels(
             }
         )
     return labels
+
+
+def _bearings_between_points(
+    starts: object,
+    ends: object,
+) -> list[float]:
+    start_coordinates = get_coordinates(starts)
+    end_coordinates = get_coordinates(ends)
+    return [
+        math.degrees(
+            math.atan2(
+                float(end[1] - start[1]),
+                float(end[0] - start[0]),
+            )
+        )
+        % 180.0
+        for start, end in zip(start_coordinates, end_coordinates)
+    ]
 
 
 def _station_member(

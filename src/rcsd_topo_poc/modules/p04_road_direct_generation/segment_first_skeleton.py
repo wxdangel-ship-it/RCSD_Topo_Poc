@@ -2,11 +2,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
-import re
 from typing import Iterable
 
 import geopandas as gpd
 import pandas as pd
+
+from .segment_first_progress import (
+    advance_progress,
+    begin_progress_stage,
+    finish_progress_stage,
+)
 
 
 @dataclass(frozen=True)
@@ -53,20 +58,58 @@ def build_segment_skeleton(
     node_by_id = nodes.copy()
     node_by_id["canonical_node_id"] = node_by_id["id"].map(canonical_id)
     node_by_id = node_by_id.drop_duplicates("canonical_node_id").set_index("canonical_node_id")
+    road_endpoint_index, road_endpoint_columns = _build_road_endpoint_index(
+        scoped_roads
+    )
     access_rows: list[dict[str, object]] = []
-    for segment in segment_units.itertuples():
+    begin_progress_stage(
+        "segment_skeleton_access",
+        len(segment_units),
+        detail="Segment endpoint/THROUGH access materialization",
+    )
+    endpoint_count = 0
+    through_count = 0
+    for segment_ordinal, segment in enumerate(
+        segment_units.itertuples(),
+        start=1,
+    ):
         pair_nodes = parse_id_list(segment.pair_node_ids)
         junc_nodes = parse_id_list(segment.junc_node_ids)
         if not pair_nodes and segment.segment_type == "advance_right":
-            pair_nodes = _road_endpoints(parse_id_list(segment.swsd_road_ids), scoped_roads)
+            pair_nodes = _road_endpoints_from_index(
+                parse_id_list(segment.swsd_road_ids),
+                road_endpoint_index,
+                road_endpoint_columns,
+            )
         for ordinal, node_id in enumerate(pair_nodes):
             access_rows.append(
                 _access_row(segment.segment_id, node_id, "ENDPOINT", ordinal, node_by_id, run_id)
             )
+            endpoint_count += 1
         for ordinal, node_id in enumerate(junc_nodes):
             access_rows.append(
                 _access_row(segment.segment_id, node_id, "THROUGH", ordinal, node_by_id, run_id)
             )
+            through_count += 1
+        if segment_ordinal % 256 == 0 or segment_ordinal == len(segment_units):
+            advance_progress(
+                "segment_skeleton_access",
+                completed=segment_ordinal,
+                last_unit=segment.segment_id,
+                counters={
+                    "endpoint_accesses": endpoint_count,
+                    "through_accesses": through_count,
+                    "indexed_roads": len(scoped_roads),
+                },
+            )
+    finish_progress_stage(
+        "segment_skeleton_access",
+        counters={
+            "endpoint_accesses": endpoint_count,
+            "through_accesses": through_count,
+            "indexed_roads": len(scoped_roads),
+        },
+    )
     accesses = gpd.GeoDataFrame(access_rows, geometry="geometry", crs=segments.crs)
     summary = {
         "segment_count": int(len(segment_units)),
@@ -114,8 +157,19 @@ def canonical_id(value: object) -> str:
     text = str(value).strip().strip("\"'")
     if not text:
         return ""
-    if re.fullmatch(r"[+-]?\d+(?:\.0+)?", text):
-        return str(int(text.split(".", 1)[0]))
+    unsigned = text[1:] if text[:1] in {"+", "-"} else text
+    if unsigned.isdecimal():
+        return str(int(text))
+    whole, separator, fraction = unsigned.partition(".")
+    if (
+        separator
+        and "." not in fraction
+        and whole.isdecimal()
+        and bool(fraction)
+        and not fraction.strip("0")
+    ):
+        signed_whole = text[:1] + whole if text[:1] in {"+", "-"} else whole
+        return str(int(signed_whole))
     return text
 
 
@@ -154,11 +208,50 @@ def _access_row(
 
 
 def _road_endpoints(road_ids: tuple[str, ...], roads: gpd.GeoDataFrame) -> tuple[str, ...]:
-    selected = roads[roads["id"].map(canonical_id).isin(set(road_ids))]
+    index, columns = _build_road_endpoint_index(roads)
+    return _road_endpoints_from_index(road_ids, index, columns)
+
+
+def _build_road_endpoint_index(
+    roads: gpd.GeoDataFrame,
+) -> tuple[
+    dict[str, list[tuple[int, tuple[str, ...]]]],
+    tuple[str, ...],
+]:
+    endpoint_columns = tuple(
+        column for column in ("snodeid", "enodeid") if column in roads
+    )
+    columns = tuple(roads.columns)
+    id_index = columns.index("id")
+    endpoint_indexes = tuple(columns.index(column) for column in endpoint_columns)
+    result: dict[str, list[tuple[int, tuple[str, ...]]]] = {}
+    for ordinal, row in enumerate(roads.itertuples(index=False, name=None)):
+        road_id = canonical_id(row[id_index])
+        result.setdefault(road_id, []).append(
+            (
+                ordinal,
+                tuple(canonical_id(row[index]) for index in endpoint_indexes),
+            )
+        )
+    return result, endpoint_columns
+
+
+def _road_endpoints_from_index(
+    road_ids: tuple[str, ...],
+    index: dict[str, list[tuple[int, tuple[str, ...]]]],
+    endpoint_columns: tuple[str, ...],
+) -> tuple[str, ...]:
+    selected = sorted(
+        (
+            record
+            for road_id in set(road_ids)
+            for record in index.get(canonical_id(road_id), ())
+        ),
+        key=lambda record: record[0],
+    )
     values: list[str] = []
-    for column in ("snodeid", "enodeid"):
-        if column in selected:
-            values.extend(selected[column].map(canonical_id).tolist())
+    for column_index in range(len(endpoint_columns)):
+        values.extend(record[1][column_index] for record in selected)
     counts = pd.Series(values).value_counts()
     endpoints = tuple(sorted(counts[counts == 1].index))
     return endpoints[:2] if endpoints else tuple(dict.fromkeys(values))[:2]

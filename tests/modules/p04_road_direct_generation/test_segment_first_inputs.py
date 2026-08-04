@@ -1,9 +1,16 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import geopandas as gpd
+import pandas as pd
 import pytest
 from shapely.geometry import LineString
 
+from rcsd_topo_poc.modules.p04_road_direct_generation import io as io_module
+from rcsd_topo_poc.modules.p04_road_direct_generation import (
+    segment_first_inputs as inputs_module,
+)
 from rcsd_topo_poc.modules.p04_road_direct_generation.io import (
     CORE_VECTOR_FILES,
     build_input_manifest,
@@ -13,6 +20,7 @@ from rcsd_topo_poc.modules.p04_road_direct_generation.segment_first_inputs impor
     SEGMENT_FIRST_PATCH_LAYER_FAMILIES,
     _consumed_patch_inputs,
     _load_patch_layer,
+    _project_patch_frames,
     accepted_surface,
     require_columns,
 )
@@ -126,10 +134,12 @@ def test_patch_layer_prefers_fix_and_records_raw_fallback(tmp_path) -> None:
         driver="GeoJSON",
     )
 
+    manifest_by_path: dict = {}
     result = _load_patch_layer(
         patch_dirs,
         ("DivStripZone_fix.geojson", "DivStripZone.geojson"),
         "EPSG:32650",
+        manifest_by_path=manifest_by_path,
     )
 
     assert result["source_patch_id"].tolist() == ["patch_fix", "patch_raw"]
@@ -138,6 +148,59 @@ def test_patch_layer_prefers_fix_and_records_raw_fallback(tmp_path) -> None:
         "DivStripZone.geojson",
     ]
     assert result["Id"].tolist() == ["fix", "raw"]
+    expected_paths = {
+        patch_dirs[0] / "Vector" / "DivStripZone_fix.geojson",
+        patch_dirs[1] / "Vector" / "DivStripZone.geojson",
+    }
+    assert set(manifest_by_path) == expected_paths
+    for path in expected_paths:
+        row = manifest_by_path[path]
+        assert row["patch_id"] == path.parents[1].name
+        assert row["size_bytes"] == path.stat().st_size
+        assert row["sha256"] == io_module.sha256_file(path)
+
+
+def test_patch_layer_stages_drvfs_input_and_preserves_manifest(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    patch_dir = tmp_path / "patch_a"
+    vector_dir = patch_dir / "Vector"
+    vector_dir.mkdir(parents=True)
+    source_path = vector_dir / "Road.geojson"
+    source = gpd.GeoDataFrame(
+        [{"Id": "road-a", "geometry": LineString([(0, 0), (1, 0)])}],
+        crs="EPSG:32650",
+    )
+    source.to_file(source_path, driver="GeoJSON")
+    stage_root = tmp_path / "stage"
+    read_paths: list = []
+    original_read_file = inputs_module.gpd.read_file
+
+    def recording_read_file(path, *args, **kwargs):
+        read_paths.append(path)
+        return original_read_file(path, *args, **kwargs)
+
+    monkeypatch.setenv("P04_PATCH_INPUT_STAGING", "force")
+    monkeypatch.setenv("P04_PATCH_STAGE_ROOT", str(stage_root))
+    monkeypatch.setattr(inputs_module.gpd, "read_file", recording_read_file)
+    manifest_by_path: dict = {}
+
+    actual = _load_patch_layer(
+        (patch_dir,),
+        "Road.geojson",
+        "EPSG:32650",
+        manifest_by_path=manifest_by_path,
+    )
+
+    assert actual["Id"].tolist() == ["road-a"]
+    assert list(actual.geometry.to_wkb()) == list(source.geometry.to_wkb())
+    assert read_paths and all(Path(path) != source_path for path in read_paths)
+    assert manifest_by_path[source_path]["size_bytes"] == source_path.stat().st_size
+    assert manifest_by_path[source_path]["sha256"] == io_module.sha256_file(
+        source_path
+    )
+    assert list(stage_root.iterdir()) == []
 
 
 def test_segment_first_manifest_hashes_only_consumed_patch_layers(
@@ -171,3 +234,125 @@ def test_segment_first_manifest_hashes_only_consumed_patch_layers(
         str(row["path"]).replace("\\", "/")
         for row in manifest["files"]
     }
+
+
+def test_input_manifest_reuses_precomputed_patch_hashes_without_rehash(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    patch_dir = tmp_path / "patches" / "patch_a"
+    vector_dir = patch_dir / "Vector"
+    vector_dir.mkdir(parents=True)
+    for filenames in SEGMENT_FIRST_PATCH_LAYER_FAMILIES:
+        (vector_dir / filenames[0]).write_text(
+            filenames[0],
+            encoding="utf-8",
+        )
+    external = tmp_path / "swsd.gpkg"
+    external.write_text("external", encoding="utf-8")
+    patch_inputs = _consumed_patch_inputs((patch_dir,))
+    baseline = build_input_manifest(
+        run_id="case",
+        patch_dirs=(patch_dir,),
+        external_inputs={"swsd_roads": external},
+        parameters={"mode": "baseline"},
+        patch_inputs=patch_inputs,
+    )
+    precomputed = [
+        row for row in baseline["files"] if row["patch_id"] is not None
+    ]
+    hashed_paths: list = []
+    original = io_module._manifest_row_request
+
+    def tracked_manifest_row(request):
+        hashed_paths.append(request[0])
+        return original(request)
+
+    monkeypatch.setattr(
+        io_module,
+        "_manifest_row_request",
+        tracked_manifest_row,
+    )
+    fused = build_input_manifest(
+        run_id="case",
+        patch_dirs=(patch_dir,),
+        external_inputs={"swsd_roads": external},
+        parameters={"mode": "baseline"},
+        patch_inputs=patch_inputs,
+        precomputed_patch_files=precomputed,
+    )
+
+    assert hashed_paths == [external]
+    assert fused["files"] == baseline["files"]
+    assert fused["input_file_count"] == baseline["input_file_count"]
+    assert fused["input_total_bytes"] == baseline["input_total_bytes"]
+
+
+def test_patch_frames_with_shared_crs_use_one_exact_projection_batch() -> None:
+    frames = [
+        gpd.GeoDataFrame(
+            [{"id": "a", "geometry": LineString([(114.0, 30.0), (114.001, 30.0)])}],
+            crs="EPSG:4326",
+        ),
+        gpd.GeoDataFrame(
+            [{"id": "b", "geometry": LineString([(114.0, 30.001), (114.001, 30.001)])}],
+            crs="EPSG:4326",
+        ),
+    ]
+    expected_frames = []
+    for frame in frames:
+        projected = frame.to_crs("EPSG:32650")
+        projected.geometry = projected.geometry.map(io_module.to_2d)
+        expected_frames.append(projected)
+    expected = gpd.GeoDataFrame(
+        pd.concat(expected_frames, ignore_index=True),
+        geometry="geometry",
+        crs="EPSG:32650",
+    )
+
+    actual, batch_count, shared = _project_patch_frames(
+        frames,
+        "EPSG:32650",
+    )
+
+    assert shared is True
+    assert batch_count == 1
+    assert actual.drop(columns="geometry").equals(
+        expected.drop(columns="geometry")
+    )
+    assert list(actual.geometry.to_wkb()) == list(expected.geometry.to_wkb())
+
+
+def test_patch_frames_with_mixed_crs_preserve_per_frame_projection() -> None:
+    frames = [
+        gpd.GeoDataFrame(
+            [{"id": "a", "geometry": LineString([(114.0, 30.0), (114.001, 30.0)])}],
+            crs="EPSG:4326",
+        ),
+        gpd.GeoDataFrame(
+            [{"id": "b", "geometry": LineString([(12690421.95, 3503549.84), (12690521.95, 3503549.84)])}],
+            crs="EPSG:3857",
+        ),
+    ]
+    expected_frames = []
+    for frame in frames:
+        projected = frame.to_crs("EPSG:32650")
+        projected.geometry = projected.geometry.map(io_module.to_2d)
+        expected_frames.append(projected)
+    expected = gpd.GeoDataFrame(
+        pd.concat(expected_frames, ignore_index=True),
+        geometry="geometry",
+        crs="EPSG:32650",
+    )
+
+    actual, batch_count, shared = _project_patch_frames(
+        frames,
+        "EPSG:32650",
+    )
+
+    assert shared is False
+    assert batch_count == 2
+    assert actual.drop(columns="geometry").equals(
+        expected.drop(columns="geometry")
+    )
+    assert list(actual.geometry.to_wkb()) == list(expected.geometry.to_wkb())

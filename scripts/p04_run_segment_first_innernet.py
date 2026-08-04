@@ -58,6 +58,14 @@ from rcsd_topo_poc.modules.p04_road_direct_generation.segment_first_target_path_
     reset_target_path_cache,
     target_path_cache_stats,
 )
+from rcsd_topo_poc.modules.p04_road_direct_generation.segment_first_incremental_carriers import (  # noqa: E402
+    incremental_carrier_planner_stats,
+    reset_incremental_carrier_planner,
+)
+from rcsd_topo_poc.modules.p04_road_direct_generation.segment_first_surface_routing import (  # noqa: E402
+    interior_target_cache_stats,
+    reset_interior_target_cache,
+)
 
 
 Runner = Callable[[SegmentFirstConfig], Any]
@@ -108,6 +116,8 @@ def main(
     configure_progress(config.run_id, progress_temp_path)
     reset_corridor_assembly_cache()
     reset_target_path_cache()
+    reset_incremental_carrier_planner()
+    reset_interior_target_cache()
     _log_progress(
         "[2/4] Actual-work progress enabled; "
         "console=stage units percentage rate ETA counters; "
@@ -143,6 +153,8 @@ def main(
     coverage_stats = surface_coverage_runtime_stats()
     corridor_cache_stats = corridor_assembly_cache_stats()
     target_path_stats = target_path_cache_stats()
+    carrier_planner_stats = incremental_carrier_planner_stats()
+    interior_target_stats = interior_target_cache_stats()
     coverage_exactness_pass = int(
         coverage_stats.get("unsafe_local_reconstruction_count", 0)
     ) == 0
@@ -165,6 +177,8 @@ def main(
     performance["surface_coverage"] = coverage_stats
     performance["corridor_assembly_cache"] = corridor_cache_stats
     performance["target_path_cache"] = target_path_stats
+    performance["incremental_carrier_planner"] = carrier_planner_stats
+    performance["interior_target_cache"] = interior_target_stats
     performance["surface_coverage_exactness_pass"] = (
         coverage_exactness_pass
     )
@@ -285,6 +299,8 @@ def _run_with_progress_heartbeat(
                 f"coverage={_format_coverage_stats(surface_coverage_runtime_stats())}; "
                 f"corridor_cache={_format_corridor_cache_stats(corridor_assembly_cache_stats())}; "
                 f"path_cache={_format_target_path_cache_stats(target_path_cache_stats())}; "
+                f"carrier_reuse={_format_carrier_reuse_stats(incremental_carrier_planner_stats())}; "
+                f"interior_target_cache={_format_interior_target_cache_stats(interior_target_cache_stats())}; "
                 f"active={active_location}."
             )
             next_heartbeat = time.monotonic() + PROGRESS_HEARTBEAT_SECONDS
@@ -361,6 +377,40 @@ def _format_target_path_cache_stats(stats: dict[str, object]) -> str:
         f"entries={int(stats.get('entry_count', 0))},"
         f"evictions={int(stats.get('eviction_count', 0))},"
         f"key_mib={int(stats.get('key_bytes', 0)) / (1024**2):.1f}"
+    )
+
+
+def _format_interior_target_cache_stats(stats: dict[str, object]) -> str:
+    return (
+        f"queries={int(stats.get('query_count', 0))},"
+        f"hit={float(stats.get('hit_ratio', 0.0)):.1%},"
+        f"entries={int(stats.get('entry_count', 0))},"
+        f"evictions={int(stats.get('eviction_count', 0))},"
+        f"key_mib={int(stats.get('key_bytes', 0)) / (1024**2):.1f}"
+    )
+
+
+def _format_carrier_reuse_stats(stats: dict[str, object]) -> str:
+    fingerprint_hits = int(stats.get("fingerprint_cache_hit_count", 0))
+    fingerprint_queries = fingerprint_hits + int(
+        stats.get("fingerprint_cache_miss_count", 0)
+    )
+    context_hits = int(stats.get("carrier_context_cache_hit_count", 0))
+    context_queries = context_hits + int(
+        stats.get("carrier_context_cache_miss_count", 0)
+    )
+    return (
+        f"calls={int(stats.get('invocation_count', 0))},"
+        f"full={int(stats.get('full_recompute_invocation_count', 0))},"
+        f"incremental={int(stats.get('incremental_recompute_invocation_count', 0))},"
+        f"unchanged={int(stats.get('no_change_invocation_count', 0))},"
+        f"recomputed={int(stats.get('segment_units_recomputed', 0))},"
+        f"reused={int(stats.get('segment_units_reused', 0))}"
+        f"({float(stats.get('segment_reuse_ratio', 0.0)):.1%}),"
+        f"fingerprint_cache={fingerprint_hits}/{fingerprint_queries},"
+        f"context_cache={context_hits}/{context_queries},"
+        f"context_prepare="
+        f"{float(stats.get('carrier_context_prepare_seconds', 0.0)):.1f}s"
     )
 
 

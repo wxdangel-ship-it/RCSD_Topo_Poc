@@ -2,14 +2,24 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
+import hashlib
+import os
 from pathlib import Path
+import shutil
+import tempfile
 from typing import Iterable
 
 import geopandas as gpd
 import pandas as pd
+from shapely import force_2d
 
 from .geometry import to_2d
-from .io import build_input_manifest, discover_patch_dirs, read_vector
+from .io import (
+    build_input_manifest,
+    discover_patch_dirs,
+    read_vector,
+    sha256_file,
+)
 from .segment_first_config import SegmentFirstConfig
 from .segment_first_performance import PATCH_IO_WORKERS_MAX
 from .segment_first_progress import (
@@ -102,31 +112,67 @@ def load_segment_first_inputs(config: SegmentFirstConfig) -> SegmentInputBundle:
     require_columns(full_roads, ("id", "snodeid", "enodeid", "direction", "source"), "full_rcsd_roads")
     require_columns(full_nodes, ("id", "mainnodeid", "source"), "full_rcsd_nodes")
 
-    patch_roads = _load_patch_layer(patch_dirs, "Road.geojson", cfg.analysis_crs)
-    patch_lanes = _load_patch_layer(patch_dirs, "Lane.geojson", cfg.analysis_crs)
-    patch_boundaries = _load_patch_layer(patch_dirs, "LaneBoundary.geojson", cfg.analysis_crs)
-    patch_lane_topo = _load_patch_layer(patch_dirs, "LaneNextLane.geojson", cfg.analysis_crs, geometry_optional=True)
-    patch_rnr = _load_patch_layer(patch_dirs, "RoadNextRoad.geojson", cfg.analysis_crs, geometry_optional=True)
+    patch_manifest_by_path: dict[Path, dict[str, object]] = {}
+    patch_roads = _load_patch_layer(
+        patch_dirs,
+        "Road.geojson",
+        cfg.analysis_crs,
+        manifest_by_path=patch_manifest_by_path,
+    )
+    patch_lanes = _load_patch_layer(
+        patch_dirs,
+        "Lane.geojson",
+        cfg.analysis_crs,
+        manifest_by_path=patch_manifest_by_path,
+    )
+    patch_boundaries = _load_patch_layer(
+        patch_dirs,
+        "LaneBoundary.geojson",
+        cfg.analysis_crs,
+        manifest_by_path=patch_manifest_by_path,
+    )
+    patch_lane_topo = _load_patch_layer(
+        patch_dirs,
+        "LaneNextLane.geojson",
+        cfg.analysis_crs,
+        geometry_optional=True,
+        manifest_by_path=patch_manifest_by_path,
+    )
+    patch_rnr = _load_patch_layer(
+        patch_dirs,
+        "RoadNextRoad.geojson",
+        cfg.analysis_crs,
+        geometry_optional=True,
+        manifest_by_path=patch_manifest_by_path,
+    )
     patch_intersections = _load_patch_layer(
         patch_dirs,
         "Intersection.geojson",
         cfg.analysis_crs,
+        manifest_by_path=patch_manifest_by_path,
     )
     drivezones = _load_patch_layer(
         patch_dirs,
         ("DriveZone_fix.geojson", "DriveZone.geojson"),
         cfg.analysis_crs,
+        manifest_by_path=patch_manifest_by_path,
     )
     divstripzones = _load_patch_layer(
         patch_dirs,
         ("DivStripZone_fix.geojson", "DivStripZone.geojson"),
         cfg.analysis_crs,
+        manifest_by_path=patch_manifest_by_path,
     )
     require_columns(patch_roads, ("Id",), "patch_roads")
     require_columns(patch_lanes, ("Id", "RoadId", "Width"), "patch_lanes")
     require_columns(patch_lane_topo, ("Id", "LaneId", "NextLaneId"), "patch_lane_topo")
     require_columns(patch_rnr, ("Id", "RoadId", "NextRoadId"), "patch_road_next_road")
 
+    consumed_patch_inputs = _consumed_patch_inputs(patch_dirs)
+    precomputed_patch_files = [
+        patch_manifest_by_path[path]
+        for _, path in consumed_patch_inputs
+    ]
     return SegmentInputBundle(
         patch_dirs=patch_dirs,
         patch_ids=tuple(path.name for path in patch_dirs),
@@ -154,7 +200,8 @@ def load_segment_first_inputs(config: SegmentFirstConfig) -> SegmentInputBundle:
             patch_dirs=patch_dirs,
             external_inputs=external,
             parameters=cfg.parameters(),
-            patch_inputs=_consumed_patch_inputs(patch_dirs),
+            patch_inputs=consumed_patch_inputs,
+            precomputed_patch_files=precomputed_patch_files,
         ),
     )
 
@@ -205,51 +252,92 @@ def _load_patch_layer(
     analysis_crs: str,
     *,
     geometry_optional: bool = False,
+    manifest_by_path: dict[Path, dict[str, object]] | None = None,
 ) -> gpd.GeoDataFrame:
     filenames = (filename,) if isinstance(filename, str) else filename
     stage = "input_patch_layer"
     detail = "/".join(filenames)
+    stage_root = _patch_input_stage_root(patch_dirs)
+    stage_directory: tempfile.TemporaryDirectory[str] | None = None
+    staged_path: Path | None = None
+    if stage_root is not None:
+        try:
+            stage_directory = tempfile.TemporaryDirectory(
+                prefix="p04-patch-input-",
+                dir=stage_root,
+            )
+            staged_path = Path(stage_directory.name)
+        except OSError:
+            stage_directory = None
+            staged_path = None
     requests = [
-        (patch_dir, filenames, analysis_crs)
+        (
+            patch_dir,
+            filenames,
+            analysis_crs,
+            manifest_by_path is not None,
+            staged_path,
+        )
         for patch_dir in patch_dirs
     ]
-    begin_progress_stage(stage, len(requests), detail=detail)
+    staged = staged_path is not None
+    begin_progress_stage(
+        stage,
+        len(requests),
+        detail=detail,
+        counters={"staged": str(staged).lower()},
+    )
     worker_count = min(PATCH_READ_WORKERS, max(1, len(requests)))
     frames: list[gpd.GeoDataFrame | None] = [None] * len(requests)
     row_count = 0
     empty_geometry_count = 0
-    with ThreadPoolExecutor(max_workers=worker_count) as executor:
-        futures = {
-            executor.submit(_read_patch_layer_request, request): index
-            for index, request in enumerate(requests)
-        }
-        for completed_count, future in enumerate(
-            as_completed(futures),
-            start=1,
-        ):
-            index = futures[future]
-            frame = future.result()
-            frames[index] = frame
-            row_count += len(frame)
-            empty_geometry_count += int(
-                (frame.geometry.isna() | frame.geometry.is_empty).sum()
-            )
-            advance_progress(
-                stage,
-                completed=completed_count,
-                last_unit=requests[index][0].name,
-                counters={
-                    "rows": row_count,
-                    "empty_geometry": empty_geometry_count,
-                    "workers": worker_count,
-                },
-            )
+    hashed_file_count = 0
+    staged_bytes = 0
+    try:
+        with ThreadPoolExecutor(max_workers=worker_count) as executor:
+            futures = {
+                executor.submit(_read_patch_layer_request, request): index
+                for index, request in enumerate(requests)
+            }
+            for completed_count, future in enumerate(
+                as_completed(futures),
+                start=1,
+            ):
+                index = futures[future]
+                frame, path, manifest_row, copied_bytes = future.result()
+                frames[index] = frame
+                staged_bytes += copied_bytes
+                if manifest_by_path is not None and manifest_row is not None:
+                    manifest_by_path[path] = manifest_row
+                    hashed_file_count += 1
+                row_count += len(frame)
+                empty_geometry_count += int(
+                    (frame.geometry.isna() | frame.geometry.is_empty).sum()
+                )
+                advance_progress(
+                    stage,
+                    completed=completed_count,
+                    last_unit=requests[index][0].name,
+                    counters={
+                        "rows": row_count,
+                        "empty_geometry": empty_geometry_count,
+                        "hashed_files": hashed_file_count,
+                        "workers": worker_count,
+                        "staged": str(staged).lower(),
+                        "staged_bytes": staged_bytes,
+                    },
+                )
+    finally:
+        if stage_directory is not None:
+            stage_directory.cleanup()
     if not frames:
         finish_progress_stage(stage)
         return gpd.GeoDataFrame(geometry=[], crs=analysis_crs)
     completed_frames = [frame for frame in frames if frame is not None]
-    combined = pd.concat(completed_frames, ignore_index=True)
-    result = gpd.GeoDataFrame(combined, geometry="geometry", crs=analysis_crs)
+    result, transform_batches, shared_source_crs = _project_patch_frames(
+        completed_frames,
+        analysis_crs,
+    )
     if not geometry_optional:
         result = result[result.geometry.notna() & ~result.geometry.is_empty].copy()
     result = result.reset_index(drop=True)
@@ -258,25 +346,134 @@ def _load_patch_layer(
         counters={
             "rows": len(result),
             "empty_geometry": empty_geometry_count,
+            "hashed_files": hashed_file_count,
             "workers": worker_count,
+            "crs_transform_batches": transform_batches,
+            "shared_source_crs": str(shared_source_crs).lower(),
+            "staged": str(staged).lower(),
+            "staged_bytes": staged_bytes,
         },
     )
     return result
 
 
+def _project_patch_frames(
+    frames: list[gpd.GeoDataFrame],
+    analysis_crs: str,
+) -> tuple[gpd.GeoDataFrame, int, bool]:
+    """Project one layer family in a stable batch when all source CRS agree."""
+
+    source_crs = frames[0].crs
+    if all(frame.crs == source_crs for frame in frames):
+        combined = pd.concat(frames, ignore_index=True)
+        result = gpd.GeoDataFrame(
+            combined,
+            geometry="geometry",
+            crs=source_crs,
+        ).to_crs(analysis_crs)
+        result.geometry = force_2d(result.geometry.array)
+        return result, 1, True
+    projected: list[gpd.GeoDataFrame] = []
+    for frame in frames:
+        transformed = frame.to_crs(analysis_crs)
+        transformed.geometry = transformed.geometry.map(to_2d)
+        projected.append(transformed)
+    combined = pd.concat(projected, ignore_index=True)
+    return (
+        gpd.GeoDataFrame(
+            combined,
+            geometry="geometry",
+            crs=analysis_crs,
+        ),
+        len(projected),
+        False,
+    )
+
+
 def _read_patch_layer_request(
-    request: tuple[Path, tuple[str, ...], str],
-) -> gpd.GeoDataFrame:
-    patch_dir, filenames, analysis_crs = request
+    request: tuple[Path, tuple[str, ...], str, bool, Path | None],
+) -> tuple[gpd.GeoDataFrame, Path, dict[str, object] | None, int]:
+    patch_dir, filenames, analysis_crs, capture_manifest, stage_directory = request
     path = _resolve_patch_layer_path(patch_dir, filenames)
-    frame = gpd.read_file(path)
+    read_path = path
+    digest: str | None = None
+    copied_bytes = 0
+    if stage_directory is not None:
+        read_path = stage_directory / f"{patch_dir.name}-{path.name}"
+        copied_bytes, digest = _copy_patch_input(
+            path,
+            read_path,
+            calculate_sha256=capture_manifest,
+        )
+    try:
+        frame = gpd.read_file(read_path)
+    finally:
+        if read_path != path and read_path.exists():
+            read_path.unlink()
     if frame.crs is None:
         raise ValueError(f"input CRS is missing: {path}")
-    frame = frame.to_crs(analysis_crs)
-    frame.geometry = frame.geometry.map(to_2d)
     frame["source_patch_id"] = patch_dir.name
     frame["source_vector_filename"] = path.name
-    return frame
+    manifest_row = (
+        {
+            "role": "patch_vector",
+            "patch_id": patch_dir.name,
+            "path": str(path),
+            "size_bytes": path.stat().st_size,
+            "sha256": digest if digest is not None else sha256_file(path),
+        }
+        if capture_manifest
+        else None
+    )
+    return frame, path, manifest_row, copied_bytes
+
+
+def _copy_patch_input(
+    source: Path,
+    target: Path,
+    *,
+    calculate_sha256: bool,
+) -> tuple[int, str | None]:
+    digest = hashlib.sha256() if calculate_sha256 else None
+    copied_bytes = 0
+    with source.open("rb") as source_handle, target.open("wb") as target_handle:
+        for chunk in iter(lambda: source_handle.read(1024 * 1024), b""):
+            target_handle.write(chunk)
+            copied_bytes += len(chunk)
+            if digest is not None:
+                digest.update(chunk)
+    return copied_bytes, digest.hexdigest() if digest is not None else None
+
+
+def _patch_input_stage_root(patch_dirs: tuple[Path, ...]) -> Path | None:
+    mode = os.environ.get("P04_PATCH_INPUT_STAGING", "auto").strip().lower()
+    if mode in {"0", "false", "no", "off", "disabled"}:
+        return None
+    forced = mode in {"1", "true", "yes", "on", "force"}
+    if not forced and not all(_is_wsl_drvfs_path(path) for path in patch_dirs):
+        return None
+    root = Path(
+        os.environ.get("P04_PATCH_STAGE_ROOT", tempfile.gettempdir())
+    )
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+        free_bytes = shutil.disk_usage(root).free
+    except OSError:
+        return None
+    if free_bytes < 2 * 1024**3 or not os.access(root, os.W_OK):
+        return None
+    return root
+
+
+def _is_wsl_drvfs_path(path: Path) -> bool:
+    parts = path.absolute().parts
+    return bool(
+        len(parts) >= 3
+        and parts[0] == "/"
+        and parts[1] == "mnt"
+        and len(parts[2]) == 1
+        and parts[2].isalpha()
+    )
 
 
 def _resolve_patch_layer_path(

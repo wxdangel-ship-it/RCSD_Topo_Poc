@@ -205,20 +205,37 @@ def compile_road_next_road(
         for roles in by_end.values()
         for role in roles["outgoing"]
     ]
+    explicit_outgoing_by_source_key = _explicit_outgoing_index(
+        all_outgoing,
+        allowed,
+    )
+    explicit_candidate_pair_count = 0
     begin_progress_stage(
         "topology_advance_right",
         len(all_incoming),
         detail="explicit ADVANCE_RIGHT relations",
-        counters={"relation_count": len(rows)},
+        counters={
+            "relation_count": len(rows),
+            "explicit_candidate_pairs": 0,
+        },
     )
     for source_index, source in enumerate(all_incoming):
         advance_progress(
             "topology_advance_right",
             completed=source_index,
             last_unit=source["id"],
-            counters={"relation_count": len(rows)},
+            counters={
+                "relation_count": len(rows),
+                "explicit_candidate_pairs": explicit_candidate_pair_count,
+            },
         )
-        for target in all_outgoing:
+        target_indexes = _explicit_target_indexes(
+            source,
+            explicit_outgoing_by_source_key,
+        )
+        explicit_candidate_pair_count += len(target_indexes)
+        for target_index in target_indexes:
+            target = all_outgoing[target_index]
             road_pair = (source["id"], target["id"])
             if (
                 road_pair in existing_road_pairs
@@ -271,7 +288,10 @@ def compile_road_next_road(
             existing_road_pairs.add(road_pair)
     finish_progress_stage(
         "topology_advance_right",
-        counters={"relation_count": len(rows)},
+        counters={
+            "relation_count": len(rows),
+            "explicit_candidate_pairs": explicit_candidate_pair_count,
+        },
     )
     frame = _records(rows, roads.crs)
     return TopologyBuildResult(
@@ -424,6 +444,47 @@ def _pair_has_explicit_support(
         )
     }
     return bool(candidate_pairs.intersection(allowed))
+
+
+def _explicit_outgoing_index(
+    outgoing: list[dict[str, object]],
+    allowed: set[tuple[str, str]] | None,
+) -> dict[str, tuple[int, ...]]:
+    if not allowed:
+        return {}
+    outgoing_by_evidence_key: dict[str, list[int]] = {}
+    for index, target in enumerate(outgoing):
+        for key in target.get(
+            "evidence_keys",
+            target.get("patch_road_keys", ()),
+        ):
+            outgoing_by_evidence_key.setdefault(str(key), []).append(index)
+    candidate_indexes: dict[str, set[int]] = {}
+    for source_key, target_key in allowed:
+        indexes = outgoing_by_evidence_key.get(str(target_key), ())
+        if indexes:
+            candidate_indexes.setdefault(str(source_key), set()).update(
+                indexes
+            )
+    return {
+        key: tuple(sorted(indexes))
+        for key, indexes in candidate_indexes.items()
+    }
+
+
+def _explicit_target_indexes(
+    source: dict[str, object],
+    outgoing_by_source_key: dict[str, tuple[int, ...]],
+) -> tuple[int, ...]:
+    indexes = {
+        index
+        for source_key in source.get(
+            "evidence_keys",
+            source.get("patch_road_keys", ()),
+        )
+        for index in outgoing_by_source_key.get(str(source_key), ())
+    }
+    return tuple(sorted(indexes))
 
 
 def _road_evidence_keys(row: object) -> tuple[str, ...]:

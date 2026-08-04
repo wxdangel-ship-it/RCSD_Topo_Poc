@@ -35,7 +35,14 @@ def test_progress_reports_actual_monotonic_units_and_jsonl(tmp_path: Path) -> No
         assert snapshot["percentage"] == 40.0
         assert snapshot["last_unit"] == "segment-4"
         assert snapshot["counters"] == {"built": 3}
+        assert snapshot["overall_estimate"] == {
+            "completed": 3,
+            "total": 6,
+            "phase": "network_stabilization",
+            "dynamic_retry_count_unknown": True,
+        }
         rendered = format_progress_snapshot(snapshot)
+        assert "overall=3/6(network_stabilization)" in rendered
         assert "units=4/10(40.0%)" in rendered
         assert "last=segment-4" in rendered
 

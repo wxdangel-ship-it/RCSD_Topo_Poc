@@ -8,15 +8,18 @@ import weakref
 import geopandas as gpd
 import numpy as np
 import pandas as pd
-from shapely.geometry import GeometryCollection, LineString, Point
+from shapely.geometry import LineString, Point
 from shapely.ops import nearest_points, substring, unary_union
 
 from .segment_first_access_memberships import (
     AccessMembershipPolicy,
     materialize_missing_built_access_memberships,
 )
+from .segment_first_completion_surfaces import (
+    build_completion_surfaces,
+    completion_surface_covers_point,
+)
 from .segment_first_config import SegmentFirstConfig
-from .segment_first_geometry_cache import buffered_union
 from .segment_first_geometry_metrics import (
     max_sample_turn as _max_sample_turn,
     surface_coverage as _shared_surface_coverage,
@@ -44,15 +47,17 @@ _JUNCTION_SURFACE_CACHE: dict[
     int,
     tuple[weakref.ReferenceType[gpd.GeoDataFrame], int, object],
 ] = {}
-_COMPLETION_SURFACE_CACHE: dict[
-    tuple[int, int, float],
-    tuple[
-        weakref.ReferenceType[gpd.GeoDataFrame],
-        weakref.ReferenceType[gpd.GeoDataFrame],
-        int,
-        int,
-        tuple[object, object, object],
-    ],
+_ACCEPTED_ENDPOINT_SURFACE_CACHE: dict[
+    int,
+    tuple[weakref.ReferenceType[gpd.GeoDataFrame], int, object],
+] = {}
+_ACCESS_GROUP_CACHE: dict[
+    int,
+    tuple[weakref.ReferenceType[gpd.GeoDataFrame], int, object],
+] = {}
+_ACCESS_GEOMETRY_CACHE: dict[
+    int,
+    tuple[weakref.ReferenceType[gpd.GeoDataFrame], int, object],
 ] = {}
 @dataclass(frozen=True)
 class NodeBuildResult:
@@ -288,13 +293,10 @@ def build_nodes_and_connect_roads(
     materialized_ordinary_group_ids = materialized_ordinary_group_ids or set()
     junction_surface_by_group = _junction_surfaces(junction_units)
     junction_context_by_group = _junction_contexts(junction_units)
-    (
-        drivezone_surface,
-        accepted_junction_surface,
-        handoff_completion_surface,
-    ) = _completion_surfaces(
+    drivezone_surface, handoff_completion_surface = build_completion_surfaces(
         drivezones,
-        junction_units,
+        junction_surface_by_group,
+        junction_context_by_group,
         buffer_m=config.completion_surface_buffer_m,
     )
     resolution = resolve_road_endpoint_junctions(
@@ -658,50 +660,58 @@ def build_nodes_and_connect_roads(
 
     if not endpoint_frame.empty:
         sindex = endpoint_frame.sindex
-        for left, row in endpoint_frame.iterrows():
-            for right in sindex.query(row.geometry.buffer(1e-6)):
+        endpoint_geometries = list(endpoint_frame.geometry)
+        endpoint_road_ids = endpoint_frame["road_id"].tolist()
+        endpoint_names = endpoint_frame["endpoint"].tolist()
+        for left, geometry in enumerate(endpoint_geometries):
+            for right in sindex.query(
+                geometry,
+                predicate="dwithin",
+                distance=1e-6,
+            ):
                 right = int(right)
                 if right <= left:
                     continue
-                if row.road_id == endpoint_frame.iloc[right].road_id:
+                if endpoint_road_ids[left] == endpoint_road_ids[right]:
                     continue
                 if _preserve_separate_ordinary_built_portals(
-                    int(left),
+                    left,
                     right,
                     endpoint_rows,
                     endpoint_memberships,
                 ):
                     continue
-                distance = row.geometry.distance(endpoint_frame.iloc[right].geometry)
+                distance = geometry.distance(endpoint_geometries[right])
                 if distance <= 1e-6:
                     union(
-                        int(left),
+                        left,
                         right,
                         allow_shared_access_portal=True,
                     )
-        for left, row in endpoint_frame.iterrows():
-            for right in sindex.query(row.geometry.buffer(config.endpoint_snap_distance_m)):
+        for left, geometry in enumerate(endpoint_geometries):
+            for right in sindex.query(
+                geometry,
+                predicate="dwithin",
+                distance=config.endpoint_snap_distance_m,
+            ):
                 right = int(right)
                 if right <= left:
                     continue
-                if row.road_id == endpoint_frame.iloc[right].road_id:
+                if endpoint_road_ids[left] == endpoint_road_ids[right]:
                     continue
-                if (
-                    str(row.endpoint)
-                    == str(endpoint_frame.iloc[right].endpoint)
-                ):
+                if str(endpoint_names[left]) == str(endpoint_names[right]):
                     continue
                 if _preserve_separate_ordinary_built_portals(
-                    int(left),
+                    left,
                     right,
                     endpoint_rows,
                     endpoint_memberships,
                 ):
                     continue
-                distance = row.geometry.distance(endpoint_frame.iloc[right].geometry)
+                distance = geometry.distance(endpoint_geometries[right])
                 if 1e-6 < distance <= config.endpoint_snap_distance_m:
                     union(
-                        int(left),
+                        left,
                         right,
                         allow_shared_access_portal=False,
                     )
@@ -1542,21 +1552,31 @@ def _endpoint_junction_memberships(
 ) -> dict[int, dict[str, object]]:
     if endpoints.empty or junction_units.empty:
         return {}
-    accepted = junction_units[
-        junction_units["junction_source"].isin(
-            {"t03_accepted", "t04_accepted", "t07_accepted"}
+    accepted = _identity_cache_get(
+        _ACCEPTED_ENDPOINT_SURFACE_CACHE,
+        junction_units,
+    )
+    if accepted is None:
+        accepted = junction_units[
+            junction_units["junction_source"].isin(
+                {"t03_accepted", "t04_accepted", "t07_accepted"}
+            )
+        ].copy()
+        accepted.geometry = gpd.GeoSeries(
+            [
+                endpoint_surface_geometry(row)
+                for row in accepted.itertuples(index=False)
+            ],
+            index=accepted.index,
+            crs=accepted.crs,
         )
-    ].copy()
+        _identity_cache_store(
+            _ACCEPTED_ENDPOINT_SURFACE_CACHE,
+            junction_units,
+            accepted,
+        )
     if accepted.empty:
         return {}
-    accepted.geometry = gpd.GeoSeries(
-        [
-            endpoint_surface_geometry(row)
-            for row in accepted.itertuples(index=False)
-        ],
-        index=accepted.index,
-        crs=accepted.crs,
-    )
     sindex = accepted.sindex
     result: dict[int, dict[str, object]] = {}
     for endpoint_index, endpoint in endpoints.iterrows():
@@ -1589,6 +1609,9 @@ def _endpoint_junction_memberships(
 def _access_group_by_segment_source(
     accesses: gpd.GeoDataFrame,
 ) -> dict[tuple[str, str], str]:
+    cached = _identity_cache_get(_ACCESS_GROUP_CACHE, accesses)
+    if cached is not None:
+        return cached
     result: dict[tuple[str, str], str] = {}
     if accesses.empty:
         return result
@@ -1597,25 +1620,31 @@ def _access_group_by_segment_source(
         group = canonical_id(access.junction_group_id)
         if key[1] and group:
             result[key] = group
+    _identity_cache_store(_ACCESS_GROUP_CACHE, accesses, result)
     return result
 
 
 def _access_geometry_by_segment_source(
     accesses: gpd.GeoDataFrame,
 ) -> dict[tuple[str, str], object]:
+    cached = _identity_cache_get(_ACCESS_GEOMETRY_CACHE, accesses)
+    if cached is not None:
+        return cached
     if accesses.empty:
         return {}
     keys = [
         accesses["segment_id"].astype(str),
         accesses["source_node_id"].map(canonical_id),
     ]
-    return {
+    result = {
         (str(segment_id), str(source_node_id)): frame.geometry.union_all()
         for (segment_id, source_node_id), frame in accesses.groupby(
             keys,
             sort=True,
         )
     }
+    _identity_cache_store(_ACCESS_GEOMETRY_CACHE, accesses, result)
+    return result
 
 
 def _junction_contexts(
@@ -1708,67 +1737,6 @@ def _identity_cache_store(
     cache[key] = (weakref.ref(frame, remove), id(frame._mgr), value)
 
 
-def _completion_surfaces(
-    drivezones: gpd.GeoDataFrame,
-    junction_units: gpd.GeoDataFrame,
-    *,
-    buffer_m: float,
-) -> tuple[object, object, object]:
-    key = (id(drivezones), id(junction_units), float(buffer_m))
-    entry = _COMPLETION_SURFACE_CACHE.get(key)
-    if (
-        entry is not None
-        and entry[0]() is drivezones
-        and entry[1]() is junction_units
-        and entry[2] == id(drivezones._mgr)
-        and entry[3] == id(junction_units._mgr)
-    ):
-        return entry[4]
-    drivezone_surface = (
-        buffered_union(drivezones, buffer_m)
-        if not drivezones.empty
-        else GeometryCollection()
-    )
-    accepted_units = (
-        junction_units[
-            junction_units["junction_source"].isin(
-                {"t07_accepted", "t03_accepted", "t04_accepted"}
-            )
-        ]
-        if not junction_units.empty
-        and "junction_source" in junction_units
-        else junction_units.iloc[0:0]
-    )
-    accepted_junction_surface = (
-        unary_union(
-            list(_junction_surfaces(accepted_units).values())
-        ).buffer(buffer_m)
-        if not accepted_units.empty
-        else GeometryCollection()
-    )
-    value = (
-        drivezone_surface,
-        accepted_junction_surface,
-        drivezone_surface.union(accepted_junction_surface),
-    )
-
-    def remove(_: weakref.ReferenceType[gpd.GeoDataFrame]) -> None:
-        current = _COMPLETION_SURFACE_CACHE.get(key)
-        if current is not None and (
-            current[0]() is None or current[1]() is None
-        ):
-            _COMPLETION_SURFACE_CACHE.pop(key, None)
-
-    _COMPLETION_SURFACE_CACHE[key] = (
-        weakref.ref(drivezones, remove),
-        weakref.ref(junction_units, remove),
-        id(drivezones._mgr),
-        id(junction_units._mgr),
-        value,
-    )
-    return value
-
-
 def _physical_portal_supported(
     point: Point,
     completion_surface: object | None,
@@ -1781,11 +1749,10 @@ def _physical_portal_supported(
     physically unsupported endpoint.
     """
 
-    if completion_surface is None:
-        return True
-    return bool(
-        not completion_surface.is_empty
-        and float(point.distance(completion_surface)) <= 1e-9
+    return completion_surface_covers_point(
+        completion_surface,
+        point,
+        epsilon=1e-9,
     )
 
 
@@ -2376,9 +2343,17 @@ def _source_node_mainnode_group(
 
 
 def _near_full_rcsd_node(point: Point, nodes: gpd.GeoDataFrame, sindex: object, distance: float):
-    indexes = list(sindex.query(point.buffer(distance)))
-    candidates = [nodes.iloc[int(index)] for index in indexes if nodes.iloc[int(index)].geometry.distance(point) <= distance]
-    return min(candidates, key=lambda row: row.geometry.distance(point)) if candidates else None
+    candidates: list[tuple[float, pd.Series]] = []
+    for index in sindex.query(
+        point,
+        predicate="dwithin",
+        distance=distance,
+    ):
+        row = nodes.iloc[int(index)]
+        node_distance = float(row.geometry.distance(point))
+        if node_distance <= distance:
+            candidates.append((node_distance, row))
+    return min(candidates, key=lambda item: item[0])[1] if candidates else None
 
 
 def _mainnode_id(

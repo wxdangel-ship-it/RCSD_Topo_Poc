@@ -12,6 +12,26 @@ PROGRESS_EVENT_VERSION = "p04-progress-v1"
 _EVENT_INTERVAL_SECONDS = 30.0
 _MIN_EVENT_INTERVAL_SECONDS = 1.0
 _LOGGER = logging.getLogger(__name__)
+_OVERALL_PHASE_TOTAL = 6
+_STAGE_PHASES = {
+    "input_patch_layer": (1, "input_loading"),
+    "patch_road_center": (2, "evidence_preparation"),
+    "segment_carrier_change_detection": (3, "network_stabilization"),
+    "segment_carrier": (3, "network_stabilization"),
+    "movement_anchor_split": (3, "network_stabilization"),
+    "segment_access_split": (3, "network_stabilization"),
+    "junction_portal": (3, "network_stabilization"),
+    "node_completion_surface": (3, "network_stabilization"),
+    "node_topology_pairs": (3, "network_stabilization"),
+    "node_materialization": (3, "network_stabilization"),
+    "topology_shared_nodes": (4, "publication_compilation"),
+    "topology_semantic_junctions": (4, "publication_compilation"),
+    "topology_advance_right": (4, "publication_compilation"),
+    "output_gpkg_layers": (5, "output_and_qa"),
+    "independent_qa_objects": (5, "output_and_qa"),
+    "qgis_layer_discovery": (5, "output_and_qa"),
+    "qgis_project_layers": (5, "output_and_qa"),
+}
 
 
 class SegmentFirstProgressTracker:
@@ -35,6 +55,8 @@ class SegmentFirstProgressTracker:
         self._invocations: dict[str, int] = {}
         self._stage_invocation = 0
         self._stage_sequence = 0
+        self._overall_completed = 0
+        self._overall_phase = "initializing"
         event_path.parent.mkdir(parents=True, exist_ok=True)
         event_path.touch(exist_ok=False)
         self._emit_locked("run_started", force=True)
@@ -62,6 +84,13 @@ class SegmentFirstProgressTracker:
             self._stage_sequence += 1
             self._stage_invocation = self._invocations.get(self._stage, 0) + 1
             self._invocations[self._stage] = self._stage_invocation
+            phase_completed, phase_name = _STAGE_PHASES.get(
+                self._stage,
+                (self._overall_completed, self._overall_phase),
+            )
+            if phase_completed >= self._overall_completed:
+                self._overall_completed = phase_completed
+                self._overall_phase = phase_name
             self._emit_locked("stage_started", force=True)
             return self._snapshot_locked(now)
 
@@ -124,6 +153,8 @@ class SegmentFirstProgressTracker:
         counters: Mapping[str, int | float | str] | None = None,
     ) -> dict[str, object]:
         with self._lock:
+            self._overall_completed = _OVERALL_PHASE_TOTAL
+            self._overall_phase = "completed"
             if counters:
                 self._counters.update(counters)
             self._emit_locked("run_completed", force=True)
@@ -153,7 +184,12 @@ class SegmentFirstProgressTracker:
             "completed": self._completed,
             "total": self._total,
             "percentage": percentage,
-            "overall_estimate": None,
+            "overall_estimate": {
+                "completed": self._overall_completed,
+                "total": _OVERALL_PHASE_TOTAL,
+                "phase": self._overall_phase,
+                "dynamic_retry_count_unknown": True,
+            },
             "last_unit": self._last_unit,
             "stage_elapsed_seconds": elapsed,
             "seconds_since_progress": max(0.0, now - self._last_progress),
@@ -307,7 +343,14 @@ def format_progress_snapshot(snapshot: Mapping[str, object]) -> str:
     rendered_counters = ",".join(
         f"{key}={value}" for key, value in sorted(dict(counters).items())
     )
+    overall = dict(snapshot.get("overall_estimate") or {})
+    rendered_overall = (
+        f"{int(overall.get('completed', 0))}/"
+        f"{int(overall.get('total', _OVERALL_PHASE_TOTAL))}"
+        f"({overall.get('phase', 'unknown')})"
+    )
     return (
+        f"overall={rendered_overall}; "
         f"stage={snapshot.get('stage', 'unknown')}"
         f"#{snapshot.get('stage_invocation', 0)}; "
         f"units={completed}/{total}({percentage:.1f}%); "
@@ -339,7 +382,12 @@ def _empty_snapshot(stage: str, total: int, detail: str) -> dict[str, object]:
         "completed": 0,
         "total": total,
         "percentage": 0.0,
-        "overall_estimate": None,
+        "overall_estimate": {
+            "completed": 0,
+            "total": _OVERALL_PHASE_TOTAL,
+            "phase": "not_started",
+            "dynamic_retry_count_unknown": True,
+        },
         "last_unit": "",
         "stage_elapsed_seconds": 0.0,
         "seconds_since_progress": 0.0,

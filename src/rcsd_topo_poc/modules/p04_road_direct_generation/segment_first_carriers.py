@@ -9,6 +9,15 @@ import pandas as pd
 from shapely.geometry import LineString, Point
 from shapely.ops import linemerge, nearest_points, unary_union
 
+from .segment_first_carrier_context import (
+    longest_line as _longest_line,
+    prepare_assignment_context,
+    prepare_endpoint_surfaces_by_segment,
+    prepare_reference_by_segment,
+    prepare_road_by_id,
+    prepare_through_surfaces_by_segment,
+    reservation_overlap_fraction,
+)
 from .segment_first_corridors import (
     CorridorAssembly,
     assemble_directional_corridor,
@@ -45,6 +54,8 @@ class CarrierPlanResult:
     segment_plans: gpd.GeoDataFrame
     carriers: gpd.GeoDataFrame
     summary: dict[str, object]
+    segment_summary_contributions: dict[str, dict[str, int]]
+    segment_carrier_column_orders: dict[str, tuple[str, ...]]
 
 
 def plan_segment_carriers(
@@ -75,69 +86,14 @@ def plan_segment_carriers(
         forced_suppressed_local_connector_keys or set()
     )
     directional_member_roles = directional_member_roles or {}
-    road_frame = swsd_roads.copy()
-    road_frame["canonical_road_id"] = road_frame["id"].map(canonical_id)
-    road_by_id = road_frame.drop_duplicates("canonical_road_id").set_index("canonical_road_id")
-    eligible = (
-        assignments[assignments.get("takeover_eligible", True).fillna(False).astype(bool)].copy()
-        if not assignments.empty
-        else assignments.copy()
-    )
-    recovery_candidates = (
-        assignments[
-            assignments.get("assignment_source", pd.Series(index=assignments.index, dtype=str))
-            .fillna("")
-            .isin(
-                {
-                    "target_baseline_recovery_candidate",
-                    "target_access_surface_candidate",
-                }
-            )
-        ].copy()
-        if not assignments.empty
-        else assignments.copy()
-    )
-    access_reservations = (
-        recovery_candidates[
-            recovery_candidates["assignment_source"]
-            .fillna("")
-            .eq("target_access_surface_candidate")
-        ].copy()
-        if not recovery_candidates.empty
-        else recovery_candidates
-    )
-    if not eligible.empty and "carrier_role" not in eligible:
-        eligible["carrier_role"] = "directional_corridor"
-    evidence_by_member = {
-        (str(segment_id), str(road_id)): group.copy()
-        for (segment_id, road_id), group in eligible.groupby(
-            ["assigned_segment_id", "target_swsd_road_id"]
-        )
-    } if not eligible.empty else {}
-    eligible_by_segment = (
-        {
-            str(segment_id): group.copy()
-            for segment_id, group in eligible.groupby(
-                eligible["assigned_segment_id"].astype(str),
-                sort=False,
-            )
-        }
-        if not eligible.empty
-        else {}
-    )
-    recovery_by_segment = (
-        {
-            str(segment_id): group.copy()
-            for segment_id, group in recovery_candidates.groupby(
-                recovery_candidates["assigned_segment_id"].astype(str),
-                sort=False,
-            )
-        }
-        if not recovery_candidates.empty
-        else {}
-    )
-    empty_eligible = eligible.iloc[0:0]
-    empty_recovery = recovery_candidates.iloc[0:0]
+    road_by_id = prepare_road_by_id(swsd_roads)
+    assignment_context = prepare_assignment_context(assignments)
+    access_reservation_buffers = assignment_context.access_reservation_buffers
+    evidence_by_member = assignment_context.evidence_by_member
+    eligible_by_segment = assignment_context.eligible_by_segment
+    recovery_by_segment = assignment_context.recovery_by_segment
+    empty_eligible = assignment_context.empty_eligible
+    empty_recovery = assignment_context.empty_recovery
     carrier_roles_by_member: dict[tuple[str, str], dict[str, str]] = {}
     required_roles_by_segment: dict[str, set[tuple[str, str]]] = {}
     for (
@@ -158,44 +114,22 @@ def plan_segment_carriers(
         if drivezones is not None and not drivezones.empty
         else None
     )
-    reference_by_segment = (
-        {
-            str(segment_id): _longest_line(group.geometry.union_all())
-            for segment_id, group in target_reference_axes.groupby("segment_id")
-        }
-        if target_reference_axes is not None and not target_reference_axes.empty
-        else {}
+    reference_by_segment = prepare_reference_by_segment(target_reference_axes)
+    through_surfaces_by_segment = prepare_through_surfaces_by_segment(
+        required_through_surfaces
     )
-    through_surfaces_by_segment = (
-        {
-            str(segment_id): tuple(
-                (
-                    str(getattr(row, "access_id", f"surface:{index}")),
-                    row.geometry,
-                )
-                for index, row in enumerate(group.itertuples(index=False))
-            )
-            for segment_id, group in required_through_surfaces.groupby("segment_id")
-        }
-        if required_through_surfaces is not None
-        and not required_through_surfaces.empty
-        else {}
+    all_endpoint_surfaces_by_segment = prepare_endpoint_surfaces_by_segment(
+        required_endpoint_surfaces
     )
-    endpoint_surfaces_by_segment = (
-        {
-            str(segment_id): tuple(group.geometry)
-            for segment_id, group in required_endpoint_surfaces.groupby(
-                "segment_id"
-            )
-            if str(segment_id) in endpoint_surface_segment_ids
-        }
-        if required_endpoint_surfaces is not None
-        and not required_endpoint_surfaces.empty
-        and endpoint_surface_segment_ids
-        else {}
-    )
+    endpoint_surfaces_by_segment = {
+        segment_id: surfaces
+        for segment_id, surfaces in all_endpoint_surfaces_by_segment.items()
+        if segment_id in endpoint_surface_segment_ids
+    }
     plan_rows: list[dict[str, object]] = []
     carrier_rows: list[dict[str, object]] = []
+    segment_summary_contributions: dict[str, dict[str, int]] = {}
+    segment_carrier_column_orders: dict[str, tuple[str, ...]] = {}
     insufficient_members = 0
     suppressed_connectors = 0
     published_connectors = 0
@@ -218,6 +152,26 @@ def plan_segment_carriers(
     for segment in segment_units.itertuples():
         segment_id = str(segment.segment_id)
         carrier_start = len(carrier_rows)
+        counter_start = {
+            "insufficient_member_count": insufficient_members,
+            "assembled_patch_source_count": assembled_source_count,
+            "published_local_connector_count": published_connectors,
+            "suppressed_local_connector_count": suppressed_connectors,
+            "forced_suppressed_local_connector_count": (
+                forced_suppressed_connectors
+            ),
+            "target_fragment_takeover_count": target_fragment_takeover_count,
+            "member_surface_inference_takeover_count": (
+                member_surface_inference_takeover_count
+            ),
+            "baseline_recovery_takeover_count": (
+                baseline_recovery_takeover_count
+            ),
+            "access_surface_recovery_takeover_count": (
+                access_surface_recovery_takeover_count
+            ),
+            "access_support_carrier_count": access_support_carrier_count,
+        }
         member_ids = parse_id_list(segment.swsd_road_ids)
         conflict_retained = segment_id in forced_retained
         built_count = 0
@@ -596,13 +550,9 @@ def plan_segment_carriers(
                 support_reference,
                 run_id,
                 surface_max_distance_m=through_surface_max_distance_m,
-                reserved_access_candidates=access_reservations[
-                    ~access_reservations["assigned_segment_id"]
-                    .astype(str)
-                    .eq(segment_id)
-                ]
-                if not access_reservations.empty
-                else access_reservations,
+                reserved_access_candidates=access_reservation_buffers,
+                reserved_access_segment_id=segment_id,
+                reserved_access_candidates_prebuffered=True,
                 forced_access_ids=forced_through_access_ids or set(),
                 completion_surface=drivezone_surface,
                 completion_min_coverage=completion_min_coverage,
@@ -676,6 +626,63 @@ def plan_segment_carriers(
                 "geometry": segment.geometry,
             }
         )
+        segment_carrier_column_orders[segment_id] = tuple(
+            dict.fromkeys(
+                key
+                for row in carrier_rows[carrier_start:]
+                for key in row
+            )
+        )
+        segment_summary_contributions[segment_id] = {
+            "forced_retained_segment_count": int(conflict_retained),
+            "endpoint_surface_scoped_segment_count": int(
+                segment_id in endpoint_surfaces_by_segment
+            ),
+            "partial_member_takeover_count": sum(
+                "partial_member" in str(row.get("assembly_state", ""))
+                for row in carrier_rows[carrier_start:]
+            ),
+            "insufficient_member_count": int(
+                insufficient_members
+                - counter_start["insufficient_member_count"]
+            ),
+            "assembled_patch_source_count": int(
+                assembled_source_count
+                - counter_start["assembled_patch_source_count"]
+            ),
+            "published_local_connector_count": int(
+                published_connectors
+                - counter_start["published_local_connector_count"]
+            ),
+            "suppressed_local_connector_count": int(
+                suppressed_connectors
+                - counter_start["suppressed_local_connector_count"]
+            ),
+            "forced_suppressed_local_connector_count": int(
+                forced_suppressed_connectors
+                - counter_start["forced_suppressed_local_connector_count"]
+            ),
+            "target_fragment_takeover_count": int(
+                target_fragment_takeover_count
+                - counter_start["target_fragment_takeover_count"]
+            ),
+            "member_surface_inference_takeover_count": int(
+                member_surface_inference_takeover_count
+                - counter_start["member_surface_inference_takeover_count"]
+            ),
+            "baseline_recovery_takeover_count": int(
+                baseline_recovery_takeover_count
+                - counter_start["baseline_recovery_takeover_count"]
+            ),
+            "access_surface_recovery_takeover_count": int(
+                access_surface_recovery_takeover_count
+                - counter_start["access_surface_recovery_takeover_count"]
+            ),
+            "access_support_carrier_count": int(
+                access_support_carrier_count
+                - counter_start["access_support_carrier_count"]
+            ),
+        }
         progress_built_count += built_count
         progress_retained_count += retained_count
         progress_review_count += sum(
@@ -736,7 +743,13 @@ def plan_segment_carriers(
             "carrier_rows": len(carriers),
         },
     )
-    return CarrierPlanResult(plans, carriers, summary)
+    return CarrierPlanResult(
+        plans,
+        carriers,
+        summary,
+        segment_summary_contributions,
+        segment_carrier_column_orders,
+    )
 
 
 def _member_carriers(
@@ -1278,6 +1291,8 @@ def _target_access_support_carriers(
     *,
     surface_max_distance_m: float,
     reserved_access_candidates: gpd.GeoDataFrame | None = None,
+    reserved_access_segment_id: str = "",
+    reserved_access_candidates_prebuffered: bool = False,
     forced_access_ids: set[str] | None = None,
     completion_surface: object | None = None,
     completion_min_coverage: float = 0.90,
@@ -1365,17 +1380,13 @@ def _target_access_support_carriers(
             )
             if overlap_fraction > 0.80:
                 continue
-            reservation_overlap = max(
-                (
-                    float(
-                        geometry.intersection(reservation.buffer(1.0)).length
-                    )
-                    / float(geometry.length)
-                    for reservation in reserved_access_candidates.geometry
-                    if reservation is not None and not reservation.is_empty
-                ),
-                default=0.0,
-            ) if reserved_access_candidates is not None else 0.0
+            reservation_overlap = reservation_overlap_fraction(
+                geometry,
+                reserved_access_candidates,
+                excluded_segment_id=reserved_access_segment_id,
+                prebuffered=reserved_access_candidates_prebuffered,
+                buffer_m=1.0,
+            )
             if reservation_overlap > 0.80:
                 continue
             coverage = {
@@ -2337,15 +2348,6 @@ def _longest_observed_component(
     if merged.geom_type == "MultiLineString":
         merged = linemerge(merged)
     return _longest_line(merged)
-
-
-def _longest_line(geometry: object) -> LineString | None:
-    if geometry is None or getattr(geometry, "is_empty", True):
-        return None
-    if geometry.geom_type == "LineString":
-        return geometry
-    parts = [part for part in geometry.geoms if part.geom_type == "LineString"]
-    return max(parts, key=lambda part: float(part.length)) if parts else None
 
 
 def _orient_like(geometry: LineString, reference: LineString) -> LineString:

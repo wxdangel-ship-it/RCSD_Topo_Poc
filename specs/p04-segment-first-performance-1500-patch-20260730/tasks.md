@@ -15,13 +15,13 @@
 - [x] 执行 CRS、拓扑、几何、审计、性能五项 QA。
 - [x] 执行可重复的 1500 Patch 输入读取与峰值内存规模基准。
 - [x] 构建并验证内网时限、资源、QA和业务零回退只读验收器。
-- [x] 提交并推送上一轮内网候选（当前第三轮热点候选仍在隔离分支，未获提交授权）。
+- [x] 提交并推送上一轮内网候选；第四轮dirty-set候选继续在隔离分支验证。
 - [x] 记录 2026-08-02 约 1500 Patch 异常终止前超过12.7小时的中间观测下界。
 - [x] 为最终 DriveZone `MultiPolygon` 的原生组件增加精确等价空间索引。
 - [x] 让 partial-member completion 复用共享覆盖实现。
 - [x] 执行 1500 分片覆盖微基准并验证逐值完全一致。
 - [x] 重新执行 P04 全量测试。
-- [ ] 使用冻结 6-Patch 输入重新执行业务结果等价检查（当前本机 `Vector` 目录为空，等待恢复数据）。
+- [x] 使用冻结6-Patch反向重放输入重新执行业务结果等价检查，7类业务指纹一致。
 - [ ] 取得第三轮约 1500 Patch 的`<=6h`且不高于异常终止前观测下界50%的正式复跑证据。
 - [ ] 确认第三轮端到端耗时不高于异常终止前观测下界50%且绝对`<=6h`；
   `8h`只作为失败诊断线（等待约1532 Patch正式完成运行）。
@@ -50,5 +50,76 @@
 - [x] 将Patch Road居中采样改为同一GEOS算法的批量调用，保持偏移值与几何WKB逐位一致，并增加`patch_road_center`实际进度阶段。
 - [x] 以最新P04 schema基线重放6-Patch完整入口；7类业务工件指纹一致、独立QA为0异常、QGIS 50层回读通过。
 - [x] 完成305项P04专项测试，并将`patch_road_center`纳入正式内网验收进度门禁。
-- [ ] 提交并推送当前第三轮热点候选，供内网正式复跑。
-- [ ] 完成冻结6-Patch结果等价和1532 Patch正式验收。
+- [x] 按治理授权拆分超过100KB的`segment_first_pipeline.py`并保持私有测试兼容。
+- [x] 实现逐Segment完整输入指纹、dirty-set重算、原顺序合并和精确汇总重建。
+- [x] 发布Carrier全量/增量轮次、重算/复用数、复用率与指纹缓存命中。
+- [x] 对Movement静态证据、accepted Junction surface和Segment access映射增加run内弱引用缓存。
+- [x] 将总体进度改为6阶段单调`overall_estimate`，明确动态重试次数未知。
+- [x] 冻结6-Patch run08为114.530s技术候选；相对135.0109s降低15.17%，峰值约520.6MiB。
+- [x] 冻结6-Patch候选与run14的7类业务工件规范化语义指纹全部一致。
+- [x] 将第2轮THROUGH surface上下文变化收敛为逐Segment dirty-set；该轮330个Segment中仅211个重算。
+- [x] 将retained Junction kind判定由逐Junction全表扫描改为一次Node索引，并发布真实Junction group进度。
+- [x] 将ADVANCE_RIGHT skeleton端点查找由逐Access扫描全量Road改为一次端点索引，并发布真实进度。
+- [x] 将access surface恢复由逐Segment扫描全量Patch Road改为空间索引粗筛加原精确门槛。
+- [x] 为Patch Road/Lane target fragment增加真实工作量进度，并以等价扩展包围盒减少空间索引粗筛成本。
+- [x] 使用完整流水线`cProfile`复核剩余Node、输出I/O、Evidence、Carrier和Movement规模热点。
+- [x] 固化run18后静态上下文函数剖析，区分profile放大与正常wall，并记录约4.18亿次函数调用的全量规模风险。
+- [x] 将Node端点邻域查询从重复`Point.buffer`改为GEOS `dwithin`粗筛加原精确距离门槛，并复用同轮端点只读数组。
+- [x] 将配置路径重叠校验收敛为一次resolve后纯绝对路径包含判断，保持输入输出隔离合同。
+- [x] 完成run19正常回放；wall为111.0526秒、7类业务指纹一致、独立QA零异常、QGIS 50层回读通过、316项专项测试通过。
+- [ ] 使用run38当前代码候选取得1532 Patch完整阶段吞吐、最终wall和峰值RSS证据；不得以6-Patch局部`ACCEPTED`替代。
+- [x] 将ADVANCE_RIGHT补充关系从全incoming×outgoing笛卡尔积改为显式evidence倒排候选，保持原顺序和全部后置门槛。
+- [x] 以1500×1500压力样本验证33个有序关系完全一致、约136倍加速，并在run20记录1090个incoming只枚举1988个候选。
+- [x] 完成run20同输入零回退验证和317项P04专项测试。
+- [x] 将8类Patch文件SHA256融合到读取worker，保持正式清单顺序、大小和哈希完全一致，并增加`input_manifest`真实进度。
+- [x] 对路口面内缩目标增加逐run、有界、精确WKB键缓存，并把容量纳入控制台、summary和验收hard gate。
+- [x] 完成run23同输入零回退验证；内缩目标命中率91.02%、7类业务指纹一致、独立QA和QGIS回读通过、320项P04专项测试通过。
+- [x] 将同源CRS Patch输入改为稳定拼接后一次批量投影和二维化；混合CRS保留原逐帧回退。
+- [x] 对WSL挂载盘Patch GeoJSON实现单流暂存、同流SHA256和本机解析，保持正式manifest身份不变。
+- [x] 对WSL挂载盘GPKG实现本机完整写出、目标隐藏临时文件复制和原子替换，并保留安全直接写出回退。
+- [x] 将Target fragment的station、切向量和候选轴线距离改为矩阵批处理，保留逐station最终判定合同。
+- [x] 使用真实3203条Road/Lane样本证明旧、新标签和fragment属性/WKB零差异；完成run28冻结6-Patch业务等价验证。
+- [x] 完成第五轮P04全量专项测试（325 passed）和代码体量审计登记。
+- [x] 缓存单次run内只读的ENDPOINT/THROUGH Segment access分组及Junction source映射，以DataFrame和manager identity阻断过期复用。
+- [x] 完成run29正式6-Patch回放；第2至12轮上下文全部命中，`segment_access_split`合计减少22.5%。
+- [x] 完成run29相对冻结run14的7类业务指纹、独立QA、QGIS回读和326项P04专项测试零回退验证。
+- [x] 复用同一evidence对象的精确Patch端点和切向，并以本轮只读Carrier行索引替代候选评分中的重复`.loc`。
+- [x] 完成run30正式6-Patch回放；`movement_anchor_split`相对run29减少37.7%，两类Movement相对run28合计减少29.7%。
+- [x] 完成run30相对冻结run14的7类业务指纹、独立QA、QGIS回读和327项P04专项测试零回退验证。
+- [x] 完成run31后优化剖析，确认增量Carrier指纹中的约251万次标量序列化为下一可控热点。
+- [x] 为常见精确标量、Shapely geometry和Pandas显式缺失值增加旧字节合同等价快速路径。
+- [x] 使用真实1004行×53列assignment证明196组digest逐字节一致，序列化微基准约1.78x。
+- [x] 完成run32正式6-Patch回放；fingerprint累计减少47.4%，wall为86.4917秒。
+- [x] 完成run32相对冻结run14的7类业务指纹、独立QA、QGIS回读和337项P04专项测试零回退验证。
+- [x] 以Unicode十进制和ASCII零尾数判断替代`canonical_id`重复正则匹配，保持原归一化范围。
+- [x] 使用正式Road/Node/RoadNextRoad的58556个真实ID相关值证明旧、新结果逐值一致，250万次微基准约2.48x。
+- [x] 完成run33相对冻结run14的7类业务指纹、独立QA、QGIS回读和351项P04专项测试零回退验证。
+- [x] 将最大采样转角的逐Point插值改为同一Shapely算法的批量插值和坐标提取，保留原逐角度运算顺序。
+- [x] 使用正式761条Road carrier、两种spacing共1522组样本证明新旧结果逐浮点完全一致，局部微基准约3.19x。
+- [x] 完成run34正式6-Patch回放；wall为83.4849秒，相对run33减少3.96%，机械线性外推约5.92小时。
+- [x] 完成run34相对冻结run14的7类业务指纹、独立QA、QGIS 50层回读和351项P04专项测试零回退验证。
+- [x] 完成run35持久化函数级剖析，确认Target fragment逐点方位角坐标读取为下一严格等价热点。
+- [x] 将Target fragment重复`get_x/get_y`改为坐标批取，保留逐点浮点运算顺序。
+- [x] 使用正式16642对Road插值点证明新旧方位角逐浮点完全一致，坐标读取微基准约16.8x。
+- [x] 完成run36/run37两次正常回放；Target fragment阶段相对run34分别减少20.7%和24.0%。
+- [x] 完成run37相对冻结run14的7类业务指纹、独立QA、QGIS 50层回读和352项P04专项测试零回退验证。
+- [x] 将Target axes只读行序列改为阶段级一次构建，按原空间索引顺序取候选，移除逐source DataFrame复制和namedtuple生成。
+- [x] 完成run38正常回放；Target fragment阶段相对run34减少42.6%、相对run37减少24.5%。
+- [x] 完成run38相对冻结run14的7类业务指纹、独立QA、QGIS 50层回读和352项P04专项测试零回退验证。
+- [x] 在`outputs/_work`构造1532目录、12256正式消费文件的只读硬链接输入规模复用集。
+- [x] 完成1532 Patch输入规模基准：3474894行、758.949秒、peak RSS 2.12GiB，8GiB/16GiB预算均通过。
+- [x] 明确输入规模结果只证明读取/CRS/拼接/manifest预算，硬链接I/O偏乐观且不得替代端到端验收。
+- [x] 从全量截断日志定位`junction_portal`完成后的Node completion surface全域物化内存峰值，并保留“宿主OOM事件待内网确认”的证据边界。
+- [x] 复用accepted Junction分组surface，以STRtree局部查询和2048条buffer LRU替代全域accepted union及其buffer。
+- [x] 为点覆盖、距离、路由和覆盖率接入局部精确surface，并增加`node_completion_surface`实际进度。
+- [x] 完成24014个accepted surface故障规模压力验证；索引和24014次查询RSS增量均低于5MiB，缓存封顶2048条。
+- [x] 完成355项P04专项测试，以及run39相对冻结run14的7类业务指纹、独立QA和QGIS 50层回读零回退验证。
+- [ ] 在内网重新执行1532 Patch正式入口，确认不再在Node completion surface阶段外部终止，并取得最终Road、Node、时限和峰值RSS证据。
+- [x] 证明初始endpoint trim已覆盖probe追加集合，跳过一次冗余Movement切分、网络物化和Node构建。
+- [x] 缓存单次run内Carrier只读Road、assignment及surface分组，发布命中和准备耗时。
+- [x] 将access-support保留证据重叠改为预缓冲空间索引查询，保留当前Segment排除和原精确重叠率。
+- [x] 完成第四轮P04全量专项测试（316 passed）和代码体量审计登记。
+- [ ] 取得第四轮1532 Patch正式运行的`<=6h`、资源预算和业务零回退证据。
+- [x] 提交并推送当前第四轮dirty-set候选，供内网正式复跑。
+- [x] 完成冻结6-Patch候选的7类业务指纹、独立QA和QGIS回读等价验证。
+- [ ] 完成1532 Patch正式验收。

@@ -294,6 +294,57 @@ def test_retained_kind2_128_group_stays_explicit_physical_complex() -> None:
     assert junction["topology_mode"] == "explicit_physical"
 
 
+def test_retained_kind_index_preserves_id_and_mainnode_membership() -> None:
+    empty_surfaces = gpd.GeoDataFrame(geometry=[], crs="EPSG:32650")
+    accesses = gpd.GeoDataFrame(
+        [
+            {
+                "access_id": f"a{group_id}",
+                "junction_group_id": group_id,
+                "geometry": Point(offset, 0),
+            }
+            for offset, group_id in enumerate(("101", "100", "201", "200"))
+        ],
+        crs="EPSG:32650",
+    )
+    t01_nodes = gpd.GeoDataFrame(
+        [
+            {
+                "id": 101,
+                "mainnodeid": 100,
+                "kind_2": 128,
+                "geometry": Point(0, 0),
+            },
+            {
+                "id": 201,
+                "mainnodeid": 200,
+                "kind_2": 1,
+                "geometry": Point(1, 0),
+            },
+        ],
+        crs="EPSG:32650",
+    )
+
+    result = build_junction_units(
+        empty_surfaces,
+        empty_surfaces,
+        empty_surfaces,
+        accesses,
+        t01_nodes=t01_nodes,
+        run_id="run",
+    )
+    kinds = result.junction_units.set_index("junction_group_id")[
+        "junction_kind"
+    ].to_dict()
+
+    assert kinds == {
+        "100": "complex_divmerge",
+        "101": "complex_divmerge",
+        "200": "retained",
+        "201": "retained",
+    }
+
+
 def test_partial_plan_is_complete_road_level_built_and_retained() -> None:
     segments = gpd.GeoDataFrame(
         [{"segment_id": "s", "swsd_road_ids": "r1,r2", "geometry": LineString([(0, 0), (10, 0)])}],

@@ -14,6 +14,8 @@ from rcsd_topo_poc.modules.p04_road_direct_generation.segment_first_physical_han
     normalize_segment_main_handoffs,
 )
 from rcsd_topo_poc.modules.p04_road_direct_generation.segment_first_topology import (
+    _explicit_outgoing_index,
+    _explicit_target_indexes,
     compile_road_next_road,
 )
 
@@ -286,6 +288,34 @@ def test_advance_right_explicit_relation_may_bridge_lineage_groups() -> None:
         relation["compile_source"]
         == "explicit_lane_topo_advance_right_semantic"
     )
+
+
+def test_advance_right_candidate_index_matches_explicit_evidence_pairs() -> None:
+    outgoing = [
+        {"id": 1, "evidence_keys": ("target-a", "shared")},
+        {"id": 2, "evidence_keys": ("target-b",)},
+        {"id": 3, "evidence_keys": ("shared",)},
+        {"id": 4, "evidence_keys": ()},
+    ]
+    allowed = {
+        ("source-a", "target-a"),
+        ("source-a", "shared"),
+        ("source-b", "target-b"),
+    }
+    index = _explicit_outgoing_index(outgoing, allowed)
+
+    assert _explicit_target_indexes(
+        {"evidence_keys": ("source-a",)},
+        index,
+    ) == (0, 2)
+    assert _explicit_target_indexes(
+        {"evidence_keys": ("source-b", "source-a")},
+        index,
+    ) == (0, 1, 2)
+    assert _explicit_target_indexes(
+        {"evidence_keys": ("not-allowed",)},
+        index,
+    ) == ()
 
 
 def _node(

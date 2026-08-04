@@ -2,12 +2,17 @@ from __future__ import annotations
 
 import geopandas as gpd
 import pandas as pd
-from shapely.geometry import LineString
+from shapely.geometry import LineString, box
 from shapely.ops import nearest_points, substring, unary_union
 
 from .segment_first_geometry_cache import buffered_union
 from .segment_first_geometry_metrics import surface_coverage
 from .segment_first_junctions import endpoint_surface_geometry
+from .segment_first_progress import (
+    advance_progress,
+    begin_progress_stage,
+    finish_progress_stage,
+)
 from .segment_first_skeleton import parse_id_list
 from .segment_first_surface_routing import interior_surface_target
 
@@ -107,12 +112,26 @@ def build_access_surface_recovery_candidates(
     minimum_drivezone_coverage: float,
     minimum_length_m: float = 4.0,
 ) -> gpd.GeoDataFrame:
+    progress_stage = "access_surface_recovery"
     if (
         target_segments.empty
         or patch_road_centers.empty
         or segment_accesses.empty
         or junction_units.empty
     ):
+        begin_progress_stage(
+            progress_stage,
+            0,
+            detail="target Segment endpoint-surface recovery candidates",
+        )
+        finish_progress_stage(
+            progress_stage,
+            counters={
+                "bbox_candidates": 0,
+                "exact_candidates": 0,
+                "recovery_candidates": 0,
+            },
+        )
         return patch_road_centers.iloc[0:0].copy()
     required = target_segments[
         target_segments["target_required"].fillna(False).astype(bool)
@@ -121,6 +140,13 @@ def build_access_surface_recovery_candidates(
     endpoint_accesses = segment_accesses[
         segment_accesses["access_type"].eq("ENDPOINT")
     ].copy()
+    endpoint_accesses_by_segment = {
+        str(segment_id): group.sort_values("access_ordinal", kind="stable")
+        for segment_id, group in endpoint_accesses.groupby(
+            endpoint_accesses["segment_id"].astype(str),
+            sort=False,
+        )
+    }
     surfaces = {
         str(group_id): unary_union(
             [
@@ -135,66 +161,136 @@ def build_access_surface_recovery_candidates(
         if not drivezones.empty
         else None
     )
+    center_index = patch_road_centers.sindex
     rows: list[dict[str, object]] = []
-    for segment in required.itertuples(index=False):
-        accesses = endpoint_accesses[
-            endpoint_accesses["segment_id"].astype(str).eq(str(segment.segment_id))
-        ].sort_values("access_ordinal", kind="stable")
+    bbox_candidate_count = 0
+    exact_candidate_count = 0
+    begin_progress_stage(
+        progress_stage,
+        len(required),
+        detail="target Segment endpoint-surface recovery candidates",
+    )
+    for segment_ordinal, segment in enumerate(
+        required.itertuples(index=False),
+        start=1,
+    ):
+        accesses = endpoint_accesses_by_segment.get(
+            str(segment.segment_id),
+            endpoint_accesses.iloc[0:0],
+        )
         if len(accesses) != 2:
-            continue
-        endpoint_surfaces = [
-            surfaces.get(str(access.junction_group_id))
-            for access in accesses.itertuples(index=False)
-        ]
-        if any(surface is None or surface.is_empty for surface in endpoint_surfaces):
-            continue
-        search_surface = gpd.GeoSeries(
-            endpoint_surfaces,
-            crs=patch_road_centers.crs,
-        ).union_all()
-        candidates = patch_road_centers[
-            patch_road_centers.geometry.distance(search_surface)
-            <= maximum_surface_distance_m
-        ]
-        member_ids = parse_id_list(segment.swsd_road_ids)
-        member_id = member_ids[0] if member_ids else ""
-        for center in candidates.itertuples(index=False):
-            distances = [
-                float(center.geometry.distance(surface))
-                for surface in endpoint_surfaces
+            candidate_indexes: list[int] = []
+        else:
+            endpoint_surfaces = [
+                surfaces.get(str(access.junction_group_id))
+                for access in accesses.itertuples(index=False)
             ]
-            if max(distances) > maximum_surface_distance_m:
-                continue
-            clipped = _clip_between_surfaces(center.geometry, endpoint_surfaces)
-            if clipped is None or clipped.length < minimum_length_m:
-                continue
-            coverage = surface_coverage(clipped, drivezone_surface)
-            if coverage + 1e-9 < minimum_drivezone_coverage:
-                continue
-            row = center._asdict()
-            row.update(
-                {
-                    "run_id": run_id,
-                    "assigned_segment_id": str(segment.segment_id),
-                    "target_swsd_road_id": member_id,
-                    "assignment_fragment_id": (
-                        f"{center.patch_road_key}@{segment.segment_id}@access-surface"
-                    ),
-                    "assignment_distance_m": max(distances),
-                    "assignment_angle_deg": 0.0,
-                    "assignment_score": max(distances),
-                    "assignment_margin": None,
-                    "carrier_role": "directional_corridor",
-                    "takeover_eligible": False,
-                    "assignment_state": "access_surface_recovery_candidate",
-                    "assignment_source": "target_access_surface_candidate",
-                    "target_anchor_source": "junction_unit_endpoint_surfaces",
-                    "reason_codes": "patch_road_connects_both_segment_endpoint_surfaces",
-                    "access_surface_coverage": coverage,
-                    "geometry": clipped,
-                }
+            if any(
+                surface is None or surface.is_empty
+                for surface in endpoint_surfaces
+            ) or maximum_surface_distance_m < 0:
+                candidate_indexes = []
+            else:
+                surface_candidate_sets = []
+                for surface in endpoint_surfaces:
+                    minx, miny, maxx, maxy = surface.bounds
+                    search_box = box(
+                        minx - maximum_surface_distance_m,
+                        miny - maximum_surface_distance_m,
+                        maxx + maximum_surface_distance_m,
+                        maxy + maximum_surface_distance_m,
+                    )
+                    surface_candidate_sets.append(
+                        set(map(int, center_index.query(search_box)))
+                    )
+                candidate_indexes = sorted(
+                    set.intersection(*surface_candidate_sets)
+                    if surface_candidate_sets
+                    else set()
+                )
+            bbox_candidate_count += len(candidate_indexes)
+            if candidate_indexes:
+                search_surface = gpd.GeoSeries(
+                    endpoint_surfaces,
+                    crs=patch_road_centers.crs,
+                ).union_all()
+                candidate_pool = patch_road_centers.iloc[candidate_indexes]
+                candidates = candidate_pool[
+                    candidate_pool.geometry.distance(search_surface)
+                    <= maximum_surface_distance_m
+                ]
+                exact_candidate_count += len(candidates)
+                member_ids = parse_id_list(segment.swsd_road_ids)
+                member_id = member_ids[0] if member_ids else ""
+                for center in candidates.itertuples(index=False):
+                    distances = [
+                        float(center.geometry.distance(surface))
+                        for surface in endpoint_surfaces
+                    ]
+                    if max(distances) > maximum_surface_distance_m:
+                        continue
+                    clipped = _clip_between_surfaces(
+                        center.geometry,
+                        endpoint_surfaces,
+                    )
+                    if clipped is None or clipped.length < minimum_length_m:
+                        continue
+                    coverage = surface_coverage(clipped, drivezone_surface)
+                    if coverage + 1e-9 < minimum_drivezone_coverage:
+                        continue
+                    row = center._asdict()
+                    row.update(
+                        {
+                            "run_id": run_id,
+                            "assigned_segment_id": str(segment.segment_id),
+                            "target_swsd_road_id": member_id,
+                            "assignment_fragment_id": (
+                                f"{center.patch_road_key}@{segment.segment_id}"
+                                "@access-surface"
+                            ),
+                            "assignment_distance_m": max(distances),
+                            "assignment_angle_deg": 0.0,
+                            "assignment_score": max(distances),
+                            "assignment_margin": None,
+                            "carrier_role": "directional_corridor",
+                            "takeover_eligible": False,
+                            "assignment_state": (
+                                "access_surface_recovery_candidate"
+                            ),
+                            "assignment_source": (
+                                "target_access_surface_candidate"
+                            ),
+                            "target_anchor_source": (
+                                "junction_unit_endpoint_surfaces"
+                            ),
+                            "reason_codes": (
+                                "patch_road_connects_both_segment_"
+                                "endpoint_surfaces"
+                            ),
+                            "access_surface_coverage": coverage,
+                            "geometry": clipped,
+                        }
+                    )
+                    rows.append(row)
+        if segment_ordinal % 64 == 0 or segment_ordinal == len(required):
+            advance_progress(
+                progress_stage,
+                completed=segment_ordinal,
+                last_unit=segment.segment_id,
+                counters={
+                    "bbox_candidates": bbox_candidate_count,
+                    "exact_candidates": exact_candidate_count,
+                    "recovery_candidates": len(rows),
+                },
             )
-            rows.append(row)
+    finish_progress_stage(
+        progress_stage,
+        counters={
+            "bbox_candidates": bbox_candidate_count,
+            "exact_candidates": exact_candidate_count,
+            "recovery_candidates": len(rows),
+        },
+    )
     if not rows:
         return patch_road_centers.iloc[0:0].copy()
     result = gpd.GeoDataFrame(

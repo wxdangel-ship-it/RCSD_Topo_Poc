@@ -5,7 +5,13 @@ import math
 import weakref
 
 import numpy as np
-from shapely import STRtree, is_prepared, prepare
+from shapely import (
+    STRtree,
+    get_coordinates,
+    is_prepared,
+    line_interpolate_point,
+    prepare,
+)
 from shapely.geometry import MultiPolygon
 
 
@@ -46,6 +52,7 @@ _SURFACE_COVERAGE_STATS = {
     "threshold_exact_fallback_count": 0,
     "unsafe_local_reconstruction_count": 0,
     "native_component_prepare_count": 0,
+    "localized_surface_query_count": 0,
 }
 
 
@@ -65,22 +72,24 @@ def max_sample_turn(geometry: object, spacing: float) -> float:
         return cached
 
     count = max(3, int(math.ceil(geometry.length / spacing)) + 1)
-    points = [
-        geometry.interpolate(value)
-        for value in np.linspace(0.0, geometry.length, count)
-    ]
+    coordinates = get_coordinates(
+        line_interpolate_point(
+            geometry,
+            np.linspace(0.0, geometry.length, count),
+        )
+    )
     maximum = 0.0
-    for index in range(1, len(points) - 1):
+    for index in range(1, len(coordinates) - 1):
         first = np.array(
             [
-                points[index].x - points[index - 1].x,
-                points[index].y - points[index - 1].y,
+                coordinates[index, 0] - coordinates[index - 1, 0],
+                coordinates[index, 1] - coordinates[index - 1, 1],
             ]
         )
         second = np.array(
             [
-                points[index + 1].x - points[index].x,
-                points[index + 1].y - points[index].y,
+                coordinates[index + 1, 0] - coordinates[index, 0],
+                coordinates[index + 1, 1] - coordinates[index, 1],
             ]
         )
         denominator = float(np.linalg.norm(first) * np.linalg.norm(second))
@@ -108,6 +117,10 @@ def _surface_coverage_value(
 ) -> tuple[float, str]:
     global _SURFACE_COVERAGE_CACHE_WKB_BYTES
     _SURFACE_COVERAGE_STATS["query_count"] += 1
+    localizer = getattr(surface, "local_surface_for", None)
+    if callable(localizer):
+        surface = localizer(line)
+        _SURFACE_COVERAGE_STATS["localized_surface_query_count"] += 1
     if line.length <= 1e-9:
         return 1.0, "degenerate"
     if surface is None or getattr(surface, "is_empty", True):

@@ -9,6 +9,11 @@ import pandas as pd
 from shapely import wkt
 from shapely.geometry import Point
 
+from .segment_first_progress import (
+    advance_progress,
+    begin_progress_stage,
+    finish_progress_stage,
+)
 from .segment_first_skeleton import canonical_id
 
 
@@ -106,37 +111,71 @@ def build_junction_units(
             )
 
     selected_groups = {str(row["junction_group_id"]) for row in selected_rows}
-    for group_id, group in accesses.groupby(accesses["junction_group_id"].map(canonical_id)):
-        if not group_id or group_id in selected_groups:
-            continue
-        points = [geometry for geometry in group.geometry if geometry is not None and not geometry.is_empty]
-        geometry = points[0] if points else Point()
-        junction_kind = _retained_junction_kind(
-            group_id,
-            t01_nodes,
-        )
-        selected_rows.append(
-            {
-                "run_id": run_id,
-                "junction_id": _stable_text_id("junction", group_id),
-                "junction_group_id": group_id,
-                "junction_source": "swsd_retained",
-                "junction_kind": junction_kind,
-                "topology_mode": (
-                    "explicit_physical"
-                    if junction_kind == "complex_divmerge"
-                    else "ordinary_semantic"
-                ),
-                "source_object_id": group_id,
-                "surface_source": "swsd_retained",
-                "surface_source_object_id": group_id,
-                "endpoint_surface_wkt": geometry.wkt,
-                "source_priority": 0,
-                "candidate_source_count": 0,
-                "reason_codes": "no_accepted_surface_for_access_group",
-                "geometry": geometry,
-            }
-        )
+    complex_retained_groups = _retained_complex_junction_groups(t01_nodes)
+    grouped_accesses = accesses.groupby(
+        accesses["junction_group_id"].map(canonical_id)
+    )
+    group_count = int(grouped_accesses.ngroups)
+    retained_count = 0
+    begin_progress_stage(
+        "junction_unit_retained_groups",
+        group_count,
+        detail="retained SWSD Junction group materialization",
+    )
+    for ordinal, (group_id, group) in enumerate(grouped_accesses, start=1):
+        if group_id and group_id not in selected_groups:
+            points = [
+                geometry
+                for geometry in group.geometry
+                if geometry is not None and not geometry.is_empty
+            ]
+            geometry = points[0] if points else Point()
+            junction_kind = _retained_junction_kind(
+                group_id,
+                complex_group_ids=complex_retained_groups,
+            )
+            selected_rows.append(
+                {
+                    "run_id": run_id,
+                    "junction_id": _stable_text_id("junction", group_id),
+                    "junction_group_id": group_id,
+                    "junction_source": "swsd_retained",
+                    "junction_kind": junction_kind,
+                    "topology_mode": (
+                        "explicit_physical"
+                        if junction_kind == "complex_divmerge"
+                        else "ordinary_semantic"
+                    ),
+                    "source_object_id": group_id,
+                    "surface_source": "swsd_retained",
+                    "surface_source_object_id": group_id,
+                    "endpoint_surface_wkt": geometry.wkt,
+                    "source_priority": 0,
+                    "candidate_source_count": 0,
+                    "reason_codes": "no_accepted_surface_for_access_group",
+                    "geometry": geometry,
+                }
+            )
+            retained_count += 1
+        if ordinal % 256 == 0 or ordinal == group_count:
+            advance_progress(
+                "junction_unit_retained_groups",
+                completed=ordinal,
+                last_unit=group_id,
+                counters={
+                    "retained_groups": retained_count,
+                    "accepted_surface_groups": len(selected_groups),
+                    "complex_retained_groups": len(complex_retained_groups),
+                },
+            )
+    finish_progress_stage(
+        "junction_unit_retained_groups",
+        counters={
+            "retained_groups": retained_count,
+            "accepted_surface_groups": len(selected_groups),
+            "complex_retained_groups": len(complex_retained_groups),
+        },
+    )
     junction_units = gpd.GeoDataFrame(selected_rows, geometry="geometry", crs=crs)
     junction_by_group = {
         str(row.junction_group_id): str(row.junction_id)
@@ -181,29 +220,36 @@ def build_junction_units(
 
 def _retained_junction_kind(
     group_id: str,
-    t01_nodes: gpd.GeoDataFrame | None,
+    t01_nodes: gpd.GeoDataFrame | None = None,
+    *,
+    complex_group_ids: set[str] | None = None,
 ) -> str:
+    groups = (
+        _retained_complex_junction_groups(t01_nodes)
+        if complex_group_ids is None
+        else complex_group_ids
+    )
+    return "complex_divmerge" if group_id in groups else "retained"
+
+
+def _retained_complex_junction_groups(
+    t01_nodes: gpd.GeoDataFrame | None,
+) -> set[str]:
     if (
         t01_nodes is None
         or t01_nodes.empty
         or "kind_2" not in t01_nodes.columns
     ):
-        return "retained"
-    ids = t01_nodes["id"].map(canonical_id)
-    mainnodes = (
-        t01_nodes["mainnodeid"].map(canonical_id)
-        if "mainnodeid" in t01_nodes.columns
-        else pd.Series("", index=t01_nodes.index)
-    )
-    group = t01_nodes[(ids == group_id) | (mainnodes == group_id)]
-    kind_values = {
-        canonical_id(value) for value in group["kind_2"]
-    }
-    return (
-        "complex_divmerge"
-        if "128" in kind_values
-        else "retained"
-    )
+        return set()
+    complex_mask = t01_nodes["kind_2"].map(canonical_id).eq("128")
+    if not complex_mask.any():
+        return set()
+    groups = set(t01_nodes.loc[complex_mask, "id"].map(canonical_id))
+    if "mainnodeid" in t01_nodes.columns:
+        groups.update(
+            t01_nodes.loc[complex_mask, "mainnodeid"].map(canonical_id)
+        )
+    return groups
 
 
 def _surface_group_id(row: object, source: str) -> str:

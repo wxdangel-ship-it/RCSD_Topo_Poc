@@ -6,8 +6,10 @@ import hashlib
 import json
 import os
 import platform
+import shutil
 import subprocess
 import sys
+import tempfile
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -127,9 +129,13 @@ def build_input_manifest(
     external_inputs: Mapping[str, Path | None],
     parameters: Mapping[str, Any],
     patch_inputs: Iterable[tuple[str, Path]] | None = None,
+    precomputed_patch_files: Iterable[Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    precomputed = [dict(row) for row in (precomputed_patch_files or ())]
     requests: list[tuple[Path, str, str | None]] = []
-    if patch_inputs is None:
+    if precomputed:
+        pass
+    elif patch_inputs is None:
         for patch_dir in patch_dirs:
             vector_dir = patch_dir / "Vector"
             requests.extend(
@@ -150,9 +156,52 @@ def build_input_manifest(
         for role, path in external_inputs.items()
         if path is not None
     )
+    total = len(precomputed) + len(requests)
+    begin_progress_stage(
+        "input_manifest",
+        total,
+        detail="SHA256 input identity manifest",
+        counters={
+            "precomputed_patch_files": len(precomputed),
+            "hashed_files": len(precomputed),
+        },
+    )
+    if precomputed:
+        advance_progress(
+            "input_manifest",
+            completed=len(precomputed),
+            last_unit=str(precomputed[-1].get("path", "")),
+            counters={
+                "precomputed_patch_files": len(precomputed),
+                "hashed_files": len(precomputed),
+            },
+        )
     worker_count = min(6, max(1, len(requests)))
+    files = list(precomputed)
     with ThreadPoolExecutor(max_workers=worker_count) as executor:
-        files = list(executor.map(_manifest_row_request, requests))
+        for completed, row in enumerate(
+            executor.map(_manifest_row_request, requests),
+            start=len(precomputed) + 1,
+        ):
+            files.append(row)
+            advance_progress(
+                "input_manifest",
+                completed=completed,
+                last_unit=str(row["path"]),
+                counters={
+                    "precomputed_patch_files": len(precomputed),
+                    "hashed_files": completed,
+                    "workers": worker_count,
+                },
+            )
+    finish_progress_stage(
+        "input_manifest",
+        counters={
+            "precomputed_patch_files": len(precomputed),
+            "hashed_files": len(files),
+            "workers": worker_count,
+        },
+    )
     return {
         "run_id": run_id,
         "created_at_utc": datetime.now(timezone.utc).isoformat(),
@@ -231,21 +280,62 @@ def write_csv(path: Path, rows: Iterable[Mapping[str, Any]], fieldnames: Iterabl
 
 def write_gpkg_layers(path: Path, layers: Mapping[str, gpd.GeoDataFrame]) -> None:
     stage = "output_gpkg_layers"
+    stage_root = _gpkg_stage_root(path, layers)
+    staged = stage_root is not None
+    total_units = len(layers) + int(staged)
     begin_progress_stage(
         stage,
-        len(layers),
+        total_units,
         detail=path.name,
-        counters={"written_layers": 0, "written_rows": 0},
+        counters={
+            "written_layers": 0,
+            "written_rows": 0,
+            "staged": str(staged).lower(),
+        },
     )
     if path.exists():
         path.unlink()
+    stage_directory: tempfile.TemporaryDirectory[str] | None = None
+    working_path = path
+    partial_path: Path | None = None
+    if stage_root is not None:
+        stage_directory = tempfile.TemporaryDirectory(
+            prefix="p04-gpkg-",
+            dir=stage_root,
+        )
+        working_path = Path(stage_directory.name) / path.name
     first = True
     written_layers = 0
     written_rows = 0
     skipped_layers = 0
-    for layer_index, (layer_name, frame) in enumerate(layers.items()):
-        if frame.empty:
-            skipped_layers += 1
+    copied_bytes = 0
+    try:
+        for layer_index, (layer_name, frame) in enumerate(layers.items()):
+            if frame.empty:
+                skipped_layers += 1
+                advance_progress(
+                    stage,
+                    completed=layer_index + 1,
+                    last_unit=layer_name,
+                    counters={
+                        "written_layers": written_layers,
+                        "written_rows": written_rows,
+                        "skipped_empty_layers": skipped_layers,
+                        "staged": str(staged).lower(),
+                    },
+                )
+                continue
+            sanitized = sanitize_for_vector(frame)
+            sanitized.to_file(
+                working_path,
+                layer=layer_name,
+                driver="GPKG",
+                mode="w" if first else "a",
+                index=False,
+            )
+            first = False
+            written_layers += 1
+            written_rows += len(sanitized)
             advance_progress(
                 stage,
                 completed=layer_index + 1,
@@ -254,33 +344,87 @@ def write_gpkg_layers(path: Path, layers: Mapping[str, gpd.GeoDataFrame]) -> Non
                     "written_layers": written_layers,
                     "written_rows": written_rows,
                     "skipped_empty_layers": skipped_layers,
+                    "staged": str(staged).lower(),
                 },
             )
-            continue
-        sanitized = sanitize_for_vector(frame)
-        sanitized.to_file(path, layer=layer_name, driver="GPKG", mode="w" if first else "a", index=False)
-        first = False
-        written_layers += 1
-        written_rows += len(sanitized)
-        advance_progress(
+        if first:
+            raise ValueError(f"no nonempty layers to write: {path}")
+        if staged:
+            partial_path = path.with_name(
+                f".{path.name}.{os.getpid()}.partial"
+            )
+            if partial_path.exists():
+                partial_path.unlink()
+            shutil.copy2(working_path, partial_path)
+            copied_bytes = partial_path.stat().st_size
+            os.replace(partial_path, path)
+            partial_path = None
+            advance_progress(
+                stage,
+                completed=total_units,
+                last_unit="copy_to_output",
+                counters={
+                    "written_layers": written_layers,
+                    "written_rows": written_rows,
+                    "skipped_empty_layers": skipped_layers,
+                    "staged": "true",
+                    "copied_bytes": copied_bytes,
+                },
+            )
+        finish_progress_stage(
             stage,
-            completed=layer_index + 1,
-            last_unit=layer_name,
             counters={
                 "written_layers": written_layers,
                 "written_rows": written_rows,
                 "skipped_empty_layers": skipped_layers,
+                "staged": str(staged).lower(),
+                "copied_bytes": copied_bytes,
             },
         )
-    if first:
-        raise ValueError(f"no nonempty layers to write: {path}")
-    finish_progress_stage(
-        stage,
-        counters={
-            "written_layers": written_layers,
-            "written_rows": written_rows,
-            "skipped_empty_layers": skipped_layers,
-        },
+    finally:
+        if partial_path is not None and partial_path.exists():
+            partial_path.unlink()
+        if stage_directory is not None:
+            stage_directory.cleanup()
+
+
+def _gpkg_stage_root(
+    path: Path,
+    layers: Mapping[str, gpd.GeoDataFrame],
+) -> Path | None:
+    mode = os.environ.get("P04_GPKG_STAGING", "auto").strip().lower()
+    if mode in {"0", "false", "no", "off", "disabled"}:
+        return None
+    if mode not in {"1", "true", "yes", "on", "force"} and not (
+        _is_wsl_drvfs_path(path)
+    ):
+        return None
+    root = Path(
+        os.environ.get("P04_GPKG_STAGE_ROOT", tempfile.gettempdir())
+    )
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+        free_bytes = shutil.disk_usage(root).free
+    except OSError:
+        return None
+    row_count = sum(len(frame) for frame in layers.values())
+    required_free_bytes = max(
+        8 * 1024**3,
+        row_count * 8192,
+    )
+    if free_bytes < required_free_bytes or not os.access(root, os.W_OK):
+        return None
+    return root
+
+
+def _is_wsl_drvfs_path(path: Path) -> bool:
+    parts = path.absolute().parts
+    return bool(
+        len(parts) >= 3
+        and parts[0] == "/"
+        and parts[1] == "mnt"
+        and len(parts[2]) == 1
+        and parts[2].isalpha()
     )
 
 

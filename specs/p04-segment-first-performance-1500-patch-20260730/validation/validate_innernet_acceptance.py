@@ -41,8 +41,12 @@ NATIVE_THREAD_LIMITS = (
 )
 REQUIRED_PROGRESS_STAGE_GROUPS = {
     "patch": {"input_patch_layer"},
-    "evidence": {"patch_road_center"},
+    "manifest": {"input_manifest"},
+    "skeleton": {"segment_skeleton_access"},
+    "evidence": {"patch_road_center", "target_fragment_assignment"},
+    "access_recovery": {"access_surface_recovery"},
     "segment": {"segment_carrier"},
+    "junction_unit": {"junction_unit_retained_groups"},
     "junction": {"junction_portal"},
     "node": {"node_topology_pairs", "node_materialization"},
     "topology": {
@@ -419,6 +423,12 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
     target_path_cache_stats = dict(
         performance.get("target_path_cache") or {}
     )
+    carrier_planner_stats = dict(
+        performance.get("incremental_carrier_planner") or {}
+    )
+    interior_target_cache_stats = dict(
+        performance.get("interior_target_cache") or {}
+    )
 
     from rcsd_topo_poc.modules.p04_road_direct_generation.segment_first_inputs import (
         SEGMENT_FIRST_PATCH_LAYER_FAMILIES,
@@ -606,6 +616,105 @@ def evaluate(args: argparse.Namespace) -> dict[str, Any]:
                 ),
             },
             expected="0 <= current <= configured bound",
+        ),
+        gate(
+            "interior_target_cache_bounded",
+            0
+            <= int(interior_target_cache_stats.get("entry_count", -1))
+            <= int(
+                interior_target_cache_stats.get("entry_count_max", -2)
+            )
+            and 0
+            <= int(interior_target_cache_stats.get("key_bytes", -1))
+            <= int(
+                interior_target_cache_stats.get("key_bytes_max", -2)
+            ),
+            actual={
+                "entry_count": interior_target_cache_stats.get(
+                    "entry_count"
+                ),
+                "entry_count_max": interior_target_cache_stats.get(
+                    "entry_count_max"
+                ),
+                "key_bytes": interior_target_cache_stats.get("key_bytes"),
+                "key_bytes_max": interior_target_cache_stats.get(
+                    "key_bytes_max"
+                ),
+                "eviction_count": interior_target_cache_stats.get(
+                    "eviction_count"
+                ),
+            },
+            expected="0 <= current <= configured bound",
+        ),
+        gate(
+            "incremental_carrier_reuse_active",
+            int(carrier_planner_stats.get("invocation_count", 0)) >= 2
+            and 1
+            <= int(
+                carrier_planner_stats.get(
+                    "full_recompute_invocation_count",
+                    0,
+                )
+            )
+            < int(carrier_planner_stats.get("invocation_count", 0))
+            and int(carrier_planner_stats.get("segment_units_reused", 0)) > 0
+            and int(carrier_planner_stats.get("segment_units_seen", -1))
+            == int(
+                carrier_planner_stats.get("segment_units_recomputed", -2)
+            )
+            + int(carrier_planner_stats.get("segment_units_reused", -3)),
+            actual=carrier_planner_stats,
+            expected=(
+                "invocations>=2, full recomputes below invocations, reused>0, "
+                "seen=recomputed+reused"
+            ),
+        ),
+        gate(
+            "carrier_static_context_cache_active",
+            int(
+                carrier_planner_stats.get(
+                    "carrier_context_cache_hit_count",
+                    0,
+                )
+            )
+            > 0
+            and int(
+                carrier_planner_stats.get(
+                    "carrier_context_cache_miss_count",
+                    0,
+                )
+            )
+            > 0
+            and float(
+                carrier_planner_stats.get(
+                    "carrier_context_prepare_seconds",
+                    -1.0,
+                )
+            )
+            >= 0.0
+            and 0
+            <= int(
+                carrier_planner_stats.get(
+                    "carrier_context_cache_entry_count",
+                    -1,
+                )
+            )
+            <= 5,
+            actual={
+                "hit_count": carrier_planner_stats.get(
+                    "carrier_context_cache_hit_count"
+                ),
+                "miss_count": carrier_planner_stats.get(
+                    "carrier_context_cache_miss_count"
+                ),
+                "prepare_seconds": carrier_planner_stats.get(
+                    "carrier_context_prepare_seconds"
+                ),
+                "entry_count": carrier_planner_stats.get(
+                    "carrier_context_cache_entry_count"
+                ),
+            },
+            expected="hits>0, misses>0, prepare>=0, 0<=live entries<=5",
         ),
         gate(
             "independent_quality_pass",

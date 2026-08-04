@@ -575,7 +575,7 @@ Access 几何同时缺失时不猜测，继续由
 | `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_nodes.py` | `89059` bytes | Node/mainnode、端点协调及有界几何缓存调用 | 不回填SegmentAccess编排或新端点策略 |
 | `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_inputs.py` | `10616` bytes | 正式Patch输入读取及与资源合同共源的最多6个I/O worker | 不改变图层族、字段语义或稳定拼接顺序 |
 | `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_path_scoring.py` | `4595` bytes | Patch Road路径指标预计算和等价评分 | 只承接无状态评分复用 |
-| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_geometry_metrics.py` | `2928` bytes | 最大采样转角和道路面覆盖的精确有界复用 | 不引入近似几何或silent fix |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_geometry_metrics.py` | `11485` bytes | 最大采样转角的精确批量插值、道路面覆盖精确索引和有界复用 | 不改变角度运算顺序，不引入近似几何或silent fix |
 | `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_performance.py` | `15078` bytes | 高分辨率墙钟、进程CPU/RSS/I/O、最多6个Patch I/O worker合同、30秒资源时间线和预算审计 | 最多保留1024个有界样本，不进入业务决策；Windows API必须保留64位句柄签名 |
 | `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_geometry_cache.py` | `1124` bytes | 按活动GeoDataFrame身份复用精确buffered union | 只缓存不可变计算结果，不做几何修复 |
 | `scripts/p04_run_segment_first_innernet.py` | `12409` bytes | 正式参数化内网入口、心跳、共源I/O worker上限、原生线程默认上限及资源审计 | 不改变正式参数合同，不复制业务算法 |
@@ -587,6 +587,65 @@ Access 几何同时缺失时不猜测，继续由
 | `tests/modules/p04_road_direct_generation/test_segment_first_geometry_cache.py` | `864` bytes | buffered union精确复用和空输入合同 | 不以近似几何替代等价计算 |
 | `tests/modules/p04_road_direct_generation/test_segment_first_geometry_metrics.py` | `1787` bytes | 转角与道路面覆盖精确缓存合同 | 重复调用必须保持数值等价 |
 | `tests/modules/p04_road_direct_generation/test_segment_first_path_scoring.py` | `1164` bytes | 路径评分数值与布尔归一合同 | 不改变缺失值和非有限值语义 |
+
+### P04 Segment dirty-set性能优化与主编排拆分（2026-08-02）
+
+本轮依据已授权拆分计划处理既有超阈值文件：原
+`segment_first_pipeline.py`（`100510 bytes`）中的输出关系、审计和冻结结果读取辅助
+职责迁移到`segment_first_pipeline_outputs.py`，主编排保留调用别名以兼容既有私有
+测试。拆分后主编排为`88492 bytes`，仓库P04 Segment-first源码重新回到
+`>=100000 bytes`为0的状态。本轮不改变正式入口签名、不新增入口、不修改T01–T12。
+
+当前扫描`53`个`segment_first*.py`源码和`68`个P04专项测试：源码
+`>=61440 bytes`为`3`、测试`>=61440 bytes`为`0`，源码和测试
+`>=100000 bytes`均为`0`。新增逐Segment增量规划职责位于独立小模块；Carrier和Node
+只增加产生精确合并元数据及复用静态索引所需的最小接线，不新增业务策略。后续补充
+ADVANCE_RIGHT Road端点索引、access surface恢复空间索引及Target fragment粗筛/进度后，
+又增加Carrier静态上下文和reservation空间索引；当前继续融合Patch输入SHA256并加入
+有界路口面内缩目标缓存；随后增加同源CRS批量投影、WSL挂载盘Patch输入/GPKG输出
+暂存和Target fragment站点矩阵计算，P04专项测试为`325 passed`。
+本轮继续复用Movement固定点中的Segment access分组和Junction source静态上下文，
+并增加Patch端点切向及本轮Carrier行索引复用，P04专项测试更新为`327 passed`。
+本轮继续为增量Carrier指纹常见标量增加旧字节合同等价快速路径，P04专项测试更新为
+`337 passed`；随后增加canonical ID等价快速归一化，以及保持逐浮点结果不变的最大
+采样转角批量插值；随后Target fragment改为精确坐标批取且保持逐点方位角运算顺序，
+专项测试更新为`352 passed`。随后将Node completion surface全域accepted union拆入
+独立索引模块，按查询范围精确物化局部surface并增加实际进度；专项测试更新为
+`355 passed`。当前扫描仍无`>=100000 bytes`源码或测试文件。
+
+| 文件 | 当前体量 | 当前职责 | 后续约束 |
+|---|---:|---|---|
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_pipeline.py` | `88715` bytes | Segment-first阶段编排、仅按新增endpoint trim差集触发固定点重建、性能缓存逐run复位及发布挂接 | 继续只保留编排；新输出辅助职责下沉 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_pipeline_outputs.py` | `12917` bytes | 输出关系、Node关系、审计与冻结结果读取辅助 | 不承接构图策略 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_carriers.py` | `93589` bytes | 原Carrier规划及逐Segment汇总/字段顺序元数据 | 距硬阈值6411字节；新静态准备职责下沉到context模块 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_incremental_carriers.py` | `20316` bytes | 逐Segment输入指纹、常见标量等价快速序列化、dirty重算、原顺序合并和复用统计 | 保持旧字节指纹合同；只缓存run内不可变输入，不承接业务仲裁 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_carrier_context.py` | `10668` bytes | Road/assignment/reference/surface单条目弱引用缓存及reservation空间索引 | 对象或manager变化即失效；不改变Carrier仲裁门槛 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_junctions.py` | `11794` bytes | JunctionUnit候选选择、retained kind一次性Node索引和实际group进度 | 保持T07/T04/T03优先级与kind_2语义不变 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_skeleton.py` | `9794` bytes | T01 SegmentBuildUnit、Access、ADVANCE_RIGHT Road端点一次性索引及canonical ID等价快速归一化 | 不扩大ID归一化范围，不改变Segment/Access定义 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_access_recovery.py` | `18991` bytes | access surface恢复候选、按Segment聚合Access和空间索引粗筛 | 最终仍执行原距离、裁切、覆盖与冲突门槛 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_target_fragments.py` | `20740` bytes | Patch Road/Lane目标Segment分片、扩展包围盒粗筛、阶段级只读axis行、站点矩阵和方位角精确坐标批取及实际进度 | 保持空间索引候选顺序、最终站点距离、逐点角度运算顺序、member和排序合同 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_nodes.py` | `89978` bytes | Node/mainnode、端点协调、静态Junction/Access索引复用及dwithin邻域粗筛 | completion surface聚合已下沉；新端点策略必须继续拆分 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_completion_surfaces.py` | `10316` bytes | accepted Junction分组surface空间索引、DriveZone联合、局部精确查询和有界buffer缓存 | 禁止恢复全域accepted union；2048条LRU不得无界增长 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_config.py` | `5219` bytes | 参数合同、单次路径解析及输入输出隔离校验 | 不改变正式入口参数或路径重叠保护 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_movements.py` | `52237` bytes | Movement/Access物理切分及只读evidence、Patch端点切向、Junction surface/source、Segment access分组和本轮Carrier行索引复用 | 不缓存跨轮Carrier选择；不改变选择、裁切或拓扑条件 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_topology.py` | `24480` bytes | 共享Node、语义路口及ADVANCE_RIGHT显式关系编译；显式关系使用evidence倒排候选 | 保留全部Node/mainnode、显式支持和relation去重门槛 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_progress.py` | `14254` bytes | 实际对象进度、Node completion surface进度及6阶段单调overall estimate | 动态重试不得伪造线性ETA |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/io.py` | `17171` bytes | 输入SHA256清单、通用矢量I/O、真实清单进度及WSL挂载盘GPKG原子暂存写出 | 预计算Patch清单必须保持正式顺序、大小和SHA256完全一致；暂存失败安全回退 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_inputs.py` | `18289` bytes | 8类Patch输入读取、同轮SHA256、同源CRS批量投影、挂载盘本机暂存及正式输入清单组装 | 不改变输入图层族、fallback优先级、manifest身份或拼接顺序 |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_surface_routing.py` | `14846` bytes | 端点到路口面局部路由、有界精确内缩目标缓存及completion surface局部查询 | 不近似路口面；8192条、32MiB键预算内LRU |
+| `src/rcsd_topo_poc/modules/p04_road_direct_generation/segment_first_geometry_metrics.py` | `11711` bytes | 最大采样转角精确批量插值、道路面覆盖精确索引和completion surface局部覆盖 | 保留原station及逐角度运算顺序；不得引入近似几何或silent fix |
+| `scripts/p04_run_segment_first_innernet.py` | `22290` bytes | 正式入口、资源/缓存/dirty-set/context心跳和summary性能审计 | 保持第12.1节正式参数签名 |
+| `specs/p04-segment-first-performance-1500-patch-20260730/validation/validate_innernet_acceptance.py` | `31529` bytes | 时限、资源、输入清单、Target fragment进度、有界缓存及业务零回退验收 | 无1532 Patch完整证据不得升级为ACCEPTED |
+| `tests/modules/p04_road_direct_generation/test_segment_first_physical_handoff.py` | `11261` bytes | 物理交接、显式语义关系及ADVANCE_RIGHT evidence倒排候选回归 | 保持候选顺序与旧显式支持集合一致 |
+| `tests/modules/p04_road_direct_generation/test_segment_first_inputs.py` | `11809` bytes | Patch图层fallback、读取期SHA256、挂载盘暂存、批量投影及清单免二次散列回归 | 输入清单顺序、大小、SHA256、字段、CRS和WKB必须等价 |
+| `tests/modules/p04_road_direct_generation/test_io.py` | `1535` bytes | WSL挂载盘GPKG暂存、复制和原子替换回归 | 正式输出不得暴露半成品；失败路径安全回退 |
+| `tests/modules/p04_road_direct_generation/test_segment_first_movements.py` | `27648` bytes | Movement切分、Patch端点切向及Junction/Segment access静态上下文复用回归 | 缓存必须保持候选重评、分组去重、source首选与聚合几何合同 |
+| `tests/modules/p04_road_direct_generation/test_segment_first_incremental_carriers.py` | `9302` bytes | dirty-set重算、合并统计及常见标量/几何指纹字节合同回归 | 指纹快速路径不得改变任何值的旧字节表达 |
+| `tests/modules/p04_road_direct_generation/test_segment_first_skeleton.py` | `4395` bytes | Segment/Access骨架、端点索引及canonical ID归一化合同回归 | 正负号、前导零、Unicode数字、非零小数和复合ID必须保持现有语义 |
+| `tests/modules/p04_road_direct_generation/test_segment_first_target_fragments.py` | `3877` bytes | Target fragment划分及坐标批取方位角逐浮点等价回归 | 不得改变station标签、fragment属性或WKB |
+| `tests/modules/p04_road_direct_generation/test_segment_first_surface_routing.py` | `6455` bytes | 局部路由、精确内缩目标复用及缓存上限回归 | 不用缓存绕过几何门槛 |
+| `tests/modules/p04_road_direct_generation/test_segment_first_completion_surfaces.py` | `4201` bytes | 全域物化参考与索引局部surface的点覆盖、距离、数值覆盖率、门槛和进度等价回归 | 必须保持accepted来源过滤和精确几何合同 |
+| `tests/modules/p04_road_direct_generation/test_innernet_acceptance_validation.py` | `12029` bytes | 正式进度、资源、有界缓存和业务参考验收回归 | 局部样本不得升级全量结论 |
 
 ### T12 非预期反向载体检出当前快照（2026-07-31）
 

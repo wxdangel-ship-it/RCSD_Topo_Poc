@@ -15,7 +15,13 @@ from rcsd_topo_poc.modules.p04_road_direct_generation.segment_first_corridors im
 from rcsd_topo_poc.modules.p04_road_direct_generation.segment_first_geometry import (
     _smooth_centerline,
 )
+from rcsd_topo_poc.modules.p04_road_direct_generation import (
+    segment_first_surface_routing as surface_routing,
+)
 from rcsd_topo_poc.modules.p04_road_direct_generation.segment_first_surface_routing import (
+    interior_surface_target,
+    interior_target_cache_stats,
+    reset_interior_target_cache,
     route_endpoint_to_surface,
     route_tangent_endpoint_to_surface,
 )
@@ -29,6 +35,47 @@ def _bent_support() -> object:
             box(6, 8, 15, 12),
         ]
     )
+
+
+def test_interior_surface_target_reuses_exact_buffered_geometry() -> None:
+    reset_interior_target_cache()
+    surface = box(0, 0, 20, 20)
+
+    first = interior_surface_target(surface, inset_m=1.0)
+    second = interior_surface_target(surface, inset_m=1.0)
+
+    assert second is first
+    assert first.equals_exact(surface.buffer(-1.0), tolerance=0.0)
+    assert interior_target_cache_stats() == {
+        "query_count": 2,
+        "hit_count": 1,
+        "hit_ratio": 0.5,
+        "eviction_count": 0,
+        "entry_count": 1,
+        "entry_count_max": 8192,
+        "key_bytes": len(surface.wkb) + 8,
+        "key_bytes_max": 32 * 1024 * 1024,
+    }
+
+
+def test_interior_surface_target_cache_evicts_within_entry_bound(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        surface_routing,
+        "_INTERIOR_TARGET_CACHE_ENTRY_MAX",
+        2,
+    )
+    reset_interior_target_cache()
+
+    for offset in range(3):
+        interior_surface_target(box(offset, 0, offset + 10, 10), inset_m=1.0)
+
+    stats = interior_target_cache_stats()
+    assert stats["entry_count"] == 2
+    assert stats["entry_count_max"] == 2
+    assert stats["eviction_count"] == 1
+    reset_interior_target_cache()
 
 
 def test_endpoint_route_follows_local_road_surface_when_direct_line_leaves_it() -> None:

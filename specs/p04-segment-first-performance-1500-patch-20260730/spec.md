@@ -159,3 +159,71 @@ P04 1500 Patch 规模设定以下任务级预算：
 进度中的阶段百分比必须由真实`completed/total`计算；跨阶段总体值只能标记为
 `overall_estimate`。ETA在样本不足时显示`estimating`，不得用虚假线性百分比替代实际
 处理计数。
+
+## 9. 第四轮 Segment 脏集与动态总体进度合同
+
+1532 Patch首轮日志证明`segment_carrier`会对46399个Segment执行多轮规划。第四轮
+允许在同一次正式运行内复用未变化Segment的规划结果，但必须满足：
+
+- 每个Segment的assignment、参考轴、端点面救援、强制保留/抑制、THROUGH access
+  及全局恢复预留均进入指纹；发生变化的Segment必须重算；
+- 路口访问面等静态上下文发生变化时允许必要的全量重算，不能以缓存绕过；
+- 合并后的Carrier字段出现顺序、正式/审计图层、几何、关系、gate和summary必须与
+  原全量规划语义指纹一致；
+- 缓存只在单次入口运行的对象生命周期内有效，入口启动时清空；不得跨run复用；
+- 正式summary必须发布调用数、全量/增量/无变化轮次、重算/复用Segment数、复用率、
+  指纹耗时和缓存命中，验收必须证明后续轮次确实发生复用。
+
+总体进度采用6个单调里程碑：初始化、输入读取、证据准备、网络稳定化、发布编译、
+输出与QA/完成。网络稳定化包含动态重试，因此总体值只发布
+`overall_estimate`及`dynamic_retry_count_unknown=true`；当前阶段仍以真实对象
+`completed/total`为准，不生成虚假的全流程线性ETA。
+
+## 10. 全量规模索引与Evidence进度合同
+
+第四轮静态审计继续发现的`对象 × 全表`模式允许改为一次性索引，但必须保持原业务
+判定不变：
+
+- Junction retained kind只把T01 Node的既有`kind_2`及mainnode关系预建为集合；
+- ADVANCE_RIGHT Access只把scoped Road的既有起终Node关系预建为端点索引；
+- access surface恢复只允许空间索引粗筛，最终距离、裁切、DriveZone覆盖、冲突和
+  发布门槛必须使用原精确规则；
+- Target fragment只允许使用扩展包围盒取得保守候选，最终站点距离、角度、member、
+  score、margin、排序和最短片段规则必须保持原实现。
+
+固定点重建只允许在新发现的endpoint trim Segment相对当前已处理集合的差集非空时
+触发；差集为空必须复用当前Movement、网络几何和Node结果。该消重不得跳过新增
+Segment、改变semantic endpoint探测，也不得跨不同Road内容或Junction物化集合复用。
+
+Carrier静态上下文缓存必须同时校验DataFrame对象身份和内部manager身份，且每类输入
+最多保留一个存活条目；输入变化时先释放旧上下文再准备新上下文。access reservation
+可预先执行原`buffer(1.0)`并建立空间索引，但候选最终仍以原intersection length比率
+判定，且必须排除当前Segment自己的reservation。summary和控制台必须发布上下文缓存
+命中、未命中、准备耗时和存活条目数；验收器必须阻断缓存未实际命中的全量候选。
+
+Evidence阶段必须额外发布`target_fragment_assignment`实际进度；两次调用分别代表
+Patch Road与Lane，不以预估百分比合并。控制台和`p04_progress.jsonl`至少记录
+`completed/total`、fragment数、命中source数和当前source ID。正式验收器必须阻断
+缺失该阶段的候选。函数级剖析只用于热点排序，不得将剖析插桩后的wall用作性能通过
+证据。
+
+## 11. Node completion surface低内存合同
+
+2026-08-03全量运行在`junction_portal`完成后、Node completion surface准备期间异常终止。
+日志终止前RSS约`8.95GiB`、peak RSS约`9.02GiB`，且没有Python traceback、
+`run_failed`或launcher退出陷阱记录。该证据支持“进程树被外部内存机制终止”的高置信
+判断，但内网宿主的OOM/killed事件仍需由运行方补充确认。
+
+修复必须满足：
+
+- 不再把全部accepted JunctionUnit surface先做全域`unary_union`再整体buffer；
+- 复用本轮已经生成的Junction分组面，使用空间索引按查询范围取得局部候选；
+- DriveZone仍使用原缓冲联合面，accepted来源仍严格限定为`t07_accepted`、
+  `t03_accepted`和`t04_accepted`；
+- 点覆盖、距离、路由和覆盖率最终结果必须与原全域物化几何精确等价，不允许近似、
+  silent fix或改变Junction优先级；
+- buffered Junction局部缓存必须有界，单次run重试不得累计新的全域surface；
+- 正式进度必须发布`node_completion_surface`的开始、实际完成单位和完成事件，不能继续
+  停留在已100%的`junction_portal`阶段；
+- 6-Patch等价验证只能证明业务零回退和局部资源改善，1532 Patch正式复跑仍是内存、
+  时限和端到端完成性的唯一验收。

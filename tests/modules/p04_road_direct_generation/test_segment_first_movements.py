@@ -14,6 +14,118 @@ from rcsd_topo_poc.modules.p04_road_direct_generation.segment_first_movements im
 )
 
 
+def test_segment_access_and_junction_contexts_are_reused_by_identity() -> None:
+    accesses = gpd.GeoDataFrame(
+        [
+            {
+                "segment_id": "s1",
+                "access_type": "ENDPOINT",
+                "junction_group_id": "j1",
+                "access_id": "a1",
+                "geometry": Point(0, 0),
+            },
+            {
+                "segment_id": "s1",
+                "access_type": "ENDPOINT",
+                "junction_group_id": "j1",
+                "access_id": "a1-duplicate",
+                "geometry": Point(0, 0),
+            },
+            {
+                "segment_id": "s1",
+                "access_type": "THROUGH",
+                "junction_group_id": "j2",
+                "access_id": "a2",
+                "geometry": Point(5, 0),
+            },
+        ],
+        geometry="geometry",
+        crs="EPSG:32650",
+    )
+    endpoint_first, through_first, first_hit = (
+        movement_module._segment_access_groups(accesses)
+    )
+    endpoint_second, through_second, second_hit = (
+        movement_module._segment_access_groups(accesses)
+    )
+    assert not first_hit
+    assert second_hit
+    assert endpoint_second is endpoint_first
+    assert through_second is through_first
+    assert list(endpoint_first) == ["s1"]
+    assert endpoint_first["s1"]["access_id"].tolist() == ["a1"]
+    assert through_first["s1"]["access_id"].tolist() == ["a2"]
+
+    junctions = gpd.GeoDataFrame(
+        [
+            {
+                "junction_group_id": "j1",
+                "junction_source": "t07_accepted",
+                "geometry": box(-1, -1, 1, 1),
+            },
+            {
+                "junction_group_id": "j1",
+                "junction_source": "t03_accepted",
+                "geometry": box(1, -1, 2, 1),
+            },
+        ],
+        geometry="geometry",
+        crs="EPSG:32650",
+    )
+    surfaces_first, sources_first, first_hit = (
+        movement_module._junction_surface_context(junctions)
+    )
+    surfaces_second, sources_second, second_hit = (
+        movement_module._junction_surface_context(junctions)
+    )
+    assert not first_hit
+    assert second_hit
+    assert surfaces_second is surfaces_first
+    assert sources_second is sources_first
+    assert sources_first == {"j1": "t07_accepted"}
+    assert surfaces_first["j1"].equals(box(-1, -1, 2, 1))
+
+
+def test_movement_selection_reuses_static_patch_endpoint_tangent(
+    monkeypatch,
+) -> None:
+    patch_line = LineString([(0, 0), (10, 0)])
+    carrier_line = LineString([(0, 1), (10, 1)])
+    carrier_rows = {
+        0: pd.Series(
+            {
+                "carrier_id": "carrier-0",
+                "geometry": carrier_line,
+            }
+        )
+    }
+    endpoint_contexts: dict[tuple[str, str], object] = {}
+    original = movement_module._line_tangent
+    patch_tangent_calls = 0
+
+    def counted_tangent(geometry, measure):
+        nonlocal patch_tangent_calls
+        if geometry is patch_line:
+            patch_tangent_calls += 1
+        return original(geometry, measure)
+
+    monkeypatch.setattr(movement_module, "_line_tangent", counted_tangent)
+    for _ in range(2):
+        selected = movement_module._select_movement_carrier(
+            "patch-0",
+            "end",
+            carrier_rows,
+            {"patch-0": patch_line},
+            endpoint_contexts,
+            {"patch-0": [0]},
+            {"segment-0": [0]},
+            {"patch-0": {"segment-0"}},
+        )
+        assert selected == 0
+    assert patch_tangent_calls == 1
+    assert list(endpoint_contexts) == [("patch-0", "end")]
+
+
 def test_cross_road_internal_movement_splits_both_physical_roads() -> None:
     carriers = gpd.GeoDataFrame(
         [

@@ -23,7 +23,35 @@ _MIN_THROUGH_SPLIT_PART_LENGTH_M = 2.0
 _MOVEMENT_CARRIER_SELECTION_CACHE_MAX_ENTRIES = 32768
 _JUNCTION_SURFACE_CACHE: dict[
     int,
-    tuple[weakref.ReferenceType[gpd.GeoDataFrame], int, dict[str, object]],
+    tuple[
+        weakref.ReferenceType[gpd.GeoDataFrame],
+        int,
+        dict[str, object],
+        dict[str, str],
+    ],
+] = {}
+_SEGMENT_ACCESS_GROUP_CACHE: dict[
+    int,
+    tuple[
+        weakref.ReferenceType[gpd.GeoDataFrame],
+        int,
+        dict[str, gpd.GeoDataFrame],
+        dict[str, gpd.GeoDataFrame],
+    ],
+] = {}
+_MOVEMENT_EVIDENCE_CACHE: dict[
+    int,
+    tuple[
+        weakref.ReferenceType[gpd.GeoDataFrame],
+        int,
+        dict[str, object],
+        dict[str, object],
+        dict[str, set[str]],
+        dict[
+            tuple[str, str],
+            tuple[Point, tuple[float, float]],
+        ],
+    ],
 ] = {}
 
 
@@ -59,41 +87,29 @@ def split_carriers_at_movement_anchors(
             "carrier_count": len(carriers),
         },
     )
-    patch_geometry = {
-        str(patch_road_key): max(
-            group.geometry,
-            key=lambda geometry: float(geometry.length),
-        )
-        for patch_road_key, group in assignments.groupby(
-            assignments["patch_road_key"].astype(str),
-            sort=False,
-        )
-    }
-    assignment_segments = {
-        str(patch_road_key): {
-            str(value)
-            for value in group.get(
-                "assigned_segment_id",
-                pd.Series("", index=group.index),
-            )
-            if str(value) and str(value).lower() != "nan"
-        }
-        for patch_road_key, group in assignments.groupby(
-            assignments["patch_road_key"].astype(str),
-            sort=False,
-        )
-    }
+    (
+        patch_geometry,
+        _,
+        assignment_segments,
+        patch_endpoint_contexts,
+        evidence_cache_hit,
+    ) = (
+        _movement_evidence_indexes(assignments)
+    )
     carrier_by_patch: dict[str, list[int]] = {}
     carriers_by_segment: dict[str, list[int]] = {}
+    carrier_rows: dict[int, pd.Series] = {}
     for index, carrier in carriers.iterrows():
+        carrier_index = int(index)
+        carrier_rows[carrier_index] = carrier
         if str(carrier.get("realization", "")) != "built":
             continue
         carriers_by_segment.setdefault(
             str(carrier.get("segment_id", "")),
             [],
-        ).append(int(index))
+        ).append(carrier_index)
         for key in _split_keys(carrier.get("source_patch_road_keys", "")):
-            carrier_by_patch.setdefault(key, []).append(int(index))
+            carrier_by_patch.setdefault(key, []).append(carrier_index)
 
     carrier_selection_cache: dict[tuple[str, str], int | None] = {}
     carrier_selection_query_count = 0
@@ -112,8 +128,9 @@ def split_carriers_at_movement_anchors(
         selected = _select_movement_carrier(
             patch_key,
             endpoint_name,
-            carriers,
+            carrier_rows,
             patch_geometry,
+            patch_endpoint_contexts,
             carrier_by_patch,
             carriers_by_segment,
             assignment_segments,
@@ -147,14 +164,14 @@ def split_carriers_at_movement_anchors(
             continue
         surface_routing_peer = any(
             "endpoint_surface_constrained_routing"
-            in str(carriers.loc[index].get("assembly_state", ""))
+            in str(carrier_rows[index].get("assembly_state", ""))
             for index in (source_index, target_index)
         )
         for role, key, index, endpoint_name in (
             ("source_end", source_key, source_index, "end"),
             ("target_start", target_key, target_index, "start"),
         ):
-            carrier = carriers.loc[index]
+            carrier = carrier_rows[index]
             endpoint_keys = _split_keys(
                 carrier.get(
                     "end_patch_road_keys" if endpoint_name == "end" else "start_patch_road_keys",
@@ -278,6 +295,7 @@ def split_carriers_at_movement_anchors(
             "carrier_selection_cache_evictions": (
                 carrier_selection_cache_eviction_count
             ),
+            "static_evidence_cache_hit": str(evidence_cache_hit).lower(),
         },
     )
     return MovementSplitResult(result, audit, summary)
@@ -286,8 +304,12 @@ def split_carriers_at_movement_anchors(
 def _select_movement_carrier(
     patch_key: str,
     endpoint_name: str,
-    carriers: gpd.GeoDataFrame,
+    carrier_rows: dict[int, pd.Series],
     patch_geometry: dict[str, LineString],
+    patch_endpoint_contexts: dict[
+        tuple[str, str],
+        tuple[Point, tuple[float, float]],
+    ],
     carrier_by_patch: dict[str, list[int]],
     carriers_by_segment: dict[str, list[int]],
     assignment_segments: dict[str, set[str]],
@@ -301,17 +323,28 @@ def _select_movement_carrier(
             candidates.update(carriers_by_segment.get(segment_id, ()))
     if not candidates:
         return None
-    anchor = patch_line.interpolate(
-        1.0 if endpoint_name == "end" else 0.0,
-        normalized=True,
-    )
-    patch_vector = _line_tangent(
-        patch_line,
-        float(patch_line.project(anchor)),
-    )
+    endpoint_key = (patch_key, endpoint_name)
+    endpoint_context = patch_endpoint_contexts.get(endpoint_key)
+    if endpoint_context is None:
+        anchor = patch_line.interpolate(
+            1.0 if endpoint_name == "end" else 0.0,
+            normalized=True,
+        )
+        patch_vector = _line_tangent(
+            patch_line,
+            float(patch_line.project(anchor)),
+        )
+        if (
+            len(patch_endpoint_contexts)
+            >= _MOVEMENT_CARRIER_SELECTION_CACHE_MAX_ENTRIES
+        ):
+            patch_endpoint_contexts.pop(next(iter(patch_endpoint_contexts)))
+        patch_endpoint_contexts[endpoint_key] = (anchor, patch_vector)
+    else:
+        anchor, patch_vector = endpoint_context
     scored: list[tuple[float, float, float, str, int]] = []
     for index in sorted(candidates):
-        carrier = carriers.loc[index]
+        carrier = carrier_rows[index]
         geometry = carrier.geometry
         if geometry is None or geometry.is_empty or geometry.length <= 1e-9:
             continue
@@ -389,23 +422,25 @@ def split_carriers_at_segment_accesses(
             "access_count": len(segment_accesses),
         },
     )
-    surfaces = _junction_surfaces(junction_units)
-    surface_sources = {
-        str(group_id): str(
-            getattr(group.iloc[0], "junction_source", "")
-        )
-        for group_id, group in junction_units.groupby("junction_group_id")
-    }
-    patch_geometry = {
-        str(row.patch_road_key): row.geometry
-        for row in geometry_sources.drop_duplicates("patch_road_key").itertuples()
-    }
+    surfaces, surface_sources, junction_context_cache_hit = (
+        _junction_surface_context(junction_units)
+    )
+    (
+        endpoint_accesses_by_segment,
+        accesses_by_segment,
+        access_context_cache_hit,
+    ) = _segment_access_groups(segment_accesses)
+    (
+        _,
+        patch_geometry,
+        _,
+        _,
+        evidence_cache_hit,
+    ) = _movement_evidence_indexes(geometry_sources)
     carriers, endpoint_audit, endpoint_trimmed_count = (
         _trim_target_main_carriers_to_endpoint_surfaces(
             carriers,
-            segment_accesses[
-                segment_accesses["access_type"].astype(str).eq("ENDPOINT")
-            ],
+            endpoint_accesses_by_segment,
             surfaces,
             patch_geometry,
             run_id=run_id,
@@ -432,10 +467,6 @@ def split_carriers_at_segment_accesses(
             },
         )
         return result
-    accesses_by_segment = {
-        str(segment_id): group.copy()
-        for segment_id, group in through.groupby("segment_id")
-    }
     output_rows: list[dict[str, object]] = []
     audit_rows: list[dict[str, object]] = []
     split_parent_count = 0
@@ -643,14 +674,95 @@ def split_carriers_at_segment_accesses(
             "through_split_part_count": summary[
                 "through_split_part_count"
             ],
+            "static_evidence_cache_hit": str(evidence_cache_hit).lower(),
+            "junction_context_cache_hit": str(
+                junction_context_cache_hit
+            ).lower(),
+            "access_context_cache_hit": str(access_context_cache_hit).lower(),
         },
     )
     return MovementSplitResult(result, audit, summary)
 
 
+def _movement_evidence_indexes(
+    assignments: gpd.GeoDataFrame,
+) -> tuple[
+    dict[str, object],
+    dict[str, object],
+    dict[str, set[str]],
+    dict[
+        tuple[str, str],
+        tuple[Point, tuple[float, float]],
+    ],
+    bool,
+]:
+    key = id(assignments)
+    cached = _MOVEMENT_EVIDENCE_CACHE.get(key)
+    if (
+        cached is not None
+        and cached[0]() is assignments
+        and cached[1] == id(assignments._mgr)
+    ):
+        return cached[2], cached[3], cached[4], cached[5], True
+    groups = assignments.groupby(
+        assignments["patch_road_key"].astype(str),
+        sort=False,
+    )
+    patch_geometry: dict[str, object] = {}
+    first_patch_geometry: dict[str, object] = {}
+    assignment_segments: dict[str, set[str]] = {}
+    patch_endpoint_contexts: dict[
+        tuple[str, str],
+        tuple[Point, tuple[float, float]],
+    ] = {}
+    for patch_road_key, group in groups:
+        key_text = str(patch_road_key)
+        patch_geometry[key_text] = max(
+            group.geometry,
+            key=lambda geometry: float(geometry.length),
+        )
+        first_patch_geometry[key_text] = group.geometry.iloc[0]
+        assignment_segments[key_text] = {
+            str(value)
+            for value in group.get(
+                "assigned_segment_id",
+                pd.Series("", index=group.index),
+            )
+            if str(value) and str(value).lower() != "nan"
+        }
+
+    def remove(_: weakref.ReferenceType[gpd.GeoDataFrame]) -> None:
+        current = _MOVEMENT_EVIDENCE_CACHE.get(key)
+        if current is not None and current[0]() is None:
+            _MOVEMENT_EVIDENCE_CACHE.pop(key, None)
+
+    _MOVEMENT_EVIDENCE_CACHE[key] = (
+        weakref.ref(assignments, remove),
+        id(assignments._mgr),
+        patch_geometry,
+        first_patch_geometry,
+        assignment_segments,
+        patch_endpoint_contexts,
+    )
+    return (
+        patch_geometry,
+        first_patch_geometry,
+        assignment_segments,
+        patch_endpoint_contexts,
+        False,
+    )
+
+
 def _junction_surfaces(
     junction_units: gpd.GeoDataFrame,
 ) -> dict[str, object]:
+    surfaces, _, _ = _junction_surface_context(junction_units)
+    return surfaces
+
+
+def _junction_surface_context(
+    junction_units: gpd.GeoDataFrame,
+) -> tuple[dict[str, object], dict[str, str], bool]:
     key = id(junction_units)
     cached = _JUNCTION_SURFACE_CACHE.get(key)
     if (
@@ -658,16 +770,20 @@ def _junction_surfaces(
         and cached[0]() is junction_units
         and cached[1] == id(junction_units._mgr)
     ):
-        return cached[2]
-    result = {
-        str(group_id): unary_union(
+        return cached[2], cached[3], True
+    surfaces: dict[str, object] = {}
+    sources: dict[str, str] = {}
+    for group_id, group in junction_units.groupby("junction_group_id"):
+        group_id_text = str(group_id)
+        surfaces[group_id_text] = unary_union(
             [
                 endpoint_surface_geometry(row)
                 for row in group.itertuples(index=False)
             ]
         )
-        for group_id, group in junction_units.groupby("junction_group_id")
-    }
+        sources[group_id_text] = str(
+            getattr(group.iloc[0], "junction_source", "")
+        )
 
     def remove(_: weakref.ReferenceType[gpd.GeoDataFrame]) -> None:
         current = _JUNCTION_SURFACE_CACHE.get(key)
@@ -677,14 +793,56 @@ def _junction_surfaces(
     _JUNCTION_SURFACE_CACHE[key] = (
         weakref.ref(junction_units, remove),
         id(junction_units._mgr),
-        result,
+        surfaces,
+        sources,
     )
-    return result
+    return surfaces, sources, False
+
+
+def _segment_access_groups(
+    segment_accesses: gpd.GeoDataFrame,
+) -> tuple[
+    dict[str, gpd.GeoDataFrame],
+    dict[str, gpd.GeoDataFrame],
+    bool,
+]:
+    key = id(segment_accesses)
+    cached = _SEGMENT_ACCESS_GROUP_CACHE.get(key)
+    if (
+        cached is not None
+        and cached[0]() is segment_accesses
+        and cached[1] == id(segment_accesses._mgr)
+    ):
+        return cached[2], cached[3], True
+    access_type = segment_accesses["access_type"].astype(str)
+    endpoint = segment_accesses[access_type.eq("ENDPOINT")]
+    through = segment_accesses[access_type.eq("THROUGH")].copy()
+    endpoint_by_segment = {
+        str(segment_id): group.drop_duplicates("junction_group_id").copy()
+        for segment_id, group in endpoint.groupby("segment_id")
+    }
+    through_by_segment = {
+        str(segment_id): group.copy()
+        for segment_id, group in through.groupby("segment_id")
+    }
+
+    def remove(_: weakref.ReferenceType[gpd.GeoDataFrame]) -> None:
+        current = _SEGMENT_ACCESS_GROUP_CACHE.get(key)
+        if current is not None and current[0]() is None:
+            _SEGMENT_ACCESS_GROUP_CACHE.pop(key, None)
+
+    _SEGMENT_ACCESS_GROUP_CACHE[key] = (
+        weakref.ref(segment_accesses, remove),
+        id(segment_accesses._mgr),
+        endpoint_by_segment,
+        through_by_segment,
+    )
+    return endpoint_by_segment, through_by_segment, False
 
 
 def _trim_target_main_carriers_to_endpoint_surfaces(
     carriers: gpd.GeoDataFrame,
-    endpoint_accesses: gpd.GeoDataFrame,
+    accesses_by_segment: dict[str, gpd.GeoDataFrame],
     surfaces: dict[str, object],
     patch_geometry: dict[str, object],
     *,
@@ -692,10 +850,6 @@ def _trim_target_main_carriers_to_endpoint_surfaces(
     allowed_segment_ids: set[str],
     endpoint_surface_buffer_m: float,
 ) -> tuple[gpd.GeoDataFrame, gpd.GeoDataFrame, int]:
-    accesses_by_segment = {
-        str(segment_id): group.drop_duplicates("junction_group_id").copy()
-        for segment_id, group in endpoint_accesses.groupby("segment_id")
-    } if not endpoint_accesses.empty else {}
     rows: list[dict[str, object]] = []
     audit_rows: list[dict[str, object]] = []
     trimmed_count = 0

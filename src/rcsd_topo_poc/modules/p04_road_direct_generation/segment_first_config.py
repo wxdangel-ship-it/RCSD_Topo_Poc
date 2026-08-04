@@ -67,36 +67,41 @@ class SegmentFirstConfig:
         crs = CRS.from_user_input(cfg.analysis_crs)
         if not crs.is_projected:
             raise ValueError("analysis_crs must be a projected CRS")
-        inputs = self.input_paths()
+        inputs = cfg._input_paths()
         for role, path in inputs.items():
             if require_files and not path.exists():
                 raise FileNotFoundError(f"missing {role}: {path}")
-            if _is_relative_to(cfg.output_dir, path):
+            if _is_relative_to_resolved(cfg.output_dir, path):
                 raise ValueError(f"input path is inside output_dir: {role}={path}")
-            if _is_relative_to(cfg.output_dir, path.parent) or _is_relative_to(path, cfg.output_dir):
+            if _is_relative_to_resolved(
+                cfg.output_dir,
+                path.parent,
+            ) or _is_relative_to_resolved(path, cfg.output_dir):
                 raise ValueError("output_dir must not overlap any input path")
         if cfg.output_dir.exists() and any(cfg.output_dir.iterdir()):
             raise FileExistsError(f"output_dir must be new or empty: {cfg.output_dir}")
 
     def input_paths(self) -> dict[str, Path]:
-        cfg = self.resolved()
+        return self.resolved()._input_paths()
+
+    def _input_paths(self) -> dict[str, Path]:
         inputs = {
-            "patch_root": cfg.patch_root,
-            "swsd_roads": cfg.swsd_road_path,
-            "swsd_nodes": cfg.swsd_node_path,
-            "t01_roads": cfg.t01_road_path,
-            "t01_nodes": cfg.t01_node_path,
-            "t01_segments": cfg.t01_segment_path,
-            "t07_surface": cfg.t07_surface_path,
-            "t03_surface": cfg.t03_surface_path,
-            "t04_surface": cfg.t04_surface_path,
-            "full_rcsd_roads": cfg.full_rcsd_road_path,
-            "full_rcsd_nodes": cfg.full_rcsd_node_path,
+            "patch_root": self.patch_root,
+            "swsd_roads": self.swsd_road_path,
+            "swsd_nodes": self.swsd_node_path,
+            "t01_roads": self.t01_road_path,
+            "t01_nodes": self.t01_node_path,
+            "t01_segments": self.t01_segment_path,
+            "t07_surface": self.t07_surface_path,
+            "t03_surface": self.t03_surface_path,
+            "t04_surface": self.t04_surface_path,
+            "full_rcsd_roads": self.full_rcsd_road_path,
+            "full_rcsd_nodes": self.full_rcsd_node_path,
         }
-        if cfg.target_replaceability_path is not None:
-            inputs["target_replaceability"] = cfg.target_replaceability_path
-        if cfg.target_disposition_path is not None:
-            inputs["target_disposition"] = cfg.target_disposition_path
+        if self.target_replaceability_path is not None:
+            inputs["target_replaceability"] = self.target_replaceability_path
+        if self.target_disposition_path is not None:
+            inputs["target_disposition"] = self.target_disposition_path
         return inputs
 
     def parameters(self) -> dict[str, object]:
@@ -121,9 +126,9 @@ class SegmentFirstConfig:
         return {key: value for key, value in self.__dict__.items() if key not in excluded}
 
 
-def _is_relative_to(path: Path, parent: Path) -> bool:
+def _is_relative_to_resolved(path: Path, parent: Path) -> bool:
     try:
-        path.resolve().relative_to(parent.resolve())
+        path.relative_to(parent)
         return True
     except ValueError:
         return False

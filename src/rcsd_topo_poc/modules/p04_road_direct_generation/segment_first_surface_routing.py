@@ -1,12 +1,31 @@
 from __future__ import annotations
 
+from collections import OrderedDict
 import heapq
 import math
+from threading import RLock
 
 from shapely.geometry import LineString, Point
 from shapely.ops import nearest_points, unary_union
 
+from .segment_first_completion_surfaces import (
+    IndexedCompletionSurface,
+    completion_surface_local_geometry,
+)
 from .segment_first_geometry_metrics import surface_coverage_at_least
+
+
+_INTERIOR_TARGET_CACHE_ENTRY_MAX = 8192
+_INTERIOR_TARGET_CACHE_KEY_BYTES_MAX = 32 * 1024 * 1024
+_INTERIOR_TARGET_CACHE: OrderedDict[
+    tuple[bytes, float],
+    tuple[object, int],
+] = OrderedDict()
+_INTERIOR_TARGET_CACHE_KEY_BYTES = 0
+_INTERIOR_TARGET_CACHE_QUERY_COUNT = 0
+_INTERIOR_TARGET_CACHE_HIT_COUNT = 0
+_INTERIOR_TARGET_CACHE_EVICTION_COUNT = 0
+_INTERIOR_TARGET_CACHE_LOCK = RLock()
 
 
 def interior_surface_target(
@@ -19,10 +38,102 @@ def interior_surface_target(
     if surface is None or surface.is_empty:
         return surface
     inset = max(float(inset_m), 1e-3)
+    key, key_bytes = _interior_target_cache_key(surface, inset)
+    if key is not None:
+        cached = _interior_target_cache_get(key)
+        if cached is not None:
+            return cached
     core = surface.buffer(-inset)
-    if not core.is_empty:
-        return core
-    return surface.representative_point()
+    result = core if not core.is_empty else surface.representative_point()
+    if key is not None:
+        _interior_target_cache_put(key, result, key_bytes)
+    return result
+
+
+def interior_target_cache_stats() -> dict[str, int | float]:
+    with _INTERIOR_TARGET_CACHE_LOCK:
+        query_count = _INTERIOR_TARGET_CACHE_QUERY_COUNT
+        return {
+            "query_count": query_count,
+            "hit_count": _INTERIOR_TARGET_CACHE_HIT_COUNT,
+            "hit_ratio": (
+                _INTERIOR_TARGET_CACHE_HIT_COUNT / query_count
+                if query_count
+                else 0.0
+            ),
+            "eviction_count": _INTERIOR_TARGET_CACHE_EVICTION_COUNT,
+            "entry_count": len(_INTERIOR_TARGET_CACHE),
+            "entry_count_max": _INTERIOR_TARGET_CACHE_ENTRY_MAX,
+            "key_bytes": _INTERIOR_TARGET_CACHE_KEY_BYTES,
+            "key_bytes_max": _INTERIOR_TARGET_CACHE_KEY_BYTES_MAX,
+        }
+
+
+def reset_interior_target_cache() -> None:
+    global _INTERIOR_TARGET_CACHE_KEY_BYTES
+    global _INTERIOR_TARGET_CACHE_QUERY_COUNT
+    global _INTERIOR_TARGET_CACHE_HIT_COUNT
+    global _INTERIOR_TARGET_CACHE_EVICTION_COUNT
+    with _INTERIOR_TARGET_CACHE_LOCK:
+        _INTERIOR_TARGET_CACHE.clear()
+        _INTERIOR_TARGET_CACHE_KEY_BYTES = 0
+        _INTERIOR_TARGET_CACHE_QUERY_COUNT = 0
+        _INTERIOR_TARGET_CACHE_HIT_COUNT = 0
+        _INTERIOR_TARGET_CACHE_EVICTION_COUNT = 0
+
+
+def _interior_target_cache_key(
+    surface: object,
+    inset: float,
+) -> tuple[tuple[bytes, float] | None, int]:
+    try:
+        geometry_wkb = bytes(surface.wkb)
+    except (AttributeError, TypeError, ValueError):
+        return None, 0
+    key_bytes = len(geometry_wkb) + 8
+    if key_bytes > _INTERIOR_TARGET_CACHE_KEY_BYTES_MAX:
+        return None, key_bytes
+    return (geometry_wkb, inset), key_bytes
+
+
+def _interior_target_cache_get(
+    key: tuple[bytes, float],
+) -> object | None:
+    global _INTERIOR_TARGET_CACHE_QUERY_COUNT
+    global _INTERIOR_TARGET_CACHE_HIT_COUNT
+    with _INTERIOR_TARGET_CACHE_LOCK:
+        _INTERIOR_TARGET_CACHE_QUERY_COUNT += 1
+        cached = _INTERIOR_TARGET_CACHE.get(key)
+        if cached is None:
+            return None
+        _INTERIOR_TARGET_CACHE_HIT_COUNT += 1
+        _INTERIOR_TARGET_CACHE.move_to_end(key)
+        return cached[0]
+
+
+def _interior_target_cache_put(
+    key: tuple[bytes, float],
+    value: object,
+    key_bytes: int,
+) -> None:
+    global _INTERIOR_TARGET_CACHE_KEY_BYTES
+    global _INTERIOR_TARGET_CACHE_EVICTION_COUNT
+    with _INTERIOR_TARGET_CACHE_LOCK:
+        existing = _INTERIOR_TARGET_CACHE.pop(key, None)
+        if existing is not None:
+            _INTERIOR_TARGET_CACHE_KEY_BYTES -= existing[1]
+        while _INTERIOR_TARGET_CACHE and (
+            len(_INTERIOR_TARGET_CACHE) >= _INTERIOR_TARGET_CACHE_ENTRY_MAX
+            or _INTERIOR_TARGET_CACHE_KEY_BYTES + key_bytes
+            > _INTERIOR_TARGET_CACHE_KEY_BYTES_MAX
+        ):
+            _, (_, evicted_key_bytes) = _INTERIOR_TARGET_CACHE.popitem(
+                last=False
+            )
+            _INTERIOR_TARGET_CACHE_KEY_BYTES -= evicted_key_bytes
+            _INTERIOR_TARGET_CACHE_EVICTION_COUNT += 1
+        _INTERIOR_TARGET_CACHE[key] = (value, key_bytes)
+        _INTERIOR_TARGET_CACHE_KEY_BYTES += key_bytes
 
 
 def route_tangent_endpoint_to_surface(
@@ -132,12 +243,21 @@ def route_endpoint_to_surface(
     direct_distance = float(endpoint.distance(target_surface))
     if direct_distance <= 1e-9 or direct_distance > maximum_distance_m + 1e-9:
         return None
-    support = completion_surface.union(target_surface)
     direct_target = nearest_points(endpoint, target_surface)[1]
     direct = LineString([endpoint, direct_target])
+    if isinstance(completion_surface, IndexedCompletionSurface):
+        direct_support = completion_surface_local_geometry(
+            completion_surface,
+            direct.envelope.buffer(1e-6),
+            extra_surfaces=(target_surface,),
+        )
+        support = None
+    else:
+        support = completion_surface.union(target_surface)
+        direct_support = support
     if _coverage_at_least(
         direct,
-        support,
+        direct_support,
         minimum_coverage,
         epsilon=1e-9,
     ):
@@ -150,7 +270,15 @@ def route_endpoint_to_surface(
     local_scope = unary_union([endpoint, target_surface]).convex_hull.buffer(
         scope_buffer
     )
-    local_support = support.intersection(local_scope)
+    local_support = (
+        completion_surface_local_geometry(
+            completion_surface,
+            local_scope,
+            extra_surfaces=(target_surface,),
+        )
+        if isinstance(completion_surface, IndexedCompletionSurface)
+        else support.intersection(local_scope)
+    )
     maximum_route_length = min(
         maximum_distance_m * 1.50,
         direct_distance * maximum_detour_ratio + 2.0,
@@ -178,7 +306,7 @@ def route_endpoint_to_surface(
             or float(routed.length) > maximum_route_length + 1e-9
             or not _coverage_at_least(
                 routed,
-                support,
+                local_support,
                 minimum_coverage,
                 epsilon=1e-9,
             )
@@ -316,7 +444,9 @@ def _coverage_at_least(
 
 
 __all__ = [
+    "interior_target_cache_stats",
     "interior_surface_target",
+    "reset_interior_target_cache",
     "route_endpoint_to_surface",
     "route_tangent_endpoint_to_surface",
 ]

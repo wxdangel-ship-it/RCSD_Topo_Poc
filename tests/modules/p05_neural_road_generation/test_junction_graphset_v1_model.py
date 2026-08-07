@@ -1,0 +1,273 @@
+from __future__ import annotations
+
+import pytest
+import torch
+
+from rcsd_topo_poc.modules.p05_neural_road_generation.junction_graphset_v1_model import (
+    JunctionGraphSetModel,
+    JunctionTrainingOverlay,
+    PairConstraint,
+    RoadBreakTarget,
+    compute_multitask_loss,
+)
+from rcsd_topo_poc.modules.p05_neural_road_generation.junction_graphset_v1_prediction import (
+    AnchorResult,
+    AnchorState,
+    CandidateBinding,
+    CandidatePlan,
+    JunctionEvidenceExample,
+    JunctionPredictionError,
+    ObjectTokenSpan,
+    QualityState,
+    RoadBreakOperation,
+    Step1DriveZoneState,
+    SurfaceMode,
+    SurfacePlan,
+)
+from rcsd_topo_poc.modules.p05_neural_road_generation.junction_graphset_v1_store import (
+    EvidenceRole,
+    ObjectRef,
+)
+from rcsd_topo_poc.modules.p05_neural_road_generation.junction_graphset_v1_surface import (
+    ConstraintState,
+    SurfaceConstraint,
+)
+
+
+SWSD = ObjectRef(EvidenceRole.SWSD_JUNCTION, "S1")
+DRIVEZONE = ObjectRef(EvidenceRole.DRIVEZONE, "D1")
+INTERSECTION = ObjectRef(EvidenceRole.RCSD_INTERSECTION, "I1")
+NODE_1 = ObjectRef(EvidenceRole.RCSD_NODE, "N1")
+NODE_2 = ObjectRef(EvidenceRole.RCSD_NODE, "N2")
+ROAD_1 = ObjectRef(EvidenceRole.RCSD_ROAD, "R1")
+ALL_REFS = (SWSD, DRIVEZONE, INTERSECTION, NODE_1, NODE_2, ROAD_1)
+
+
+def _example(
+    *,
+    case_key: str = "T03:fixture",
+    semantic_id: str = "S1",
+    refs: tuple[ObjectRef, ...] = ALL_REFS,
+) -> JunctionEvidenceExample:
+    token_by_ref = {
+        ref: torch.arange(index * 21, (index + 1) * 21, dtype=torch.float32) / 100.0
+        for index, ref in enumerate(ALL_REFS)
+    }
+    tokens = torch.stack(tuple(token_by_ref[ref] for ref in refs))
+    junction_key = f"{case_key}|{semantic_id}"
+    plans = (
+        CandidatePlan(
+            plan_id="plan:a",
+            step1_drivezone_state=Step1DriveZoneState.EVIDENCE,
+            surface_plan=SurfacePlan(
+                mode=SurfaceMode.EXISTING_RCSD_INTERSECTION,
+                selected_rcsdintersection_refs=(INTERSECTION,),
+            ),
+            anchor_result=AnchorResult(
+                state=AnchorState.SUCCESS,
+                associated_rcsd_node_refs=(NODE_1, NODE_2),
+                associated_rcsd_road_refs=(ROAD_1,),
+                selected_main_anchor=NODE_1,
+                road_break_operations=(RoadBreakOperation(ROAD_1, (0.5,)),),
+            ),
+            quality_state=QualityState.NORMAL,
+            review_reason="",
+            planned_topology_signature="topology:a",
+        ),
+        CandidatePlan(
+            plan_id="plan:b",
+            step1_drivezone_state=Step1DriveZoneState.EVIDENCE,
+            surface_plan=SurfacePlan(
+                mode=SurfaceMode.EXISTING_RCSD_INTERSECTION,
+                selected_rcsdintersection_refs=(INTERSECTION,),
+            ),
+            anchor_result=AnchorResult(
+                state=AnchorState.SUCCESS,
+                associated_rcsd_node_refs=(NODE_1, NODE_2),
+                associated_rcsd_road_refs=(ROAD_1,),
+                selected_main_anchor=NODE_2,
+                road_break_operations=(
+                    RoadBreakOperation(ROAD_1, (0.25, 0.75)),
+                ),
+            ),
+            quality_state=QualityState.NORMAL,
+            review_reason="",
+            planned_topology_signature="topology:b",
+        ),
+    )
+    return JunctionEvidenceExample(
+        junction_key=junction_key,
+        case_key=case_key,
+        semantic_junction_id=semantic_id,
+        geometry_tokens=tokens,
+        object_spans=tuple(
+            ObjectTokenSpan(ref, index, index + 1)
+            for index, ref in enumerate(refs)
+        ),
+        topology_edge_indices=torch.zeros((2, 0), dtype=torch.long),
+        topology_edge_features=torch.zeros((0, 8), dtype=torch.float32),
+        candidate_binding=CandidateBinding(
+            junction_key=junction_key,
+            allowed_object_refs=refs,
+            plans=plans,
+        ),
+    )
+
+
+def _scores_by_ref(refs, logits) -> dict[ObjectRef, float]:
+    return {
+        ref: float(logits[index].detach())
+        for index, ref in enumerate(refs)
+    }
+
+
+def test_encoder_parameter_count_is_in_preregistered_range() -> None:
+    model = JunctionGraphSetModel(dropout=0.0)
+    assert 5_000_000 <= model.encoder.parameter_count <= 8_000_000
+    assert model.encoder.parameter_count == 6_574_720
+
+
+def test_object_order_is_equivariant_and_query_outputs_are_invariant() -> None:
+    torch.manual_seed(17)
+    model = JunctionGraphSetModel(dropout=0.0).eval()
+    first = model((_example(),))
+    second = model((_example(refs=tuple(reversed(ALL_REFS))),))
+
+    assert torch.allclose(first.step1_logits, second.step1_logits, atol=1e-5)
+    assert torch.allclose(first.surface.mode_logits, second.surface.mode_logits, atol=1e-5)
+    assert torch.allclose(first.anchor_state_logits, second.anchor_state_logits, atol=1e-5)
+    assert _scores_by_ref(first.anchor_member_refs, first.anchor_member_logits) == pytest.approx(
+        _scores_by_ref(second.anchor_member_refs, second.anchor_member_logits), abs=1e-5
+    )
+    assert torch.allclose(
+        first.complete_plan.logits,
+        second.complete_plan.logits,
+        atol=1e-5,
+    )
+
+
+def test_variable_and_empty_examples_emit_every_head_without_padding() -> None:
+    model = JunctionGraphSetModel(hidden_dim=64, dropout=0.0).eval()
+    empty = JunctionEvidenceExample.empty(
+        case_key="T04:empty",
+        semantic_junction_id="J-empty",
+    )
+    output = model((_example(), empty))
+
+    assert output.junction_keys == ("T03:fixture|S1", "T04:empty|J-empty")
+    assert tuple(output.step1_logits.shape) == (2, 4)
+    assert tuple(output.surface.mode_logits.shape) == (2, 5)
+    assert tuple(output.anchor_state_logits.shape) == (2, 5)
+    assert tuple(output.quality_logits.shape) == (2, 6)
+    assert output.anchor_member_refs == (NODE_1, NODE_2, ROAD_1)
+    assert tuple(output.anchor_member_logits.shape) == (3,)
+    assert output.node_equivalence.pair_refs == ((NODE_1, NODE_2),)
+    assert output.road_break.road_refs == (ROAD_1,)
+    assert tuple(output.road_break.fractions.shape) == (1,)
+    assert output.complete_plan.plan_ids == ("plan:a", "plan:b")
+    assert output.complete_plan.plan_batch_indices.tolist() == [0, 0]
+    assert tuple(output.complete_plan.logits.shape) == (2,)
+
+
+def test_teacher_conditions_follow_step1_then_surface_then_anchor_order() -> None:
+    torch.manual_seed(23)
+    model = JunctionGraphSetModel(hidden_dim=64, dropout=0.0).eval()
+    first = model(
+        (_example(),),
+        step1_state_indices=torch.tensor((0,), dtype=torch.long),
+        surface_mode_indices=torch.tensor((0,), dtype=torch.long),
+    )
+    changed_step1 = model(
+        (_example(),),
+        step1_state_indices=torch.tensor((1,), dtype=torch.long),
+        surface_mode_indices=torch.tensor((0,), dtype=torch.long),
+    )
+    changed_surface = model(
+        (_example(),),
+        step1_state_indices=torch.tensor((0,), dtype=torch.long),
+        surface_mode_indices=torch.tensor((1,), dtype=torch.long),
+    )
+
+    assert torch.allclose(first.step1_logits, changed_step1.step1_logits)
+    assert not torch.allclose(
+        first.surface.mode_logits,
+        changed_step1.surface.mode_logits,
+    )
+    assert torch.allclose(first.surface.mode_logits, changed_surface.surface.mode_logits)
+    assert not torch.allclose(
+        first.anchor_state_logits,
+        changed_surface.anchor_state_logits,
+    )
+    assert first.conditioned_step1_indices.tolist() == [0]
+    assert first.conditioned_surface_mode_indices.tolist() == [0]
+
+
+def test_multitask_loss_supports_separate_surface_and_anchor_gold() -> None:
+    model = JunctionGraphSetModel(hidden_dim=64, dropout=0.0)
+    output = model((_example(),))
+    overlay = JunctionTrainingOverlay(
+        junction_key="T03:fixture|S1",
+        source_weight=1.0,
+        step1_acceptable_indices=(0,),
+        surface_mode_acceptable_indices=(0, 1),
+        anchor_state_acceptable_indices=(0,),
+        quality_acceptable_indices=(0,),
+        acceptable_complete_plan_ids=("plan:a",),
+        virtual_surface_constraints=(
+            SurfaceConstraint(NODE_1, ConstraintState.REQUIRED, 1.0),
+            SurfaceConstraint(NODE_2, ConstraintState.UNKNOWN, 0.0),
+            SurfaceConstraint(ROAD_1, ConstraintState.FORBIDDEN, 1.0),
+        ),
+        anchor_member_constraints=(
+            SurfaceConstraint(NODE_1, ConstraintState.REQUIRED, 1.0),
+            SurfaceConstraint(NODE_2, ConstraintState.REQUIRED, 1.0),
+            SurfaceConstraint(ROAD_1, ConstraintState.REQUIRED, 1.0),
+        ),
+        acceptable_main_anchor_refs=(NODE_1, NODE_2),
+        pair_constraints=(
+            PairConstraint(NODE_1, NODE_2, ConstraintState.REQUIRED, 1.0),
+        ),
+        road_break_targets=(RoadBreakTarget(ROAD_1, True, 0.5, 1.0),),
+    )
+    losses = compute_multitask_loss(output, (overlay,))
+
+    assert set(losses) == {
+        "step1",
+        "surface_mode",
+        "anchor_state",
+        "quality",
+        "virtual_surface_member",
+        "anchor_member",
+        "main_anchor",
+        "node_equivalence",
+        "road_break_presence",
+        "road_break_fraction",
+        "complete_plan",
+        "total",
+    }
+    assert all(torch.isfinite(loss).item() for loss in losses.values())
+    losses["total"].backward()
+    assert model.encoder.token_projection.weight.grad is not None
+    assert torch.isfinite(model.encoder.token_projection.weight.grad).all().item()
+    assert model.heads.complete_plan_scorer.break_point_encoder[0].weight.grad is not None
+
+
+def test_missing_tasks_and_zero_weight_rows_have_zero_loss() -> None:
+    model = JunctionGraphSetModel(hidden_dim=64, dropout=0.0)
+    output = model((_example(),))
+    overlay = JunctionTrainingOverlay(
+        junction_key="T03:fixture|S1",
+        source_weight=0.0,
+    )
+    losses = compute_multitask_loss(output, (overlay,))
+    assert float(losses["total"].detach()) == 0.0
+
+
+def test_only_frozen_source_weights_are_accepted() -> None:
+    output = JunctionGraphSetModel(hidden_dim=64, dropout=0.0)((_example(),))
+    overlay = JunctionTrainingOverlay(
+        junction_key="T03:fixture|S1",
+        source_weight=0.3,
+    )
+    with pytest.raises(JunctionPredictionError, match="source weight"):
+        compute_multitask_loss(output, (overlay,))

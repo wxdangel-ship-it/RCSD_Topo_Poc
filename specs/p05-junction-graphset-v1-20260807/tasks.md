@@ -27,35 +27,35 @@
 
 ## Phase 2：US2 Stage 防火墙与 surface 分支
 
-- [ ] T009 [Architecture] [US2] 实现物理独立 Step1 DriveZone-only view 与 Step2
+- [x] T009 [Architecture] [US2] 实现物理独立 Step1 DriveZone-only view 与 Step2
   RCSDIntersection view；共享参数不能通过全证据 token 泄漏。
-- [ ] T010 [Testing] [US2] 对 tensor、attention mask、缓存键和梯度路径做 Step1 RCSD
+- [x] T010 [Testing] [US2] 对 tensor、attention mask、缓存键和梯度路径做 Step1 RCSD
   通道物理缺席测试。
-- [ ] T011 [Development] [US2] 实现 existing/virtual/no-valid/ambiguous surface heads 与
+- [x] T011 [Development] [US2] 实现 existing/virtual/no-valid/ambiguous surface heads 与
   REQUIRED/FORBIDDEN/UNKNOWN member loss。
-- [ ] T012 [QA] [US2] 在 1,685 条范围重算约束 ledger：5 条 Review、6 条 reference-only
+- [x] T012 [QA] [US2] 在 1,685 条范围重算约束 ledger：5 条 Review、6 条 reference-only
   UNKNOWN、1,528 条 REQUIRED 可达必须与冻结审计一致。
 
 ## Phase 3：US3 锚定与完整结构方案
 
-- [ ] T013 [Development] [US3] 实现角色分离 Graph/Set encoder、对象内 pooling、RCSD
+- [x] T013 [Development] [US3] 实现角色分离 Graph/Set encoder、对象内 pooling、RCSD
   拓扑消息与 SWSD cross-attention，参数量目标 5–8M。
-- [ ] T014 [Development] [US3] 实现 state/member/main-anchor/node-equivalence/break 多任务
+- [x] T014 [Development] [US3] 实现 state/member/main-anchor/node-equivalence/break 多任务
   heads；UNKNOWN/missing 字段为零 loss，多解使用 acceptable-set loss。
-- [ ] T015 [Development] [US3] 实现候选约束 structured decoder；锚定状态先确定，后续
+- [x] T015 [Development] [US3] 实现候选约束 structured decoder；锚定状态先确定，后续
   分数不能改写失败/歧义或扩充候选。
-- [ ] T016 [Testing] [US3] 覆盖对象顺序等变、变长集合、唯一主锚定、Road 打断顺序、
+- [x] T016 [Testing] [US3] 覆盖对象顺序等变、变长集合、唯一主锚定、Road 打断顺序、
   多解、mask、梯度隔离及候选越界阻断。
 - [ ] T017 [Testing] [US3] 用训练折内冻结小批强 Gold 执行表示 overfit 门；失败则回到
   表征/合同，不启动正式 canary。
 
 ## Phase 4：US4 materializer 与安全链
 
-- [ ] T018 [Development] [US4] 实现只执行已选方案的 surface/break/Node/topology
+- [x] T018 [Development] [US4] 实现只执行已选方案的 surface/break/Node/topology
   materializer，不得另选业务对象。
-- [ ] T019 [Testing] [US4] 覆盖 CRS、几何可解释、Node/Road 连通、打断一致、生成 ID
+- [x] T019 [Testing] [US4] 覆盖 CRS、几何可解释、Node/Road 连通、打断一致、生成 ID
   忽略、silent fix=0 和路口作用域 fallback。
-- [ ] T020 [QA] [US4] 建立危险/未知自动接受、异常 recall、自动/fallback exact 和逐 Case
+- [x] T020 [QA] [US4] 建立危险/未知自动接受、异常 recall、自动/fallback exact 和逐 Case
   最差表现 ledger；任一危险项自动关闭相应发布范围。
 
 ## Phase 5：训练与 free-run 收口

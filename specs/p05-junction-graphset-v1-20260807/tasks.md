@@ -2,14 +2,14 @@
 
 ## Phase 0：启动与阻断审计
 
-- [ ] T001 [Architecture] 冻结 `spec.md`、`data-model.md` 与
+- [x] T001 [Architecture] 冻结 `spec.md`、`data-model.md` 与
   `contracts/junction-result-contract.md` 的字段/阶段可见性哈希。
-- [ ] T002 [Development] 对拟修改和新增的全部 `.py` 文件执行写入前字节数检查；禁止
+- [x] T002 [Development] 对拟修改和新增的全部 `.py` 文件执行写入前字节数检查；禁止
   向当前 >=100KB 文件写入，历史 60KiB 观察线文件保持只读。
-- [ ] T003 [QA] 逐维审计既有 64D/12D 特征，输出
+- [x] T003 [QA] 逐维审计既有 64D/12D 特征，输出
   `raw / derived_geometry / candidate_metadata / forbidden` 分类与 Step1 可见性；未审计
   维度默认关闭。
-- [ ] T004 [Testing] 建立 feature/label/test 三重隔离测试和冻结 105 条 blind test
+- [x] T004 [Testing] 建立 feature/label/test 三重隔离测试和冻结 105 条 blind test
   不可读门禁。
 
 **Checkpoint**：T001–T004 全部通过才允许实现网络链路。

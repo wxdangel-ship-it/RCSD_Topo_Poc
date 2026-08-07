@@ -1,0 +1,28 @@
+{
+  "schema_version": "p05-junction-graphset-v1-contract-freeze-v1",
+  "frozen_at": "2026-08-07",
+  "contract_sha256": {
+    "specs/p05-junction-graphset-v1-20260807/spec.md": "5aa5279390423943dfb3246ccd68fc0ab25c64ae337f45712ade96fb29f90e51",
+    "specs/p05-junction-graphset-v1-20260807/data-model.md": "5e4d5b66037fcc6afa82862e1259355f46cac03feb147a491c0e9d6675667cc9",
+    "specs/p05-junction-graphset-v1-20260807/contracts/junction-result-contract.md": "429b962b629cf3103c0b5e6322f21239c75c73d17d6829b02133fbe34e8c5e17"
+  },
+  "feature_contract": {
+    "schema_version": "junction-graphset-v1-compatibility-features-v1",
+    "typed_dimensions": {
+      "object64": 64,
+      "node_candidate64": 64,
+      "road_bundle64": 64,
+      "member12": 12
+    },
+    "step1_object_indices": [0, 1, 2, 3, 13, 14, 15, 21, 22, 23, 24],
+    "step1_rc_evidence": "DriveZone-only"
+  },
+  "blind_test_seal": {
+    "source_split_file_sha256": "7b9246416c0f3a5d101d89b576e6946f5c2213556dcb451228dd6c7ffb6b5a27",
+    "sealed_test_count": 106,
+    "schema_discovery_quarantine_sample_id": "junction-gold:POC_Data:T04_Error:1010449:6f546311f57ad6aa",
+    "remaining_blind_count": 105,
+    "remaining_blind_identity_sha256": "db46622ac3f04e965beed64b534885c1e79d9728a38295d3684df5dd17db5dc4",
+    "release_task": "T029"
+  }
+}

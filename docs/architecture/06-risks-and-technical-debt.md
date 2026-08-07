@@ -16,7 +16,7 @@
 | 当前合法truth-free结构证据仍不足 | P2-P2-P2-P0 的202维证据使浅层MLP全局零错误，但跨Case fold仍不能同时维持unsafe recall=1和50%覆盖；平均指标会掩盖fold失效 | 当前证据路线正式EVIDENCE_NO_GO；停止在已见Case上继续调参。只有新增推理期信息源或独立预训练表征并使用新冻结验证集才可重启；label-only字段提升必须二次确认 |
 | 直接风险事实被源合同阻断 | P2-P2-P2-P1 的22个风险对象均能由T06/联合真值直接解释，但这些事实产生于label/evaluation层；直接作为输入会形成truth泄漏或把P05降为T06后处理 | 保持22对象强制fallback/Review；只接受在T06之前独立生成且经source-contract审计的等价事实。P2-P1 joint fallback precision仅20.83%~29.81%，不得作硬门 |
 | carrier安全与clue可见性混为unsafe | 正确`KEEP_SWSD`但漏报RealityChangeClue会被误解为错误Road，掩盖真正的覆盖率问题 | P2-P2-P2-P2固定双指标：carrier错误与clue-only漏报分开；现有浅层MLP carrier全局安全但仅2/5 fold通过coverage，仍禁止自动发布 |
-| 单层scorer无法表达Junction依赖与MIXED | 16个Junction依赖对象需要共享Node一致性，1个MIXED候选需要不同于二分类KEEP/USE的选择；继续扩同一safety head无法稳定跨Case | 后续若授权，使用carrier scorer、辅助node evidence/clue head和通用Junction闭包的分层架构；T03–T06保持监督角色，不作推理规则 |
+| 旧 P2 单层 scorer 无法表达 Junction 依赖与完整 Road 方案 | 共享 Node、锚定、所有权、access 和 `ADVANCE_RIGHT` 条件依赖不能由 KEEP/USE 二分类闭合；继续扩同一 safety head 会固化错误边界 | Target A 先用路口专用 Graph/Set 系统从原始数据替代 T07/T03/T04/T05，并通过独立路口门；之后才训练普通/提右方案。所有权联合求解不得扩大 fallback，T07–T06 终态保持 label-only，不作推理规则 |
 | 分层模型的selective calibration仍不稳定 | P2-P3-P0虽使49+2整图全部合法，但seed 311/313稳定错误接受同一Segment，seed 317靠大量clue/fallback避免错误；fold 2三seed覆盖均约0.29 | 当前模型NO-GO；冻结双跑证据，禁止在已见held-out上继续调阈值/挑seed。后续须引入新推理期表征或新冻结验证证据，T03–T06继续保持label-only |
 | P2-P3-P1新增推理证据与独立验证均缺失 | 直接根因只存在于label-only Junction/T06 final事实；51个端到端Case已全部用于OOF，其余本地包不是冻结RoadGraph真值 | 保持`EVIDENCE_NO_GO`；先确认coverage分母，再建设T06前新表征和独立验证合同，禁止把旧Case复用或label-only字段提升伪装成新证据 |
 | expected baseline failure级联污染对象coverage | 旧P2-P3把`T10:609214532/74155468`全Case 1,795/159个Segment覆盖为fallback，混淆Case不可发布与对象评分 | Dataset-P1固定双层合同：Case仍`EXPECTED_FAIL`，只对`failure_group_ids`局部失败；其它Segment保留scorer资格，corrected cascade mask=0 |
@@ -49,7 +49,7 @@
 | P05 JSG-P3 把 RoadGraph 100% 误称模型成功 | strategy proposal carrier 可掩盖 JSG 排序错误 | P3 以 JSG/Review 为主门禁，RoadGraph 只作 safety gate；3 seeds 均须通过 |
 | P05 JSG-P3 上下文或 vocabulary 泄漏 held-out | 小 Case 数下会虚高 OOF | context 零 truth/ID；fold vocabulary、class weight、inner validation 只来自 outer train |
 | P05 旧业务本体污染方案 A | 旧 SegmentConnector、PTO-A 或 Review 指标若继续进入当前合同，会让模型学习改写业务骨架 | 当前 source-of-truth 固定 T01 Segment/Junction/PhysicalMovement；旧 P0–P3 只读历史，current object type 中禁止 SegmentConnector |
-| P05 fallback 扩大或伪成功 | 为提高自动化率可能把局部冲突扩大、或把不合法 SWSD 保留计成功 | 使用确定性最小依赖闭包；fallback 后重新验证独立 Road、引用、方向、CRS、拓扑和 lineage，不通过即 FAIL |
+| P05 fallback 扩大或伪成功 | 为提高自动化率可能把局部冲突沿 Junction—Segment 链扩大、或把不合法 SWSD 保留计成功 | 只执行模型显式有限 directive，并以冻结 T01 校验 Junction 直接关联；Segment 止于自身、Junction 止于直接 Segment，跨边界扩张为硬失败；fallback 后重新验证独立 Road、引用、方向、CRS、拓扑和来源，不通过即 FAIL |
 | P05 expected failure 被误当排除项 | 原始 SWSD 非法 Case若被移出分母，会虚高模型与异常指标 | 两个登记 Case保留在51 Case分母；只允许 RoadGraph 终态为 `EXPECTED_FAIL`，仍要求线索、禁止发布、确定性和全部模型指标 |
 | P05 现实冲突被自动改结构 | 模型或约束可能把冲突解释成 Segment 增删改 | 只输出 RealityChangeClue 并失败/fallback；任何 skeleton mutation hard fail |
 
@@ -59,7 +59,7 @@
 - P01 作为 POC / 成果模块存在，不进入 T09 正式契约。
 - P02 作为武汉局部实验 POC / 成果模块存在；完整输入实验、人工关系和空兼容工件不得被误解释为全量 T07/T03/T04/T05 生产能力。
 - P04 作为 Segment-first Road 直出 POC / 成果模块存在；Phase 0、第一/第二里程碑、冻结 Directional Road V2、High-Precision Road V3 及当前 Segment-first 单 Case 成果均不得被误解释为已实现生产能力。
-- P05 当前采用方案 A，冻结骨架、策略基线、carrier-only 标签、RealityChangeClue 与 fallback 合同已完成；Scheme-A-P1 也已完成并判定 `P05_SCHEME_A_P1_MODEL_NO_GO`。P1 的对象级 Segment/Movement 指标和 RoadGraph 安全通过，但逐对象 truth 在整图 carrier 来源组合上不闭合，accepted coverage 仅 `0.3533~0.3637`，seed 29/43 anomaly precision 也未过门。下一阶段如启动，应先建设 JunctionUnit 级一致 carrier-set truth/candidate compatibility；旧 M1/M2R/R2/PTO/JSG-PTO 继续仅作历史实验，不得接入生产。
+- P05 当前采用 Target A；冻结骨架、历史策略基线、标签作用域、RealityChangeClue 与 fallback 合同继续继承，但 carrier-only 模型边界已被联合锚定—普通完整方案—条件化 `ADVANCE_RIGHT`—Clue/scope—结构化 decoder 取代。当前 decoder 的 Segment/Junction fallback 为有类型有限作用域，禁止通用传递连通组；Scheme-A-P1 的 `MODEL_NO_GO`、accepted coverage `0.3533~0.3637` 和后续 P1–P13 结论只作历史对照；旧 M1/M2R/R2/PTO/JSG-PTO/P1–P13 均不得接入生产或定义当前验收。
 - 旧 `TEXT_QC_BUNDLE` 相关 CLI 入口保留为兼容工具，但不再作为正式协作协议。
 - `docs/doc-governance/audits/` 保留历史审计材料，其中旧文件名和旧口径仅作追溯，不作为当前源事实。
 - T06 当前同时保留 problem registry、visual check、topology audit 和 surface topology audit 多类质量证据；短期接受证据类型较多，后续应沉淀成更稳定的批量质量看板。

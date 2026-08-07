@@ -811,11 +811,27 @@ def _attachment_record(
         {
             "action": str(row.get("action") or ""),
             "action_reason": str(row.get("action_reason") or ""),
+            "generated_rcsd_node_id": str(
+                row.get("generated_rcsd_node_id") or ""
+            ),
+            "projected_gap_m": str(row.get("projected_gap_m") or ""),
+            "rcsd_node_id": str(row.get("rcsd_node_id") or ""),
+            "rcsd_road_id": str(row.get("rcsd_road_id") or ""),
             "replacement_segment_ids": _parse_list(
                 row.get("replacement_segment_ids")
             ),
+            "retained_in_frcsd": _as_bool(
+                row.get("retained_in_frcsd")
+            ),
             "swsd_advance_road_id": str(
                 row.get("swsd_advance_road_id") or ""
+            ),
+            "swsd_node_id": str(row.get("swsd_node_id") or ""),
+            "swsd_node_mainnodeid_after": str(
+                row.get("swsd_node_mainnodeid_after") or ""
+            ),
+            "swsd_node_mainnodeid_before": str(
+                row.get("swsd_node_mainnodeid_before") or ""
             ),
         }
         for row in matched_attachment
@@ -825,11 +841,32 @@ def _attachment_record(
             "action": str(row.get("action") or ""),
             "action_reason": str(row.get("action_reason") or ""),
             "audit_status": str(row.get("audit_status") or ""),
+            "endpoint_degree": str(row.get("endpoint_degree") or ""),
+            "endpoint_index": str(row.get("endpoint_index") or ""),
+            "generated_swsd_node_id": str(
+                row.get("generated_swsd_node_id") or ""
+            ),
+            "projected_gap_m": str(row.get("projected_gap_m") or ""),
             "rcsd_advance_road_id": str(
                 row.get("rcsd_advance_road_id") or ""
             ),
+            "rcsd_endpoint_node_id": str(
+                row.get("rcsd_endpoint_node_id") or ""
+            ),
             "replacement_segment_ids": _parse_list(
                 row.get("replacement_segment_ids")
+            ),
+            "target_rcsd_node_id": str(
+                row.get("target_rcsd_node_id") or ""
+            ),
+            "target_rcsd_road_id": str(
+                row.get("target_rcsd_road_id") or ""
+            ),
+            "target_road_source": str(
+                row.get("target_road_source") or ""
+            ),
+            "target_swsd_road_id": str(
+                row.get("target_swsd_road_id") or ""
             ),
         }
         for row in matched_closure

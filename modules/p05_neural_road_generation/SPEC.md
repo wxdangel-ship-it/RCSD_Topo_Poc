@@ -2,9 +2,201 @@
 
 ## 1. 模块定位
 
-P05 是 `Active POC / 成果模块`。其长期研究目标是用神经网络从业务证据直接生成符合 T06 Step3 语义的 F-RCSD Road/Node；它不替代 T01-T06 正式业务契约，也不把实验指标提升为生产质量口径。
+P05 是 `Active POC / 成果模块`。其长期研究目标是用神经网络从业务证据直接生成符合 T06 Step3 语义的 F-RCSD Road/Node；它不修改 T01–T12 正式业务契约或现有实现，也不把实验指标提升为生产质量口径。
 
-当前正式研究路线是 2026-07-22 授权的方案 A：冻结 T01 Segment 集合、Junction—Segment 关系和 PhysicalMovement 存在性，模型只负责 carrier 候选评分/排序、Road/Node carrier 选择、异常线索和失败概率。模型不得新增、删除、合并、拆分 Segment，不得改变 Junction 归属或 PhysicalMovement 存在性，不得使用 PTO-A 改写业务骨架。
+当前正式研究路线是 2026-07-25 授权、2026-07-27 修正 fallback 作用域并于 2026-08-04 扩展 T07 边界的 **Target A：T07–T06 联合业务决策与约束 RoadGraph 生成**，完整合同位于 `specs/p05-target-a-joint-roadgraph-20260725/`。T01 Segment 集合、Junction—Segment 关系、SegmentAccess 和 PhysicalMovement 存在性冻结，T10 继续负责数据与编排。模型先从原始 DriveZone、RCSDIntersection、SWSD/RCSD Road/Node 学习 T07/T03/T04/T05 路口 evidence、surface、relation、graph-consumable/junctionization 与完整锚定对象；路口阶段独立通过零危险门后，才允许训练普通 Segment、条件化 ADVANCE_RIGHT、RealityChangeClue 与 fallback。旧 T07–T06 策略在 Target A 推理期完全退出，终态只作训练标签和评价；T07 Step1 仍严格 DriveZone-only，RCSDIntersection 从模型内 Step2 才可见。第一版不启用 Movement、不接生产，也不修改 T01–T12 实现或接口。
+
+2026-08-06 已完成下一阶段训练前的完整 `JunctionResult` 合同与 Oracle 可表达性
+审计。当前路口阶段以唯一 SWSD 语义路口及其动态业务依赖子图为 forward 单元，输出
+面方案、完整 RCSD Node/Road 锚定集合、唯一主锚定、Road 打断操作、物化后拓扑、
+质量状态与 ABSTAIN。虚拟面不要求复现旧规则面几何或 exact 成员集合，而按
+`REQUIRED / FORBIDDEN / UNKNOWN` 三态监督：1,685 条适用记录中 1,680 条可监督，
+5 条冲突隔离 Review；成功锚定记录 REQUIRED 候选可达 `1,528/1,528=100%`，完整
+结果 Oracle 可表达 `1,621/1,685=96.20%`。该结论只授权进入新网络结构实现，不是
+模型精度或安全发布 GO。下一代模型采用角色分离的 Graph/Set encoder、分阶段多任务
+head 与候选约束 structured decoder；T07 Step1 仍保持 DriveZone-only 物理防火墙。
+
+Target A 不是自由重建业务骨架。模型不得新增、删除、合并、拆分或重分配 T01 Segment/Junction，不得改变 PhysicalMovement 存在性，不得使用 PTO-A 改写骨架。语义路口锚定是模型内前置硬门禁，多候选不能由后续 Road 分数代选；锚定失败或歧义必须回退。普通 Segment 输出完整 Road 清单、业务角色、所有权、access、方向、条件化 Node 和打断配方；`KEEP_SWSD` 是正向业务决定，`ABSTAIN -> fallback` 单独统计。ADVANCE_RIGHT 只能在相邻普通 Segment 最终 access 锁定后条件化解码，不能反向改变普通 Segment。确定性层只执行模型给出的 split/clip/reverse/splice、ID/schema/CRS 写出和通用合法性校验，不重新作业务判断。
+
+锚定结构 decoder 以共享 object encoder 输出、原子 RCSD Node/Road
+成员、SWSD/RCSD arm 摘要和原始端点拓扑边为推理输入，联合输出
+`success_required_rcsd_junction / rcsd_present_not_junction /
+no_related_rcsd` 证据角色、Node/Road 类型、cardinality 与完整成员集合。
+训练标签与推理 batch 物理分离；多解标签按任一可接受的类型、数量和完整
+成员集合计算，不压成单解。类型只能在现有原子候选类型中选择。cardinality
+阈值解码与期望下界不一致时，安全门禁只能把已有自动 proposal 降级为
+`ABSTAIN`，不得改写锚定对象、Road 集合、候选作用域、业务骨架或 fallback
+作用域。
+
+一条最终 RCSD Road 片段只能由一个正式 Segment 所有；无 owner Road 只用于 Junction 内部或多 Segment connectivity。RCSD 主干允许由一条或多条 RCSD Road/片段组成。普通 Segment 禁止通用 HYBRID，唯一允许的普通 Segment 混源 carrier 是 T06 已定义的“主干 RCSD 替换、附属/侧向 SWSD 保留”。ADVANCE_RIGHT 的 `MIXED_SPLICE` 是独立的条件化几何方案，不属于通用 HYBRID：仅当两侧相邻普通 Segment 最终 access Road 来源一侧为 RCSD、另一侧为 SWSD 时，模型才可输出 RCSD Road、SWSD Road、两侧保留区间和 splice 位置；最终 Road role 仍为 `ADVANCE_RIGHT`，所有权仍属于该提右 Segment，确定性层只执行已选配方。任一对象、区间或位置不明确时只回退该 ADVANCE_RIGHT Segment。Segment 内部 RCSD 连接树满足“聚合后为树、所有叶都挂接当前 Segment 选择的 RCSD 主干、无外部叶”时，其 Road 同时进入 `frcsd_road_ids` 与 `owned_frcsd_road_ids`。
+
+截至 2026-07-29，Target A 已完成锚定、普通 Segment、相邻 ordinary
+source/access 条件化 AdvanceRight、有限作用域 decoder，以及 whole-Road、
+端点复用和独立 `MIXED_SPLICE` 的确定性 materializer 研究实现。
+AdvanceRight 链路已从 P13 的 candidate-local scorer 升级为：先锁定两侧
+普通 Segment 的 `SWSD / RCSD / UNRESOLVED`、完整 Road 清单和 RCSD
+access，再选择完整提右 Road 组合、父 Road、打断/片段、挂接和 splice
+recipe；后层不能反向改变普通 Segment。
+
+v218 在同一 1,221,363 参数 shared encoder 上联合微调 AdvanceRight
+carrier 与 geometry heads，严格 OOF complete plan+geometry raw
+exact=`0.177215`、geometry action exact=`0.268519`、raw end-to-end
+complete exact=`0.006329`，自动接受仍为 `0/474`。该轮普通 Segment
+完整 Road/access 是 forward 前固定的 OOF 条件，474 个 AdvanceRight
+中只有 3 个两侧 ordinary `Road set + source + access` 同时正确，因此
+v218 证明局部联合梯度有效，但不是 anchor/ordinary/AdvanceRight 全链
+端到端联合模型。v219–v222 进一步把普通 Segment 的完整 Road 清单与
+AdvanceRight access 父 Road 拆成共享 encoder 上的独立业务角色，并复用
+普通 Segment 预训练 checkpoint。当前业务合法的 v222 以锁定 source
+约束 Road 候选：847 个有监督 ordinary 侧的 Road-set exact=`0.081464`，
+948 个侧的 source exact=`0.907173`，563 个 RCSD 侧的 access exact=
+`0.948490`；两侧 ordinary exact 与 raw end-to-end complete exact 均为
+`0.006329`，自动接受仍为 `0/474`。这说明 source/access 已不是首要瓶颈，
+完整 ordinary Road 清单才是当前决定性约束；下一轮应在全部普通 Segment
+监督上预训练 role-aware Road encoder，再以较低学习率接入 access、
+AdvanceRight 与 geometry heads，而不是继续局部调整 AdvanceRight 或
+`MIXED_SPLICE` scorer。v223–v228 已完成该验证：v223 以 v142 ordinary
+预训练和 `0.1×` 学习率把 Road-set/端到端 exact 提升至
+`0.095632/0.008439`；跨 anchor-graph 结构迁移 v175 在同 seed v226
+退化为 `0.075561`，已淘汰。v227r1 在与 joint 相同的 unordered-set
+forward 上用 3,160 个普通 Segment 训练 ownership/role 辅助头，ordinary
+总体 complete exact=`0.610443`，低于 v142 的 `0.625712`；但同 seed
+接入的 v228 在 847 个有监督相邻侧上 Road-set exact=`0.102715`，raw
+end-to-end exact=`0.014768`（7/474）。其 source/access/AR plan exact
+分别为 `0.897679/0.946714/0.510549`，自动接受仍为 `0/474`，因此只保留
+same-forward 角色预训练的弱正向资产，下一轮转向普通 Segment 大 Road
+bundle 的数量与结构完整性，不再扫描角色 loss 或提右 scorer。
+v105r1 的全部 8,863 个冻结 Segment 所有权/有限 fallback
+审计仍保留为历史诊断：自动 ordinary=`855`、AdvanceRight=`0`，重复 Road
+所有权与骨架 mutation 均为零，但 577 个强标签可评价自动对象中仍有 84 个
+业务错误。T033–T035 仍为诊断性 **NO_GO**，不接生产；完整结果见 Target A
+`validation-summary.md`。
+
+截至 2026-07-30，v229–v234 已把普通 Segment 从独立 Road membership
+升级为 order-free 结构化 set expansion。v231/v233 的完整 Road set
+exact 为 `0.713291/0.707911`，但 10+ Road Segment exact 仅
+`0.184932/0.219178`，失败主要来自提前 STOP 和漏选。首次 v234 虽以两个
+strict Case-OOF seed 的业务状态与完整 Road set 一致性作为发布门，但错误
+放行 26 个 required-anchor 失败的 USE，已废止。修正后的
+v234r1 要求 KEEP/USE 均服从锚定前置门禁，并要求两个 seed 对完整 Road set、
+逐 Road ownership 和业务角色一致；自动接受 `113/3160`，全部为正向 KEEP，
+coverage=`0.035759`、selected business truth `113/113` 正确，
+USE=`0`、unsafe/unverifiable automatic=`0`。
+
+v235r2–v240r1 随后把 AdvanceRight 条件输入改为相邻普通 Segment 的最终
+access Road 状态，显式区分正向 KEEP 与 fallback SWSD。两个独立 strict
+OOF seed 只在锁定后的完整方案一致时发布；v240r1 自动接受 `414/474`，
+coverage=`0.873418`、完整方案 exact=`1.0`、unsafe automatic=`0`，
+且 414 条全部为 `SWSD_ONLY`。v241r1 对 51 Case 执行最终状态 materializer：
+414/414 提右决定可物化，Road/Node/attachment 为
+`14,193/12,745/868`，hard failure、skeleton mutation、silent fix、
+content repair 均为 0；ordinary USE/preflight fallback 均为 0，45 个既有
+T01/source blocker 保持直接对象局部阻断。该结果只证明 SWSD-only 提右
+条件路径局部 PASS；普通 USE 的完整执行、
+RCSD_ONLY/MIXED_SPLICE、Clue/scope 和完整 RoadGraph 仍未通过，Target A
+总体继续 **NO_GO**、不接生产。下一轮冻结该局部 PASS，集中治理普通
+Segment 大 Road bundle 的结构化完整性。
+
+`621989990` 人工可锚定裁决触发了 required-anchor 数据完整性复核。按当前
+51 Case inventory 和精确目标 Segment 重建的 v107 有 5,148 个锚定样本，
+比旧 v19 多 584 个既有 Case 内 required anchors；旧 4,564 个样本无删除，
+排除直接依赖集合后的 truth-free 核心特征零漂移，但 2,145 个样本的
+Segment 内直接依赖集合得到补全。因此 v50–v105 保留为历史诊断，不能再
+作为当前完整监督作用域的最终性能结论。相同配置/seed 重训的 v109 虽将
+anchor gate accuracy 提升到 `0.959889`、accepted coverage 提升到
+`0.164918`。v110 将 32 个 unsafe-to-release 正式拆为 `17` 个有监督
+错误和 `15` 个不可验证自动项；后者含 14 个
+`relation_record_absent` 真值未知对象及 1 个 exact candidate 被 mask
+的 SUCCESS，不得补造为失败或对象错误。`621989990` 自身折外预测为 `NO_EVIDENCE`，
+被 independent gate 安全拒绝为 `ABSTAIN`。T030d 继续 **NO_GO**，
+因此未继续重训 downstream ordinary/AdvanceRight。
+
+T032-R2 随后在 v111 完整继承 `621989990`、已证明无证据、
+T11 `no_valid_relation` 和 `relation_record_absent` 三态政策后，完成
+200,963 参数共享 anchor/ordinary gate 的 strict-nested OOF。锚定对象
+选择保持独立，Segment loss 只约束 required-anchor 可判定性和有限
+Segment fallback，不能反向选择对象。v113 以共享 gate 与独立对象模型
+置信度的保守合取接受 1,072 个 anchor，其中 safe=`1,019`、
+supervised error=`25`、unverifiable=`28`；接受 835 个普通 Segment，
+其中 safe=`808`、supervised error=`5`、unverifiable=`22`。与 v110
+取交集仍有 15+9 个 anchor 危险项及 4+8 个 Segment 危险项，且覆盖更低。
+因此 T032-R2 实现与单 seed 诊断已完成，但发布门仍为 **NO_GO**，不向
+Road/carrier、AdvanceRight 或完整 RoadGraph 下游释放。
+
+T012 已于 2026-07-29 完成。旧 14,415 个未经证明的
+`CORRIDOR_COMPONENT` 候选已退出；v114 改为保留全 MAIN 连通分量候选，
+并只对“物理并行 Road 聚合后为单树、所有叶均挂接当前 MAIN、无外部叶”
+的子图输出 `INTERNAL_CONNECTOR_TREE`。51 Case 共生成 6,651 个内部连接
+树候选，逐候选 hard-valid、叶/挂接、所有权与物理边计数全部通过，
+`EPSG:3857` 51/51、`silent_fix=false`、骨架 mutation=0。完整 Road
+清单可达性由 4,409/5,829 增为 4,410/5,829，旧 9 个完整清单零丢失。
+当前只有
+`T10-Error-2:986209_996008_1 / 986209_996008_1`
+这一条可达标签必须包含内部连接 Road；T06 提供完整 Road 清单监督，
+MAIN/INTERNAL_CONNECTOR 角色由已确认树形条件证明，现有 Case 没有第二条
+同类可达正例。v120 在该 held-out 对象仍漏选内部连接 Road，v119 的
+required-anchor 发布门将其拒绝；共享 gate 仍有 25 个 anchor 监督错误和
+5 个 Segment 监督错误，因此继续 **NO_GO**。`621989990` 仍是人工确认
+应成功锚定的正标签；当前模型 `NO_EVIDENCE -> ABSTAIN` 只算安全 fallback，
+不能改写业务真值或计为正向 KEEP。
+
+截至 2026-07-28 的阶段性结果已完成锚定与 T032 普通 Segment 的严格单 seed
+Case-OOF 研究实现。普通 Segment decoder 显式先输出
+`KEEP_SWSD / USE_RCSD / ABSTAIN` 关键业务状态，再在该状态内选择完整 Road
+清单；状态内归一化不能替代完整 carrier 输出。当前按安全优先选择的结构基线为
+v45：候选可达且通过锚定条件的完整 plan exact=`0.936338`、
+KEEP=`0.970816`、USE=`0.797847`、自动决策覆盖=`0.989618`，
+最差 fold=`0.850498`、最差 USE fold=`0.756881`。v45 继承 v44 的逐
+Road 成员集合并限制其只参与业务状态内的 Road 清单排序，同时增加对称的
+SWSD 两端 arm ↔ 候选 Road 端点匹配，让距离、叶端点、方向对齐和 OOF
+锚定关系以受控残差参与业务状态与 bundle 选择。相对 v41，v45 修复
+`117`、回归 `65`，净改善 `52`；`within-USE_RCSD` 错误由 `67` 降到
+`34`，六个主要 T10 Case 均净改善或持平。但仍有 `267` 个自动完整 plan
+错误，且 v45 只完成单 seed 严格 OOF。T030d 锚定
+零危险门与 ordinary 发布门均为 `NO_GO`；
+该阶段当时未启动 AdvanceRight、联合 fine-tuning、完整 RoadGraph 发布或生产接入；
+后续已按 2026-07-29 状态继续研究，但仍未取得发布授权。
+
+v46 进一步把每个 OOF 锚定结果区分为当前 Segment 端点对应的 local anchor
+和另一端的 foreign anchor。它将 exact 提升到 `0.936576`、USE 提升到
+`0.813397`、最差 fold 提升到 `0.857143`，但 KEEP 降到 `0.967242`；
+相对 v45 仅修复 `41`、回归 `40`，净改善 `1`。更重要的是危险方向
+`KEEP_SWSD -> USE_RCSD` 从 `98` 增至 `110`，而
+`USE_RCSD -> KEEP_SWSD` 从 `135` 降至 `118`。因此 local/foreign
+关系证明了端点条件化证据能够移动 USE/KEEP 边界，但 v46 不满足安全优先，
+只保留为诊断实验，不替代 v45。
+
+v47 在不改变 v45 锚定或 carrier 排序的前提下增加 14,913 参数的
+strict-nested safety head，只允许把自动 `USE_RCSD` 改成 `ABSTAIN`。
+它从 798 个 raw USE 中接受 189 个，其中 180 个正确、9 个危险，
+accepted USE coverage=`0.236842`，仍为 `NO_GO`。v48 再加入来自全量
+8,863 Segment truth-free candidate store 的共享语义路口邻接统计，
+接受 217 个 USE、危险增至 14，亦为 `NO_GO`。现有 8,863 条 plan
+标签只有 5 条具有 Clue/fallback-scope 监督；4,238 个普通 Segment
+训练样本中只有 4 条（3 个 `clue=false/NONE`、1 个
+`clue=true/JUNCTION`）。因此当前标签只能监督最终 Road 方案，不能可靠
+辨识“KEEP 的业务原因、现实冲突与影响对象”。该缺口必须由明确的
+Clue/scope 人工或正式可审计标签补足，不能从 KEEP 终态反推，也不能用
+post-hoc safety 阈值补造。
+
+为避免把“缺监督”泛化成要求新增 Case，当前已从既有 51 Case 生成
+`target_a_clue_scope_adjudication_20260728_02` 标签准备包：363 个待裁决
+普通 Segment 覆盖 22 个 Case，其中 P0 safety 危险 20、P1 carrier
+错误 247、P1 锚定 fallback 44、匹配正确对照 52。5 条既有用户人工
+裁决被单独锁定继承。准备包只展示现有标签、v45/v47/v48 证据、required
+anchor 及直接相关普通 Segment；363 条新裁决均保持
+`UNKNOWN/PENDING`，T06/T11 自动映射为 `0`。其中的
+`carrier_verdict / keep_reason / clue / fallback_scope /
+affected_segment_ids` 仍是待用户确认的补标草案，未进入模型训练或正式
+业务源事实。
+
+队列已进一步按缺失监督拆分：363 条都需要完整 carrier plan 复核，其中
+128 条 KEEP 对象需要 `keep_reason + Clue + scope`，44 条需要锚定结果
+复核。第一批只含 P0 safety 危险与匹配正确对照，共 72 条 carrier plan；
+其中 47 条同时需要 KEEP/Clue/scope。剩余 291 条单独保留，第一批确认前
+不进入裁决或训练。
+
+Target A 的硬安全门为 unsafe auto RCSD、Review auto、unreachable auto、skeleton mutation、silent fix 和新增 RoadGraph hard failure全部为零，并保持至少 49 `LEGAL` + 2 `EXPECTED_FAIL` 的历史安全边界。正式评价同时比较完整现有策略，分别报告自动决策整图 exact 与 fallback 后最终 RoadGraph exact。现有 P1–P13、M2R、R2、PTO/JSG 结论继续作为历史实验事实；其中 P13-P0 只证明局部 AdvanceRight carrier scorer `SELECTION_NO_GO`，不再定义当前模型范围。
 
 方案 A baseline 已于 2026-07-22 完成。按“Segment 不连带 Movement”口径重跑的正式 Run A/B 为 `p05_scheme_a_baseline_20260722_12/_13`：51 Case、8,863 Segment、474 ADVANCE_RIGHT、24,779 PhysicalMovement 全量覆盖，骨架 mutation 为零，五类业务 signature 完全一致；修正前 `_10/_11` 只保留为历史证据。该完成状态只放行冻结骨架下的 carrier 数据、clue 和 fallback 合同，不代表神经 scorer 已训练或可接入生产。
 
@@ -307,7 +499,7 @@ PTO-A/PTO-B 三个 seed 均 51/51 `OPTIMAL`，Road/Node/direction/source/SPLIT �
 
 ## 9.10 方案 A Carrier 基线目标
 
-方案 A 首阶段在冻结 51 Case 上重建完整 T01 Segment 骨架、当前策略 `SUCCESS_DIRECT/SUCCESS_WITH_FALLBACK/FAIL` 基线、Segment/Movement carrier-only 标签、RealityChangeClue 和最小依赖闭包 fallback。全部 `advance_right` 必须作为 Segment 表达，当前 `SegmentConnector` 数为零；策略和标签覆盖率、lineage 完整率为 100%，骨架 mutation、content repair 和 silent fix 为零。两轮独立 run 的 skeleton/baseline/label/clue/fallback signature 必须一致。本阶段不训练模型，完成条件以对应 SpecKit 为准。
+方案 A 历史首阶段在冻结 51 Case 上重建完整 T01 Segment 骨架、当时策略 `SUCCESS_DIRECT/SUCCESS_WITH_FALLBACK/FAIL` 基线、Segment/Movement carrier-only 标签、RealityChangeClue 和当时登记的最小依赖 fallback。全部 `advance_right` 必须作为 Segment 表达，当前 `SegmentConnector` 数为零；策略和标签覆盖率、来源完整率为 100%，骨架 mutation、content repair 和 silent fix 为零。两轮独立 run 的 skeleton/baseline/label/clue/fallback signature 必须一致。该段只记录历史 P1 工件，不授权 Target A 采用传递闭包；Target A 当前作用域以本文件开头的显式有限 directive 为准。本阶段不训练模型，完成条件以对应 SpecKit 为准。
 
 ## 9.11 Scheme-A-P1 已完成结论
 
@@ -590,3 +782,396 @@ candidate-only模型，不否定R1候选GO或神经网络整体。未经另行�
 - Road/Node evaluator 覆盖 CRS、属性、端点、几何、拓扑与性能。
 - 通过 truth integrity gate 的可用样本 Oracle 满分；异常 truth 隔离率与原因明确，至少五类定向破坏均能被识别。
 - M0 summary 明确样本量、有效任务量、异常量、fold 分布和资源消耗。
+
+## 11. Target A T014 materializer 当前状态（2026-07-29）
+
+Target A 已实现 typed `DecisionLedger -> RoadGraph` 确定性执行器。模型/ledger
+必须显式给出 source Road、Road 角色与 owner、方向、slice/break、reverse、
+join mode、Node recipe、完整 access binding 和 attachment position；执行器只做
+稳定 ID、split/clip/reverse/splice、Node/Road 写出和通用 hard validation，
+不得选择最近 Road、补造 access、改变骨架、扩大 fallback 或修复不连续几何。
+正向 `KEEP_SWSD` 与 `ABSTAIN -> fallback SWSD` 分开输出。
+
+普通 Segment access 的正式执行单位已修正为一个冻结 access 下的完整
+Road/Node 集合，不要求唯一 Road；access 可来自 `pair_node`、`junc_node`
+或 T01 `source_segment_access/target_segment_access` 明确给出的
+AdvanceRight 内部挂接 Node。只有 AdvanceRight 的 RCSD 侧附件才必须从
+已选 access 集合中再指定唯一父 Road 片段、打断位置和共享最终 Node；
+SWSD fallback 侧允许复用冻结 access Node/JunctionUnit。
+
+v132 对 51 Case 严格物化 `8,818/8,863` 个冻结 Segment、14,193 条
+Road；51/51 Case 都能物化其依赖完整子图，45/51 可完整物化冻结
+skeleton。剩余 45 个局部 blocker 仅含 38 个 `FROZEN_ACCESS_INVALID`、
+2 个 `FROZEN_INDEPENDENT_ROAD_INVALID` 和 5 个 owned
+`MultiLineString` 不连续 Road；`STANDARD_LEDGER_UNRESOLVED=0`、
+`ADVANCE_RIGHT_LEDGER_UNRESOLVED=0`。旧 v122/v123 的 1,243 个普通
+Segment 与 431 个 AdvanceRight blocker 来自错误的“唯一 access Road”
+假设，已被 v132 推翻，不得再解释为标签不足。审计为 CRS
+metric/consistent 51/51，materialization hard failure=0，
+`skeleton_mutation=0`、`silent_fix=false`、`content_repair=false`。完整 P05
+回归 `500 passed`，`compileall` 通过。materializer 的最大 Case wall 由重复全图
+Road/CRS 扫描修正为 owner 索引和 canonical CRS cache 后的 `47.26s`，
+51 Case v132 wall=`185.37s`。这仍是逐 Case 审计器；城市推理必须一次
+加载只读 Road/Node 索引、内存传递依赖子图并最终一次写出。
+
+普通 access 训练标签也已按完整集合重解释。v126 的 2,904 个 access 对象中，
+2,000 个有可解析集合，1,972 个需要同时输出多条最终 Road，只有 1 个存在
+真正多解；原 1,665 个可训练对象及权重全部保留。旧单 Road v93
+`raw exact≈0.778` 不能再解释为完整 access 正确率。首轮 253,121 参数
+set decoder v127 的严格 5-fold OOF 完整集合 exact=`0.339002`、
+mean set F1=`0.639804`、teacher exact=`0.586168`，23 个自动接受中仍有
+4 个危险项，结论 **NO_GO**。
+
+v135/v136 在同一 882 个 example 上加入 Set Transformer、显式集合大小头和
+严格 top-k decoder。只用 teacher view 的 v135 OOF exact=`0.337868`；
+teacher+strict-OOF 双视图训练、仅以 OOF view 早停的 v136 将 OOF 完整集合
+exact 提升到 `0.433107`、mean set F1=`0.742805`、集合大小
+exact=`0.713152`，参数量 446,737。上游 release-eligible 仍只有 25 个，
+唯一自动接受项错误，故 v136 仍为 **NO_GO**，正式安全执行必须全部 fallback。
+
+AdvanceRight 挂接监督已按 T06 最终 access Road 口径重建。1,481 条 T06
+动作中，725 条仅为确定性 Node 规范化，不是模型目标；756 条 Road
+打断/端点复用动作中，619 条能在正式关系范围内唯一映射为“相邻普通
+Segment 的最终 access Road 片段 + 挂接端点”强监督，76 条只保留 0.3
+弱辅助监督，61 条因依赖未解析、相邻 Segment 最终非 RCSD 或 carrier
+缺失而屏蔽。619 条强监督中 563 条在冻结推理候选中精确可达。基于这
+563 条的 v137 side attachment scorer 使用 144D 推理期特征、230,081
+参数，严格 5-fold Case-OOF exact=`0.943162`，source=`0.942029`、
+target=`0.944251`、最差 Case=`0.895349`。但其上游完整 access
+release-ready 为 0，自动接受仍为 0；该结果只证明挂接候选判别力，
+不代表完整 AdvanceRight 或 RoadGraph 已可发布。
+
+T014 仍未关闭：自动 RCSD ledger 的零危险发布、56 条 AdvanceRight
+强监督候选不可达、普通完整 Road/access 与 AdvanceRight Road/geometry
+同一 forward 的联合解码、真实自动提右 materialization、城市级一次写出和
+最终 RoadGraph exact 尚未完成，不接生产。独立 `MIXED_SPLICE` 已完成
+合成整图执行和训练输出绑定，但不得据此替代真实 Case 验收。
+
+## 12. Target A ordinary 结构化方案选择当前状态（2026-07-30）
+
+v244r1 在严格 fold2 canary 中以三动作结构化 decoder 输出完整 Road set，
+complete exact=`0.701754`、Road macro F1=`0.847126`、unsafe automatic=0；
+10+ Road exact 仅 `2/16`，不能扩完整 OOF。v245 truth-free beam
+oracle@16=`0.897661`，但 10+ Road 仅 `7/16`，说明正确方案多数可提出，
+仍有长集合候选不可达和方案选择两类问题。
+
+v246 32D 完整方案 reranker 没有提高 raw exact，但把 fold2 零危险自动覆盖
+提高到 `113/342=0.330409`。v247 直接加入 672D graph/Road embedding 后
+跨 Case 退化为 raw exact=`0.611111`、10+ Road=`0/16`，不得扩模型或完整
+OOF。下一步只能研究 case-invariant 的 ownership、角色、access 和端点关系
+方案比较；truth cardinality、T03–T06 终态和 held-out 标签仍不得作为推理输入。
+
+v248–v255 已完成该关系方案比较。v249 结构化能量 raw exact 提高到
+`0.716374`，但 10+ Road 仍为 `2/16` 且出现 1 条 unsafe automatic；
+v253 relation-only same-plan pair F1 达到 `0.654739`，却没有改善完整方案
+选择。v254/v255 改用 listwise complete-plan loss 后，必须把正确 ABSTAIN 与
+carrier 方案 exact 分开：reachable-plan exact 分别为
+`241/306=0.787582`、`239/306=0.781046`，10+ Road reachable exact 仅
+`1/7`、`2/7`，零危险自动覆盖分别为 `90/342`、`97/342`，均未超过 v246。
+
+v250 多视图 truth-free 方案并集的 oracle 可达为 `311/342=0.909357`，但与
+当前锚定 hard gate 相交后只有 `214/342=0.625731`。因此 Target A 的下一阶段
+不是继续独立调 ordinary decoder，而是 Case 级 combined batch：同一 forward
+编码 SWSD 语义路口锚定候选与普通 Segment 完整 Road 方案，使锚定与 carrier
+监督共享 encoder；推理时锚定头仍须独立输出唯一对象或歧义/无有效关系状态，
+carrier 分数不得反向选择、修改或绕过锚定结果。
+
+## 13. Target A 锚定—ordinary 同一 forward 当前状态（2026-07-30）
+
+目标 A 的普通 Segment 网络 forward 单位正式采用“一个 focal Segment +
+全部 required semantic anchors + 每个 required anchor 的一跳直接锚定依赖 +
+该 Segment 的完整 Road plan 候选”。不得把城市、完整 Case 或共享 Road/Node
+的传递闭包作为单次 forward 单位；城市文件只读索引应一次加载，业务子图在内存
+中组装，最终结果一次写出。当前 4,196 个真实子图的对象数 P95/max 为
+`14/47`，而完整 Case 传递闭包最大达到 3,117 个对象。
+
+锚定头和 carrier 头可以共享 evidence encoder，但消息方向和发布语义必须满足：
+
+- ordinary 对象不能向 anchor 决策发送消息；同一 anchor 在不同 focal Segment
+  中的 status/candidate 输出必须一致；
+- 锚定头独立输出唯一 RCSD Node/Road bundle、`NO_EVIDENCE`、`AMBIGUOUS`
+  或 `ABSTAIN`；carrier 和 RoadGraph decoder 均不得替它选择对象；
+- carrier 与锚定可以共享 context encoder，但原始锚定 evidence 分支必须
+  保留；在证明不降低 relation/type、零危险与跨 Case 稳定性之前，
+  carrier loss 不得直接改写锚定语义 encoder，更不能绕过或修改锚定离散
+  结果；
+- 冻结条件桥只允许把原始 object evidence 与锚定模型的
+  relation/type/cardinality 摘要传给 ordinary decoder；锚定 teacher 在
+  carrier forward 中必须 `eval + no_grad`，后层不得借条件化重新选择或
+  改写 anchor proposal；
+- `USE_RCSD` 要求全部 required anchors 唯一成功；
+- 只有经独立安全证明的 `NO_EVIDENCE` 才允许 `KEEP_SWSD` 在没有具体 RCSD
+  anchor 对象时成为正向业务结果；
+- `relation_record_absent` 只表示真值未知，不能自动转换为成功、失败、
+  `NO_EVIDENCE`、`KEEP_SWSD` 或 `RealityChangeClue`。
+
+v257r3 首次完成上述同一 forward 严格 fold2 训练，参数量 18,415,507；
+anchor prediction inconsistency=`0`，concrete anchor exact=
+`210/277=0.758123`，all-plan exact=`533/603=0.883914`，但安全自动正确仅
+`23/603` 且有 1 个 Review 自动项。直接或辅助 anchor-plan compatibility 的
+v258/v259 均降低完整 plan exact，路线停止。
+
+v260r1 补上正向 `NO_EVIDENCE -> KEEP_SWSD` 后，outer truth-ready 从
+`212/603` 增至 `235/603`，但单独 status 概率的无证据证明产生 1 个 outer
+危险项。v262 将无证据分数限制为
+`min(P(NO_EVIDENCE), 1-P(unique-anchor gate success))`，inner-only 校准后
+unsafe/review 均为 0；all-plan exact=`522/603=0.865672`，ready free-plan
+exact=`184/235=0.782979`，concrete anchor exact=`207/277=0.747292`，
+安全自动正确仅 `5/603=0.008292`。正式结论仍是
+**`TARGET_A_CASE_JOINT_NO_GO`**，不得扩完整 OOF 或接生产。
+
+当前 fold2 有 198 个 required anchor 缺少 status 或具体 candidate 真值，
+影响 356 个 ordinary Segment；56 个已进入模型未验证 release 候选，必须由
+安全阈值阻断。v263/v264 已形成 30 条 Phase 1 人工锚定队列和只读
+EPSG:3857 可视审计包，覆盖 91 个受影响 Segment。v265 已按同一语义路口、
+同一推理输入、同一候选集合和同一局部结构证据复核现有 T03/T04/T11 真值：
+跨样本严格可复用数为 0；另有 1 个 T11 已知正确 Road 不在冻结候选集，
+固化为 `CANDIDATE_MISSING`，全量剩余 197，Phase 1 仍为 30。人工结果只能是：
+
+- `SUCCESS_UNIQUE` 并从冻结 candidate 集合选择一个唯一对象；
+- 有正式证据的 `PROVEN_NO_EVIDENCE`；
+- `AMBIGUOUS`；
+- 正确对象不在候选集合的 `CANDIDATE_MISSING`。
+
+人工裁决只写 label-only 工件，不修改 T01–T12，不得从模型预测或
+`relation_record_absent` 补造真值。回填时必须逐列校验 v263 冻结证据，
+`SUCCESS_UNIQUE` 原样命中一个完整候选，其他三类不得填写候选，且四类均需
+证据说明；输出 inference feature store 必须保持字节一致。任一 required
+anchor 已明确失败时，该 Segment 立即局部 fallback，不等待其余 anchor 监督
+齐全。
+
+## 14. Target A recall-first 端到端模型当前状态（2026-07-31）
+
+Target A 已形成第一版可训练、可强制输出的同一 forward，但尚未完成最终
+RoadGraph 发布验收。forward 单位为一个 AdvanceRight、两侧相邻普通 Segment
+及其 required anchors；城市数据和索引只读一次，依赖子图在内存组装。旧
+T03–T06 终态不作为推理输入，锚定仍是模型内前置门，提右不能反向修改普通
+Segment。
+
+v386r1 在严格外层 fold1 上输出 143/143 个提右研究结果。106 个有完整 Road
+集合监督的对象 top-1 exact=`86/106=0.811321`；正确 Road 集合在 beam-16
+中为 `106/106=1.0`。v387r2 从 50D 提右局部证据、普通方案成员和原始 side
+Road candidates 构建 269,875 个 103D 几何 proposal，218/218 个需要新增
+打断、挂接或衔接动作的监督对象可达；不使用旧 OOF condition 或终态选择，
+单对象最大 5,188 个 proposal，运行内只读一次并跨 epoch 复用。
+
+v388r1 冻结 v386r1 的锚定、ordinary 和 Road-set 权重，只训练 365,953 参数
+几何头，避免破坏 recall。外层 fold1 指标为：
+
+| 指标 | 结果 |
+|---|---:|
+| 强制研究输出 | `143/143=1.0` |
+| Road top-1 exact | `86/106=0.811321` |
+| Road beam-16 recall | `106/106=1.0` |
+| 几何 top-1 complete exact | `30/67=0.447761` |
+| 几何 beam-16 complete recall | `67/67=1.0` |
+| Road + 几何联合 top-1 complete exact | `33/77=0.428571` |
+| Road + 几何联合 beam-16 recall | `77/77=1.0` |
+
+以上是 recall-first 研究基线，不应用置信发布门，`automatic_decision=false`。
+正向 `KEEP_SWSD` 仍是业务决定；`ABSTAIN -> fallback` 仍单独统计。29 个
+`SWSD_ONLY` 的正确几何结果是“无新增动作”，不进入 218 个 proposal 分类
+分母，但继续进入端到端 Road 结果评价。
+
+v390r3 尝试把 Road 与几何 beam 平铺为最多 81,920 个四类可解释组合：
+`SWSD 无新增动作`、`两侧 RCSD 挂接`、`source RCSD + 中间衔接` 和
+`target RCSD + 中间衔接`。候选覆盖为 239/239，但外层 top-1 降至
+`32/77=0.415584`，decoder top-16 recall 降至 `63/77=0.818182`。该路线因
+组合空间过大、239 个联合监督过于稀疏而判定 NO_GO；不能通过增加 epoch、
+通用 HYBRID 或扩大评估 beam 继续解释为收敛。
+
+当前正式保留 v388r1 + v389。下一步只收敛两个可辨识错误面：完整 Road
+cardinality/成员排序，以及 SOURCE/TARGET_ATTACHMENT/MIDDLE_SPLICE
+分类型几何 top-1。五折 OOF、完整 Node/方向/拓扑写出、确定性物化后的最终
+RoadGraph exact、与现有完整策略对比及零危险发布门尚未完成；Target A
+总体仍不接生产。
+
+## 15. 普通 Segment 联合模型优先级修正（2026-08-02）
+
+上一节的 AdvanceRight 组件实验继续作为历史证据，但不再是当前训练优先级。
+当前按修正方案 A 优先收敛普通 Segment：模型在同一业务依赖子图 forward 中
+先输出 required anchor 的唯一锚定对象与状态，锚定失败立即形成 Segment 局部
+fallback；锚定结果锁定后，完整 Road decoder 才能输出 KEEP_SWSD 或
+USE_RCSD 的完整 Road 清单、用途、所有权、access、方向及所需打断。Road
+分数不得反向修改或绕过锚定。
+
+M144 已形成严格五折高召回研究基线：强制 gated output=
+`3119/3125=0.998080`，anchor exact=`2388/3123=0.764649`，gated complete
+Road exact=`2370/3125=0.758400`，anchor+Road joint exact=
+`1910/3123=0.611591`。强制输出覆盖不等于安全发布覆盖；该基线仍为
+`TARGET_A_ORDINARY_JOINT_HIGH_RECALL_BASELINE_NO_GO`。正向 KEEP_SWSD 与
+`ABSTAIN -> fallback` 必须分开统计。
+
+下一版共享 encoder 必须显式表示 focal Segment、required anchors、候选
+RCSD Road、共享 Junction/Node、access 和所有权冲突。T03/T04 人工真值与
+T10 分级监督进入同一多任务训练，但旧 T03–T06 终态不得成为推理输入。
+城市级索引一次读入，forward 按动态业务依赖子图组装；空间切片只能用于查询
+加速，不能截断业务依赖。AdvanceRight 暂停训练，Movement 保持关闭，直到
+普通 Segment 的高召回联合 exact 与安全工作点同步提升。
+
+M146–M149 已验证把相邻普通 Segment 压缩方案或显式 Road 成员图直接叠加到
+同一最终 scorer 会造成 KEEP/USE 偏置迁移，未超过 M69/M120。下一版 decoder
+必须先在锁定锚定下独立确定正向 KEEP/USE source，再条件化执行完整 Road
+方案：KEEP 输出完整冻结 SWSD 方案；USE 才解码 RCSD Road 成员、用途、
+所有权与 access。成员分数不得反向修改 source，ABSTAIN 仍单独进入局部
+fallback。当前候选缓存未覆盖 T06 明确允许的附属 SWSD 保留样本，该场景须
+以已有明确业务候选单独验证，不得扩展为通用 HYBRID。
+
+M150–M153 已实现并验证 source-first 硬隔离，但均未超过普通 Segment 基线；
+最好结果 M151=`676/920`，M153 即使事后选择 Fold1 最优 source 阈值也只有
+`670/920`。因此不得继续以 source 阈值扫描解释为收敛。真值 source 条件下，
+M69/M126/M150 完整 Road exact 分别为 `79.78%/80.98%/80.76%`，KEEP 均为
+100%，而 USE 仅为 `60.68%/63.00%/62.58%`。当前下一训练目标收窄为锁定
+source 后的 USE hard-negative 完整 Road bundle/member decoder；KEEP 直接
+输出唯一完整冻结 SWSD 方案。Road 成员分数仍不得反向修改 source 或锚定，
+AdvanceRight/Movement 继续后置。
+
+M154–M158 已完成上述 source-locked USE canary。M154 member/cardinality
+hard-negative、M155 relation bundle、M157 top-32 member graph 和 M158 无界
+direct listwise 的 Fold1 exact 分别为 `293/473`、`296/473`、`294/473`、
+`293/473`，均未超过 M126 的 `298/473`；10+ Road 均未超过 `9/30`。
+M156 只扩大既有合法 USE 方案的保留宽度，使 Fold1 Oracle 从 top-12 的
+`396/473` 提升到 top-32 的 `415/473`，但 M158 没有把新增 19 个正确方案中的
+任何一个提升为 top-1。Oracle 不得视为模型输出精度。
+
+因此当前不得继续扫描同类 reranker、epoch、阈值或候选宽度。下一研究阶段必须
+先对 source-locked USE 的 top-1 错误方案做推理期证据可辨识性审计，按缺 Road、
+多 Road、错误连接、内部连接、access/方向/拓扑不完整及 10+ Road 分层；只有
+确认现有 Road/关系证据能区分正确与错误完整方案后，才允许重建 Road-level
+监督和完整集合 decoder。source 与锚定硬门禁不变，KEEP 仍输出唯一完整冻结
+SWSD 方案，AdvanceRight/Movement 继续后置。
+
+## 16. Target A Junction 唯一锚定—Segment 完整方案架构收口（2026-08-04）
+
+ARCH-CLOSURE-P0 已将当前普通 Segment 主线收敛为三层边界：Layer A 按唯一
+`case_key + semantic_junction_id` 计算并广播锚定；Layer B 按唯一
+`case_key + segment_id` 读取锁定锚定并选择完整 Road/access/break/Node Plan；
+Layer C 只在同一 Junction 的直接关联 Segment 范围执行确定性
+`ACCEPT/FALLBACK`。Segment Plan 不得反向修改锚定，Road member 不得反向修改
+source，fallback 不得沿 `Junction—Segment—Junction` 递归扩张。
+
+引用式 `JunctionStore/SegmentStore/PlanStore` 和 16 项 Gate 0 已通过：一个
+Junction 一份结果、required 引用/候选/广播合法、一个 Segment 一个完整 Plan、
+Road owner 唯一、Unknown/终态 mask 与两类梯度隔离正确、无 T03–T06 终态推理
+输入、T01 骨架不变、CRS/方向/ID 合法且 `silent_fix=0`。P0 固定 Fold1 canary
+的 Segment Full Exact 仍为 `8/24`、Junction Group Exact 仍为 `6/18`，
+structured plan exact `971/1209→959/1209`，正确 USE `139→109`，正式结论
+`ARCH_CANARY_NO_GO`。引用式缓存把峰值 RAM 从 R46 约 25 GiB 降至约 4.72 GiB，
+因此 IO/重复子图问题已关闭，但旧锚定边界不得进入五折。
+
+用户随后选择重训真正的唯一 Junction Layer A。UNIQUE-JUNCTION-P1 固定
+Fold1、seed=`20261660`、8 epoch、LR=`2e-5`、gate=`0.5`，以无向直接依赖
+ego graph、结构证据和完整 member-set loss 训练 19,422,227 参数模型；未扫描
+epoch/threshold/seed，也未增加局部 safety head 或 reranker。完整锚定业务 exact
+从 `908/1145=0.793013` 提升到 `921/1145=0.804367`，但 Gold 从
+`129/159=0.811321` 降至 `127/159=0.798742`，SUCCESS 完整对象从
+`791/961` 降至 `782/961`，正向 `NO_EVIDENCE` 从 `32/47` 降至 `29/47`，
+dangerous automatic `12→13`、unknown automatic `165→169`。正式结论为
+**`UNIQUE_JUNCTION_CANARY_NO_GO`**；不得生成五折 OOF `JunctionStore`，也不得
+启动读取该结果的 Layer B Segment Plan。
+
+该 NO-GO 否定本次唯一 Junction 训练目标与现有监督配比，不否定唯一 forward
+边界或整个神经网络方向。训练折 Gold/Silver 为 `624/3165`，完整对象监督仅
+`121/2414`；按现有 `1.0/0.7` 权重，对象 loss 仍由 Silver 主导，实测提升集中在
+Silver `+15`，Gold `-2`。当前具体缺失的监督信号是独立 Gold 的完整 Node/Road
+anchor 集合，尤其 T10 Gold；不能泛化为候选不可达或 Case 整体不足。继续目标 A
+前必须由用户重新选择：新增/复核该 Gold 监督、接受规则 fallback 的混合边界，或
+结束当前结构。未经新边界授权，不得在 Fold1 继续调 loss、权重、epoch 或阈值。
+
+正式工件位于
+`outputs/_work/p05_neural_road_generation/target_a_unique_junction_p1_fold1_20260804_seed_20261660/`；
+完整 P05 回归为 `786 passed, 1 warning`。本阶段未修改 T01–T12、正式接口、
+几何或拓扑，不接生产。
+
+用户于 2026-08-04 在 P1 `NO_GO` 后明确授权：允许在现有 Case 内补充/复核完整
+Node/Road anchor Gold。该授权只改变下一阶段的监督边界，不新增 Case，不恢复
+T03–T06 终态推理输入，也不授权继续 Fold1 调参。Phase 1 已在 6 个现有 T10
+Case 中冻结 80 个 SWSD 语义 Junction：Fold0–3 各 16 条，Fold4 的两个 Case
+各 8 条；覆盖 22 个 Node 集合、20 个单 Road、21 个 2–3 Road、16 个 4–9 Road
+和唯一 1 个 10+ Road 对象。选样只使用既有 Silver SUCCESS 的对象类型/集合大小、
+冻结直接 Segment 引用和固定 SHA256 排序，不读取模型预测、分数、错误或发布结果。
+
+人工模板与 QGIS 工程不显示 Silver 选择或模型输出。`SUCCESS_CONFIRMED` 允许保存
+多个等价正确的完整 candidate，并显式指定 preferred；其他裁决继续区分
+`PROVEN_NO_EVIDENCE / AMBIGUOUS / CANDIDATE_MISSING`。严格回填器拒绝修改冻结
+字段、越界 candidate、缺失证据说明、覆盖既有 Gold 和拆分 Road/Node bundle。
+人工结果返回后只生成 label-only Gold overlay，并在冻结选样与 Case-grouped 隔离下
+重建一次 Gold-first canary，推理 feature 必须字节不变。
+
+初始标注包位于
+`outputs/_work/p05_neural_road_generation/target_a_unique_junction_gold_phase1_20260804/`；
+补齐原始 SWSD/RCSD 图层后的正式人工包为同根目录的 `_r1` 版本。80 条队列、4,674
+个完整 candidate 组合、6 个相对路径 QGIS 工程及总工程均通过读回，空间图层统一
+`EPSG:3857`，几何未修改、拓扑未改变、`silent_fix=0`。人工结果中的 27 个
+`manual_preferred_candidate_id` 前缀 `|` 已规范化且保留原 CSV 备份；最终裁决为
+77 条 `SUCCESS_CONFIRMED`、1 条 `CANDIDATE_MISSING`、1 条 `AMBIGUOUS` 和 1 条
+`PROVEN_NO_EVIDENCE`。label-only overlay 保持 inference feature SHA256
+`78a3f17c0d9bc47bdd516bfaf5544e7e96db8ec5eb3a9ee99b578e6b186376a6`
+逐字节不变。
+
+固定 Fold1 Gold-first canary 沿用 UNIQUE-JUNCTION-P1 的 19,422,227 参数结构、
+seed=`20261660`、8 epoch、LR=`2e-5`、weight decay=`2e-4`、clip=`1.0` 和 gate
+threshold=`0.5`，只将训练折 Gold/Silver 总 loss 质量固定为 `0.5/0.5`；未扫描
+weight、epoch、threshold 或 seed。新 80 条按 Case-grouped 拆为训练 64、Fold1
+留出 16。完整业务 exact `907/1145→919/1145`，新留出 Gold `10/16→11/16`；但
+全 Gold `139/175→139/175`、SUCCESS 完整对象 `789/959→785/959`、正向
+NO_EVIDENCE `32/47→30/47`、危险自动 `13→14`、unknown 自动 `165→170`。
+因此正式结论仍为 `UNIQUE_JUNCTION_CANARY_NO_GO`，不得进入五折、OOF
+`JunctionStore`、Layer B 或同类 Fold1 局部调参。80 条以 SUCCESS 对象为主，只有
+1 条 `PROVEN_NO_EVIDENCE` 且不在 Fold1 留出集，不能据此声称 NO_EVIDENCE 已有
+新增跨 Case 监督；1 条人工 Road 组合不在冻结候选集，继续保留为候选覆盖缺口，
+不得补造为可训练成功标签。回填、overlay 和固定 canary 合入后的完整 P05 回归为
+`796 passed, 1 warning`；唯一 warning 仍为既有 Transformer nested-tensor 提示。
+
+用户后续授权继续按目标 A 验证同 forward 联合边界。T032-JOINT-ARCH-CLOSURE-P1
+以 T01 的直接 `Junction—Segment` 业务依赖连通组为 forward 单元；每个唯一
+Junction 只计算一次并先输出锚定状态和完整对象，普通 Segment 再读取 live
+embedding 与已确认对象关系选择完整 Road/access/break/Node Plan。Segment decoder
+仍不得反向选择锚定、扩充候选、改变骨架或把 fallback 沿相邻 Junction 递归扩张。
+
+固定 Fold1 canary 使用 38,099,141 参数、seed=`20261670`、4 epoch（2 teacher +
+2 free-run）和 PCGrad，未扫描参数。Segment Full Exact `6/24→9/24`、Junction
+Group Exact `5/18→6/18`、structured plan exact `909/1209→982/1209`；但锚定
+dangerous automatic `13→17`，ordinary unsafe automatic `22→25`，unknown
+automatic 分别 `170→194`、`381→433`。新增 4 个危险锚定中有 3 个直接导致新增
+危险 Segment；不存在跨 Junction fallback 扩散或 decoder 反向改锚定。四轮各有
+238–255/822 个连通组出现 anchor/ordinary 共享梯度冲突。
+
+正式结论为 `JOINT_ARCH_CLOSURE_CANARY_NO_GO`。该结果保留动态直接依赖子图、唯一
+Junction 一次 forward、live 条件化与候选约束 decoder，淘汰 ordinary loss 直接
+写入锚定决策参数的共享训练方式。下一架构必须在神经系统内部隔离该梯度写入；这不
+恢复 T03–T06 旧策略，也不允许确定性层重新判断锚定业务事实。不得对本 Fold1 继续
+做 loss、epoch、threshold、seed 或局部 head 搜索，AdvanceRight 继续后置。
+本阶段完整 P05 回归为 `799 passed, 1 warning`；唯一 warning 为既有 Transformer
+nested-tensor 提示。
+
+## 17. Target A Junction-first Gold 数据与正式成功门（2026-08-04）
+
+用户确认当前本地数据为本阶段全量数据，并授权 P05 自行决定训练/验证/测试划分。
+五个权重 1.0 的 Gold 目录为 `POC_Data/T03`、`POC_Data/T03_Error`、
+`POC_Data/T04`、`POC_Data/T04_Error` 和 `POC_QA/T03_Error`；这些 Case 的
+当前正式规则重放结果视为人工确认。T10 中只有可明确追溯到具体 SWSD 语义路口的
+锚定结果可按 0.7 监督，背景路口不得生成标签。完全重复输入只保留一个样本身份；
+同 ID 多输入版本若终态业务签名一致则保持同 split 并均分该 Case 的 1.0 总权重，
+终态冲突进入 `LABEL_REVIEW`，不得训练或测试。
+
+743 个 Gold 目录记录归并为 716 个 Case ID；正式重放得到 surface
+accepted/rejected/runtime_failed=`399/321/23`，RCSD 锚定业务状态
+在 T05 延续前为 SUCCESS/NO_RCSD_EVIDENCE/QUALITY_ISSUE=`156/19/568`。399 个
+accepted surface 已全部继续执行 T05：343 个完整 SUCCESS、19 个正向
+NO_RCSD_EVIDENCE、37 个 Road-only 打断端点拓扑不完整；最终业务状态为
+SUCCESS/NO_RCSD_EVIDENCE/QUALITY_ISSUE=`343/19/381`。706 条可用于完整路口 Gold，
+37 条只用于 action/safety，不补造完整拓扑。24 个多版本 Case 中
+8 个终态一致、16 个终态冲突。最终冻结 700 个 Case group、708 个输入版本为
+train/validation/test=`490/105/105` 个 group，输入版本=`497/105/106`，有效权重
+同为 `490/105/105`；同一
+Case、语义路口或输入版本不跨 split，训练集覆盖全部现有终态组合。测试集不得用于
+结构、loss、epoch、阈值或 seed 选择。
+
+路口阶段 GO 要求：Gold 冻结测试 raw 完整路口 exact `>=0.85`、自动业务决策覆盖
+`>=0.80`、自动接受完整正确率 `=1.0`、危险自动接受和真值未知自动接受均为 0、
+已证明异常不得判正常且异常或安全 `ABSTAIN` recall=`1.0`；T10 留出 weighted
+exact `>=0.75`。完整路口 exact 同时比较 surface、锚定状态、RCSD 对象完整集合、
+聚合/打断方案、重构拓扑与质量状态。相同输入/输出/环境下总耗时不得超过现有
+T07+T03+T04+T05 规则链的 1.5 倍，城市输入只允许完整读取并建立一次索引。上述
+任一门禁未通过时普通 Segment、AdvanceRight、Movement 均继续关闭。

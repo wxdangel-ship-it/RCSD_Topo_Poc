@@ -48,7 +48,7 @@ T07 是项目“路口 1:1 关系层”的已有路口面锚定模块。它迁�
 |---|---|
 | `nodes.gpkg` | SWSD 语义路口分组、代表 node 和状态写回。 |
 | `DriveZone.gpkg` | Step1 道路面 evidence 面。 |
-| `RCSDIntersection.gpkg` | Step2 existing surface 锚定面。 |
+| `RCSDIntersection.gpkg` | Step2 existing surface 锚定面；Step1 不读取、不校验、不记录该输入。 |
 | `intersection_match_all.geojson` | Step3 可选 relation 补锚来源，需兼容 `target_id / base_id / status` 关系字段。 |
 | `RCSDNode.gpkg` | Step2 可选校验 `RCSDIntersection` 是否可消费；Step3 校验 `base_id` 是否存在。 |
 

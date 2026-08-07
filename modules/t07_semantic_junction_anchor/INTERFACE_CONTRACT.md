@@ -15,7 +15,7 @@
 
 ### 1.1 当前正式支持
 
-- Step1/2 消费 `nodes.gpkg`、`DriveZone.gpkg`、`RCSDIntersection.gpkg` 与可选输入 `RCSDNode.gpkg`；其中 Step1 `has_evd` 只使用 `DriveZone`，Step2 `is_anchor` 使用 `RCSDIntersection`。Step3 可选消费 `intersection_match_all.geojson` 兼容 relation 文件与输入 `RCSDNode.gpkg`。
+- Step1 只消费 `nodes.gpkg` 与 `DriveZone.gpkg`；Step2 消费 Step1 `nodes.gpkg`、`RCSDIntersection.gpkg` 与可选 `RCSDNode.gpkg`。Step1 callable 为兼容既有调用保留 `intersection_path / intersection_layer / intersection_crs` 参数，但必须完全忽略，不读取、不校验、不记录。Step3 可选消费 `intersection_match_all.geojson` 兼容 relation 文件与输入 `RCSDNode.gpkg`。
 - 按 `nodes.mainnodeid` 组装 SWSD 语义路口；`mainnodeid` 为空时退化为单 node 语义路口。
 - 以语义路口代表 node 的 `kind_2` 作为 Step1 / Step2 类型 gate。
 - 仅对代表 node `kind_2 in {4, 8, 16, 64, 128, 2048}` 的语义路口处理 `has_evd`。
@@ -46,8 +46,13 @@
 
 - `nodes_path`：SWSD `nodes.gpkg`。
 - `drivezone_path`：`DriveZone.gpkg`。
-- `intersection_path`：`RCSDIntersection.gpkg`；组合 runner 与内网脚本必须传入，Step1 standalone callable 为兼容历史调用可省略。
 - `out_root`：输出根目录。
+
+兼容占位参数：
+
+- `intersection_path / intersection_layer / intersection_crs`：只为保持既有 callable
+  签名；Step1 必须完全忽略，不得读取、校验、记录或参与 `has_evd`。
+- 组合 runner 的 `intersection_path` 是 Step2 必选输入，不向 Step1 转交。
 
 `nodes` 依赖字段：
 
@@ -57,10 +62,6 @@
 - geometry
 
 `DriveZone` 依赖：
-
-- 面状 geometry。
-
-`RCSDIntersection` 依赖：
 
 - 面状 geometry。
 

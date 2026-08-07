@@ -1,5 +1,29 @@
 # 03 方案策略
 
+## 当前 Target A 策略
+
+以城市数据的一次读取和标准化缓存为外层边界，按动态业务依赖子图执行共享 Graph/Set encoder；先由独立锚定 head 对每个 SWSD 语义路口给出唯一 RCSD 锚定对象和打断位置，不能确定即 `AMBIGUOUS/ABSTAIN`。普通 Segment decoder 始终保留正向 `KEEP_SWSD` 与 `ABSTAIN`；只有 required anchor 全部成功时才启用 `USE_RCSD` 和 T06 明确允许的“主干 RCSD、附属 SWSD”候选。当前 ordinary head 先显式输出 `KEEP_SWSD / USE_RCSD / ABSTAIN`，再在该状态内选择完整 Road 清单，状态内归一化不改变 carrier 必须输出完整 Road/Node 方案的合同。每个 KEEP/USE 候选以逐 Road 成员集合表达来源角色、端点、方向、局部拓扑、相对几何和 OOF 锚定关系；成员证据只参与已选业务状态内部的完整 Road bundle 排序，避免把 Road 数量或集合形态当成 KEEP/USE 的捷径。另以对称的两端 arm 关系表达 SWSD pair_node/Segment 端点到候选 Road 叶端点的距离、方向和 OOF 锚定匹配；两端用 mask-aware mean/max 编码，交换 pair_node 存储顺序不改变表示。arm 关系作为受控跨状态残差参与 KEEP/USE 与 bundle 选择，但不构成锚定成功硬规则。实现允许把 OOF 锚定关系细分为当前端 local 与另一端 foreign；v46 证明该证据会把边界推向 USE，却同时增加危险 `KEEP->USE`，所以只保留为诊断能力，正式结构基线仍采用不区分 local/foreign 的 v45。原始 Road/Node ID 只作关系 join 与结果 sidecar，不进入 embedding。普通 Segment 最终 access 锁定后，`ADVANCE_RIGHT` decoder 才生成完整提右 Road 组合、打断、衔接和挂接方案。Clue/scope head 判断无证据、歧义、现实冲突、影响对象并输出显式 `FallbackDirective`。结构化 decoder 只联合选择模型已给出的方案，所有权约束不具有扩大 fallback 的权力；Segment directive 止于自身，Junction directive 止于明确列出的直接关联 Segment，禁止沿 Segment 传播到另一端 Junction。确定性层只校验冻结 T01 直接关系、物化几何/Node、执行已确定 fallback 和通用合法性检查，不补造或重判业务事实。
+
+当前锚定分支进一步使用原子 Node/Road set 与原始拓扑边：结构 decoder
+同时保留当前 SWSD 语义路口的原始推理期 object evidence 和共享 encoder
+context，联合解码 RCSD 证据角色、对象类型、数量与完整成员集合。v351
+证明只消费共享 embedding 会提高 member exact、却使 relation/type 退化并
+把 1633165 错判为附近 Node；因此原始锚定证据不得被共享 context 替代，
+ordinary loss 也不得成为改变锚定语义 encoder 的唯一梯度来源。对象类型按
+候选集中实际存在的 Node/Road 做 hard mask；训练期的 relation、
+acceptable set、cardinality 和 member truth 不进入推理 batch。多解集合以
+minimum acceptable-set loss 进入训练。发布时保留独立的 threshold
+cardinality 与 expected-floor cardinality；二者不一致只触发 `ABSTAIN`，
+后层不得拿其中任一结果重选或扩充成员。
+
+下游条件化采用冻结桥：每个 required anchor 的原始 64D object evidence
+与 relation/type/cardinality 六维模型摘要聚合为 70D 条件输入；结构锚定
+teacher 在该 forward 中强制 `eval + no_grad`，carrier 梯度只能更新下游
+条件化 adapter，不能进入锚定 proposal。v353r3 已证明该结构在总参数
+24,929,538 下把 free-plan exact 提升到 `0.881356`，同时保持锚定输出不变。
+
+旧 T07–T06 策略在目标 A 推理期完全退出；终态只作为分层监督和完整策略对照。T01 业务骨架冻结，T10 为编排；模型先完成并独立验收 T07/T03/T04/T05 路口业务，再启动 Segment。第一版不启用 Movement、不接生产，也不修改 T01–T12 正式实现或接口。下述 M0–P13 内容均为历史实验路线与可继承证据，不再定义当前网络边界。
+
 ## M0 流程
 
 ```text
@@ -111,7 +135,7 @@ JSG-PTO-P0 已按独立路径完成：冻结 T01/T05/T06/R2 evidence 生成 cano
 
 JSG-PTO-P1 已完成。candidate builder 先验证 truth-free RoadGraph PTO manifest，从 T01 和登记 proposal lineage 生成 Case-local EvidenceGraph 与有限 enum/neighborhood candidates；冻结后 Oracle solver 才读取 P0 truth。PTO-A 选择业务对象及 Review，PTO-B 复用 RoadGraph group selection 并验证每个已选 Unit 的 carrier/access。正式双跑 51/51 通过，任何后续候选缺失或 infeasible 仍直接 no-go。
 
-JSG-PTO-P3 已完成：context builder 从同组备选、P1 dependency/reverse-dependency 和 T01 相对方向证据生成 ID-free set context，candidate/context 双编码与乘性交互 MLP 以 listwise loss 学习每组选择；outer held-out 只在评分后进入评价，PTO 约束和 compiler 未因 scorer 改变。正式结果证明 object-conditioned scoring 有效，但旧 Connector 与 Review/Unknown 未过门禁，判定 `P3_MODEL_NO_GO`。该结论只作为历史模型证据；当前路线先重建方案 A carrier-only 合同，不直接扩大模型。
+JSG-PTO-P3 已完成：context builder 从同组备选、P1 dependency/reverse-dependency 和 T01 相对方向证据生成 ID-free set context，candidate/context 双编码与乘性交互 MLP 以 listwise loss 学习每组选择；outer held-out 只在评分后进入评价，PTO 约束和 compiler 未因 scorer 改变。正式结果证明 object-conditioned scoring 有效，但旧 Connector 与 Review/Unknown 未过门禁，判定 `P3_MODEL_NO_GO`。该结论只作为历史模型证据；随后曾重建 carrier-only 合同，现又由目标 A 联合合同取代。
 
 P2-P3-P3已完成Review硬门重放和残余可分性审计。后续固定顺序为：先提出一个
 T06前可生成的新关系/共享上下文表征合同，验证其source role、生成时点、lineage、

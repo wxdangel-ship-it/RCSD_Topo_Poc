@@ -33,8 +33,8 @@
 
 **Acceptance Scenarios**:
 
-1. **Given** 代表 node `kind_2 = 4` 且组内所有 node 均落入或接触 `DriveZone ∪ RCSDIntersection`，**When** 执行 T07 Step1，**Then** 代表 node `has_evd = yes`。
-2. **Given** 代表 node `kind_2 = 8` 且组内任一 node 未命中 `DriveZone ∪ RCSDIntersection`，**When** 执行 T07 Step1，**Then** 代表 node `has_evd = no`。
+1. **Given** 代表 node `kind_2 = 4` 且组内所有 node 均落入或接触 `DriveZone`，**When** 执行 T07 Step1，**Then** 代表 node `has_evd = yes`。
+2. **Given** 代表 node `kind_2 = 8` 且组内任一 node 未命中 `DriveZone`，即使该 node 命中 `RCSDIntersection`，**When** 执行 T07 Step1，**Then** 代表 node `has_evd = no`。
 3. **Given** 代表 node `kind_2 = 1`，**When** 执行 T07 Step1，**Then** 代表 node `has_evd = NULL`，且该语义路口不进入 Step2。
 
 ### User Story 2 - 语义路口级 anchor recognition (Priority: P1)
@@ -88,7 +88,7 @@
 - `mainnodeid` 为空的 node：作为 singleton 语义路口处理。
 - 代表 node `kind_2` 为空、`0` 或不在 `{4, 8, 16, 64, 128, 2048}`：`has_evd / is_anchor / anchor_reason` 均为 `NULL`。
 - 从属 node 不写业务状态；从属 node 空值不得解释为失败、未处理或候选结果。
-- `DriveZone` 或 `RCSDIntersection` CRS 缺失、不可投影、几何为空：执行失败并留审计，不得转成业务 `no`。
+- Step1 的 `DriveZone` CRS 缺失、不可投影、几何为空：执行失败并留审计，不得转成业务 `no`；Step2 对 `RCSDIntersection` 执行相同检查。Step1 不读取或检查 `RCSDIntersection`。
 - `RCSDIntersection` 边界接触与 T02 一致，视为命中。
 - `fail2` 优先级高于 `fail1` 与基础 `yes / no` 判定，且覆盖 `anchor_reason`；一面多 SWSD 语义路口场景覆盖代表 node `kind_2 in {4, 8, 16, 64, 128}`，不覆盖 `kind_2 = 2048`。
 - Step3 处理范围包括代表 node `kind_2 in {4, 8, 16}`；T05 relation 补充候选只包括 `has_evd = yes`、`is_anchor = no` 的语义路口。
@@ -99,11 +99,11 @@
 
 ### Functional Requirements
 
-- **FR-001**: T07 Step1 MUST read `nodes` and `DriveZone`, MAY read `RCSDIntersection` for standalone compatibility, and MUST NOT require or read `segment`.
+- **FR-001**: T07 Step1 MUST read only `nodes` and `DriveZone` as business inputs and MUST NOT read `RCSDIntersection` or `segment`. The callable MAY retain RCSDIntersection-named arguments only as ignored compatibility placeholders.
 - **FR-002**: T07 Step1 MUST build semantic junction groups from `nodes.mainnodeid`; non-empty `mainnodeid` groups nodes together, and missing/empty `mainnodeid` falls back to singleton node groups.
 - **FR-003**: T07 Step1 MUST use the representative node's `kind_2` as the only kind filter.
 - **FR-004**: T07 Step1 MUST only process representative `kind_2 in {4, 8, 16, 64, 128, 2048}`.
-- **FR-005**: T07 Step1 MUST set representative `has_evd = yes` only when all group nodes intersect or touch `DriveZone ∪ RCSDIntersection`, and `has_evd = no` when any group node misses that combined evidence surface.
+- **FR-005**: T07 Step1 MUST set representative `has_evd = yes` only when all group nodes intersect, touch, or fall within the formal tolerance of `DriveZone`, and `has_evd = no` when any group node misses that DriveZone evidence surface. RCSDIntersection MUST NOT affect this result.
 - **FR-006**: T07 Step1 MUST set or keep representative `has_evd = NULL` for all representative `kind_2` outside `{4, 8, 16, 64, 128, 2048}`.
 - **FR-007**: T07 Step2 MUST only process semantic junctions with representative `has_evd = yes`.
 - **FR-008**: T07 Step2 MUST set representative `is_anchor = yes / no / fail1 / fail2 / NULL` and `anchor_reason = NULL`.

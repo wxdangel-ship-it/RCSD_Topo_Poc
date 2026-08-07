@@ -24,8 +24,9 @@
 | P05 PTO Candidate | 由 raw/T01 与登记策略 commit 独立重放产生的有限 Road/Node edit 或 pointer proposal；`label_only=false`、`truth_derived=false`，按规范化 payload 去重并保留来源 lineage | P05 |
 | P05 PTO Solve Certificate | 候选 manifest 冻结后生成的 label-only cost、选中候选、objective/lower bound/gap 与通用图约束证书；不等于 learned scorer 输出 | P05 |
 | P05 Scheme-A Frozen Skeleton | 冻结的 T01 Segment 集合、JunctionSegmentRelation 和 PhysicalMovement 存在性；模型不得增删改。普通提右属于 `ADVANCE_RIGHT Segment`，以 `source_segment_access/target_segment_access` 连接两个普通 Segment，可包含 `junc_nodes`，并必须有独立 Road | P05 |
-| P05 Carrier Realization | Segment、JunctionUnit 和 PhysicalMovement 的 Road/Node 实现；是模型允许评分/选择的对象，不改变业务对象存在性 | P05 |
-| P05 Dataset-P0 Semantic Record | 对 T01/T07/T03/T04/T05/T06/T09/T11/T10 artifact 标记模块职责、训练角色、权重、task mask、lineage 与候选来源；T01 只能是冻结骨架/SWSD fallback，T07 固定 DriveZone-only，T06 Step3 Road/Node 是最终主标签 | P05 |
+| P05 Target A Joint Decision | 在冻结骨架上先从原始 DriveZone/RCSDIntersection/SWSD/RCSD 输出 T07/T03/T04/T05 路口 evidence、surface、唯一 relation、graph-consumable/junctionization 和完整锚定对象；路口阶段通过后再输出普通 Segment、条件化 `ADVANCE_RIGHT`、现实冲突线索和 fallback 作用域。旧 T07–T06 终态只作标签/评价，不能进入推理 feature，第一版 Movement 不启用 | P05 |
+| P05 Carrier Realization | Segment 与 JunctionUnit 的完整 Road/Node 实现，包括 Road 清单、用途、唯一所有权、access、方向、Node/打断/衔接配方和挂接关系；`KEEP_SWSD` 是正向业务决定，必须与 `ABSTAIN -> fallback` 分开，不改变业务对象存在性 | P05 |
+| P05 Dataset-P0 Semantic Record | 历史 Dataset-P0 对 T01/T07/T03/T04/T05/T06/T09/T11/T10 artifact 标记模块职责、训练角色、权重、task mask、lineage 与候选来源；其 T07 前置证据角色只属于历史 carrier 实验。当前路口阶段只把原始 DriveZone/RCSDIntersection 放入 inference store，T07/T03/T04/T05 产物进入 label store | P05 |
 | P05 P2-P1 Joint Scoring Group | Segment组使用冻结Road candidate；Node组从PTO-P0全量FINAL_NODE truth-free payload按Road endpoint/JunctionUnit重组为`T01_NODE / PROPOSAL_NODE / OMIT` carrier option。candidate先冻结，随后由方案A有效Segment标签及Road来源连接条件化Node标签；PTO Oracle不直接作Node标签。JunctionUnit兼容边只表达共享Node payload、引用和拓扑合法性 | P05 |
 | P05 P2-P2-P2-P0 Safety Evidence | candidate-first 的 Segment accept/fallback 数值证据；由 T01 冻结骨架、T07 DriveZone-only anchor、proposal/KEEP Road 有向结构差、Segment→Node compatibility/Junction共享压力和 base OOF 统计组成。Case/object/candidate ID 只作 lineage，T03/T04/T05/T06 字段和 label 只在证据冻结后参与评估 | P05 |
 | P05 P2-P2-P2-P1 Missing Evidence Attribution | 对 9 error、残留 unsafe accepted 与 40 Review 的唯一对象并集记录直接原因、辅助信号、推理可用性、源角色、生成时点、成本和 lineage；终态仅为 `INFERENCE_EVIDENCE_AVAILABLE / SOURCE_FACT_BLOCKED / UNOBSERVABLE_FALLBACK`，label-only 事实不得因相关模型信号自动升级 | P05 |
@@ -36,7 +37,7 @@
 | P05 P2-P3-P2 Scope Application / AllSegmentDecision | 将 Dataset-P1 scope精确join到P2-P3 example；eligible对象覆盖监督权重并进入OOF，context-only与局部expected-failure对象生成确定性`KEEP_SWSD` fallback；scorer metric使用6,275对象，整图effective selection使用8,863对象 | P05 |
 | P05 P2-P3-P3 AccessSafetyEligibility / ResidualSeparabilityAudit | `ADVANCE_RIGHT access_valid=false`由冻结T01事实直接触发Review fallback；不读取标签或T06终态。残余false-use只在held-out训练Case内审计202维证据近邻、候选margin与表征重叠，不生成业务规则 | P05 |
 | P05 RealityChangeClue | 推理证据与冻结结构冲突时产生的可审计线索；只触发失败/fallback，不自动改写业务结构 | P05 |
-| P05 Fallback Plan | 按 Movement/Segment/Junction 最小依赖闭包保留 SWSD 或阻断发布的确定性计划；业务正确才计成功 | P05 |
+| P05 Fallback Directive | 模型明确输出作用域、原因与受影响对象；Segment 级只含一个 Segment，Junction 级只含该 Junction 的 T01 直接关联 Segment，确定性层校验后保留 SWSD 或阻断发布，禁止传递扩张；业务正确才计成功 | P05 |
 | P05 Historical JSG/PTO Evidence | 旧 Junction/StandardSegment/SegmentConnector/PTO-A/PTO-B、scorer 与 compiler 的历史证据；不得作为当前方案 A 业务本体或当前模型指标 | P05 |
 
 方案 A 以 T01 为 Segment 集合源事实，不再把普通提右转换为 `SegmentConnector`。Junction、Segment、PhysicalMovement 与 carrier realization 分层；TrafficRule 继续由 T09 表达。历史 JSG-PTO-P0/P1 的 signature、Oracle 和 compiler 证据保留追溯，但 PTO-A 不得选择或改变当前骨架。
@@ -76,7 +77,7 @@ SWSD / RCSD raw data
 | P04 Segment 发布状态 | `hp_full / hp_partial / swsd_retained / conflict_retained`。它描述 Segment carrier 的证据与发布方式，并与 `segment_publishable`、`carrier_takeover_ready`、`replacement_scope`、`review_required` 和 `evidence_quality_state` 分离。`hp_partial` 内的新建 Road 只允许由 `hp_observed + hp_constrained_completion` 组成，不直接拼接 SWSD 坐标；不能满足 hard gate 时整体保留原 carrier 或仅阻断该 Segment，不得以 review 绕过。 |
 | P04 Road/Node 连通不变量 | 每个正式 Segment 至少有一条独立 Road；高精证据可区分上下行时必须形成两条连续方向主干链，链可按LaneGroup、物理Node、`junc_nodes`、分流合流和证据边界细分为多条Road，铺装面内无法区分方向时可发布双向Road，非高速主辅路等按T01结构可包含额外方向链和附属Road。SWSD负责完整的逐Segment Access方向与逐Junction Movement拓扑合同，不负责built坐标或Road一一对应；细分后仍按归一化方向链保持该合同。ordinary Junction保留分布式portal Node，同一正确分类JunctionUnit的Node共享mainnodeid，不生成中心聚合点或星形内部Road；其RoadNextRoad由同一ordinary JunctionUnit内方向兼容的进入—离开Road组合编译，并记录两端物理Node与Junction lineage。Segment内部连续性和复杂路口仍要求实际共享Node或显式物理关系；T04复杂路口、环岛和聚合异常不得由mainnode机械全连接。跨Segment被拒Movement显式排除，不自动回退两侧Segment。 |
 | P04 历史候选 | M2、冻结 Directional V2 与 High-Precision V3 保留为回归和几何对照，不再作为当前 Segment-first 数据模型。 |
-| P05 `label_weight` | P05 监督可信度：`1.0` 为 T03/T04 目标对象逐对象人工确认/修正，`0.7` 为 T10 整体 Case或指定 Segment/lineage 后继检查通过；`0.3` 只允许表示非目标规则上下文的 `context_input_weight`，不得进入 label、loss、threshold、calibration 或 metric。仅适用于 P05 POC，不改变上游字段语义。 |
+| P05 `label_weight` | P05 监督可信度：当前路口阶段 `1.0` 覆盖 `POC_Data/T03`、`T03_Error`、`T04`、`T04_Error` 与用户授权的 `POC_QA/T03_Error`，其当前正式规则重放结果按逐 Case 人工确认 Gold 使用；`0.7` 只覆盖 T10 中可明确追溯到具体 SWSD 语义路口的锚定结果。`0.3` 只允许表示非目标规则上下文的 `context_input_weight`，不得进入 label、loss、threshold、calibration 或 metric。重复输入按 hash 去重；同 Case 多版本终态一致时同 split 并均分 Case 总权重，终态冲突进入 `LABEL_REVIEW`。仅适用于 P05 POC，不改变上游字段语义。 |
 | P05 `task_availability` | M2R 任务标签可用性；只有可追溯 artifact 和人工确认 scope 同时成立时为 `available`，否则为 `unknown/invalid/excluded`，不得从 `Error` 目录名推断。 |
 
 ## 字段治理规则

@@ -54,6 +54,13 @@
 - 2026-07-24 P05 Scheme-A-P2-P3-P12R 完成态扫描 P05 `src/` 与两处 `tests/` 共 `200` 个源码和测试文件，`>=100KB=0`、`>=60KiB=0`。新增只读审计、models与专项测试分别为`61410/3291/4817` bytes；最大文件`scheme_a_p2_p3_p12r_audit.py`低于60KiB软预警线，职责限于6 Case提右真值重建、候选上限和工件编排，后续候选补强仍应拆出endpoint/JunctionUnit candidate builder，避免回填主审计。P12R未新增或修改`scripts/`、`tools/`、repo CLI、`__main__.py`、Makefile、T10 stage、T01–T12实现或正式入口，`entrypoint-registry.md`无需改变。
 - 2026-07-24 P05 Scheme-A-P2-P3-P12R-R1 完成态扫描 P05 `src/` 与两处 `tests/` 共 `204` 个源码和测试文件，`>=100KB=0`、`>=60KiB=0`。R1新增models/candidate builder/audit/专项测试分别为`2086/14997/31577/5154` bytes；全模块最大仍为P12R审计`61410` bytes，R1未回填该主审计。R1只新增P05内部callable与测试，未新增或修改`scripts/`、`tools/`、repo CLI、`__main__.py`、Makefile、T10 stage、T01–T12实现或正式入口，`entrypoint-registry.md`无需改变。
 - 2026-07-24 P05 Scheme-A-P2-P3-P13-P0 完成态扫描 P05 `src/` 与两处 `tests/` 共 `210` 个源码和测试文件，`>=100KB=0`、`>=60KiB=0`。P13-P0新增models/dataset/network/training/OOF/专项测试分别为`4146/28689/4140/28922/33571/5637` bytes；全模块最大仍为P12R审计`61410` bytes，P13-P0未回填该主审计。P13-P0只新增P05内部callable、训练实现与测试，未新增或修改`scripts/`、`tools/`、repo CLI、`__main__.py`、Makefile、T10 stage、T01–T12实现或正式入口，`entrypoint-registry.md`无需改变。
+- 2026-07-27 P05 Target A 正式 replay、T11 人工锚定继承、T01 依赖 ego-graph、分层/组合式锚定 decoder、learned/posthoc/independent gate 与严格 nested OOF 共新增 `22` 个源码和 `20` 个测试文件，`>=100KB=0`、`>=60KiB=1`；最大新增源码为 `target_a_t05_anchor_dataset.py`（`64442` bytes，已进入60KiB观察线），其次为 `target_a_network.py`（`43253` bytes）、`target_a_dataset.py`（`39698` bytes）和 `target_a_training.py`（`33375` bytes）。`target_a_anchor_graph.py`（`37543` bytes）独立承接 T01 直接依赖子图 batching、逐锚定 loss mask、图式推理及 label-free 原子 member 集合置信度导出；`target_a_anchor_members.py`/专项测试为 `8207/2919` bytes。`target_a_anchor_posthoc_gate.py` 只训练并保存 gate delta，冻结 shared/candidate 参数；`target_a_anchor_independent_gate.py`（`23064` bytes）使用 truth-free 聚合特征，不使用 raw ID embedding 或终态输入。作用域修正后的 `target_a_decoder.py`/专项测试分别为 `15186/7395` bytes，删除通用传递 conflict components，改为显式有限 `FallbackDirective` 与冻结 T01 直接关系校验。当前只新增 P05 内部数据、模型、训练、安全校准与 decoder callable，不新增或修改 `scripts/`、`tools/`、repo CLI、`__main__.py`、Makefile、T10 stage、T01–T12 实现或正式入口，`entrypoint-registry.md` 无需改变。
+- 2026-07-28 P05 Target A T032 锚定条件化普通 Segment、anchor-plan/逐 Road 成员/对称 arm 及 arm-local/foreign 关系、有界 residual、分层 ordinary decoder、Case-balance、v47/v48 strict-nested safety 与 Clue/scope 裁决准备后扫描 `30` 个 `target_a_*.py` 源码和 `27` 个专项测试：源码 `>=61440 bytes` 为 `2`、测试为 `0`，全部 `>=100000 bytes` 为 `0`。最大源码为 `target_a_t05_anchor_dataset.py`（`72123` bytes），其次为 `target_a_network.py`（`70757` bytes）；二者进入 60KiB 观察线，后续不得继续回填新职责，T05 replay/feature builder 与 ordinary hierarchical/member/arm decoder 应优先拆出独立模块。新增 `target_a_ordinary_arms.py`、`target_a_ordinary_members.py` 与 `target_a_ordinary_safety.py` 分别承接关系构建和后置安全诊断；safety 模块为 `32310` bytes，新增 `target_a_clue_scope_adjudication.py` 为 `17321` bytes，只生成 label-only UNKNOWN/PENDING 审计包及互斥 Phase 1/remaining review task；`target_a_ordinary_relation_residual.py` 为 `35513` bytes，`target_a_ordinary_conditioned_oof.py` 为约 `27` KiB，`target_a_ordinary_conditioned_data.py` 为 `28725` bytes；最大专项测试 `test_target_a_network.py` 为 `23098` bytes。Target A 全量专项回归 `102 passed`，P05 模块回归 `358 passed`；当前仍只新增 P05 内部 callable、数据/训练/审计实现和测试，未新增或修改 `scripts/`、`tools/`、repo CLI、`__main__.py`、Makefile、T10 stage、T01–T12 实现或正式入口，`entrypoint-registry.md` 无需改变。
+- 2026-07-28 P05 Target A T032-R1 精确 Error 标签作用域、Phase 1 的 72 条人工裁决覆盖、6 条用户指定裁决、锚定硬门禁修正及 v50–v57 strict-nested 训练/安全诊断后，复扫 `30` 个 `target_a_*.py` 源码和 `27` 个专项测试：源码 `>=61440 bytes` 为 `2`、测试为 `0`，全部 `>=100000 bytes` 为 `0`。最大源码仍为 `target_a_t05_anchor_dataset.py`（`72123` bytes）和 `target_a_network.py`（`70757` bytes）；本轮未继续向两者回填职责。`target_a_ordinary_conditioned_oof.py` 为 `33653` bytes，新增显式 carrier/fallback/Clue 分口径 OOF 指标；`target_a_ordinary_conditioned_data.py` 为 `29139` bytes，修正为任一 required anchor 未成功即屏蔽 carrier 监督并以 `ABSTAIN` teacher forcing；`target_a_clue_scope_adjudication.py`、`target_a_label_adapter.py`、`target_a_plan_training_data.py` 分别为 `26965/24308/20656` bytes；最大专项测试仍为 `test_target_a_network.py`（`23098` bytes），锚定条件化测试为 `13202` bytes。受影响专项回归 `18 passed`，Target A 全量专项回归 `106 passed`，P05 模块全量回归 `362 passed`。一次性训练与裁决 runner 仅位于 ignored `outputs/_work/`，未新增或修改 `scripts/`、`tools/`、repo CLI、`__main__.py`、Makefile、T10 stage、T01–T12 实现或正式入口，`entrypoint-registry.md` 无需改变。
+- 2026-07-29 P05 Target A T033–T035 AdvanceRight access-set conditioning、teacher/student Road 与几何联合头、相邻 ordinary source/access 联合训练、结构化 decoder 审计、required-anchor scope 修正及 v110 safety 指标拆分后，复扫 P05 `src/` 与两处 `tests/` 共 `326` 个源码/脚本和测试文件，其中 `61` 个 `target_a_*.py` 源码、`55` 个 Target A 专项测试；`>=61440 bytes=3`、`>=100000 bytes=0`。最大源码为 `target_a_t05_anchor_dataset.py`（`74908` bytes），其次为 `target_a_network.py`（`70757` bytes）和 `scheme_a_p2_p3_p12r_audit.py`（`64736` bytes）；三者只进入 60KiB 观察线，均未跨 100KB 硬阈值。新增 AdvanceRight joint/geometry/access 与 decoder audit 职责均拆入独立模块，最大新增训练文件为 `target_a_advance_right_training.py`（`47982` bytes），`target_a_advance_right_joint_training.py` 为 `47946` bytes，`target_a_decoder_audit.py` 为 `19288` bytes；`target_a_anchor_safety.py` 在保持原 gate 决策不变的前提下增至 `18783` bytes，正式拆分有监督错误与不可验证自动项。Target A 全量专项回归 `200 passed`，P05 模块全量回归 `456 passed`，P05 编译与 `git diff --check` 通过。训练和结构化审计工件只位于 ignored `outputs/_work/`；未新增或修改 `scripts/`、`tools/`、repo CLI、`__main__.py`、Makefile、模块正式接口、T10 stage 或 T01–T12 实现，`entrypoint-registry.md` 无需改变。
+- 2026-07-29 P05 Target A T032-R2 完整裁决继承、共享 anchor/ordinary gate 与 strict inner-only release calibration 后，按当前工作树重新扫描 P05 `src/` 与测试目录共 `325` 个 Python 源码/测试文件，其中 `61` 个 `target_a_*.py` 源码、`55` 个 Target A 专项测试；`>=61440 bytes=3`、`>=100000 bytes=0`。最大三文件仍为 `target_a_t05_anchor_dataset.py`（`74908` bytes）、`target_a_network.py`（`70757` bytes）和 `scheme_a_p2_p3_p12r_audit.py`（`64736` bytes）。本轮 `target_a_joint_gate.py`、`target_a_joint_gate_oof.py` 和专项测试分别为 `15192/40887/4658` bytes，均低于 60KiB 观察线；共享 encoder、独立对象选择、inner calibration 与安全分账职责未回填到两个已观察的大文件。Target A 全量专项回归 `204 passed`，P05 模块全量回归 `459 passed`。一次性 v111–v113 runner 与训练工件只位于 ignored `outputs/_work/`；未新增或修改 `scripts/`、`tools/`、repo CLI、`__main__.py`、Makefile、模块正式接口、T10 stage 或 T01–T12 实现，`entrypoint-registry.md` 无需改变。
+
+- 2026-07-31 P05 Target A recall-first 端到端联合模型补充复核：按 `git ls-files --cached --others --exclude-standard` 统计，仓库根 `src/rcsd_topo_poc/modules/p05_neural_road_generation` 与对应 P05 `tests` 范围内共有 `433` 个 Python/脚本文件，`0` 个文件达到或超过 `100000` bytes；当前最大文件依次为 `target_a_ordinary_road_member_training.py`（`85201` bytes）、`target_a_network.py`（`80649` bytes）、`target_a_t05_anchor_dataset.py`（`78915` bytes）、`target_a_advance_right_joint_training.py`（`65462` bytes）、`scheme_a_p2_p3_p12r_audit.py`（`64736` bytes）。本轮新增的 recall-first、geometry 与 structured-combination 研究实现和测试均低于硬阈值；P05 全量回归为 `719 passed, 1 warning`。一次性训练/审计脚本及运行工件仅位于 ignored `outputs/_work`，未新增正式入口；T01–T12 实现与接口未改动。
 
 ## 结果
 
@@ -491,7 +498,299 @@
 | `tests/modules/p04_road_direct_generation/test_segment_first_pipeline_contract.py` | `28964` bytes | 编排和正式发布合同 | 按主题保持拆分 |
 | `tests/modules/p04_road_direct_generation/test_segment_first_movements.py` | `20146` bytes | THROUGH实际穿面和retained精确lineage例外 | 按主题保持拆分 |
 
+### P05 Target A 内部连接树当前快照（2026-07-29）
+
+本轮将 RCSD 内部连接 Road 的物理树证明拆入独立模块；候选编排文件保持
+低于 100KB 硬阈值，未新增正式入口、CLI 或 T10 stage。
+
+| 文件 | 当前体量 | 当前职责 | 后续约束 |
+|---|---:|---|---|
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_internal_connector_candidates.py` | `8792` bytes | 物理并行 Road 聚合后的内部连接树证明与 truth-free 枚举 | 只证明已确认的树、叶挂接和无外部叶条件；不得固化 T06 策略分组 |
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_plan_candidates.py` | `37001` bytes | 普通 Segment 完整 Road 候选、全 MAIN 保留候选和已证明内部连接树候选编排 | 不读取终态标签，不用 generator 名称替代 Road 角色真值 |
+| `tests/modules/p05_neural_road_generation/test_target_a_internal_connector_candidates.py` | `3436` bytes | 树、外部叶、并行 Road、环和 MAIN 重叠边专项合同 | 按拓扑证明主题保持拆分 |
+| `tests/modules/p05_neural_road_generation/test_target_a_plan_candidates.py` | `5052` bytes | 完整候选、Road owner/角色和内部连接树接入回归 | 不扩入模型训练或整图 decoder 测试 |
+
+### P05 Target A materializer 当前快照（2026-07-29）
+
+本轮把最终 Node/方向/几何/attachment 的确定性执行与真实 T01 fallback 审计
+拆为两个独立模块；未新增正式入口、CLI 或 T10 stage。全部源码/脚本低于
+100KB 硬阈值。
+
+| 文件 | 当前体量 | 当前职责 | 后续约束 |
+|---|---:|---|---|
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_materializer.py` | `44724` bytes | 执行 ledger 指定的 Road slice/reverse/splice、显式 endpoint connector、Node recipe、完整 access binding、RCSD Road-position/SWSD frozen-Node attachment、稳定 ID 和整图 hard validation | 不选择候选、不补造 access、不扩大 fallback、不 silent fix；endpoint connector 只有模型 recipe 明确声明时执行 |
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_materializer_audit.py` | `37152` bytes | 51 Case T01 fallback 账本适配、完整 Road/Node access、内部 AdvanceRight attachment、局部 blocker、输入 hash、CRS/拓扑/性能审计 | 仅把显式 T01 关系转为账本；合法多 Road access 必须保留，不连续几何必须阻断 |
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_access_collections.py` | `13384` bytes | 把 T06 final Road/Node access 终态标签转为 exact-cover 完整集合监督并复用 immutable feature integrity record | label-only；不得把 final Road/Node 或集合基数写入推理特征 |
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_ordinary_access_set_training.py` | `39068` bytes | 完整 access set strict-nested OOF、exact-cover 多解 loss、集合阈值与安全门 | 旧单 Road exact 不得作为完整集合指标；无 inner 校准证据时必须 abstain |
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_ordinary_access_network.py` | `8396` bytes | 普通 access set encoder、Set Transformer、member/cardinality heads | 只评分冻结候选；不得改变 anchor/carrier 或补造候选 |
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_ordinary_access_cardinality_training.py` | `31215` bytes | 显式集合大小、top-k、teacher/strict-OOF 双视图和 Case-nested OOF | OOF view 早停；无零危险校准证据必须 abstain |
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_advance_right_attachment_supervision.py` | `23639` bytes | T06 动作强/弱/屏蔽分类、最终 access 父 Road 片段和 label-only 位置重建 | Node 规范化不训练；不得把 T06 终态作为推理输入 |
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_advance_right_attachment_training.py` | `30030` bytes | AdvanceRight source/target 单侧父 Road 与位置 one-of-N strict-nested OOF | 只评分冻结候选；完整提右和发布仍需联合 decoder |
+| `tests/modules/p05_neural_road_generation/test_target_a_materializer.py` | `20487` bytes | split/overlap/splice、显式 endpoint connector、Node、Road owner、shared connectivity、完整 access、AdvanceRight、KEEP/fallback 和骨架/CRS 合同 | 按确定性执行主题保持拆分 |
+| `tests/modules/p05_neural_road_generation/test_target_a_materializer_audit.py` | `11034` bytes | T01 fallback ledger、AdvanceRight 依赖、内部挂接 access、局部阻断、多 Road access 和 mainnode closure 回归 | 不加入具体 Case ID 或业务自动修复 |
+| `tests/modules/p05_neural_road_generation/test_target_a_access_collections.py` | `2816` bytes | 必需多 Road、source 多解、split 覆盖与 mask 继承合同 | 保持 label-only 与 inference feature 隔离 |
+| `tests/modules/p05_neural_road_generation/test_target_a_ordinary_access_set_training.py` | `3052` bytes | exact-cover set loss、完整集合解码、阈值和无校准证据时 abstain 合同 | 不扩入旧单 Road scorer 回归 |
+| `tests/modules/p05_neural_road_generation/test_target_a_ordinary_access_network.py` | `2097` bytes | 普通 set/cardinality 网络 shape、mask 与输出合同 | 保持网络纯张量测试 |
+| `tests/modules/p05_neural_road_generation/test_target_a_ordinary_access_cardinality_training.py` | `1509` bytes | 显式 cardinality loss 与严格 top-k 解码 | 不混入数据存储回归 |
+| `tests/modules/p05_neural_road_generation/test_target_a_advance_right_attachment_supervision.py` | `3772` bytes | T06 打断/端点位置与最终 access 父 Road 唯一解析 | 非 RCSD 相邻结果必须阻断，不 silent fix |
+| `tests/modules/p05_neural_road_generation/test_target_a_advance_right_attachment_training.py` | `1874` bytes | 条件向量与 raw/release 安全指标分离 | 不把高 raw exact 解释为发布覆盖 |
+
+### P05 Target A Road 所有权与正式角色多任务快照（2026-07-29）
+
+本轮在普通 Segment 完整 Road set decoder 上增加 label-only 所有权与正式
+Road 角色监督、直接融合/辅助多任务边界及 checkpoint 恢复；未新增正式
+入口、CLI 或 T10 stage。全部源码/脚本低于 100KB 硬阈值。
+
+| 文件 | 当前体量 | 当前职责 | 后续约束 |
+|---|---:|---|---|
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_business_adjudications.py` | `3130` bytes | 记录用户确认的 anchor、逐 Road membership/ownership 与正式角色人工真值 | 人工真值只进入 label/evaluation overlay，不得进入推理特征 |
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_ordinary_road_relations.py` | `4147` bytes | 构建 25m 内稀疏、多尺度、truth-free Road–Road 几何关系 | 不把距离阈值固化为选择规则；不保存绝对坐标 |
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_ordinary_road_members.py` | `44548` bytes | 从正式 v114/v117/v108 数据链构建 truth-free Road member/稀疏关系特征，并分离弱标签与人工 membership/ownership/角色权重 | 不把 T06 终态或角色写入推理特征；connectivity 是 ownership 状态，不得新增为 Road 角色 |
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_ordinary_road_member_network.py` | `33207` bytes | anchor-Road graph decoder、可隔离的关系 attention/邻接、member/cardinality、ownership/role 与显式组件 edge heads | Road 分数不得反选 anchor；正式角色只允许既有枚举；组件实验不得固化距离为业务规则 |
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_ordinary_road_member_training.py` | `85201` bytes | strict nested Case-OOF、多视图/分任务权重 loss、稀疏关系 batch、组件 edge 审计和安全校准 | 接近 100KB 硬阈值；下一次新增职责前必须先拆出 metric/score 或 batch 模块 |
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_ordinary_road_set_full_inference.py` | `17607` bytes | 无标签 full OOF 推理、稀疏 Road 关系恢复与新旧 checkpoint 恢复 | 不在推理期读取 owner/role 真值 |
+| `tests/modules/p05_neural_road_generation/test_target_a_ordinary_road_relations.py` | `1731` bytes | 近邻但不共享 Node 的 Road 关系与远邻稀疏排除合同 | 保持纯相对几何、无真值输入 |
+| `tests/modules/p05_neural_road_generation/test_target_a_ordinary_road_members.py` | `7518` bytes | owner/no-owner/正式角色标签、用户 membership/role 裁决与 anchor 条件合同 | 保持 label-only 与推理特征隔离 |
+| `tests/modules/p05_neural_road_generation/test_target_a_ordinary_road_member_network.py` | `8158` bytes | graph/edge-attention/member/ownership/role/组件输出和辅助头初始不改写 member 合同 | 保持纯张量测试 |
+| `tests/modules/p05_neural_road_generation/test_target_a_ordinary_road_member_training.py` | `8028` bytes | 多任务配置、关系/组件 encoder 前置条件、分 Road 权重、mask/class-balanced loss、集合指标合同 | 不加入真实 Case 特例 |
+| `tests/modules/p05_neural_road_generation/test_target_a_ordinary_road_set_full_inference.py` | `5049` bytes | joint/anchor/ownership-role checkpoint 恢复合同 | 新 checkpoint 配置必须向后兼容 |
+
+### P05 Target A 完整 Road 方案 reranker 当前快照（2026-07-29）
+
+本轮没有继续向 85,201 bytes 的
+`target_a_ordinary_road_member_training.py` 回填职责，而是把完整方案生成、
+方案级特征、strict-nested OOF 训练和安全校准拆入两个独立模块；未新增正式
+入口、CLI 或 T10 stage。全部新增源码/测试低于 100KB 硬阈值。
+
+| 文件 | 当前体量 | 当前职责 | 后续约束 |
+|---|---:|---|---|
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_ordinary_plan_proposals.py` | `14125` bytes | 合并 v114 truth-free 完整方案、冻结 member 排序多基数前缀和显式 ABSTAIN，并构建无终态泄漏的方案级特征 | 只生成/表征冻结候选；标签只能在特征完成后标记 acceptable proposal |
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_ordinary_plan_reranker.py` | `40617` bytes | 冻结 v175 encoder 后的完整方案 Set/Transformer reranker、outer/inner Case 隔离、早停、零错误阈值、关系摘要与 v189 真值重算 | 不修改 anchor、扩充业务骨架或写出几何；局部阈值不得冒充全局冲突 decoder |
+| `tests/modules/p05_neural_road_generation/test_target_a_ordinary_plan_proposals.py` | `3932` bytes | static/prefix 方案合并、完整真值可达与不可达时 ABSTAIN 合同 | 保持 proposal/label 隔离 |
+| `tests/modules/p05_neural_road_generation/test_target_a_ordinary_plan_reranker.py` | `4502` bytes | 变长方案 mask、多解 NLL、关系摘要与零错误阈值合同 | 保持纯张量/小样本测试 |
+
+### P05 Target A 共享 encoder 完整方案联合训练当前快照（2026-07-29）
+
+本轮继续保持旧 85,201 bytes 训练文件只读，把共享 Road encoder 的完整方案
+可微 pooling、v189 标签覆盖 v174 checkpoint 输入、strict-nested fine-tune
+和 top-K 约束 decoder 适配拆为四个独立模块；未新增正式入口、CLI 或 T10
+stage。全部新增源码/测试低于 100KB 硬阈值。
+
+| 文件 | 当前体量 | 当前职责 | 后续约束 |
+|---|---:|---|---|
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_ordinary_joint_plan_network.py` | `10936` bytes | 把完整方案 member pooling、共享 graph context、可微 decision/cardinality/member 证据送入 selection 与独立 validity head | validity 只判断模型方案能否发布，不得修改 anchor、Road 集合或角色 |
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_ordinary_joint_plan_data.py` | `6980` bytes | 在保持 v174 checkpoint 推理输入不变时覆盖 v189 当前标签，并构建变长 proposal/candidate mask | 当前标签不得回写 checkpoint-era feature；Road relation 维度不兼容时必须阻断 |
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_ordinary_joint_plan_training.py` | `38192` bytes | shared encoder + 完整方案 strict-nested fine-tune、inner 早停/校准、outer 固定 epoch 重训、top-5 ownership/role 输出 | 单 fold 有危险项时不得扩 3-seed；selection 与 release 指标必须分开 |
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_ordinary_joint_plan_decoder.py` | `9596` bytes | 把已发布 top-1 完整方案及模型 ownership/正式角色适配到既有有限作用域 decoder，并形成直接共享 Road 冲突组 | 未有逐方案 release 资格时禁止自动改选 top-2..K；no-owner 是 ownership 状态，不伪装成 Road 角色 |
+| `tests/modules/p05_neural_road_generation/test_target_a_ordinary_joint_plan_network.py` | `4304` bytes | 完整方案梯度回传 shared candidate encoder 与 padding 合同 | 保持纯张量测试 |
+| `tests/modules/p05_neural_road_generation/test_target_a_ordinary_joint_plan_data.py` | `3390` bytes | 当前标签覆盖旧输入、proposal membership/source 对齐合同 | 保持 feature/label 隔离 |
+| `tests/modules/p05_neural_road_generation/test_target_a_ordinary_joint_plan_training.py` | `2967` bytes | joint selection/validity/base loss 与 balanced validity BCE | 不加入真实 Case 特例 |
+| `tests/modules/p05_neural_road_generation/test_target_a_ordinary_joint_plan_decoder.py` | `6908` bytes | ownership/角色分离、T06 attached SWSD、top-1 发布和 Segment 局部冲突回退 | lower-rank 候选不得绕过模型发布门 |
+
+### P05 Target A 完整链执行 ledger 当前快照（2026-07-29）
+
+本轮把 decoder 业务选择与最终几何/Node 执行之间的绑定拆成独立模块，
+并增加“已锁定 Node 锚定 + 无打断完整 Road”的普通 Segment 编译路径，
+以及“相邻 access 已锁定 + 全源 Road + 端点复用”的 AdvanceRight 编译路径。
+未新增正式入口、CLI 或 T10 stage；全部新增源码/测试低于 100KB 硬阈值。
+
+| 文件 | 当前体量 | 当前职责 | 后续约束 |
+|---|---:|---|---|
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_full_chain_ledger.py` | `12156` bytes | 将同一 `plan_id` 的模型决定、显式执行指令和完整 T01 fallback 绑定为依赖完整子图 ledger，并记录逐 Segment preflight hard-mask fallback；普通 Segment 允许同一模型 Road 被显式打断为不重叠片段；区分普通 Segment 自有 access Road 与 AdvanceRight 引用的相邻 access Road | 不改选候选、不补造 Node/打断/拼接/挂接，不用自动指令覆盖模型 fallback；hard mask 只能回退当前 Segment；AdvanceRight 正向 KEEP 也必须有条件化执行指令 |
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_ordinary_materialization.py` | `7849` bytes | 把独立锚定模型已锁定的 Node 与完整无打断 Road 方案编译为普通 Segment Road/Node/access 指令 | 只支持已明确的 whole-Road + locked-Node 路径；Road 打断与 junc access 集合必须由相应模型输出后另行编译 |
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_advance_right_materialization.py` | `16070` bytes | 把模型已锁定的完整提右 Road、两侧普通 access binding/父 Road 和提右端点编译为 RCSD `ROAD_POSITION` 或 SWSD `FROZEN_ACCESS_NODE` attachment | 只支持 whole-Road、几何重合的端点复用；中间父 Road 打断、提右 Road 片段和 RCSD/SWSD 中间 splice 必须由后续 split-capable 编译器执行，当前只允许局部 fallback |
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_advance_right_splice_materialization.py` | `29366` bytes | 执行独立 `ADVANCE_RIGHT_MIXED_SPLICE` recipe：普通 RCSD access Road 显式打断、提右 RCSD/SWSD retained interval、中间/端点直线衔接、两侧 attachment 与相邻普通指令替换 | 只执行已选父 Road、位置、片段、child endpoint、splice 与方向；不得作为普通 Segment 通用 HYBRID 或事后修图容器 |
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_advance_right_splice_prediction.py` | `12242` bytes | 把几何头输出解析为完整 mixed-splice 业务选择，并与冻结 T01 access identity、相邻 Segment 和方向绑定为执行 recipe | 缺 proposal、跨 head Road 不一致或 split 缺 `parent_piece` 必须阻断并局部 fallback |
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_advance_right_geometry_candidates.py` | `25007` bytes | 构建 attachment/split/splice 推理期候选；中间 split 显式枚举 `SOURCE_PART/TARGET_PART` 两个可接受片段方案 | 候选在标签读取前冻结；多解片段只进 acceptable-set loss，不补造唯一真值 |
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_advance_right_geometry_network.py` | `4204` bytes | 113D proposal encoder、结构化几何选择与独立安全头 | 不改变普通 Segment 最终 access 或扩充 Road 候选 |
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_advance_right_geometry_training.py` | `40594` bytes | split/splice proposal 多解 loss、strict nested Case-OOF、零危险阈值，以及可选的 carrier/geometry 联合 loss 与 shared encoder fine-tuning | weak replay 与正式 T06 action 必须分开报告；联合 loss 不等于普通 Segment access 已进入同一 forward |
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_advance_right_geometry_teacher_student.py` | `18713` bytes | teacher ordinary 条件训练、strict OOF ordinary 条件校准/评价，并支持 carrier/geometry shared encoder 联合微调 | teacher 与 OOF 条件必须物理分离；不得把固定普通 Segment 条件误报为端到端联合训练 |
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_advance_right_joint_network.py` | `17380` bytes | 共享 ordinary Road-set encoder、数据源/完整 Road 集合/access 父 Road与条件化 AdvanceRight heads；支持 teacher lock、丰富 checkpoint 的 base-key 加载和 role encoder 选择性覆盖 | 普通 Road 集合必须在已锁定数据源内选择；access 父 Road不得冒充 Segment 自有 Road；跨结构 checkpoint 只能迁移语义同构参数 |
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_advance_right_joint_training.py` | `62740` bytes | role-separated ordinary→access→AdvanceRight strict nested OOF、scheduled teacher forcing、普通 decoder/encoder 双 checkpoint、差分学习率与零危险校准 | 未标注空集合不得计作 exact；普通 Road-set 有监督作用域、source/access 与端到端指标必须分开报告 |
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_ordinary_role_set_network.py` | `8264` bytes | 与 joint ordinary decoder 同构的 unordered-set membership forward，并增加独立 ownership/business-role 辅助 heads | 角色 heads 不得融合改写 member logits；checkpoint 迁移必须保留同构 set forward |
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_ordinary_role_set_training.py` | `28802` bytes | 3,160 个普通 Segment 的同构角色辅助 strict nested OOF、set-only collator、checkpoint 与普通/角色指标 | 不构造模型未消费的图张量；teacher/OOF 标签与推理输入继续隔离；低效首版 partial run 不进入指标 |
+| `tests/modules/p05_neural_road_generation/test_target_a_full_chain_ledger.py` | `18622` bytes | 正向 KEEP/fallback 分离、plan-id/角色/所有权绑定、普通/提右自动 RCSD、preflight hard mask 与局部 fallback 同图物化 | 保持 decoder 选择与确定性执行职责分离 |
+| `tests/modules/p05_neural_road_generation/test_target_a_ordinary_materialization.py` | `6980` bytes | locked Node、完整 incident Road 集合、缺失/脱离锚定与 split 阻断合同 | 不加入真实 Case ID 或用测试真值代替锚定模型输出 |
+| `tests/modules/p05_neural_road_generation/test_target_a_advance_right_materialization.py` | `14049` bytes | 同源两侧条件化、相邻 access 所有权不转移、端点共享、非重合拒绝和父 Road 绑定合同 | 不把端点复用测试外推为 split/splice 或完整提右正确率 |
+| `tests/modules/p05_neural_road_generation/test_target_a_advance_right_splice_materialization.py` | `12717` bytes | mixed-source 父 Road 打断、两源 retained interval、显式衔接、完整 access/attachment/所有权/骨架回归 | 保持合成执行合同，不冒充真实 Case 业务正确率 |
+| `tests/modules/p05_neural_road_generation/test_target_a_advance_right_splice_prediction.py` | `4594` bytes | 训练输出解析、冻结身份绑定、跨 head Road 一致与 split 片段缺失阻断 | 不在 adapter 中补选对象 |
+| `tests/modules/p05_neural_road_generation/test_target_a_advance_right_geometry_candidates.py` | `3172` bytes | truth-free split 片段双候选、splice 位置与多解 proposal-id 合同 | 保持 feature/label 隔离 |
+| `tests/modules/p05_neural_road_generation/test_target_a_advance_right_geometry_training.py` | `4790` bytes | geometry decoder、Road 一致性、零危险阈值与 carrier 联合 loss 全 head 梯度合同 | 保持纯张量/合成输入，不加入真实 Case 特判 |
+| `tests/modules/p05_neural_road_generation/test_target_a_advance_right_joint_network.py` | `4548` bytes | role-separated Road/access heads、mask、teacher lock、丰富 checkpoint 与选择性 encoder overlay 合同 | teacher lock 不得改变各业务 head 自身预测；跨结构迁移不得覆盖非 encoder heads |
+| `tests/modules/p05_neural_road_generation/test_target_a_advance_right_joint_training.py` | `3480` bytes | 零危险 joint threshold、正向 KEEP/fallback 分离、数据源内完整 Road 集合 hard mask和差分学习率参数组 | 禁止跨 SWSD/RCSD 来源混选完整 Road 集合；ordinary 参数必须使用声明的低学习率 |
+| `tests/modules/p05_neural_road_generation/test_target_a_ordinary_role_set_network.py` | `1830` bytes | 同构 membership 输出、ownership/role shapes 与 padding mask | auxiliary heads 不改变 member 输出合同 |
+| `tests/modules/p05_neural_road_generation/test_target_a_ordinary_role_set_training.py` | `4383` bytes | joint-compatible base keys、set-only collator 和三类任务梯度 | collator 不得重新引入 adjacency/anchor 等未消费张量 |
+
 说明：
 
 - 当前未发现 `scripts/` 下超过 `100 KB` 的入口脚本。
 - 本表不裁定业务基线、模块正式范围或是否立即重构；只记录结构债事实。
+
+### P05 Target A 结构化 Road set 与最终状态条件化快照（2026-07-30）
+
+本轮继续保持 85,201 bytes 的
+`target_a_ordinary_road_member_training.py` 只读；普通 set expansion、
+双种子发布、AdvanceRight 最终状态条件化和最终 materializer 审计均拆入
+独立模块。未新增正式入口、CLI 或 T10 stage，全部新增/修改源码和测试低于
+100KB 硬阈值。
+
+| 文件 | 当前体量 | 当前职责 |
+|---|---:|---|
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_ordinary_set_expansion_network.py` | `13805` bytes | order-free Road set expansion、显式 component action 与 STOP、ownership/role 输出 |
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_ordinary_set_expansion_training.py` | `50278` bytes | 稠密 prefix、anchor/frontier teacher forcing、component action、STOP ranking、strict nested Case-OOF |
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_ordinary_release_gate.py` | `18736` bytes | 锚定/无证据前置门、两独立 seed 的完整 Road/ownership/角色一致性发布与 selected truth 审计 |
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_advance_right_final_state_conditioning.py` | `15736` bytes | ordinary 最终状态索引、SWSD 完整集合/access 条件和 I/O 复用 |
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_advance_right_teacher_student.py` | `39367` bytes | teacher/OOF 条件分离与锁定最终状态安全评价 |
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_advance_right_training.py` | `48191` bytes | 条件化完整提右方案、SWSD_ONLY 目标和严格 OOF |
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_advance_right_final_state_release_gate.py` | `7497` bytes | 两 seed 完整提右方案交集发布 |
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_final_state_materializer_audit.py` | `16915` bytes | 51 Case 最终状态写出、preflight fallback 与无修补审计 |
+| `tests/modules/p05_neural_road_generation/test_target_a_ordinary_set_expansion_network.py` | `4489` bytes | set expansion/component action/STOP/角色张量合同 |
+| `tests/modules/p05_neural_road_generation/test_target_a_ordinary_set_expansion_training.py` | `7334` bytes | 稠密 prefix、frontier 顺序、component action 与 STOP ranking |
+| `tests/modules/p05_neural_road_generation/test_target_a_ordinary_release_gate.py` | `7241` bytes | KEEP/USE 锚定、显式无证据例外、Road/ownership/角色双 seed 一致性 |
+| `tests/modules/p05_neural_road_generation/test_target_a_advance_right_final_state_conditioning.py` | `3116` bytes | 正向 KEEP/fallback SWSD、完整 T01 Road/access 条件 |
+| `tests/modules/p05_neural_road_generation/test_target_a_advance_right_teacher_student.py` | `9226` bytes | 锁定最终状态安全目标与 RCSD access pending |
+| `tests/modules/p05_neural_road_generation/test_target_a_advance_right_training.py` | `7053` bytes | 两侧最终 SWSD 优先条件方案 |
+| `tests/modules/p05_neural_road_generation/test_target_a_advance_right_final_state_release_gate.py` | `1576` bytes | 双 seed 完整方案交集 |
+| `tests/modules/p05_neural_road_generation/test_target_a_final_state_materializer_audit.py` | `2309` bytes | T01 recipe 重分类、USE preflight fallback 和局部 blocker |
+
+### P05 Target A 结构化完整方案比较快照（2026-07-30）
+
+本轮保持 85,201 bytes 的
+`target_a_ordinary_road_member_training.py` 只读，把 truth-free beam、多视图
+oracle、结构化能量、same-plan affinity、listwise pairwise plan decoder 和
+指标拆分分别放入独立模块。当前 P05 源码与测试共扫描 `397` 个 Python 文件，
+`>=100000 bytes=0`，最大文件仍为 `85201` bytes。未新增或修改正式入口、
+CLI、`scripts/`、T10 stage、T01–T12 实现或模块接口。
+
+| 文件 | 当前体量 | 当前职责 |
+|---|---:|---|
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_ordinary_set_expansion_beam_audit.py` | `16262` bytes | truth-free component beam、acceptable-set oracle 与 reachable/unreachable 分账 |
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_ordinary_multi_view_plan_audit.py` | `11333` bytes | 多个无真值方案视图的并集 oracle 上限审计 |
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_ordinary_beam_structured_energy.py` | `13115` bytes | ownership/角色/access/端点关系的可解释方案能量与 inner-only 权重选择 |
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_ordinary_same_plan_affinity.py` | `35394` bytes | Road–Road same-plan affinity、关系模式与完整方案能量；标签不进入推理特征 |
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_ordinary_pairwise_plan_decoder.py` | `32199` bytes | listwise complete-plan loss、结构化 residual 和 carrier exact/安全 ABSTAIN 分口径 |
+| `tests/modules/p05_neural_road_generation/test_target_a_ordinary_set_expansion_beam_audit.py` | `2230` bytes | beam 去重、truth-free proposal 与 oracle 标签隔离 |
+| `tests/modules/p05_neural_road_generation/test_target_a_ordinary_multi_view_plan_audit.py` | `425` bytes | 多视图并集保持完整方案身份 |
+| `tests/modules/p05_neural_road_generation/test_target_a_ordinary_beam_structured_energy.py` | `1122` bytes | 结构化能量和 inner-only 权重合同 |
+| `tests/modules/p05_neural_road_generation/test_target_a_ordinary_same_plan_affinity.py` | `1998` bytes | 对称 Road pair、关系模式与候选顺序不变性 |
+| `tests/modules/p05_neural_road_generation/test_target_a_ordinary_pairwise_plan_decoder.py` | `3019` bytes | listwise loss、Road 顺序不变和 carrier exact/安全 ABSTAIN 拆分 |
+
+### P05 Target A Case-joint forward 与锚定裁决快照（2026-07-30）
+
+本轮没有修改 85,201 bytes 的
+`target_a_ordinary_road_member_training.py`。Case-joint 数据、网络、
+strict fold canary、NO_EVIDENCE 正向 KEEP 门禁、Phase 1 人工裁决解析和
+label-only 覆盖保持拆分；未新增正式入口、CLI、T10 stage 或 T01–T12 接口。
+当前 P05 源码与测试共扫描 416 个
+Python 文件，`>=61440 bytes=6`、`>=100000 bytes=0`，最大文件仍为
+85,201 bytes。`target_a_network.py`（74,121 bytes）和
+`target_a_case_joint_oof.py`（62,262 bytes）已进入 60KiB 观察线；
+后续新增 decoder head 或 OOF/risk calibration 职责应拆入独立模块，
+不得继续向两文件无界回填。
+
+| 文件 | 当前体量 | 当前职责 |
+|---|---:|---|
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_case_joint_data.py` | `30215` bytes | focal Segment 有界依赖子图、一次读入内存 join、teacher/free-run 物理分离、锚定/NO_EVIDENCE 条件 carrier task mask |
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_case_joint_network.py` | `3347` bytes | 可选 anchor-plan compatibility 诊断 head；已验证直接/辅助路线 NO_GO，不作为当前基线 |
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_models.py` | `19783` bytes | Target A 配置与数据合同；独立 plan/decision validity head 默认关闭，启用时强制正 loss 和分层 decoder |
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_network.py` | `74121` bytes | 共享 Graph/Set encoder、锚定/普通 Segment/AdvanceRight 联合 forward；排序、decision、plan validity 与 decision validity 输出物理分头 |
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_case_joint_oof.py` | `62262` bytes | strict inner/outer Case fold 训练、同一 forward 推理、unique anchor consistency、NO_EVIDENCE 双门校准、warm-start 与推理期概率形状导出 |
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_case_joint_risk_gate.py` | `18419` bytes | 仅使用推理期证据的 cross-fitted joint risk MLP 与零危险阈值 |
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_case_joint_dual_risk_gate.py` | `29393` bytes | 锚定/计划双通道风险、独立 percentile head、二维零危险搜索和 Case/decision 相对分数 |
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_training.py` | `43748` bytes | Target A 多任务 loss；独立 plan/decision validity BCE、无监督非空 candidate 行显式零 loss，避免 `inf * 0 -> NaN` |
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_anchor_adjudication.py` | `17757` bytes | Phase 1 CSV 冻结列校验、四类锚定人工真值到 label-only store 的转换、推理 feature 字节一致门和受影响 Segment 局部门禁重算 |
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_anchor_label_policy.py` | `18002` bytes | relation-absent/no-evidence/T11/人工锚定三态政策与 Segment gate；任一 required anchor 已明确失败即局部 fallback，不等待其他 anchor 监督齐全 |
+| `tests/modules/p05_neural_road_generation/test_target_a_case_joint_data.py` | `13455` bytes | 有界一跳子图、消息方向、共享 encoder 梯度、teacher removal、NO_EVIDENCE 只放行正向 KEEP |
+| `tests/modules/p05_neural_road_generation/test_target_a_network.py` | `25118` bytes | 联合 forward、分层 decoder、独立 plan/decision validity head、mask、参数门限与梯度方向 |
+| `tests/modules/p05_neural_road_generation/test_target_a_ordinary_conditioned_data.py` | `15334` bytes | 锚定条件化 ordinary 数据、arm/member 输入及 plan/decision validity loss |
+| `tests/modules/p05_neural_road_generation/test_target_a_case_joint_oof.py` | `6467` bytes | 零危险阈值、NO_EVIDENCE 双门、all-plan/ready/automatic 指标和配置阻断 |
+| `tests/modules/p05_neural_road_generation/test_target_a_case_joint_risk_gate.py` | `4698` bytes | risk feature 不读取真值、cross-fit 和零危险发布合同 |
+| `tests/modules/p05_neural_road_generation/test_target_a_case_joint_dual_risk_gate.py` | `7971` bytes | plan/anchor 双通道特征隔离、二维阈值和 scope-relative percentile |
+| `tests/modules/p05_neural_road_generation/test_target_a_training.py` | `9129` bytes | acceptable-set loss、task mask 与通用多任务 loss 合同 |
+| `tests/modules/p05_neural_road_generation/test_target_a_anchor_adjudication.py` | `13704` bytes | bundle 候选原样解析、非法/篡改/未完成 CSV 阻断、四类标签、单 anchor 失败局部截断和 feature-store 不变合同 |
+
+### P05 Target A 结构化锚定与 cardinality 安全门快照（2026-07-31）
+
+本轮保持 85,201 bytes 的
+`target_a_ordinary_road_member_training.py` 只读，也未继续向已进入
+60KiB 观察线的 `target_a_network.py` 回填新 decoder 职责。结构化锚定、
+共享 encoder adapter、多解训练 loss 与 cardinality 安全门拆入两个独立
+模块。当前 P05 源码与测试共扫描 `422` 个 Python 文件，
+`>=61440 bytes=6`、`>=100000 bytes=0`；未新增正式入口、CLI、
+`scripts/`、T10 stage 或 T01–T12 接口。
+
+| 文件 | 当前体量 | 当前职责 |
+|---|---:|---|
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_anchor_structural_decision.py` | `28866` bytes | 共享 object embedding adapter、有效 anchor-group 压缩/回填、原子 Node/Road set、arm/topology 结构 decoder、类型 hard mask、exact/ordinal cardinality 与只降级安全门 |
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_anchor_structural_training.py` | `11261` bytes | relation/member 独立 task mask、inactive padding 零权重、弱标签权重、多解类型/cardinality/完整集合 loss |
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_anchor_structural_conditioning.py` | `5412` bytes | 原始锚定 evidence 与模型摘要聚合、冻结 teacher 条件化 ordinary decoder、carrier 梯度隔离 |
+| `tests/modules/p05_neural_road_generation/test_target_a_anchor_structural_decision.py` | `11864` bytes | truth-free 输入合同、共享 encoder adapter、padding group、不可扩充类型、cardinality 双解码和 proposal 不改写 |
+| `tests/modules/p05_neural_road_generation/test_target_a_anchor_structural_training.py` | `6342` bytes | 多解 acceptable-set loss、relation/member mask 独立、inactive padding 权重与梯度合同 |
+| `tests/modules/p05_neural_road_generation/test_target_a_anchor_structural_conditioning.py` | `4348` bytes | raw evidence、padding、required anchor 越界、冻结 teacher 与 base 梯度合同 |
+
+### P05 Target A 普通 Segment member/access 结构迭代快照（2026-08-01）
+
+本轮继续保持 85,201 bytes 的
+`target_a_ordinary_road_member_training.py` 只读，也未向 81,066 bytes 的
+`target_a_network.py` 回填新职责。P05 源码与测试共扫描 `462` 个 Python
+文件，`>=61440 bytes=6`、`>=100000 bytes=0`；最大文件仍为 `85201`
+bytes。未新增正式入口、CLI、`scripts/`、T10 stage 或 T01–T12 接口。
+
+| 文件 | 当前体量 | 当前职责 |
+|---|---:|---|
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_ordinary_member_aware_plan_network.py` | `16307` bytes | proposal 内 Road member/pair relation 编码、padding mask、listwise complete-plan score |
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_ordinary_member_residual_plan_network.py` | `4249` bytes | 冻结摘要基线上的 member-aware residual，不改候选身份 |
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_ordinary_access_road_group_network.py` | `7893` bytes | carrier 内逐 Road access cardinality 0/1/2 与候选排序 |
+| `tests/modules/p05_neural_road_generation/test_target_a_ordinary_member_aware_plan_network.py` | `4560` bytes | 输出形状、mask、proposal/Road 顺序等变和 relation 索引阻断 |
+| `tests/modules/p05_neural_road_generation/test_target_a_ordinary_member_residual_plan_network.py` | `3288` bytes | residual 形状、冻结基线、顺序等变合同 |
+| `tests/modules/p05_neural_road_generation/test_target_a_ordinary_access_road_group_network.py` | `2988` bytes | Road group padding、顺序等变和非法 relation 阻断 |
+
+### P05 Target A Anchor Gold 回填合同快照（2026-08-04）
+
+本轮新增独立 Anchor Gold 回填合同与定向测试，没有向现有大文件追加职责。
+P05 源码与测试共扫描 `482` 个 Python 文件，最大文件 `85201` bytes，
+`>=100000 bytes=0`。未新增正式入口、CLI、`scripts/`、T10 stage 或
+T01–T12 接口；`outputs/_work/` 下的一次性标注/QGIS runner 不属于正式入口或
+source-of-truth。
+
+| 文件 | 当前体量 | 当前职责 |
+|---|---:|---|
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_anchor_gold_adjudication.py` | `12369` bytes | 冻结队列行哈希、完整 Node/Road 多解回填、preferred/acceptable 合同、Silver→Gold label-only 提升与既有 Gold 保护 |
+| `tests/modules/p05_neural_road_generation/test_target_a_anchor_gold_adjudication.py` | `7246` bytes | 多解 candidate、越界/篡改/未完成 CSV 阻断、Gold 覆盖保护和 bundle 不拆分回归 |
+
+### P05 Target A Junction Gold inventory 快照（2026-08-04）
+
+本轮新增独立的路口 Gold 数据根、checksum/CRS、Case ID/原始输入 hash 去重与
+`LABEL_REVIEW` 隔离合同；未修改旧 M0 的单根数据范围，也未新增正式入口、CLI、
+`scripts/` 或 T01–T12 接口。
+
+| 文件 | 当前体量 | 当前职责 |
+|---|---:|---|
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_junction_case_inventory.py` | `15130` bytes | 五个授权 Gold 根扫描、解码前声明 checksum 与当前文件 hash 分层、实际 CRS 审计、Case/input-hash 去重、冲突隔离和确定性 manifest 输出 |
+| `tests/modules/p05_neural_road_generation/test_target_a_junction_case_inventory.py` | `4920` bytes | 完全重复去重、同 ID 输入冲突隔离、原始 checksum 失败、解码后 hash 口径和双跑确定性回归 |
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_junction_gold_labels.py` | `20507` bytes | 五个 Gold 根正式重放结果的 T07/surface/RCSD relation/quality 分层标签账本、几何审计与多版本终态签名比较 |
+| `tests/modules/p05_neural_road_generation/test_target_a_junction_gold_labels.py` | `6867` bytes | surface 与 anchor 分离、runtime failure 质量语义和多版本同终态回归 |
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_junction_gold_split.py` | `14241` bytes | 终态冲突隔离、Case-group 分层冻结、组内版本权重、稀有状态训练覆盖与泄漏审计 |
+| `tests/modules/p05_neural_road_generation/test_target_a_junction_gold_split.py` | `4103` bytes | 多版本同组、冲突排除、固定分母、全终态训练覆盖与确定性回归 |
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_junction_gold_t05_replay.py` | `26923` bytes | accepted surface 的 T03/T04 无损字段适配、正式 T05 Phase1/Phase2 延续、逐 Case 隔离落盘和完整一致性分层 |
+| `tests/modules/p05_neural_road_generation/test_target_a_junction_gold_t05_replay.py` | `8914` bytes | T03/T04 适配几何不变、Road-only 证据、并发账本和完整一致性门回归 |
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_junction_gold_final_labels.py` | `12623` bytes | T05 结果并回 743 条 Gold、完整拓扑与 action/safety mask 分离、终态签名和多版本复核 |
+| `tests/modules/p05_neural_road_generation/test_target_a_junction_gold_final_labels.py` | `6049` bytes | SUCCESS、SAFETY_ONLY、NOT_APPLICABLE 分层与 T05 后多版本终态冲突回归 |
+
+### P05 Target A JunctionResult 归档快照（2026-08-07）
+
+本次归档扫描 P05 正式源码与测试共 `524` 个 Python 文件，`>=61440 bytes=7`、
+`>=100000 bytes=0`。最大文件仍为
+`target_a_ordinary_road_member_training.py`（85,201 bytes）；本轮没有向该文件追加
+内容。未新增正式 CLI、`scripts/`、T10 stage 或 T01–T12 对外接口；新增内容均为
+P05 POC 内部研究模块、测试及 SpecKit 归档。
+
+| 文件 | 当前体量 | 备注 |
+|---|---:|---|
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_ordinary_road_member_training.py` | `85201` bytes | 当前最大文件，本轮只读 |
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_network.py` | `81066` bytes | 已进入 60KiB 观察线，禁止继续堆叠新职责 |
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_t05_anchor_dataset.py` | `78915` bytes | T05 锚定数据合同与候选构建 |
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_junction_joint_training.py` | `68204` bytes | Junction 联合训练研究链 |
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_advance_right_joint_training.py` | `65462` bytes | AdvanceRight 联合训练历史研究链 |
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/scheme_a_p2_p3_p12r_audit.py` | `64736` bytes | Scheme A P12R 审计 |
+| `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_case_joint_oof.py` | `64279` bytes | Case-joint OOF 与安全门研究链 |

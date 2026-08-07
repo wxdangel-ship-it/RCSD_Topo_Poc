@@ -85,11 +85,6 @@ def test_step1_uses_representative_kind2_and_writes_only_representative(tmp_path
         drivezone_path,
         [_feature({"id": "dz"}, Polygon([(-10, -10), (10, -10), (10, 10), (-10, 10), (-10, -10)]))],
     )
-    _write_geojson(
-        intersections_path,
-        [_feature({"id": "intersection"}, Polygon([(90, -10), (110, -10), (110, 10), (90, 10), (90, -10)]))],
-    )
-
     artifacts = run_t07_step1_has_evd(
         nodes_path=nodes_path,
         drivezone_path=drivezone_path,
@@ -115,7 +110,10 @@ def test_step1_uses_representative_kind2_and_writes_only_representative(tmp_path
     assert summary["has_evd_null_count"] == 1
     assert summary["params"]["has_evd_evidence_tolerance_m"] == 1.5
     assert summary["params"]["has_evd_evidence_surface"] == "DriveZone"
-    assert summary["input_paths"]["intersection"] == str(intersections_path)
+    assert summary["input_paths"] == {
+        "nodes": str(nodes_path),
+        "drivezone": str(drivezone_path),
+    }
     assert "stage_timings" in summary["performance"]
     assert "write_nodes_seconds" in summary["performance"]["stage_timings"]
 

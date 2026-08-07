@@ -16,13 +16,13 @@
 
 ## Phase 1：US1 城市 store 与完整 free-run 骨架
 
-- [ ] T005 [Development] [US1] 新建独立 `junction_graphset_v1_*` 城市对象仓模块，完成
+- [x] T005 [Development] [US1] 新建独立 `junction_graphset_v1_*` 城市对象仓模块，完成
   单次 GIS 读取、CRS 校验、对象 ID 索引、动态依赖切片和 manifest/hash。
-- [ ] T006 [Testing] [US1] 覆盖同一城市只读一次、空间窗口不截断依赖、对象引用不复制、
+- [x] T006 [Testing] [US1] 覆盖同一城市只读一次、空间窗口不截断依赖、对象引用不复制、
   Case 顺序确定性和不同 CRS 输入阻断。
-- [ ] T007 [Development] [US1] 建立完整 `JunctionResultPrediction` schema、空/变长 batch、
+- [x] T007 [Development] [US1] 建立完整 `JunctionResultPrediction` schema、空/变长 batch、
   candidate binding 和随机初始化 free-run。
-- [ ] T008 [Testing] [US1] 对全部开发身份验证输出为合法结果或 ABSTAIN，非法/越界对象
+- [x] T008 [Testing] [US1] 对全部开发身份验证输出为合法结果或 ABSTAIN，非法/越界对象
   和空集合崩溃为 0。
 
 ## Phase 2：US2 Stage 防火墙与 surface 分支

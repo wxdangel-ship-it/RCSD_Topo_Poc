@@ -774,3 +774,35 @@ candidate/object/safety threshold必须fold-local。模型固定3 seeds × 5 Cas
 minus Local Control=`0.646907/-0.033505`，最差fold=`0.363636`，
 unsafe/review/unreachable RCSD auto publish=`14/2/1`，accepted coverage
 `0.017677`。该结果不授权自动发布或继续同构训练。
+
+## 38. Target A Junction-first T07–T05 研究合同
+
+2026-08-04 用户确认 T07 进入模型替代范围。该变更不修改 T07/T03/T04/T05 正式
+接口，也不新增 P05 CLI 或生产入口；只约束 P05 内部离线研究数据流。
+
+推理 store 只允许包含冻结 T01/SWSD、原始 DriveZone、原始 RCSDIntersection、
+原始 RCSD Road/Node 及 truth-free 相对几何/拓扑候选。T07 Step1 batch 只能读取
+DriveZone，RCSDIntersection 通道必须物理缺席；Step2 及后续路口任务才可读取
+RCSDIntersection。T07/T03/T04/T05 的 nodes、surface、status/reason、relation、
+graph-consumability、junctionization 和人工裁决只能进入物理隔离的 label store。
+
+模型按一个 SWSD 语义路口输出 `JunctionEvidenceDecision`、
+`AnchorSurfaceDecision`、完整 `AnchorDecision` 与 `JunctionizationPlan`。输出必须
+区分 `SUCCESS/NO_EVIDENCE/AMBIGUOUS/ABSTAIN`、T07/T03/T04 来源、surface
+accepted/rejected、唯一 relation、graph-consumable 状态和 copy-on-write Road/Node
+配方。确定性层只物化 surface/Node ID/几何和 schema，不重新作业务判断。
+
+路口阶段必须先做 Case-group OOF、与现有 T07/T03/T04/T05 的 paired comparison、
+逐类最差 Case 和零危险自动锚定验收。未通过前，普通 Segment、AdvanceRight、
+Movement 和 RoadGraph 联合训练均保持关闭。
+
+本阶段 Gold 数据根扩展为 `E:\TestData\POC_Data` 的 `T03/T03_Error/T04/T04_Error`
+和用户明确授权的 `E:\TestData\POC_QA\T03_Error`；规则重放结果权重为 1.0。T10
+只有可明确追溯到具体 SWSD 语义路口的锚定结果可作为 0.7 标签，背景对象必须
+masked。五个 Gold 目录先按 Case ID 和原始输入内容 hash 去重；终态一致的多输入
+版本保持同 split 并均分 Case 权重，终态冲突版本进入 `LABEL_REVIEW`。当前冻结
+700 个 Case group 为 train/validation/test=`490/105/105`，Case/input leakage=0。
+Gold 冻结测试门为 raw 完整路口 exact `>=0.85`、自动覆盖
+`>=0.80`、自动接受正确率 `=1.0`、危险/未知自动接受 `=0/0`、已证明异常不被判
+正常；T10 留出 weighted exact `>=0.75`。测试集不得用于结构、epoch、loss、阈值
+或 seed 选择。

@@ -924,6 +924,9 @@ def run_t07_step1_has_evd(
     drivezone_crs: str | None = None,
     intersection_crs: str | None = None,
 ) -> T07StageArtifacts:
+    # RCSDIntersection arguments remain only for callable compatibility. Step1
+    # must not read, validate, record, or use them; RCSDIntersection starts at
+    # Step2.
     started_at = time.perf_counter()
     stage_timings: dict[str, float] = {}
     run_root, stage_root, resolved_run_id = _stage_root(out_root, run_id, "step1_has_evd")
@@ -943,29 +946,12 @@ def run_t07_step1_has_evd(
         crs_override=drivezone_crs,
         allow_null_geometry=False,
     )
-    intersection_layer_data = (
-        _read_vector_layer(
-            intersection_path,
-            layer_name=intersection_layer,
-            crs_override=intersection_crs,
-            allow_null_geometry=False,
-        )
-        if intersection_path is not None
-        else None
-    )
     stage_timings["read_inputs_seconds"] = _elapsed_since(stage_started)
 
     stage_started = time.perf_counter()
     drivezone_geoms = [feature.geometry for feature in drivezone_layer_data.features if feature.geometry is not None and not feature.geometry.is_empty]
     if not drivezone_geoms:
         raise T07RunError("missing_required_field", "DriveZone layer has no non-empty geometry.")
-    intersection_geoms = (
-        [feature.geometry for feature in intersection_layer_data.features if feature.geometry is not None and not feature.geometry.is_empty]
-        if intersection_layer_data is not None
-        else []
-    )
-    if intersection_layer_data is not None and not intersection_geoms:
-        raise T07RunError("missing_required_field", "RCSDIntersection layer has no non-empty geometry.")
     evidence_surface = drivezone_geoms[0] if len(drivezone_geoms) == 1 else unary_union(drivezone_geoms)
     prepared_evidence_surface = prep(evidence_surface)
 
@@ -1042,8 +1028,6 @@ def run_t07_step1_has_evd(
     _write_nodes(nodes_output_path, nodes_layer_data.features)
     stage_timings["write_nodes_seconds"] = _elapsed_since(stage_started)
     input_paths = {"nodes": str(nodes_path), "drivezone": str(drivezone_path)}
-    if intersection_path is not None:
-        input_paths["intersection"] = str(intersection_path)
     summary = {
         "run_id": resolved_run_id,
         **counts,
@@ -1325,15 +1309,12 @@ def run_t07_semantic_junction_anchor(
     step1 = run_t07_step1_has_evd(
         nodes_path=nodes_path,
         drivezone_path=drivezone_path,
-        intersection_path=intersection_path,
         out_root=out_root,
         run_id=resolved_run_id,
         nodes_layer=nodes_layer,
         drivezone_layer=drivezone_layer,
-        intersection_layer=intersection_layer,
         nodes_crs=nodes_crs,
         drivezone_crs=drivezone_crs,
-        intersection_crs=intersection_crs,
     )
     step2 = run_t07_step2_anchor_recognition(
         nodes_path=step1.nodes_path,

@@ -11,9 +11,9 @@
 - 沉淀 SWSD、RCSD、F-RCSD、语义路口、Segment、字段语义等跨模块共用信息。
 - 保持项目级架构、文档治理、仓库元数据、模块契约职责分离。
 - 保证 GIS / 拓扑 / 空间数据处理结果可解释、可审计、可复现、可验证。
-- 为 P05 方案 A 提供与正式主链隔离的冻结 T01 Junction—Segment/PhysicalMovement 骨架、策略基线、carrier 软标签、`RealityChangeClue` 和最小闭包 fallback；模型只作 carrier 评分/选择和异常判断，不能改写业务骨架。
+- 为 P05 Target A 提供与正式主链隔离的冻结 T01 Junction—Segment、SegmentAccess 和 PhysicalMovement 存在性，以及原始 DriveZone/RCSDIntersection/SWSD/RCSD、分层标签、`RealityChangeClue` 和最小闭包 fallback。联合神经系统先替代 T07/T03/T04/T05 语义路口业务，独立通过后再负责普通 Segment、条件化 `ADVANCE_RIGHT` 和证据/作用域判断，但不能改写冻结业务骨架。
 - P05 的 M1/M2R/R2/RoadGraph PTO-P0 与 JSG-PTO-P0/P1/P2/P3 全部作为历史实验保留。旧 `SegmentConnector`、PTO-A 结构选择及 Connector/Review 指标不再定义当前业务本体或门禁；旧结果只证明相应历史模型、候选、编译与资源事实。
-- P05 仍不替代 T01-T09、不进入生产。现实证据冲突只形成线索并失败/fallback；Junction、Segment、Movement 按已确认的最小依赖闭包回退，禁止 silent fix。
+- P05 Target A 不替代 T01、T09 或 T10，不修改 T01–T12 正式实现与接口，也不进入生产；在其离线推理链内，旧 T07–T06 业务策略完全退出，相关终态只作训练标签和评价。T07 Step1 仍只允许 DriveZone，RCSDIntersection 从模型内 Step2 才可见。现实证据冲突由模型输出线索、影响对象和显式有限 fallback 作用域；确定性层只校验并执行，不作传递闭包；第一版 Movement 不启用。
 - P05-Scheme-A-P2-P0 已完成：Movement 冻结，Segment Road 与 JunctionUnit shared Node carrier 已分层；其 `USE_RCSD retention=0.165753` 保留为受限 carrier bundle 的历史联合安全保留指标，不再解释为本地 Case 或正确 RCSD carrier 缺失。
 - P05-Scheme-A-Dataset-P0 已完成：按模块职责整理 741 sample、520 artifact、11,856 task target、51 Case 和 8,863 Segment；2,190 个 `USE_RCSD` Segment 的正确 Road 均由非 T01 truth-free candidate 可达，最终 Road/Node 与可用 Segment 联合可达率均为 `1.0`，正式结论 `P05_SCHEME_A_DATASET_P0_GO`。该 GO 只覆盖离线数据和候选可达性。
 - P05-Scheme-A-P2-P1已于2026-07-23完成并判定`P05_SCHEME_A_P2_P1_SAFETY_NO_GO`：条件化Node与49+2安全目标通过，但零错误自动替换、总体/`USE_RCSD` coverage、异常precision和seed43 Segment稳定性未通过；当前无可发布模型。
@@ -48,8 +48,8 @@
 
 Dataset-P1 标签资格必须先于 Node/Junction 真值闭包。P4 证明此前唯一残余
 false-use 来自 context-only Segment 过早参与闭包，不再构成新关系表征的启动理由。
-P05 当前仍以安全和准确性优先；模型因 coverage/clue 稳定性继续 NO-GO，后续只能
-另行授权后按 scope-first 真值重训/复验。
+该历史 P2-P3-P4 阶段仍以安全和准确性优先；其模型因 coverage/clue 稳定性
+继续 NO-GO。该结论保留追溯，但不再限制已获授权的 Target A 联合模型范围。
 
 ## P05 P2-P3-P5 完成结论
 

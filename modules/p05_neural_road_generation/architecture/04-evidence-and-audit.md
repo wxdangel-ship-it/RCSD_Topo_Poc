@@ -1,5 +1,7 @@
 # 04 证据与审计
 
+Target A 的每个不可变 run 必须先记录路口阶段：原始 DriveZone/RCSDIntersection 与 T07/T03/T04/T05 label store 的物理隔离及 hash、Step1 无 RCSDIntersection 通道证明、Case-grouped split/checkpoint、T07 evidence、T03/T04 surface/relation evidence、T05 unique relation/graph-consumable/junctionization、完整锚定对象、逐类最差结果和零危险门。路口门通过后才记录 Segment/AR/RoadGraph 指标。所有阶段继续记录 CRS/几何/拓扑、城市级一次读取缓存和资源；候选 ID 只作映射与审计，不进入模型数值特征。
+
 M0 的每个输出 run 必须不可变，并记录：
 
 - POC_Data 根、Case manifest 路径与 hash；
@@ -167,3 +169,77 @@ P13-P0正式证据根为
 Run F reference match=true。两轮各15个NPZ checkpoint逐文件hash一致，27项
 artifact各自hash自校验无异常；训练wall=`31.419/32.603s`，峰值RSS约
 `414.9/414.5MB`，GPU=0。完整P05回归262项通过。
+
+Target A v229–v241r1 正式研究证据位于
+`outputs/_work/p05_neural_road_generation/`，模型 checkpoint 与运行工件
+继续 ignored，不进入 Git。v231/v233 是两个独立 ordinary set-expansion
+strict Case-OOF seed；首次 v234 因 USE 绕过 required-anchor 已废止。
+v234r1 只接受二者业务状态、完整 Road set、逐 Road ownership/角色完全一致
+且通过锚定前置门的结果。v235r2 对 AdvanceRight feature store 单次流式读取并索引 ordinary
+OOF，feature/teacher/label 原文件使用 hardlink；v237/v239 是两个独立
+final-state-conditioned AdvanceRight strict OOF seed；v240 只接受二者完整
+条件方案交集；v241r1 对该交集执行 51 Case 最终 materializer 审计。
+
+正式摘要工件：
+
+- `target_a_ordinary_set_expansion_two_seed_release_gate_20260730_v234r1/summary.json`：
+  自动 `113/3160`、全部 KEEP、selected business exact=`1.0`、
+  unsafe/unverifiable=`0`；
+- `target_a_advance_right_final_state_two_seed_release_gate_20260730_v240/summary.json`：
+  自动 `414/474`、coverage=`0.873418`、plan exact=`1.0`、unsafe=`0`；
+- `target_a_final_state_two_seed_materializer_audit_20260730_v241r1/summary.json`：
+  414/414 自动提右可物化，Road/Node/attachment=`14,193/12,745/868`，
+  ordinary USE/preflight fallback=0，hard failure/mutation/silent fix/
+  content repair 均为 0。
+
+每个正式 gate 均保存输入路径、size、SHA-256、fold mismatch、truth-use 和
+raw-ID embedding 计数。v240r1 不平均两个 seed 的分数；v241r1 不修补内容，只
+执行已确认配方或局部 fallback。当前证据不能外推到 ordinary USE 完整执行、
+AdvanceRight RCSD_ONLY/MIXED_SPLICE 或完整 T03–T06 替代。
+
+Target A v339–v350 的锚定结构证据继续位于
+`outputs/_work/p05_neural_road_generation/`。用户确认
+`T10:605415675 / SWSD semantic Junction 1633165` 的唯一正确锚定为
+六条 RCSD Road 的 road-only split；附近 RCSD Node
+`5391330021350570` 不可接受。该人工真值以权重 `1.0` 写入 label-only
+store，推理 feature store 未改变。六条 Road 为：
+
+- `5391329551450177`
+- `5391329551450189`
+- `5391329551450260`
+- `5391329551450265`
+- `5391330021350944`
+- `5391330021350949`
+
+v348r2 正式结构 decoder 为 794,892 参数，outer relation exact=
+`0.841727`、type exact=`0.900568`、member exact=`0.685879`、
+member macro F1=`0.777820`。v349r1 的 ordinal cardinality outer
+exact=`0.832853`、member exact=`0.688761`、member macro F1=
+`0.783146`；1633165 的 relation/type 与六条 Road 排序方向正确，但发布
+cardinality 仍为 `1`。v350r1 因 threshold cardinality=`1` 与
+expected-floor cardinality=`4` 不一致，只把该自动结果降级。对 v340 的
+22 个自动候选最终接受 21 个，21/21 正确、危险 0，保留率 `95.45%`。
+这是结构化锚定安全门禁的集成 GO，不是 Target A 整体 GO；ordinary USE、
+RCSD_ONLY/MIXED_SPLICE 与完整 RoadGraph 仍须继续验收。
+
+v351r5 将结构锚定 loss 接入 v327 Case-joint 共享 object embedding，模型
+共 `24,926,558` 参数。ordinary free-plan exact=`0.868644`、member
+exact=`0.779821`，但 relation/type exact 退化到
+`0.727901/0.893274`；1633165 再次错选
+`NODE:5391330021350570`，20 个自动候选中出现 1 个危险结果。该错误不能
+解释为同类监督缺失：outer fold2 的训练范围包含 426 条
+`B + ROAD + 多 Road`，其中 27 条为 6 Road。v350 与 v351 的自动结果取
+交集后为 19/19 正确，但覆盖没有增加。证据支持保留原始锚定 evidence
+分支、冻结已确认的 anchor proposal 语义，并只训练下游条件化 adapter；
+不支持继续让 ordinary loss 直接微调锚定语义表示。
+
+v352 将 raw-evidence teacher 压缩至 324,108 参数。总体
+relation/type/member exact 为 `0.784173/0.872159/0.648415`，低于 v348，
+但 held-out 1633165 首次实现 `B + ROAD + cardinality 6 + 六 Road exact`。
+v353r3 冻结该 teacher、v327 anchor/base encoder 和 ordinary heads，只训练
+25,696 参数条件化 stem；总参数 `24,929,538`，free/all-plan exact 提升到
+`0.881356/0.917355`，anchor exact 维持 `0.801444` 且 inconsistency=0。
+v354 迁移旧 inner 阈值并叠加 v350 正式门后，安全接受从 21 增至 24，
+24/24 正确、全部 KEEP。outer-truth 零危险上限为 34，其中 USE 4，但该
+阈值不可发布；必须补齐严格 inner 校准。冻结条件桥已经进入独立源码模块，
+carrier loss 无法反向进入结构锚定 teacher。

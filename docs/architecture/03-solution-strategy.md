@@ -18,7 +18,7 @@
 | T09 | 基于 SWSD Laneinfo / restriction 与 F-RCSD 承载关系还原路口级通行规则。 |
 | T10 | 组织端到端编排与 Case 证据包；v1 Case runner 编排 T01 / T07 Step1/2 / T03 / T04 / T05 / T06 / T11 / T09，T11 为 audit-only，T08 独立前置运行；内网全量总控可把 T08 作为独立阶段串入。 |
 | T12 | 对原始 1V1 F-RCSD 执行 audit-only 质量检查，验证 SWSD 方向通行性等价假设，覆盖必需方向缺失与非预期反向载体。1V1/T05 mainNode 锚定只展开选中 `base_id` canonical raw alias group，其它显式 grouped raw node 不递归扩组；按当前方向 source outgoing / target incoming 进入 raw identity endpoint topology，锚定 alias 距离仅审计，非锚定 spatial fallback 不放宽。以 portal-constrained semantic carrier、T07 Road-surface portal carrier 和 SWSD 反向替代路径为误报排除门禁；Road-surface 层要求唯一标准面和有向物理 Road，非预期反向载体还必须在双端标准面间形成实际 Road 路径，且锚点间逐 raw RCSD Road 唯一归属于当前 Segment、未被其它 Segment 更强覆盖。Junction 层把正式 T03 rejected 作为候选，用原始 FRCSD 准确率优先重验 terminal-collapse 或 unmatched-support；T07 只以 Step2 代表路口 final `fail1/fail2` 直接发布 J03/J04，Step3 cardinality 不作为质量来源。Segment 线几何族（`LineString/MultiLineString`）与 Junction Point 分层，人工复核仅作 Segment 可选 QA 覆盖，不执行修复。 |
-| P05 | 在正式链外采用方案 A：冻结 T01 Junction—Segment/PhysicalMovement 骨架，模型只为 Road/Node carrier 评分/选择并报告异常；冲突进入最小闭包 fallback。全部旧 M1/M2R/R2/PTO/JSG-PTO 结论作为历史证据。 |
+| P05 | 在正式链外采用 Target A：冻结 T01 Junction—Segment、SegmentAccess 和 PhysicalMovement 存在性，T10 负责编排；联合模型先从原始 DriveZone/RCSDIntersection/SWSD/RCSD 替代 T07/T03/T04/T05 路口业务，独立通过路口门后再完成普通 Segment、条件化 `ADVANCE_RIGHT`、Clue/fallback 作用域。fallback 与所有权求解解耦且禁止传递；旧 T07–T06 策略只在 Target A 推理期退出，不修改正式模块或接口；第一版不启用 Movement、不接生产。全部旧实验结论作为历史证据。 |
 
 ## 业务分层策略
 
@@ -55,7 +55,7 @@ T06 的原始目标是基于 T01 Segment 与 T05 1:1 relation 执行 SWSD Segmen
 
 T09 基于 T06 的 F-RCSD carrier 恢复 restriction。T10 默认在 T06 后先运行 T11 形成 relation repair candidate audit，再进入 T09；显式提供原始 1V1 F-RCSD 时，在 T11 后、T09 前运行 T12。T12 与 T11 都不改变 carrier。F-RCSD 质量检查专用入口固定跳过 T08、启用 T12，并复用同一 full runner。T10 通过 Case replay、T06 funnel、可选 T12 quality audit、T11 candidate audit、visual check、feedback package 和 full pipeline summary 把真实数据问题组织成可追溯证据链。P01 作为 POC，在 Arm / RoadNextRoad 层探索更完整的通行能力建模，但不替代 T09。P02 作为武汉局部实验 POC，在缺少道路面、导流带和 RCSDIntersection 时，以 T11 格式人工关系进入 T05，再由 T06 验证 Segment 替换；P02 不替代被编排模块。P04 作为并行 POC，以 T01 Segment 为顶层业务单元，复用 T07/T03/T04/T08 accepted surface 建立 JunctionUnit，并以 Patch Vector、Patch Road 和 LaneTopo 实例化 Road/Node/RoadNextRoad；P04 当前不进入 T10 正式编排。
 
-P05 与规则主链并行，当前只执行方案 A。T01 Segment 集合、Junction relation 与 PhysicalMovement 存在性先冻结，神经模型只学习 carrier 候选评分、Road/Node carrier 选择和异常概率；确定性层仅验证骨架 signature、schema、引用、方向、CRS、lineage 和最小 fallback 闭包。`ADVANCE_RIGHT` 是 Segment，不是 Connector。证据冲突形成 `RealityChangeClue`，不得通过 PTO-A、补路、吸附或重连改变骨架。
+P05 与规则主链并行，当前执行 Target A。T01 Segment 集合、Junction relation、SegmentAccess 与 PhysicalMovement 存在性先冻结；共享 Graph/Set encoder 先完成模型内语义路口锚定硬门，再输出普通 Segment 完整 Road/Node 方案，随后按相邻普通 Segment 已锁定的最终 access Road 条件化解码 `ADVANCE_RIGHT`，并输出 `RealityChangeClue`、影响对象和 fallback 作用域。RoadGraph decoder 只能在模型给出的完整候选方案中联合选择，不能修改锚定、扩充候选、改变骨架或重作证据判断。模型的每条 fallback directive 必须明确 Segment/Junction 作用域和受影响对象；确定性层以冻结 T01 直接关系校验，Segment 级只执行该 Segment，Junction 级只执行明确列出的直接关联 Segment，绝不沿 Segment 传播到另一端 Junction。所有权冲突求解不具有扩大 fallback 的权力。确定性层另只执行几何/Node 写出和通用 schema、引用、方向、CRS、拓扑验证。`ADVANCE_RIGHT` 是 Segment，不是 Connector；不得通过 PTO-A、补路或重连改变骨架。
 
 Scheme-A-P2-P0 已完成且未训练模型。它把 P1 中绑在每个 Segment 上的共享 Node carrier 分离为 JunctionUnit 统一选择：candidate 阶段只枚举当时受限的 T01/proposal Road/Node，Oracle 阶段才读取 label-only truth；Movement 不参与候选、求解或评价。其 `USE_RCSD retention=0.165753` 现在只保留为该受限 carrier bundle 的联合安全保留指标，不再外推为训练 Case 或正确 RCSD carrier 缺失。
 
@@ -96,7 +96,7 @@ JSG-PTO-P3 已完成。candidate/context 双编码与交互网络只读取 ID-fr
 - P01 是异构路口通行能力 POC / 成果模块，不替代 T09 正式契约。
 - P02 是武汉局部人工锚定实验 POC / 成果模块，不进入正式主链，也不伪造 T07/T03/T04 产物。
 - P04 是 Segment-first Road 直出 POC / 成果模块，不进入正式主链，不把当前 Road/LaneGroup、历史 V2/V3 或单 Case 候选提升为正式 RCSD。
-- P05 是方案 A 神经网络 carrier 决策 POC / 成果模块；冻结业务骨架，不进入正式主链。既有模型与 RoadGraph/JSG PTO 只作为历史基线保留。
+- P05 是目标 A 联合神经 RoadGraph 决策 POC / 成果模块；冻结 T01 业务骨架，以原始 DriveZone/RCSDIntersection/SWSD/RCSD 为路口输入、T10 为编排，先研究替代 T07/T03/T04/T05，再研究 Segment；不修改 T01–T12 正式实现/接口，也不进入正式主链。既有 carrier scorer 与 RoadGraph/JSG PTO 只作为历史基线保留。
 
 ## 设计取舍
 
@@ -150,8 +150,8 @@ P5 已按上述固定顺序复用 candidate/feature/payload/compatibility，仅�
 scope-first Segment/Node label，并从头训练原 2.818M 级分层网络。硬门和通用闭包
 保证三 seed 的最终错误发布为0及合法整图，但P6确认scorer层每seed仍各有1个错误
 自动接受。seed 311/317 的自动覆盖不足，三个 seed 的 clue head 分别表现为过报或
-漏报。当前策略因此保持“scorer 软判断 + 确定性安全 fallback”，不将安全层通过
-解释为模型 GO。
+漏报。该历史 P5 策略因此保持“scorer 软判断 + 确定性安全 fallback”，不将安全层
+通过解释为模型 GO；该结论不再定义 Target A 的网络边界。
 
 P6 已完成失败归因。下一路线固定为双路：一条先提出不使用T06终态的关系/共享上下文
 表征并做跨Case可分性审计；另一条把clue/abstention从carrier rank解耦并建立Case域

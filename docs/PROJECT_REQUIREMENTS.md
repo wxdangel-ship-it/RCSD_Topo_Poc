@@ -65,9 +65,28 @@ T10 负责组织端到端 Case package、Case replay、full pipeline manifest、
 
 ### 3.8 神经网络 Road 直出 POC
 
-P05 当前采用 2026-07-22 确认的方案 A。T01 Segment 集合、Junction—Segment 关系和 PhysicalMovement 存在性冻结；神经模型只替换策略中的软判断、carrier 候选评分/排序、Road/Node carrier 选择以及异常概率判断，不新增、删除、合并、拆分 Segment，不改变 Junction 归属，也不以 PTO-A 重选业务结构。正式 Segment 必须至少拥有一条独立 Road，普通提右统一为含 `source_segment_access/target_segment_access` 的 `segment_type=ADVANCE_RIGHT` Segment，可保留真实 `junc_nodes`，不再使用 `SegmentConnector` 作为当前业务类型；access 不唯一时必须失败并形成线索，不得按几何邻近猜测。
+P05 当前采用 2026-07-25 确认并于 2026-08-04 扩展 T07 边界的 Target A。T01 Segment 集合、Junction—Segment 关系、SegmentAccess 和 PhysicalMovement 存在性冻结；T10 继续负责数据与编排。联合神经系统先从原始 DriveZone、RCSDIntersection、SWSD/RCSD Road/Node 学习并替代 T07/T03/T04/T05 的语义路口核心业务判断，路口阶段独立验收通过后，才继续学习 T06 普通 Segment 完整 Road/Node、条件化 ADVANCE_RIGHT、现实冲突与 fallback 作用域，再由约束 RoadGraph decoder 在模型方案中组合。旧 T07–T06 策略在 Target A 推理期完全退出，其终态只能作为训练标签或评价；T07 Step1 仍严格为 DriveZone-only，RCSDIntersection 从模型内 Step2 才可见。Target A 不得改变 T01 业务骨架，不修改 T01–T12 现有实现或接口，第一版不启用 Movement、不接生产。
 
-如果推理证据与冻结结构冲突，P05 只生成 `RealityChangeClue` 并执行最小依赖闭包 fallback：Junction 冲突使关联全部 Segment 保留 SWSD，Segment 冲突只回退该 Segment且不自动改变或回退相关 PhysicalMovement；Movement 仅因自身问题回退，carrier 确实共享或影响 Junction 内部拓扑时才升级为 Junction fallback，否则只回退该 Movement。fallback 后结果符合统一本体、独立 Road、引用、方向、CRS、拓扑与 lineage hard gate时计 `SUCCESS_WITH_FALLBACK`，否则计 `FAIL`。准确性和安全性优先于自动化率。
+语义路口锚定是普通 Segment RCSD 替换的模型内前置硬门禁。模型必须以 SWSD 语义路口为唯一锚定主体，独立确定一个或多个 RCSD Junction、一个或多个 RCSD Road 及必要打断位置；多候选不能由后续 Road/carrier 分数代选，不能唯一确定时输出 `AMBIGUOUS/ABSTAIN`。任一 required `pair_node/junc_node` 未锚定成功时，普通 Segment 不得进入 RCSD 方案判断。第一版缺少“RCSD Junction + RCSD Road”复合锚定人工监督，该类场景统一安全回退并单独统计，不补造 KEEP 或 clue 原因。
+
+普通 Segment 的模型输出是完整 Road 清单及业务角色、所有权、source/target access、方向、条件化 Node 和打断配方，不是单一 `USE_RCSD/KEEP_SWSD` 标签。`KEEP_SWSD` 是正常正向业务决定，必须与 `ABSTAIN -> fallback SWSD` 分开统计；RCSD 主干允许由一条或多条 RCSD Road/片段组成，`USE_RCSD` 后不得保留 SWSD 主干。唯一允许的混源是 T06 已定义的“主干 RCSD 替换、附属/侧向 Segment 无 RCSD 时保留 SWSD”。Segment 内部 RCSD 连接树若聚合后为树、所有叶节点都挂接在当前 Segment 选择的 RCSD 主干 Road 且无外部叶，其 Road 同时进入 `frcsd_road_ids` 与 `owned_frcsd_road_ids`。一条最终 RCSD Road 片段只能属于一个正式 Segment；无 owner Road 只允许用于 Junction 内部或多 Segment connectivity。
+
+正式 Segment 必须至少拥有一条独立 Road。普通提右统一为含 `source_segment_access/target_segment_access` 的 `segment_type=ADVANCE_RIGHT` Segment，可保留真实 `junc_nodes`，不再使用 `SegmentConnector` 作为当前业务类型。ADVANCE_RIGHT 必须等相邻普通 Segment 完成选择并锁定最终 access Road 后再解码；模型根据两端最终 Road 来源选择完整提右 Road 组合、打断、衔接与挂接关系，确定性层只执行几何与 Node 写出。提右只引用相邻 access Road而不取得其所有权，也不能反向改变普通 Segment 的锚定、Road 方案或 access；access 不唯一时必须失败并形成线索，不得按几何邻近猜测。
+
+模型负责判断无证据、歧义、现实冲突、影响对象和 `RealityChangeClue`；确定性层只执行模型已确认的有类型、有限深度 Segment/Junction fallback，不重新判断业务事实，也不得计算传递闭包。Segment 级 fallback 只回退该 Segment并止于两端 Junction，不影响同一 Junction 的其他 Segment；Junction 级 fallback 只覆盖该 Junction 与模型明确列出的 T01 直接关联 Segment，并止于这些 Segment，不得经这些 Segment 传播到其另一端 Junction。T01 依赖图只可作为 encoder 上下文，不能成为 fallback 扩张边。RCSD 数据缺失是正向 `KEEP_SWSD + clue=false`，不是现实结构冲突；原因不明的 `no_valid_relation` 只表示未锚定成功，不得补造 KEEP 或 clue 原因。ADVANCE_RIGHT 自身问题只回退提右，carrier 共享或影响 Junction 内部拓扑时才升级为受上述边界约束的 Junction fallback。第一版 Movement 不参与模型决策。fallback 后结果符合统一本体、独立 Road、引用、方向、CRS、拓扑和输入来源 hard gate 时计 `SUCCESS_WITH_FALLBACK`，否则计 `FAIL`。准确性和安全性优先于自动化率。
+
+Target A 的完整合同位于 `specs/p05-target-a-joint-roadgraph-20260725/`。正式评价必须同时报告锚定与完整 Road 方案正确率、自动决策整图 exact、fallback 后最终 RoadGraph exact、正向 KEEP 覆盖、ABSTAIN/fallback 质量、各类 Case 最差表现，并与完整现有策略做 paired comparison。生成 ID、文件顺序和无业务影响的折线点差异可忽略；锚定对象、源 Road、Road 用途、所有权、access、方向和拓扑必须严格正确。unsafe auto RCSD、Review auto、unreachable auto、skeleton mutation、silent fix 和新增 RoadGraph hard failure必须全部为零。
+
+当前路口阶段的数据授权扩展为 `POC_Data/T03`、`T03_Error`、`T04`、`T04_Error`
+与 `POC_QA/T03_Error`：当前正式规则重放结果按逐 Case 人工确认 Gold、权重 1.0
+使用；T10 只有可明确追溯到具体 SWSD 语义路口的锚定结果按 0.7 使用。重复 Case
+按 Case ID 和原始输入 hash 去重；终态一致多版本保持同 split 并均分 Case 权重，
+终态冲突进入 `LABEL_REVIEW`。当前冻结 700 个 Case group 为 `490/105/105`。Gold 冻结测试
+要求 raw完整路口 exact `>=0.85`、自动覆盖 `>=0.80`、自动接受正确率 `=1.0`、
+危险/未知自动接受 `=0/0`、异常或安全 ABSTAIN recall `=1.0`；T10 留出 weighted
+exact `>=0.75`。未通过该门禁前不得恢复 Segment、AdvanceRight 或 Movement训练。
+
+2026-08-04 的 Target A 架构收口保留“唯一 Junction 锚定 + 锁定锚定后的普通 Segment 完整 Plan + Junction 直接关联协调”边界，但两个固定 canary 均未晋级。ARCH-CLOSURE-P0 的 Segment Full Exact/Junction Group Exact 均未提高；随后唯一 Junction Layer A 虽把完整业务 exact 从 `908/1145` 提升到 `921/1145`，Gold、SUCCESS 完整对象、正向 `NO_EVIDENCE` 和安全指标却同时退化，正式判定 `UNIQUE_JUNCTION_CANARY_NO_GO`。当前不得生成五折 OOF `JunctionStore`、训练 Layer B 或恢复 AdvanceRight；引用式 Store、Gate 0、唯一 forward 与直接 fallback 边界继续保留。现有训练折 Gold/Silver 完整对象监督为 `121/2414`，具体监督缺口是独立 Gold 的完整 Node/Road anchor 集合，不能解释为候选不可达或神经网络整体不适用。下一训练边界必须由用户重新确认，不得通过 Fold1 loss/权重/epoch/阈值扫描绕过 Promotion Gate。
 
 Scheme-A-P1 的安全验收要求 51/51 Case 都有确定终态，但不要求把原始 SWSD 非法 Case修成合法图。冻结范围内 `T10:74155468` 缺少端点 Node `953982`、`T10:609214532` 缺少端点 Node `987665`；两者必须稳定输出 `FAIL + RealityChangeClue`，不得发布、补点、吸附或改写骨架。其余 49 Case必须全部通过 RoadGraph hard gate。两个预期失败仍参加51 Case的模型、fallback与异常指标计算，不得当作排除项。
 
@@ -179,7 +198,7 @@ P05-PTO-P0 已完成。P0 不训练第二个 decoder，而是复用 R2 edit/poin
 | P02 | 武汉局部人工锚定实验编排与证据收口；复用 T08/T01/T05/T06，不替代这些模块的正式业务契约。 |
 | P04 | Segment-first Road 直出 POC；T01 Segment 是顶层业务单元，SWSD 路口—路段结构提供完整Access/Movement拓扑合同而非built几何模板，T07/T03/T04/T08 accepted surface 定义 JunctionUnit，Patch Vector 与同版本 Patch Road 提供高精物理证据，锚定成功的完整 RCSD 只作跨 Patch 辅助与缺证据 carrier 候选。每个正式 Segment 必须发布至少一条独立 Road；高精可区分方向时，业务验收对象是两条连续的方向主干链，而不是固定两条 Road 记录。方向主干链可按 LaneGroup、物理 Node、`junc_nodes`、分流合流和证据边界细分为多条 Road；细分不要求与SWSD Road一一对应，但不得改变SWSD定义的进出方向和路口Movement完整性；非高速主辅路等还可包含额外方向链和附属 Road。新建 Road 几何只能由 `hp_observed + hp_constrained_completion` 形成，不直接拼接 SWSD 坐标；缺证据时可整体保留 SWSD carrier，单 Segment hard gate 失败只阻断该 Segment 及相关 Movement。ordinary Junction保留分布式高精portal Node，不生成中心聚合点或星形JunctionUnit内部Road；同一正确分类的ordinary JunctionUnit内Node共享`mainnodeid`，RoadNextRoad按该JunctionUnit的方向兼容进入—离开Road组合编译默认PhysicalMovement。实际共享Node仍用于Segment内部连续性和显式物理连接；T04复杂路口、环岛及聚合异常不得由mainnode机械全连接，必须按上游物理子图和LaneTopo编译。跨Segment被拒Movement显式排除，不自动回退两侧Segment。发布状态为 `hp_full / hp_partial / swsd_retained / conflict_retained`，并与 `segment_publishable`、`carrier_takeover_ready`、`replacement_scope` 和输入质量状态分离。正式 POC 候选只发布 Road、Node、RoadNextRoad。冻结 Directional V2 和 High-Precision V3 只作历史对照。最大化复用既有模块正式产物与公开契约，但不修改 T01-T12；当前不替代 relation-first 正式主链，不发布正式 RCSD/F-RCSD。 |
 
-| P05 | 方案 A 神经网络 F-RCSD Road/Node carrier 决策 POC；冻结 T01 Junction—Segment/PhysicalMovement 骨架，模型只作 carrier 评分/选择和异常线索。P12R-R1已证明普通提右正确carrier基本进入候选池；P13-P0的480,739参数candidate-set scorer完成3 seeds × 5 Case folds，但raw exact-set `0.646907`低于5m Local Control的`0.680412`，选择能力与自动发布安全门失败，正式`P05_SCHEME_A_P2_P3_P13_P0_SELECTION_NO_GO`。当前无可发布神经模型，不替代T01-T09。 |
+| P05 | 目标 A 联合神经 RoadGraph 决策 POC；冻结 T01 Junction—Segment/PhysicalMovement 业务骨架，T10 继续负责编排。模型先直接消费原始 DriveZone/RCSDIntersection/SWSD/RCSD 并替代 T07/T03/T04/T05 路口业务，独立通过路口门后再完成普通 Segment、条件化 AdvanceRight、RealityChangeClue 与 fallback 作用域；确定性层只执行几何/Node 写出、通用图合法性和已确定 fallback。旧 T07–T06 终态仅用于标注与验收，退出目标 A 推理链；第一版不启用 Movement、不接生产，也不修改 T01–T12 正式实现或接口。P13-P0 的 `SELECTION_NO_GO` 保留为历史失败证据。 |
 
 P04闭域目标必须同时发布三套事实：输入确定的`BaselineCohort`、外部确认清单确定的`DirectBuildEligibility`和最终`PublishDisposition`。Baseline历史分母不得因资料不足或现实变化而被改写；只有逐对象、可哈希、可追溯的`patch_data_insufficient`或`reality_change`可以退出DirectBuild硬分母，未列出的对象默认`direct_build_required`。退出硬分母的对象仍必须保留完整可发布图结构，并分别进入资料不足或现实变化审计。
 

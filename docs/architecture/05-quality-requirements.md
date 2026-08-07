@@ -23,7 +23,7 @@
 - P05 训练样本必须能证明人工检查边界与 T06 artifact lineage；同一业务对象不同版本不得跨 train/validation/test，缺失标签应 task-mask 而非补造。
 - P05 方案 A 必须逐 Case证明 T01 Segment 集合、`pair_nodes/junc_nodes`、Junction relation 和 PhysicalMovement 存在性未被修改；骨架 mutation 数必须为零。
 - 当前 P05 业务输出不得含 `SegmentConnector`；全部普通提右必须保留为具有独立 Road 的 `ADVANCE_RIGHT Segment`。旧 Connector 指标只作历史证据。
-- P05 fallback 必须按 Movement/Segment/Junction 最小依赖闭包执行；原始 SWSD Road/Node 不合法、mainnode 分组冲突或证据与先验冲突必须生成 `RealityChangeClue` 并失败，禁止 silent fix。
+- P05 fallback 必须按模型明确的 Segment/Junction 有限作用域执行：Segment 级只含自身，Junction 级只含模型列出且经冻结 T01 验证的直接关联 Segment；不得沿 `Junction—Segment—Junction` 传递，跨边界扩张计数必须为零。原始 SWSD Road/Node 不合法、mainnode 分组冲突或证据与先验冲突必须生成 `RealityChangeClue` 并失败，禁止 silent fix。
 - P05 M1/M2R 必须阻止不同局部 Case 中相同业务对象、Road 实体及门禁邻域跨 split；任务目标字段只作 label/evaluation，不能进入模型输入，物化器不允许业务 fallback 或 silent fix。M2R 的通用约束不得编码 Segment 归属、SPLIT、方向、路口映射或补路。
 - P05 R2 必须先通过 oracle 表示门禁：Road truth edit coverage 至少 `99.9%`、Node/SPLIT/pointer 可表达率 `100%`，51/51 Case 的归一化 Road/Node 与有向拓扑精确重建；未通过不得进入模型泛化声明。oracle payload 只能 label-only，模型推理不得读取。
 - P05 R2 已通过表示和 small-batch 门禁，但当前 ordinal slot-query 模型未通过 grouped OOF；在另立架构实验并重新通过相同门禁前，不得以训练 loss、资源合规或通用合法性约束替代最终 RoadGraph 泛化指标。
@@ -50,7 +50,22 @@ P2 实测：V1 JSG Top-1/macro F1/Review recall 为 `0.7243/0.6173/0.0130`，排
 - PTO-A/PTO-B 51/51 `OPTIMAL`；Road/Node、最差 Case Road、direction/source、SPLIT 均保持 `1.0`；全部 hard failure/repair 为零。
 - 单 seed 5-fold `<=2h`，3 seeds 总计 `<=6h`，RAM `<=16GB`、VRAM `<=8GB`；score 与完整链沿用 P2 `5s/20s`、`60s/300s` 门禁。
 
-上述 JSG-PTO-P0/P1/P2/P3 门禁均为历史实验门禁。当前方案 A 的正式门禁以冻结骨架覆盖、策略基线映射、carrier-only 标签、RealityChangeClue、fallback 正确性、双跑确定性和 no-silent-fix 为准。
+上述 JSG-PTO-P0/P1/P2/P3 以及 P1–P13 门禁均为历史实验门禁。当前 Target A
+首先继承冻结骨架、完整标签作用域、`RealityChangeClue`、fallback 正确性、
+双跑确定性和 no-silent-fix，再按联合业务目标验收：锚定对象、完整 Road 清单及
+用途/所有权、access、Node、方向、打断/衔接与最终拓扑必须正确；正向
+`KEEP_SWSD` 与 `ABSTAIN -> fallback` 分开；同时报告自动决策整图 exact 和
+fallback 后最终 RoadGraph exact，并与完整现有策略做 paired comparison。任一
+unsafe auto RCSD、Review auto、unreachable auto、skeleton mutation、silent fix
+或新增 RoadGraph hard failure 非零即为 NO_GO。
+
+Target A 当前先执行独立路口门。Gold 冻结测试必须达到 raw 完整路口 exact
+`>=0.85`、自动业务决策覆盖 `>=0.80`、自动接受完整正确率 `=1.0`、危险自动接受
+和真值未知自动接受 `=0/0`；已证明异常不得自动判正常，`异常或安全 ABSTAIN`
+recall 必须为 `1.0`。T10 留出集按 0.7 标签计算的完整路口 exact 必须
+`>=0.75`。完整路口 exact 同时比较 surface、锚定状态、RCSD 对象集合、聚合/打断、
+重构拓扑和质量状态。相同输入/输出/环境下，包含一次性索引构建的模型链总耗时不得
+超过现有 T07+T03+T04+T05 规则链的 1.5 倍，且城市输入不得按路口重复全量读取。
 
 方案 A baseline 已通过：51 Case、8,863 Segment、474 ADVANCE_RIGHT、24,779 PhysicalMovement 全量覆盖，双跑五类业务 signature 一致；40 个不可发布 ADVANCE_RIGHT 显式 `REVIEW_FALLBACK`，不补造 access 或 Road。Run A/B P95/max 均远低于 `30s/120s`，RSS 低于 16GB，CPU 低于 1h，无需 GPU。
 

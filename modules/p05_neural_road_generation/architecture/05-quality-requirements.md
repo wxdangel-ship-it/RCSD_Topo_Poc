@@ -1,5 +1,26 @@
 # 05 质量要求
 
+## 当前 Target A 总门禁
+
+- 当前先独立验收 T07/T03/T04/T05 路口阶段：Gold 冻结测试 raw 完整路口 exact
+  `>=0.85`、自动覆盖 `>=0.80`、自动接受完整正确率 `=1.0`、危险自动接受和真值
+  未知自动接受均为 0；已证明异常不得判为正常，异常或安全 `ABSTAIN` recall
+  必须为 1.0；T10 留出 weighted exact `>=0.75`。未通过前 Segment、
+  AdvanceRight、Movement 全部关闭。
+- 完整路口 exact 同时比较 surface、锚定状态、RCSD 对象完整集合、聚合/打断方案、
+  重构拓扑和质量状态；任一关键对象错误即整体错误，不得以生成 ID、文件顺序或
+  几何容差掩盖业务对象选择错误。
+- 锚定是普通 Segment RCSD 替换的模型内前置硬门；required anchor 未唯一成功时不得进入 RCSD Road 方案发布。
+- 锚定对象类型必须存在于冻结原子候选集；cardinality 的发布解码与独立期望下界不一致时只允许降级为 `ABSTAIN`，不得改写或扩充成员集合。
+- 普通 Segment 按锚定、完整 Road 清单、用途/所有权、access、Node、方向和拓扑联合评价；`KEEP_SWSD` 是正向自动决定，`ABSTAIN -> fallback` 单列。
+- `ADVANCE_RIGHT` 按两端已锁定 access Road 来源、完整提右 Road 清单、打断/衔接、挂接关系和最终拓扑联合评价。
+- 自动发布必须达到 unsafe auto RCSD、Review auto、unreachable auto、skeleton mutation、silent fix 和新增 RoadGraph hard failure 全为零。
+- fallback 作用域跨边界扩张必须为零：Segment 级不得影响其他 Segment，Junction 级不得包含非直接关联 Segment，也不得经直接 Segment 继续影响另一端 Junction。
+- 同时报告模块替代覆盖率、自动决策整图 exact、fallback 后最终 RoadGraph exact、完整现有策略 paired comparison、逐类/逐 fold 最差结果与 fallback 质量。
+- 保持至少 49 `LEGAL` + 2 `EXPECTED_FAIL` 历史安全边界；业务对象选择错误不得被几何容差掩盖。
+
+下述 M0–P13 门禁均为历史阶段门禁；除通用 CRS、拓扑、审计、确定性和资源要求外，不再单独定义 Target A 成功。
+
 ## CRS
 
 所有 Road/Node layer 必须声明 CRS。candidate 与 truth CRS 不同即 hard fail；M0 不隐式重投影。
@@ -100,7 +121,7 @@ P2 实测：V1 JSG Top-1/macro F1/Review recall 为 `0.7243/0.6173/0.0130`，ran
 
 P3 实测：三个 seed 的 JSG Top-1/macro 为 `0.9390~0.9395 / 0.8471~0.8817`，Connector 为 `0.4283~0.5992`，Review recall/precision 为 `0.4389~0.4952 / 0.6886~0.7828`。Gate 0/1/3/4 通过，Gate 2 失败，正式判定 `P3_MODEL_NO_GO`。三个 seed 的 PTO-A/PTO-B 均 51/51 `OPTIMAL`，Road/Node/direction/source/SPLIT 均为 `1.0`，hard failure/repair/silent fix 为零；确定性、GIS、资源和完整回归通过。
 
-## 方案 A Carrier 基线质量门禁
+## 历史方案 A Carrier 基线质量门禁
 
 - 51/51 Case，排除项零出现；全部输入 manifest/hash/CRS 可定位。
 - T01 Segment、ID、`pair_nodes/junc_nodes` 覆盖 100%，骨架 mutation 为零。

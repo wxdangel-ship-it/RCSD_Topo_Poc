@@ -10,7 +10,8 @@ T07 是项目路口 1:1 关系层中的已有路口面锚定模块。它迁移 T
 
 ## 3. 目标
 
-- Step1 只基于 `DriveZone` 判定代表 node 的 `has_evd`；`RCSDIntersection` 不参与 Step1 正向判定。
+- Step1 仅基于 `DriveZone` 判定代表 node 的 `has_evd`；不得读取、校验或使用
+  `RCSDIntersection`。
 - Step2 基于 `RCSDIntersection` 和可选 `RCSDNode` 判定 `is_anchor / anchor_reason`。
 - Step2 输出 T07 版 surface handoff 与 relation evidence。
 - Step3 在显式提供兼容 relation 文件时，对符合条件且仍未锚定的 existing-surface 候选补写 relation anchor。

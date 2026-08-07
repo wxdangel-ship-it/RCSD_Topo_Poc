@@ -1,8 +1,10 @@
 # P05 神经网络 F-RCSD Road 直出 POC
 
-## 当前方案 A
+## 当前目标 A
 
-P05 当前冻结 T01 Junction—Segment 结构和 PhysicalMovement 存在性，神经模型只对 Road/Node carrier 方案评分/选择并报告异常。普通提右是 `segment_type=ADVANCE_RIGHT` 的 Segment，必须有独立 Road，可包含真实 `junc_nodes`；当前业务层不使用 `SegmentConnector`。证据冲突生成 `RealityChangeClue` 并按 Movement/Segment/Junction 最小依赖闭包 fallback，禁止 PTO-A 改写骨架和任何 silent fix。
+P05 当前冻结 T01 Junction—Segment、SegmentAccess 和 PhysicalMovement 存在性，T10 继续负责数据与编排。联合神经系统先直接读取原始 DriveZone、RCSDIntersection 和 SWSD/RCSD Road/Node，按 Step1 DriveZone-only → Step2 existing surface → T03/T04 → T05 的业务顺序完成语义路口判断；路口阶段独立通过后，才允许训练普通 Segment 完整 Road/Node 方案、条件化 `ADVANCE_RIGHT`、`RealityChangeClue` 与 fallback 作用域，并由约束 RoadGraph decoder 联合选择。fallback 不采用通用冲突传递闭包：Segment 级只回退自身并止于 Junction，Junction 级只覆盖模型明确列出且经冻结 T01 验证的直接关联 Segment，并止于这些 Segment；所有权联合求解不得扩大作用域，T01 依赖图只作 encoder 上下文。旧 T07–T06 终态只作标签与验收，退出目标 A 推理链；确定性层只执行几何/Node 写出、已确定 fallback 和通用图合法性，不重作业务判断。普通提右是 `segment_type=ADVANCE_RIGHT` 的 Segment，必须有独立 Road，可包含真实 `junc_nodes`；当前业务层不使用 `SegmentConnector`。第一版不启用 Movement、不接生产，也不修改 T01–T12 正式实现或接口。
+
+截至 2026-07-31，v388r1/v389 已形成第一版 recall-first 端到端研究基线：外层 fold1 对 143/143 个提右强制输出，Road top-1=`86/106=0.811321`，需要几何动作的 top-1 complete exact=`30/67=0.447761`，Road+几何联合 top-1=`33/77=0.428571`；Road 与几何 beam 均为 16 时联合正确方案 `77/77` 可达。该结果只证明模型可以稳定出结果并保住正确方案，不代表最终 Node/方向/拓扑和 RoadGraph 已正确物化。v390 的平面组合 decoder 使 top-1 降至 `32/77`，已判定 NO_GO；下一步分别收敛 Road cardinality/完整成员和分类型几何 top-1，不再扩候选或评估 beam。
 
 [P05-Scheme-A-Dataset-P0](../../specs/p05-scheme-a-dataset-p0-module-semantic-reachability-20260722/) 已完成并判定 `P05_SCHEME_A_DATASET_P0_GO`：在不增加 Case 的前提下，741 sample、520 artifact、11,856 task target、51 Case 和 8,863 Segment 已按模块业务语义重新归档；T01 只作 SWSD 冻结骨架/fallback，T07 固定 `DRIVEZONE_ONLY`，T03/T04/T05 是中间监督，T06 Road/Node 是最终标签。`USE_RCSD` 的非 T01 候选覆盖为 `2190/2190`，可用 Segment、最终 Road/Node 与联合 exact 均为 `100%`。这证明现有 Case 数据与离线候选足够进入 scorer 方案设计；不等于 scorer 已训练，也不等于在线 proposal 性能或生产接入已通过。
 
@@ -84,7 +86,7 @@ PTO-P0 已完成：登记 commit 的 T03-T06 策略重放只从 raw/T01 生成�
 
 核心依赖不包含 PyTorch。需要复现实验时使用锁定的可选 extra：`uv sync --python 3.10 --extra dev --extra p05-neural`。M1 实测 GPU 环境为隔离的 Python 3.12、`torch 2.9.1+cu128` 和 RTX 5090；正式锁文件固定同版本 CUDA 12.8 wheel，不改变默认 `dev` 同步命令。
 
-## 当前阶段：P13-P0 已完成，提右候选集合模型 NO-GO
+## 历史阶段：P13-P0 提右候选集合模型 NO-GO
 
 `P05-Scheme-A-P2-P3-P8` 已完成并判定
 `P05_SCHEME_A_P2_P3_P8_PARTIAL_GO_CARRIER_ONLY_CLUE_SOURCE_BLOCKED`。51个

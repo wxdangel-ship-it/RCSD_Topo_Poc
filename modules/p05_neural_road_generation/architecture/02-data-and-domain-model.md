@@ -24,9 +24,10 @@
 - `FrozenSegment`：T01 Segment 原样业务骨架，包含 `STANDARD/ADVANCE_RIGHT`、`pair_nodes/junc_nodes` 和至少一条独立 SWSD Road；`ADVANCE_RIGHT` 还必须保留 `source_segment_access/target_segment_access`。模型不得增删改。
 - `JunctionSegmentRelation`：独立表达 `ENDPOINT/THROUGH` 与 `ENTER/EXIT/BOTH/UNKNOWN`；多 THROUGH 必须 REVIEW。
 - `PhysicalMovement`：同一 JunctionUnit 内 Segment access 之间的物理可达，不受 T09 TrafficRule 过滤。
-- `CarrierRealization`：Segment、JunctionUnit 或 Movement 的 Road/Node 实现，是当前模型允许评分/选择的对象。
+- `SemanticJunctionAnchor`：模型对一个 SWSD 语义路口输出的唯一 RCSD 锚定对象、关联 Road 与打断位置，以及 `SUCCESS/NO_EVIDENCE/AMBIGUOUS/ABSTAIN`；普通 Segment 后续判断不得反向修改锚定。
+- `CarrierRealization`：普通 Segment 或 `ADVANCE_RIGHT` 的完整 Road/Node 实现，包含 Road 清单、业务用途、唯一所有权、access、方向、Node、打断/衔接和挂接关系；不是单个 `USE/KEEP` 标签。
 - `RealityChangeClue`：证据与冻结骨架冲突时形成的线索，不改变骨架。
-- `FallbackPlan`：Movement/Segment/Junction 最小依赖闭包的保留 SWSD 或阻断发布计划。
+- `FallbackDirective`：模型明确给出 Segment/Junction 类型、原因和受影响对象；Segment 级只含一个 Segment，Junction 级只含该 Junction 的 T01 直接关联 Segment，确定性层校验但不补全、不传递扩张。
 
 旧 `StandardSegmentUnit/SegmentConnector/PTO-A/PTO-B` 只存在于历史 JSG-PTO 证据。当前普通提右必须是 `ADVANCE_RIGHT Segment`，通过 source/target Segment access 直接关联两个普通 Segment，可包含真实 `junc_nodes`，并具有独立 Road。当前 T01 未显式存储 access 时，只接受“独立 Road 唯一有向端点 + 端点处唯一普通 Segment owner”的可追溯结果；不唯一即保留空值并形成现实冲突线索。
 
@@ -57,9 +58,9 @@ P1 新增 `JSGP1Candidate/JSGP1CandidateSet/JSGP1SolveCertificate`。candidate p
 
 P2 新增 `P2FeatureRow/P2LinearModel/P2CandidateScore/P2SelectionCertificate`。ID 只用于 split/join/audit，不进入 feature；feature token 只表达候选枚举、结构、source/role、复杂度和证据状态。label、fold、model、score、selection 分层哈希；V1 held-out fold 不得参与任何权重统计。
 
-方案 A label layer 只生成 Segment/Movement carrier 与异常软标签。T01 Segment/Junction relation/PhysicalMovement 存在性没有增删改 target；缺失 carrier 只 mask 或形成 clue，不能编码为不存在。
+历史方案 A carrier baseline 的 label layer 只生成 Segment/Movement carrier 与异常软标签；该边界只作为旧实验事实保留。目标 A 先训练 T07/T03/T04/T05 路口 evidence、surface、relation、graph-consumable/junctionization 和完整锚定对象，通过后再训练普通 Segment、条件化 `ADVANCE_RIGHT`、RealityChangeClue/影响对象/fallback。T01 业务骨架仍没有增删改 target；旧 T07–T06 终态只能进入标签、loss 或评价，不能进入推理 feature。
 
-Dataset-P0 为每个 sample/artifact/task 增加模块职责、训练角色、权重、task mask、lineage 和候选来源审计。T01 记录为 `INPUT_FROZEN_SKELETON`，SWSD Road 只进入 `T01_OR_SWSD_FALLBACK`；T07 为 `DRIVEZONE_ONLY` 确定性输入；T03/T04/T05 为 label-only intermediate；T06 Step3 Road/Node 为 primary target；T09/T11/T10 分别承担 downstream validation、经重跑确认的 correction source 与 dataset manifest/split。
+Dataset-P0 的 T07 `DRIVEZONE_ONLY` 前置角色只作为历史 carrier 实验事实保留。当前路口阶段把原始 DriveZone 与 RCSDIntersection 分层存入 inference store，把 T07/T03/T04/T05 产物存入物理隔离的 label store；Step1 tensor 必须没有 RCSDIntersection 通道。
 
 P2-P1联合数据包含`SEGMENT`与`NODE`两类candidate group。Segment group来自P1冻结Road option；Node group从PTO-P0全量FINAL_NODE truth-free payload按Road endpoint/JunctionUnit重组为`T01_NODE / PROPOSAL_NODE / OMIT` option。ID仅用于join/split/audit，payload仅用于物化/引用审计；模型feature只保留候选、对象、Junction上下文token和归一化相对量。Segment有效标签取carrier_labels；Node标签在候选冻结后由Segment真值Road来源条件化连接，PTO Oracle不直接作Node标签。
 

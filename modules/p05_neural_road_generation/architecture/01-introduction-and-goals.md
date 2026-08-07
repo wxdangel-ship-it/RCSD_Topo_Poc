@@ -1,8 +1,8 @@
 # 01 引言与目标
 
-P05 研究用神经网络直接生成符合 T06 Step3 语义的 F-RCSD Road/Node。它与正式规则链并行，不替代 T01-T06。
+P05 当前研究目标 A 联合神经 RoadGraph 决策系统。它与正式规则链并行，在独立 POC 中先验证能否替代 T07/T03/T04/T05 路口业务，路口门通过后再验证 T06 Segment 业务；不修改或接入 T01–T12 正式实现/接口。
 
-当前路线是方案 A：冻结 T01 Junction—Segment 结构和 PhysicalMovement 存在性，模型只做 carrier 评分/选择、异常线索和失败概率。普通提右是 `ADVANCE_RIGHT Segment`，当前业务层无 `SegmentConnector`；证据冲突进入 RealityChangeClue 和最小闭包 fallback，禁止改写骨架。
+目标 A 冻结 T01 Junction—Segment、SegmentAccess 和 PhysicalMovement 存在性，T10 继续负责数据与编排。路口专用编码器直接读取原始 DriveZone/RCSDIntersection/SWSD/RCSD，依次输出 T07/T03/T04/T05 关键状态和完整锚定对象；路口阶段独立验收通过后，才训练普通 Segment 和 `ADVANCE_RIGHT`。旧 T07–T06 终态只作标签/验收；T07 Step1 只可见 DriveZone，第一版不启用 Movement、不接生产。普通提右仍是 `ADVANCE_RIGHT Segment`，当前业务层无 `SegmentConnector`。
 
 M0 的架构目标是先建立可信数据与度量底座：限定 Case 范围、冻结真值权重、阻止切分泄漏、统一 Road/Node 质量评价，并把所有异常和 lineage 保留为可追溯证据。
 

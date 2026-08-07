@@ -12,6 +12,8 @@ from shapely.geometry.base import BaseGeometry
 from shapely.ops import substring
 
 from rcsd_topo_poc.modules.p05_neural_road_generation.junction_graphset_v1_prediction import (
+    AnchorNodeKind,
+    AnchorNodeRef,
     AnchorResult,
     AnchorState,
     CandidateBinding,
@@ -50,6 +52,7 @@ class GeneratedRoadFragment:
 class GeneratedBreakNode:
     generated_id: str
     source_road_ref: ObjectRef
+    break_rank: int
     fraction: float
     geometry: Point
 
@@ -78,6 +81,7 @@ class MaterializedJunctionResult:
     generated_road_fragments: tuple[GeneratedRoadFragment, ...]
     generated_break_nodes: tuple[GeneratedBreakNode, ...]
     node_equivalence_keys: tuple[tuple[str, ...], ...]
+    materialized_main_node_id: str | None
     topology_signature: str | None
     fallback: bool
     ledger: MaterializationLedger
@@ -165,6 +169,7 @@ class SelectedPlanMaterializer:
             generated_road_fragments=(),
             generated_break_nodes=(),
             node_equivalence_keys=(),
+            materialized_main_node_id=None,
             topology_signature=None,
             fallback=True,
             ledger=ledger,
@@ -197,6 +202,7 @@ class SelectedPlanMaterializer:
         geometry_assets: Mapping[ObjectRef, GeometryAsset],
     ) -> dict[ObjectRef, GeometryAsset]:
         refs = set(prediction.surface_plan.selected_rcsdintersection_refs)
+        refs.update(prediction.surface_plan.virtual_member_refs)
         refs.update(prediction.anchor_result.associated_rcsd_node_refs)
         refs.update(prediction.anchor_result.associated_rcsd_road_refs)
         return {ref: self._asset(ref, geometry_assets) for ref in refs}
@@ -230,10 +236,7 @@ class SelectedPlanMaterializer:
             parameters = dict(recipe.parameters)
             if set(parameters) != {"buffer_m"} or parameters["buffer_m"] <= 0.0:
                 raise JunctionMaterializationError("INVALID_VIRTUAL_SURFACE_PARAMETERS")
-            member_refs = (
-                prediction.anchor_result.associated_rcsd_node_refs
-                + prediction.anchor_result.associated_rcsd_road_refs
-            )
+            member_refs = plan.virtual_member_refs
             if not member_refs:
                 raise JunctionMaterializationError("VIRTUAL_SURFACE_HAS_NO_SELECTED_MEMBER")
             surface = unary_union([assets[ref].geometry for ref in member_refs]).buffer(
@@ -274,8 +277,10 @@ class SelectedPlanMaterializer:
         for group in anchor.node_equivalence_classes:
             for left_index, left in enumerate(group.node_refs):
                 for right in group.node_refs[left_index + 1 :]:
-                    neighbors[left].add(right)
-                    neighbors[right].add(left)
+                    left_object = self._anchor_node_object(left)
+                    right_object = self._anchor_node_object(right)
+                    neighbors[left_object].add(right_object)
+                    neighbors[right_object].add(left_object)
         visited = {refs[0]}
         frontier = [refs[0]]
         while frontier:
@@ -322,7 +327,7 @@ class SelectedPlanMaterializer:
                         geometry=geometry,
                     )
                 )
-            for fraction in operation.fractions:
+            for break_rank, fraction in enumerate(operation.fractions):
                 generated_id = _stable_id(
                     "break-node",
                     prediction.junction_key,
@@ -333,6 +338,7 @@ class SelectedPlanMaterializer:
                     GeneratedBreakNode(
                         generated_id=generated_id,
                         source_road_ref=operation.road_ref,
+                        break_rank=break_rank,
                         fraction=fraction,
                         geometry=line.interpolate(fraction, normalized=True),
                     )
@@ -344,6 +350,35 @@ class SelectedPlanMaterializer:
                 + ",".join(f"{value:.12g}" for value in operation.fractions)
             )
         return tuple(fragments), tuple(nodes)
+
+    @staticmethod
+    def _anchor_node_object(node_ref: AnchorNodeRef) -> ObjectRef:
+        node_ref.validate()
+        if node_ref.kind == AnchorNodeKind.SOURCE_RCSD_NODE:
+            assert node_ref.node_ref is not None
+            return node_ref.node_ref
+        assert node_ref.road_ref is not None
+        return node_ref.road_ref
+
+    @staticmethod
+    def _materialized_main_node_id(
+        anchor: AnchorResult,
+        break_nodes: Sequence[GeneratedBreakNode],
+    ) -> str:
+        main = anchor.selected_main_anchor
+        if main is None:
+            raise JunctionMaterializationError("SELECTED_MAIN_ANCHOR_MISSING")
+        if main.kind == AnchorNodeKind.SOURCE_RCSD_NODE:
+            if main.node_ref is None:
+                raise JunctionMaterializationError("SOURCE_MAIN_NODE_MISSING")
+            return main.node_ref.object_id
+        for node in break_nodes:
+            if (
+                node.source_road_ref == main.road_ref
+                and node.break_rank == main.break_rank
+            ):
+                return node.generated_id
+        raise JunctionMaterializationError("MAIN_BREAK_NODE_NOT_MATERIALIZED")
 
     def materialize(
         self,
@@ -373,10 +408,14 @@ class SelectedPlanMaterializer:
             for ref, asset in assets.items():
                 self._validate_role_geometry(ref, asset.geometry)
             surface = self._surface(prediction, assets, operations)
-            for ref in (
+            surface_relation_refs = set(prediction.surface_plan.virtual_member_refs)
+            surface_relation_refs.update(
                 prediction.anchor_result.associated_rcsd_node_refs
-                + prediction.anchor_result.associated_rcsd_road_refs
-            ):
+            )
+            surface_relation_refs.update(
+                prediction.anchor_result.associated_rcsd_road_refs
+            )
+            for ref in surface_relation_refs:
                 if surface.distance(assets[ref].geometry) > self.connectivity_tolerance_m:
                     raise JunctionMaterializationError(
                         f"SELECTED_SURFACE_MEMBER_DISJOINT:{ref.key}"
@@ -393,6 +432,10 @@ class SelectedPlanMaterializer:
                 raise JunctionMaterializationError("TOPOLOGY_SIGNATURE_MISMATCH")
             generated_ids = tuple(
                 item.generated_id for item in fragments + break_nodes
+            )
+            materialized_main_node_id = self._materialized_main_node_id(
+                prediction.anchor_result,
+                break_nodes,
             )
             ledger = MaterializationLedger(
                 junction_key=prediction.junction_key,
@@ -418,6 +461,7 @@ class SelectedPlanMaterializer:
                     tuple(ref.key for ref in group.node_refs)
                     for group in prediction.anchor_result.node_equivalence_classes
                 ),
+                materialized_main_node_id=materialized_main_node_id,
                 topology_signature=actual_signature,
                 fallback=False,
                 ledger=ledger,

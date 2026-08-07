@@ -2,9 +2,10 @@
 
 ## 当前状态
 
-本分支已完成 T001–T016、T018–T020 的训练前实现与合同测试；尚未训练、尚未读取冻结
-测试。下一项工作是 T017：仅在训练折内用小批强 Gold 执行表示 overfit 门，需用户明确
-授权后才能启动。
+本分支已完成 T001–T020。T017 已在训练折内 8 条固定强 Gold 上执行，正式结果为
+`REPRESENTATION_NO_GO`：状态和完整 Oracle 候选选择可以过拟合，但对象成员与 Road 打断
+heads 无法区分多条同角色 Road/Node。冻结测试仍未读取，正式 canary 未启动；在完成对象
+表示架构修正并重新通过 T017 前，不得进入 T021。
 
 ## SpecKit 自检
 
@@ -19,3 +20,7 @@ data-model.md / contracts/ / analysis.md` 完整性、占位符清零和 `git di
 审计、Step1 防火墙、blind-test 隔离、完整输出 schema、候选约束 decoder、确定性
 materializer 和安全 evaluator 已通过训练前合同测试。T017 不得读取冻结测试或扩展到
 正式 canary；失败即停在表示/合同层。
+
+T017 运行工件位于 ignored output
+`outputs/_work/p05_neural_road_generation/junction_graphset_v1_t017_overfit_20260808/`。
+其中候选目录是 `TRAINING_ORACLE_ONLY`，不能解释为真实推理候选生成能力。

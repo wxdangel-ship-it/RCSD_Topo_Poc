@@ -20,6 +20,7 @@ class CompleteResultSignature:
     step1_state: str
     surface_mode: str
     selected_surface_keys: tuple[str, ...]
+    virtual_surface_member_keys: tuple[str, ...]
     anchor_state: str
     associated_node_keys: tuple[str, ...]
     associated_road_keys: tuple[str, ...]
@@ -46,6 +47,9 @@ class CompleteResultSignature:
                     ref.key
                     for ref in prediction.surface_plan.selected_rcsdintersection_refs
                 )
+            ),
+            virtual_surface_member_keys=tuple(
+                sorted(ref.key for ref in prediction.surface_plan.virtual_member_refs)
             ),
             anchor_state=prediction.anchor_result.state.value,
             associated_node_keys=tuple(
@@ -90,6 +94,7 @@ class CompleteResultSignature:
             "step1_state",
             "surface_mode",
             "selected_surface_keys",
+            "virtual_surface_member_keys",
             "anchor_state",
             "associated_node_keys",
             "associated_road_keys",

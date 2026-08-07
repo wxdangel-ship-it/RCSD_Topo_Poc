@@ -14,6 +14,7 @@ from rcsd_topo_poc.modules.p05_neural_road_generation.junction_graphset_v1_mater
     business_topology_signature,
 )
 from rcsd_topo_poc.modules.p05_neural_road_generation.junction_graphset_v1_prediction import (
+    AnchorNodeRef,
     AnchorResult,
     AnchorState,
     CandidatePlan,
@@ -40,7 +41,7 @@ def _prediction(junction_key: str, *, fraction: float = 0.5) -> JunctionResultPr
         state=AnchorState.SUCCESS,
         associated_rcsd_node_refs=(NODE,),
         associated_rcsd_road_refs=(ROAD,),
-        selected_main_anchor=NODE,
+        selected_main_anchor=AnchorNodeRef.source_node(NODE),
         road_break_operations=(RoadBreakOperation(ROAD, (fraction,)),),
     )
     candidate = CandidatePlan(
@@ -85,6 +86,7 @@ def _automatic_materialization(prediction: JunctionResultPrediction):
         generated_road_fragments=(),
         generated_break_nodes=(),
         node_equivalence_keys=(),
+        materialized_main_node_id=NODE.object_id,
         topology_signature=prediction.post_materialization_topology_signature,
         fallback=False,
         ledger=ledger,
@@ -113,6 +115,7 @@ def _fallback_materialization(prediction: JunctionResultPrediction):
         generated_road_fragments=(),
         generated_break_nodes=(),
         node_equivalence_keys=(),
+        materialized_main_node_id=None,
         topology_signature=None,
         fallback=True,
         ledger=ledger,

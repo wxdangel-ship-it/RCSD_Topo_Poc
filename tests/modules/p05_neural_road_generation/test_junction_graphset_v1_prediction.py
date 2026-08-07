@@ -6,6 +6,7 @@ import pytest
 import torch
 
 from rcsd_topo_poc.modules.p05_neural_road_generation.junction_graphset_v1_prediction import (
+    AnchorNodeRef,
     AnchorResult,
     AnchorState,
     CandidateBinding,
@@ -50,8 +51,15 @@ def _candidate_plan() -> CandidatePlan:
             state=AnchorState.SUCCESS,
             associated_rcsd_node_refs=(NODE_1, NODE_2),
             associated_rcsd_road_refs=(ROAD_1,),
-            selected_main_anchor=NODE_1,
-            node_equivalence_classes=(NodeEquivalenceClass((NODE_1, NODE_2)),),
+            selected_main_anchor=AnchorNodeRef.source_node(NODE_1),
+            node_equivalence_classes=(
+                NodeEquivalenceClass(
+                    (
+                        AnchorNodeRef.source_node(NODE_1),
+                        AnchorNodeRef.source_node(NODE_2),
+                    )
+                ),
+            ),
             road_break_operations=(RoadBreakOperation(ROAD_1, (0.5,)),),
         ),
         quality_state=QualityState.NORMAL,
@@ -99,7 +107,7 @@ def test_complete_candidate_and_prediction_contract() -> None:
 
     changed_anchor = replace(
         prediction.anchor_result,
-        selected_main_anchor=ROAD_1,
+        selected_main_anchor=AnchorNodeRef.source_node(NODE_2),
     )
     changed_prediction = replace(prediction, anchor_result=changed_anchor)
     with pytest.raises(JunctionPredictionError, match="immutable bound"):
@@ -120,10 +128,35 @@ def test_non_success_anchor_cannot_carry_success_objects() -> None:
     anchor = AnchorResult(
         state=AnchorState.AMBIGUOUS,
         associated_rcsd_node_refs=(NODE_1,),
-        selected_main_anchor=NODE_1,
+        selected_main_anchor=AnchorNodeRef.source_node(NODE_1),
     )
     with pytest.raises(JunctionPredictionError, match="cannot carry"):
         anchor.validate()
+
+
+def test_road_break_generated_node_is_a_first_class_anchor_node() -> None:
+    break_node = AnchorNodeRef.road_break_point(ROAD_1, 1)
+    anchor = AnchorResult(
+        state=AnchorState.SUCCESS,
+        associated_rcsd_node_refs=(NODE_1,),
+        associated_rcsd_road_refs=(ROAD_1,),
+        selected_main_anchor=break_node,
+        node_equivalence_classes=(
+            NodeEquivalenceClass(
+                (AnchorNodeRef.source_node(NODE_1), break_node)
+            ),
+        ),
+        road_break_operations=(RoadBreakOperation(ROAD_1, (0.25, 0.75)),),
+    )
+    anchor.validate()
+    assert break_node.key == "BREAK:ROAD:R1#1"
+
+    invalid = replace(
+        anchor,
+        selected_main_anchor=AnchorNodeRef.road_break_point(ROAD_1, 2),
+    )
+    with pytest.raises(JunctionPredictionError, match="does not resolve"):
+        invalid.validate()
 
 
 def test_variable_and_empty_batch_are_packed_without_padding() -> None:

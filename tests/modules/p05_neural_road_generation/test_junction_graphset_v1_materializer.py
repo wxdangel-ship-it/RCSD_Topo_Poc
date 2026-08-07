@@ -10,6 +10,7 @@ from rcsd_topo_poc.modules.p05_neural_road_generation.junction_graphset_v1_mater
     business_topology_signature,
 )
 from rcsd_topo_poc.modules.p05_neural_road_generation.junction_graphset_v1_prediction import (
+    AnchorNodeRef,
     AnchorResult,
     AnchorState,
     CandidateBinding,
@@ -41,8 +42,15 @@ def _anchor() -> AnchorResult:
         state=AnchorState.SUCCESS,
         associated_rcsd_node_refs=(NODE_1, NODE_2),
         associated_rcsd_road_refs=(ROAD_1,),
-        selected_main_anchor=NODE_1,
-        node_equivalence_classes=(NodeEquivalenceClass((NODE_1, NODE_2)),),
+        selected_main_anchor=AnchorNodeRef.source_node(NODE_1),
+        node_equivalence_classes=(
+            NodeEquivalenceClass(
+                (
+                    AnchorNodeRef.source_node(NODE_1),
+                    AnchorNodeRef.source_node(NODE_2),
+                )
+            ),
+        ),
         road_break_operations=(RoadBreakOperation(ROAD_1, (0.5,)),),
     )
 
@@ -52,6 +60,7 @@ def _plan(*, virtual: bool = False) -> CandidatePlan:
     surface = (
         SurfacePlan(
             mode=SurfaceMode.VIRTUAL_SURFACE,
+            virtual_member_refs=(NODE_1, NODE_2, ROAD_1),
             virtual_surface_recipe=VirtualSurfaceRecipe(
                 recipe_type=SelectedPlanMaterializer.VIRTUAL_RECIPE,
                 parameters=(("buffer_m", 2.0),),
@@ -132,6 +141,46 @@ def test_existing_surface_and_selected_road_break_materialize_deterministically(
     ]
     assert first.generated_road_fragments[0].geometry.length == 5.0
     assert first.generated_break_nodes[0].geometry.equals(Point(5, 0))
+    assert first.materialized_main_node_id == NODE_1.object_id
+
+
+def test_road_break_main_anchor_resolves_to_generated_node_id() -> None:
+    anchor = replace(
+        _anchor(),
+        selected_main_anchor=AnchorNodeRef.road_break_point(ROAD_1, 0),
+        node_equivalence_classes=(
+            NodeEquivalenceClass(
+                (
+                    AnchorNodeRef.source_node(NODE_1),
+                    AnchorNodeRef.road_break_point(ROAD_1, 0),
+                )
+            ),
+        ),
+    )
+    plan = replace(
+        _plan(),
+        anchor_result=anchor,
+        planned_topology_signature=business_topology_signature(anchor),
+    )
+    binding = CandidateBinding(
+        junction_key=JUNCTION_KEY,
+        allowed_object_refs=(NODE_1, NODE_2, ROAD_1, SURFACE_1),
+        plans=(plan,),
+    )
+    prediction = JunctionResultPrediction.from_candidate(
+        junction_key=JUNCTION_KEY,
+        candidate=plan,
+        complete_plan_confidence=0.9,
+        component_confidences={},
+    )
+    result = SelectedPlanMaterializer().materialize(
+        prediction=prediction,
+        binding=binding,
+        geometry_assets=_assets(),
+    )
+    assert not result.fallback
+    assert result.materialized_main_node_id == result.generated_break_nodes[0].generated_id
+    assert result.node_equivalence_keys[0][-1] == "BREAK:ROAD:R1#0"
 
 
 def test_virtual_surface_is_only_the_predeclared_selected_member_recipe() -> None:

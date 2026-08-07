@@ -46,8 +46,9 @@
   分数不能改写失败/歧义或扩充候选。
 - [x] T016 [Testing] [US3] 覆盖对象顺序等变、变长集合、唯一主锚定、Road 打断顺序、
   多解、mask、梯度隔离及候选越界阻断。
-- [ ] T017 [Testing] [US3] 用训练折内冻结小批强 Gold 执行表示 overfit 门；失败则回到
-  表征/合同，不启动正式 canary。
+- [x] T017 [Testing] [US3] 用训练折内冻结小批强 Gold 执行表示 overfit 门；正式结果
+  `REPRESENTATION_NO_GO`：对象成员与 Road 打断 heads 未能过拟合，已停在表征层，未启动
+  正式 canary。
 
 ## Phase 4：US4 materializer 与安全链
 

@@ -997,3 +997,14 @@ P05 POC 内部研究模块、测试及 SpecKit 归档。
 | `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_advance_right_joint_training.py` | `65462` bytes | AdvanceRight 联合训练历史研究链 |
 | `src/rcsd_topo_poc/modules/p05_neural_road_generation/scheme_a_p2_p3_p12r_audit.py` | `64736` bytes | Scheme A P12R 审计 |
 | `src/rcsd_topo_poc/modules/p05_neural_road_generation/target_a_case_joint_oof.py` | `64279` bytes | Case-joint OOF 与安全门研究链 |
+
+### P05 Junction GraphSet V1 T017 快照（2026-08-08）
+
+按 `git ls-files --cached --others --exclude-standard` 复扫 P05 正式源码与两处测试目录共
+`544` 个 Python 文件，`>=61440 bytes=7`、`>=100000 bytes=0`。当前最大文件为
+`target_a_ordinary_road_member_training.py`（87,572 bytes），本轮只读。新增
+`junction_graphset_v1_overfit.py`（45,698 bytes）为 P05 内部 callable，不是 CLI、script、
+`__main__.py` 或正式入口；对应专项测试为 6,858 bytes。修改后的
+`junction_graphset_v1_model.py`（46,279 bytes）和
+`junction_graphset_v1_prediction.py`（31,955 bytes）均低于 60KiB 观察线。未修改 T01–T12、
+正式模块接口或入口 registry；T017 工件仅写入 ignored `outputs/_work/`。

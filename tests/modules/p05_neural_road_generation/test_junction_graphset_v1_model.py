@@ -11,6 +11,7 @@ from rcsd_topo_poc.modules.p05_neural_road_generation.junction_graphset_v1_model
     compute_multitask_loss,
 )
 from rcsd_topo_poc.modules.p05_neural_road_generation.junction_graphset_v1_prediction import (
+    AnchorNodeRef,
     AnchorResult,
     AnchorState,
     CandidateBinding,
@@ -67,7 +68,7 @@ def _example(
                 state=AnchorState.SUCCESS,
                 associated_rcsd_node_refs=(NODE_1, NODE_2),
                 associated_rcsd_road_refs=(ROAD_1,),
-                selected_main_anchor=NODE_1,
+                selected_main_anchor=AnchorNodeRef.source_node(NODE_1),
                 road_break_operations=(RoadBreakOperation(ROAD_1, (0.5,)),),
             ),
             quality_state=QualityState.NORMAL,
@@ -85,7 +86,7 @@ def _example(
                 state=AnchorState.SUCCESS,
                 associated_rcsd_node_refs=(NODE_1, NODE_2),
                 associated_rcsd_road_refs=(ROAD_1,),
-                selected_main_anchor=NODE_2,
+                selected_main_anchor=AnchorNodeRef.source_node(NODE_2),
                 road_break_operations=(
                     RoadBreakOperation(ROAD_1, (0.25, 0.75)),
                 ),
@@ -223,7 +224,10 @@ def test_multitask_loss_supports_separate_surface_and_anchor_gold() -> None:
             SurfaceConstraint(NODE_2, ConstraintState.REQUIRED, 1.0),
             SurfaceConstraint(ROAD_1, ConstraintState.REQUIRED, 1.0),
         ),
-        acceptable_main_anchor_refs=(NODE_1, NODE_2),
+        acceptable_main_anchor_refs=(
+            AnchorNodeRef.source_node(NODE_1),
+            AnchorNodeRef.source_node(NODE_2),
+        ),
         pair_constraints=(
             PairConstraint(NODE_1, NODE_2, ConstraintState.REQUIRED, 1.0),
         ),

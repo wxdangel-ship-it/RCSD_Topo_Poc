@@ -13,6 +13,7 @@ from rcsd_topo_poc.modules.p05_neural_road_generation.junction_graphset_v1_model
     CompletePlanScoreOutput,
 )
 from rcsd_topo_poc.modules.p05_neural_road_generation.junction_graphset_v1_prediction import (
+    AnchorNodeRef,
     AnchorResult,
     AnchorState,
     CandidateBinding,
@@ -42,9 +43,13 @@ ANCHOR_1 = AnchorResult(
     state=AnchorState.SUCCESS,
     associated_rcsd_node_refs=(NODE_1,),
     associated_rcsd_road_refs=(ROAD_1,),
-    selected_main_anchor=NODE_1,
+    selected_main_anchor=AnchorNodeRef.source_node(NODE_1),
 )
-ANCHOR_2 = replace(ANCHOR_1, associated_rcsd_node_refs=(NODE_2,), selected_main_anchor=NODE_2)
+ANCHOR_2 = replace(
+    ANCHOR_1,
+    associated_rcsd_node_refs=(NODE_2,),
+    selected_main_anchor=AnchorNodeRef.source_node(NODE_2),
+)
 
 
 def _plan(plan_id: str, anchor: AnchorResult = ANCHOR_1) -> CandidatePlan:

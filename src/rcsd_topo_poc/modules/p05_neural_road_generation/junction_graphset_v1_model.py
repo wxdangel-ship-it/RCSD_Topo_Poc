@@ -15,6 +15,7 @@ from rcsd_topo_poc.modules.p05_neural_road_generation.junction_graphset_v1_firew
     StageFirewall,
 )
 from rcsd_topo_poc.modules.p05_neural_road_generation.junction_graphset_v1_prediction import (
+    AnchorNodeRef,
     AnchorState,
     CandidateBinding,
     CandidatePlan,
@@ -285,7 +286,7 @@ class JunctionGraphSetRawOutput:
     anchor_member_refs: tuple[ObjectRef, ...]
     anchor_member_batch_indices: torch.Tensor
     anchor_member_logits: torch.Tensor
-    main_anchor_refs: tuple[ObjectRef, ...]
+    main_anchor_refs: tuple[AnchorNodeRef, ...]
     main_anchor_batch_indices: torch.Tensor
     main_anchor_logits: torch.Tensor
     node_equivalence: PairScoreOutput
@@ -298,7 +299,7 @@ PLAN_SCALAR_DIM = (
     + len(SurfaceMode)
     + len(AnchorState)
     + len(QualityState)
-    + 7
+    + 8
 )
 
 
@@ -313,12 +314,17 @@ class CompletePlanScorer(nn.Module):
             nn.GELU(),
             nn.Linear(hidden_dim, hidden_dim),
         )
+        self.equivalence_group_encoder = nn.Sequential(
+            nn.Linear(hidden_dim + 1, hidden_dim),
+            nn.GELU(),
+            nn.Linear(hidden_dim, hidden_dim),
+        )
         self.scalar_projection = nn.Sequential(
             nn.Linear(PLAN_SCALAR_DIM, hidden_dim),
             nn.GELU(),
         )
         self.plan_head = nn.Sequential(
-            nn.Linear(hidden_dim * 4, hidden_dim),
+            nn.Linear(hidden_dim * 7, hidden_dim),
             nn.GELU(),
             nn.Linear(hidden_dim, 1),
         )
@@ -353,6 +359,7 @@ class CompletePlanScorer(nn.Module):
                 len(anchor.associated_rcsd_node_refs),
                 len(anchor.associated_rcsd_road_refs),
                 len(candidate.surface_plan.selected_rcsdintersection_refs),
+                len(candidate.surface_plan.virtual_member_refs),
                 len(anchor.node_equivalence_classes),
                 len(anchor.road_break_operations),
                 sum(len(operation.fractions) for operation in anchor.road_break_operations),
@@ -373,6 +380,29 @@ class CompletePlanScorer(nn.Module):
                 counts,
             )
         )
+
+    @staticmethod
+    def _pool(
+        embeddings: Sequence[torch.Tensor],
+        *,
+        reference: torch.Tensor,
+    ) -> torch.Tensor:
+        return (
+            torch.stack(tuple(embeddings)).mean(dim=0)
+            if embeddings
+            else reference.new_zeros((int(reference.shape[-1]),))
+        )
+
+    @staticmethod
+    def _anchor_node_embedding(
+        node_ref: AnchorNodeRef,
+        *,
+        local_embeddings: Mapping[ObjectRef, torch.Tensor],
+        break_embeddings: Mapping[AnchorNodeRef, torch.Tensor],
+    ) -> torch.Tensor:
+        if node_ref.node_ref is not None:
+            return local_embeddings[node_ref.node_ref]
+        return break_embeddings[node_ref]
 
     def forward(
         self,
@@ -396,41 +426,86 @@ class CompletePlanScorer(nn.Module):
                 if int(encoded.object_batch_indices[index]) == batch_index
             }
             for candidate in binding.plans:
-                selected_embeddings = tuple(
-                    local_embeddings[ref]
-                    for ref in candidate.referenced_objects
-                    if ref in local_embeddings
-                )
-                if len(selected_embeddings) != len(candidate.referenced_objects):
+                if not candidate.referenced_objects.issubset(local_embeddings):
                     raise JunctionPredictionError(
                         "bound candidate object is absent from Anchor view"
                     )
-                selected_pool = (
-                    torch.stack(selected_embeddings).mean(dim=0)
-                    if selected_embeddings
-                    else conditioned_queries.new_zeros((self.hidden_dim,))
+                surface_refs = (
+                    candidate.surface_plan.selected_rcsdintersection_refs
+                    + candidate.surface_plan.virtual_member_refs
+                )
+                surface_pool = self._pool(
+                    tuple(local_embeddings[ref] for ref in surface_refs),
+                    reference=conditioned_queries,
+                )
+                anchor_refs = (
+                    candidate.anchor_result.associated_rcsd_node_refs
+                    + candidate.anchor_result.associated_rcsd_road_refs
+                )
+                anchor_pool = self._pool(
+                    tuple(local_embeddings[ref] for ref in anchor_refs),
+                    reference=conditioned_queries,
                 )
                 break_points: list[torch.Tensor] = []
+                break_embeddings: dict[AnchorNodeRef, torch.Tensor] = {}
                 for operation in candidate.anchor_result.road_break_operations:
                     road_embedding = local_embeddings[operation.road_ref]
-                    for fraction in operation.fractions:
-                        break_points.append(
-                            self.break_point_encoder(
-                                torch.cat(
-                                    (
-                                        road_embedding,
-                                        self._fraction_features(
-                                            fraction,
-                                            reference=road_embedding,
-                                        ),
-                                    )
+                    for break_rank, fraction in enumerate(operation.fractions):
+                        point_embedding = self.break_point_encoder(
+                            torch.cat(
+                                (
+                                    road_embedding,
+                                    self._fraction_features(
+                                        fraction,
+                                        reference=road_embedding,
+                                    ),
                                 )
                             )
                         )
-                break_pool = (
-                    torch.stack(break_points).mean(dim=0)
-                    if break_points
+                        node_ref = AnchorNodeRef.road_break_point(
+                            operation.road_ref,
+                            break_rank,
+                        )
+                        break_points.append(point_embedding)
+                        break_embeddings[node_ref] = point_embedding
+                break_pool = self._pool(
+                    break_points,
+                    reference=conditioned_queries,
+                )
+                main_ref = candidate.anchor_result.selected_main_anchor
+                main_pool = (
+                    self._anchor_node_embedding(
+                        main_ref,
+                        local_embeddings=local_embeddings,
+                        break_embeddings=break_embeddings,
+                    )
+                    if main_ref is not None
                     else conditioned_queries.new_zeros((self.hidden_dim,))
+                )
+                equivalence_groups: list[torch.Tensor] = []
+                for group in candidate.anchor_result.node_equivalence_classes:
+                    member_pool = self._pool(
+                        tuple(
+                            self._anchor_node_embedding(
+                                node_ref,
+                                local_embeddings=local_embeddings,
+                                break_embeddings=break_embeddings,
+                            )
+                            for node_ref in group.node_refs
+                        ),
+                        reference=conditioned_queries,
+                    )
+                    group_size = member_pool.new_tensor(
+                        (math.log1p(len(group.node_refs)),)
+                    )
+                    equivalence_groups.append(
+                        self.equivalence_group_encoder(
+                            torch.cat((member_pool, group_size))
+                        )
+                    )
+                equivalence_pool = self._pool(
+                    equivalence_groups,
+                    reference=conditioned_queries,
                 )
                 scalar_embedding = self.scalar_projection(
                     self._scalar_features(candidate, reference=conditioned_queries)
@@ -439,8 +514,11 @@ class CompletePlanScorer(nn.Module):
                     torch.cat(
                         (
                             conditioned_queries[batch_index],
-                            selected_pool,
+                            surface_pool,
+                            anchor_pool,
                             break_pool,
+                            main_pool,
+                            equivalence_pool,
                             scalar_embedding,
                         )
                     )
@@ -634,12 +712,13 @@ class StagedMultiTaskHeads(nn.Module):
             frozenset({EvidenceRole.RCSD_NODE, EvidenceRole.RCSD_ROAD}),
             self.member_head,
         )
-        main_refs, main_batches, main_logits = self._selected_object_scores(
+        main_object_refs, main_batches, main_logits = self._selected_object_scores(
             anchor,
             conditioned_queries,
-            frozenset({EvidenceRole.RCSD_NODE, EvidenceRole.RCSD_ROAD}),
+            frozenset({EvidenceRole.RCSD_NODE}),
             self.main_anchor_head,
         )
+        main_refs = tuple(AnchorNodeRef.source_node(ref) for ref in main_object_refs)
         road_indices = tuple(
             index
             for index, ref in enumerate(anchor.object_refs)
@@ -765,20 +844,57 @@ class JunctionGraphSetModel(nn.Module):
         surface_mode_indices: torch.Tensor | None = None,
     ) -> JunctionGraphSetRawOutput:
         normalized = tuple(examples)
-        step1 = self.encoder(
-            [self.firewall.build_view(example, EvidenceStage.STEP1) for example in normalized]
+        return self.forward_stage_views(
+            step1_views=tuple(
+                self.firewall.build_view(example, EvidenceStage.STEP1)
+                for example in normalized
+            ),
+            surface_views=tuple(
+                self.firewall.build_view(example, EvidenceStage.SURFACE)
+                for example in normalized
+            ),
+            anchor_views=tuple(
+                self.firewall.build_view(example, EvidenceStage.ANCHOR)
+                for example in normalized
+            ),
+            candidate_bindings=tuple(
+                example.candidate_binding for example in normalized
+            ),
+            step1_state_indices=step1_state_indices,
+            surface_mode_indices=surface_mode_indices,
         )
-        surface = self.encoder(
-            [self.firewall.build_view(example, EvidenceStage.SURFACE) for example in normalized]
-        )
-        anchor = self.encoder(
-            [self.firewall.build_view(example, EvidenceStage.ANCHOR) for example in normalized]
-        )
+
+    def forward_stage_views(
+        self,
+        *,
+        step1_views: Sequence[StageEvidenceView],
+        surface_views: Sequence[StageEvidenceView],
+        anchor_views: Sequence[StageEvidenceView],
+        candidate_bindings: Sequence[CandidateBinding],
+        step1_state_indices: torch.Tensor | None = None,
+        surface_mode_indices: torch.Tensor | None = None,
+    ) -> JunctionGraphSetRawOutput:
+        """Forward prebuilt firewall views without rebuilding their audit hashes."""
+
+        normalized_step1 = tuple(step1_views)
+        normalized_surface = tuple(surface_views)
+        normalized_anchor = tuple(anchor_views)
+        normalized_bindings = tuple(candidate_bindings)
+        if not (
+            len(normalized_step1)
+            == len(normalized_surface)
+            == len(normalized_anchor)
+            == len(normalized_bindings)
+        ):
+            raise JunctionPredictionError("cached stage-view batch sizes are not aligned")
+        step1 = self.encoder(normalized_step1)
+        surface = self.encoder(normalized_surface)
+        anchor = self.encoder(normalized_anchor)
         return self.heads(
             step1=step1,
             surface=surface,
             anchor=anchor,
-            candidate_bindings=[example.candidate_binding for example in normalized],
+            candidate_bindings=normalized_bindings,
             step1_state_indices=step1_state_indices,
             surface_mode_indices=surface_mode_indices,
         )
@@ -840,7 +956,7 @@ class JunctionTrainingOverlay:
     acceptable_complete_plan_ids: tuple[str, ...] = ()
     virtual_surface_constraints: tuple[SurfaceConstraint, ...] = ()
     anchor_member_constraints: tuple[SurfaceConstraint, ...] = ()
-    acceptable_main_anchor_refs: tuple[ObjectRef, ...] = ()
+    acceptable_main_anchor_refs: tuple[AnchorNodeRef, ...] = ()
     pair_constraints: tuple[PairConstraint, ...] = ()
     road_break_targets: tuple[RoadBreakTarget, ...] = ()
 

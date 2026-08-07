@@ -46,6 +46,11 @@ class AnchorState(str, Enum):
     ABSTAIN = "ABSTAIN"
 
 
+class AnchorNodeKind(str, Enum):
+    SOURCE_RCSD_NODE = "SOURCE_RCSD_NODE"
+    ROAD_BREAK_POINT = "ROAD_BREAK_POINT"
+
+
 class QualityState(str, Enum):
     NORMAL = "NORMAL"
     NO_EVIDENCE = "NO_EVIDENCE"
@@ -74,6 +79,7 @@ class VirtualSurfaceRecipe:
 class SurfacePlan:
     mode: SurfaceMode
     selected_rcsdintersection_refs: tuple[ObjectRef, ...] = ()
+    virtual_member_refs: tuple[ObjectRef, ...] = ()
     virtual_surface_recipe: VirtualSurfaceRecipe | None = None
 
     def validate(self) -> None:
@@ -88,6 +94,15 @@ class SurfacePlan:
             raise JunctionPredictionError(
                 "surface plan can only select RCSD_INTERSECTION objects"
             )
+        if len(set(self.virtual_member_refs)) != len(self.virtual_member_refs):
+            raise JunctionPredictionError("virtual surface contains duplicate members")
+        if any(
+            ref.role not in {EvidenceRole.RCSD_NODE, EvidenceRole.RCSD_ROAD}
+            for ref in self.virtual_member_refs
+        ):
+            raise JunctionPredictionError(
+                "virtual surface members must be RCSD Nodes or Roads"
+            )
         if self.mode == SurfaceMode.EXISTING_RCSD_INTERSECTION:
             if not self.selected_rcsdintersection_refs:
                 raise JunctionPredictionError(
@@ -97,6 +112,10 @@ class SurfacePlan:
                 raise JunctionPredictionError(
                     "existing surface plan cannot include a virtual recipe"
                 )
+            if self.virtual_member_refs:
+                raise JunctionPredictionError(
+                    "existing surface plan cannot carry virtual members"
+                )
         elif self.mode == SurfaceMode.VIRTUAL_SURFACE:
             if self.selected_rcsdintersection_refs:
                 raise JunctionPredictionError(
@@ -105,7 +124,11 @@ class SurfacePlan:
             if self.virtual_surface_recipe is None:
                 raise JunctionPredictionError("virtual surface recipe is required")
             self.virtual_surface_recipe.validate()
-        elif self.selected_rcsdintersection_refs or self.virtual_surface_recipe is not None:
+        elif (
+            self.selected_rcsdintersection_refs
+            or self.virtual_member_refs
+            or self.virtual_surface_recipe is not None
+        ):
             raise JunctionPredictionError(
                 f"surface mode {self.mode.value} cannot carry a surface selection"
             )
@@ -129,18 +152,83 @@ class RoadBreakOperation:
 
 
 @dataclass(frozen=True)
-class NodeEquivalenceClass:
-    node_refs: tuple[ObjectRef, ...]
+class AnchorNodeRef:
+    kind: AnchorNodeKind
+    node_ref: ObjectRef | None = None
+    road_ref: ObjectRef | None = None
+    break_rank: int | None = None
+
+    @classmethod
+    def source_node(cls, node_ref: ObjectRef) -> AnchorNodeRef:
+        return cls(kind=AnchorNodeKind.SOURCE_RCSD_NODE, node_ref=node_ref)
+
+    @classmethod
+    def road_break_point(
+        cls,
+        road_ref: ObjectRef,
+        break_rank: int,
+    ) -> AnchorNodeRef:
+        return cls(
+            kind=AnchorNodeKind.ROAD_BREAK_POINT,
+            road_ref=road_ref,
+            break_rank=break_rank,
+        )
+
+    @property
+    def key(self) -> str:
+        if self.kind == AnchorNodeKind.SOURCE_RCSD_NODE and self.node_ref is not None:
+            return f"NODE:{self.node_ref.object_id}"
+        if (
+            self.kind == AnchorNodeKind.ROAD_BREAK_POINT
+            and self.road_ref is not None
+            and self.break_rank is not None
+        ):
+            return f"BREAK:ROAD:{self.road_ref.object_id}#{self.break_rank}"
+        return "INVALID_ANCHOR_NODE_REF"
+
+    @property
+    def referenced_objects(self) -> frozenset[ObjectRef]:
+        refs = tuple(ref for ref in (self.node_ref, self.road_ref) if ref is not None)
+        return frozenset(refs)
 
     def validate(self) -> None:
-        if len(self.node_refs) < 2 or len(set(self.node_refs)) != len(self.node_refs):
+        if self.kind == AnchorNodeKind.SOURCE_RCSD_NODE:
+            if (
+                self.node_ref is None
+                or self.node_ref.role != EvidenceRole.RCSD_NODE
+                or self.road_ref is not None
+                or self.break_rank is not None
+            ):
+                raise JunctionPredictionError(
+                    "SOURCE_RCSD_NODE requires exactly one RCSD Node"
+                )
+            return
+        if self.kind == AnchorNodeKind.ROAD_BREAK_POINT:
+            if (
+                self.road_ref is None
+                or self.road_ref.role != EvidenceRole.RCSD_ROAD
+                or self.node_ref is not None
+                or self.break_rank is None
+                or self.break_rank < 0
+            ):
+                raise JunctionPredictionError(
+                    "ROAD_BREAK_POINT requires one RCSD Road and non-negative rank"
+                )
+            return
+        raise JunctionPredictionError("unknown AnchorNodeRef kind")
+
+
+@dataclass(frozen=True)
+class NodeEquivalenceClass:
+    node_refs: tuple[AnchorNodeRef, ...]
+
+    def validate(self) -> None:
+        if not self.node_refs or len(set(self.node_refs)) != len(self.node_refs):
             raise JunctionPredictionError(
-                "Node equivalence class requires at least two unique nodes"
+                "Node equivalence class requires at least one unique node"
             )
-        if any(ref.role != EvidenceRole.RCSD_NODE for ref in self.node_refs):
-            raise JunctionPredictionError(
-                "Node equivalence class can only contain RCSD Node objects"
-            )
+        for ref in self.node_refs:
+            ref.validate()
 
 
 @dataclass(frozen=True)
@@ -148,7 +236,7 @@ class AnchorResult:
     state: AnchorState
     associated_rcsd_node_refs: tuple[ObjectRef, ...] = ()
     associated_rcsd_road_refs: tuple[ObjectRef, ...] = ()
-    selected_main_anchor: ObjectRef | None = None
+    selected_main_anchor: AnchorNodeRef | None = None
     node_equivalence_classes: tuple[NodeEquivalenceClass, ...] = ()
     road_break_operations: tuple[RoadBreakOperation, ...] = ()
 
@@ -176,18 +264,22 @@ class AnchorResult:
             self.associated_rcsd_road_refs
         )
         if self.state == AnchorState.SUCCESS:
-            if not carried_refs or self.selected_main_anchor not in carried_refs:
+            if not carried_refs or self.selected_main_anchor is None:
                 raise JunctionPredictionError(
                     "SUCCESS requires a complete object set and one main anchor"
                 )
+            self.selected_main_anchor.validate()
+            self._validate_anchor_node_ref(self.selected_main_anchor)
+            equivalence_members: set[AnchorNodeRef] = set()
             for equivalence_class in self.node_equivalence_classes:
                 equivalence_class.validate()
-                if not set(equivalence_class.node_refs).issubset(
-                    self.associated_rcsd_node_refs
-                ):
+                if equivalence_members.intersection(equivalence_class.node_refs):
                     raise JunctionPredictionError(
-                        "Node equivalence refers outside the associated Node set"
+                        "Anchor Node belongs to multiple equivalence classes"
                     )
+                equivalence_members.update(equivalence_class.node_refs)
+                for node_ref in equivalence_class.node_refs:
+                    self._validate_anchor_node_ref(node_ref)
             break_roads: set[ObjectRef] = set()
             for operation in self.road_break_operations:
                 operation.validate()
@@ -208,6 +300,30 @@ class AnchorResult:
         ):
             raise JunctionPredictionError(
                 f"anchor state {self.state.value} cannot carry a success object plan"
+            )
+
+    def _validate_anchor_node_ref(self, node_ref: AnchorNodeRef) -> None:
+        if node_ref.kind == AnchorNodeKind.SOURCE_RCSD_NODE:
+            if node_ref.node_ref not in self.associated_rcsd_node_refs:
+                raise JunctionPredictionError(
+                    "anchor Node refers outside associated RCSD Nodes"
+                )
+            return
+        operation = next(
+            (
+                item
+                for item in self.road_break_operations
+                if item.road_ref == node_ref.road_ref
+            ),
+            None,
+        )
+        if (
+            operation is None
+            or node_ref.break_rank is None
+            or node_ref.break_rank >= len(operation.fractions)
+        ):
+            raise JunctionPredictionError(
+                "anchor break point does not resolve to a Road-break operation"
             )
 
 
@@ -243,12 +359,14 @@ class CandidatePlan:
     @property
     def referenced_objects(self) -> frozenset[ObjectRef]:
         refs = set(self.surface_plan.selected_rcsdintersection_refs)
+        refs.update(self.surface_plan.virtual_member_refs)
         refs.update(self.anchor_result.associated_rcsd_node_refs)
         refs.update(self.anchor_result.associated_rcsd_road_refs)
         if self.anchor_result.selected_main_anchor is not None:
-            refs.add(self.anchor_result.selected_main_anchor)
+            refs.update(self.anchor_result.selected_main_anchor.referenced_objects)
         for equivalence_class in self.anchor_result.node_equivalence_classes:
-            refs.update(equivalence_class.node_refs)
+            for node_ref in equivalence_class.node_refs:
+                refs.update(node_ref.referenced_objects)
         for operation in self.anchor_result.road_break_operations:
             refs.add(operation.road_ref)
         return frozenset(refs)

@@ -28,7 +28,22 @@ class PointerSetOutput:
     object_refs: tuple[ObjectRef, ...]
     object_batch_indices: torch.Tensor
     logits: torch.Tensor
-    predicted_cardinality: torch.Tensor
+    cardinality_logits: torch.Tensor
+    cardinality_valid_mask: torch.Tensor
+
+    @property
+    def predicted_cardinality(self) -> torch.Tensor:
+        if self.cardinality_logits.ndim != 2:
+            raise JunctionPredictionError("cardinality logits must be rank-2")
+        if self.cardinality_valid_mask.shape != self.cardinality_logits.shape:
+            raise JunctionPredictionError("cardinality mask shape differs from logits")
+        if not torch.all(self.cardinality_valid_mask.any(dim=-1)):
+            raise JunctionPredictionError("each pointer set requires a valid count class")
+        masked = self.cardinality_logits.masked_fill(
+            ~self.cardinality_valid_mask,
+            -torch.inf,
+        )
+        return masked.argmax(dim=-1)
 
 
 @dataclass(frozen=True)
@@ -124,13 +139,22 @@ class ObjectPointerScorer(nn.Module):
 
 
 class PointerSetHead(nn.Module):
-    """Object pointer logits plus an uncapped set-cardinality prediction."""
+    """Object pointers plus a dynamic categorical count over 0..candidate_count."""
 
     def __init__(self, hidden_dim: int) -> None:
         super().__init__()
         self.pointer = ObjectPointerScorer(hidden_dim)
-        self.cardinality_head = nn.Sequential(
-            nn.Linear(hidden_dim * 2, hidden_dim),
+        self.cardinality_context = nn.Sequential(
+            nn.Linear(hidden_dim * 3, hidden_dim),
+            nn.GELU(),
+            nn.LayerNorm(hidden_dim),
+        )
+        self.cardinality_count_projection = nn.Sequential(
+            nn.Linear(6, hidden_dim),
+            nn.GELU(),
+        )
+        self.cardinality_score = nn.Sequential(
+            nn.Linear(hidden_dim * 4, hidden_dim),
             nn.GELU(),
             nn.Linear(hidden_dim, 1),
         )
@@ -151,10 +175,14 @@ class PointerSetHead(nn.Module):
             object_refs=object_refs,
             roles=roles,
         )
-        candidate_pool = torch.zeros_like(query_embeddings)
-        candidate_counts = query_embeddings.new_zeros(
-            (int(query_embeddings.shape[0]), 1)
+        batch_size = int(query_embeddings.shape[0])
+        candidate_sum = torch.zeros_like(query_embeddings)
+        candidate_counts = torch.zeros(
+            (batch_size,),
+            dtype=torch.long,
+            device=query_embeddings.device,
         )
+        selected = query_embeddings.new_zeros((0, int(query_embeddings.shape[1])))
         if len(pointer.object_refs):
             selected_indices = ObjectPointerScorer._selected_indices(
                 object_refs,
@@ -165,27 +193,89 @@ class PointerSetHead(nn.Module):
                 dtype=torch.long,
                 device=query_embeddings.device,
             )
-            candidate_pool.index_add_(
+            selected = object_embeddings[index_tensor]
+            candidate_sum.index_add_(
                 0,
                 pointer.object_batch_indices,
-                object_embeddings[index_tensor],
+                selected,
             )
-            candidate_counts.index_add_(
-                0,
+            candidate_counts = torch.bincount(
                 pointer.object_batch_indices,
-                query_embeddings.new_ones((len(selected_indices), 1)),
+                minlength=batch_size,
             )
-        candidate_pool = candidate_pool / candidate_counts.clamp_min(1.0)
-        cardinality = functional.softplus(
-            self.cardinality_head(
-                torch.cat((query_embeddings, candidate_pool), dim=-1)
-            ).squeeze(-1)
+        candidate_mean = candidate_sum / candidate_counts.clamp_min(1).unsqueeze(-1)
+        candidate_max_rows: list[torch.Tensor] = []
+        for batch_index in range(batch_size):
+            local = selected[pointer.object_batch_indices == batch_index]
+            candidate_max_rows.append(
+                local.amax(dim=0)
+                if int(local.shape[0])
+                else torch.zeros_like(query_embeddings[batch_index])
+            )
+        candidate_max = torch.stack(candidate_max_rows)
+        context = self.cardinality_context(
+            torch.cat((query_embeddings, candidate_mean, candidate_max), dim=-1)
         )
+
+        maximum_count = int(candidate_counts.max()) if batch_size else 0
+        cardinality_rows: list[torch.Tensor] = []
+        validity_rows: list[torch.Tensor] = []
+        for batch_index in range(batch_size):
+            local_count = int(candidate_counts[batch_index])
+            count_values = torch.arange(
+                local_count + 1,
+                dtype=query_embeddings.dtype,
+                device=query_embeddings.device,
+            )
+            denominator = float(max(local_count, 1))
+            log_denominator = torch.log1p(
+                query_embeddings.new_tensor(float(max(local_count, 1)))
+            )
+            count_features = torch.stack(
+                (
+                    count_values / denominator,
+                    (float(local_count) - count_values) / denominator,
+                    torch.log1p(count_values) / log_denominator,
+                    (count_values == 0).to(query_embeddings.dtype),
+                    (count_values == local_count).to(query_embeddings.dtype),
+                    torch.full_like(count_values, 1.0 / float(local_count + 1)),
+                ),
+                dim=-1,
+            )
+            count_embeddings = self.cardinality_count_projection(count_features)
+            repeated_context = context[batch_index].expand(local_count + 1, -1)
+            valid_logits = self.cardinality_score(
+                torch.cat(
+                    (
+                        repeated_context,
+                        count_embeddings,
+                        count_embeddings - repeated_context,
+                        count_embeddings * repeated_context,
+                    ),
+                    dim=-1,
+                )
+            ).squeeze(-1)
+            padding = maximum_count - local_count
+            cardinality_rows.append(
+                functional.pad(valid_logits, (0, padding), value=-torch.inf)
+            )
+            validity_rows.append(
+                functional.pad(
+                    torch.ones(
+                        (local_count + 1,),
+                        dtype=torch.bool,
+                        device=query_embeddings.device,
+                    ),
+                    (0, padding),
+                    value=False,
+                )
+            )
         return PointerSetOutput(
             object_refs=pointer.object_refs,
             object_batch_indices=pointer.object_batch_indices,
             logits=pointer.logits,
-            predicted_cardinality=cardinality,
+            cardinality_logits=torch.stack(cardinality_rows),
+            cardinality_valid_mask=torch.stack(validity_rows),
         )
 
 
@@ -271,7 +361,7 @@ def decode_pointer_set(
         for index in range(len(output.object_refs))
         if int(output.object_batch_indices[index]) == batch_index
     )
-    predicted_count = int(round(float(output.predicted_cardinality[batch_index])))
+    predicted_count = int(output.predicted_cardinality[batch_index])
     selected_count = max(0, min(predicted_count, len(local)))
     if not selected_count:
         return ()

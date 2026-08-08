@@ -316,13 +316,22 @@ class JunctionGraphSetRawOutput:
     anchor_member_refs: tuple[ObjectRef, ...]
     anchor_member_batch_indices: torch.Tensor
     anchor_member_logits: torch.Tensor
-    anchor_member_cardinality: torch.Tensor
+    anchor_member_cardinality_logits: torch.Tensor
+    anchor_member_cardinality_valid_mask: torch.Tensor
     main_anchor_refs: tuple[AnchorNodeRef, ...]
     main_anchor_batch_indices: torch.Tensor
     main_anchor_logits: torch.Tensor
     node_equivalence: PairScoreOutput
     road_break: RoadBreakSetOutput
     complete_plan: CompletePlanScoreOutput
+
+    @property
+    def anchor_member_cardinality(self) -> torch.Tensor:
+        masked = self.anchor_member_cardinality_logits.masked_fill(
+            ~self.anchor_member_cardinality_valid_mask,
+            -torch.inf,
+        )
+        return masked.argmax(dim=-1)
 
 
 PLAN_SCALAR_DIM = (
@@ -751,7 +760,12 @@ class StagedMultiTaskHeads(nn.Module):
             virtual_member_batch_indices=(
                 anchor_member_output.virtual_member_batch_indices
             ),
-            virtual_cardinality=anchor_member_output.virtual_cardinality,
+            virtual_cardinality_logits=(
+                anchor_member_output.virtual_cardinality_logits
+            ),
+            virtual_cardinality_valid_mask=(
+                anchor_member_output.virtual_cardinality_valid_mask
+            ),
         )
         return JunctionGraphSetRawOutput(
             junction_keys=anchor.junction_keys,
@@ -764,7 +778,10 @@ class StagedMultiTaskHeads(nn.Module):
             anchor_member_refs=member_output.object_refs,
             anchor_member_batch_indices=member_output.object_batch_indices,
             anchor_member_logits=member_output.logits,
-            anchor_member_cardinality=member_output.predicted_cardinality,
+            anchor_member_cardinality_logits=member_output.cardinality_logits,
+            anchor_member_cardinality_valid_mask=(
+                member_output.cardinality_valid_mask
+            ),
             main_anchor_refs=main_refs,
             main_anchor_batch_indices=main_output.object_batch_indices,
             main_anchor_logits=main_output.logits,
@@ -996,11 +1013,16 @@ def _grouped_object_loss(
 
 
 def _cardinality_loss(
-    predicted: torch.Tensor,
+    logits: torch.Tensor,
+    valid_mask: torch.Tensor,
     overlays: Sequence[JunctionTrainingOverlay],
     *,
     target_getter,
 ) -> torch.Tensor:
+    if logits.ndim != 2 or valid_mask.shape != logits.shape:
+        raise JunctionPredictionError("cardinality logits/mask shape is invalid")
+    if int(logits.shape[0]) != len(overlays):
+        raise JunctionPredictionError("cardinality batch differs from overlays")
     terms: list[torch.Tensor] = []
     weights: list[float] = []
     for batch_index, overlay in enumerate(overlays):
@@ -1009,18 +1031,32 @@ def _cardinality_loss(
             continue
         if int(target) < 0:
             raise JunctionPredictionError("set-cardinality target is negative")
-        scale = float(int(target) + 1)
+        if int(target) >= int(logits.shape[1]) or not bool(
+            valid_mask[batch_index, int(target)]
+        ):
+            raise JunctionPredictionError(
+                "set-cardinality target exceeds the legal candidate count"
+            )
+        local_logits = logits[batch_index].masked_fill(
+            ~valid_mask[batch_index],
+            -torch.inf,
+        )
         terms.append(
-            functional.smooth_l1_loss(
-                predicted[batch_index] / scale,
-                predicted.new_tensor(float(target) / scale),
+            functional.cross_entropy(
+                local_logits.unsqueeze(0),
+                torch.tensor(
+                    (int(target),),
+                    dtype=torch.long,
+                    device=logits.device,
+                ),
                 reduction="none",
             )
+            .squeeze(0)
             * overlay.source_weight
         )
         weights.append(overlay.source_weight)
     if not terms:
-        return predicted.sum() * 0.0
+        return logits.masked_fill(~valid_mask, 0.0).sum() * 0.0
     return torch.stack(terms).sum() / max(sum(weights), 1e-12)
 
 
@@ -1142,7 +1178,8 @@ def compute_multitask_loss(
         constraints_getter=lambda overlay: overlay.virtual_surface_constraints,
     )
     losses["virtual_surface_cardinality"] = _cardinality_loss(
-        output.surface.virtual_cardinality,
+        output.surface.virtual_cardinality_logits,
+        output.surface.virtual_cardinality_valid_mask,
         normalized,
         target_getter=lambda overlay: overlay.virtual_surface_cardinality_target,
     )
@@ -1162,7 +1199,8 @@ def compute_multitask_loss(
         constraints_getter=lambda overlay: overlay.anchor_member_constraints,
     )
     losses["anchor_member_cardinality"] = _cardinality_loss(
-        output.anchor_member_cardinality,
+        output.anchor_member_cardinality_logits,
+        output.anchor_member_cardinality_valid_mask,
         normalized,
         target_getter=lambda overlay: overlay.anchor_member_cardinality_target,
     )

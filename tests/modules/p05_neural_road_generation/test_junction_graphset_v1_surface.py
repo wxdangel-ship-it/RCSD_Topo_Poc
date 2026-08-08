@@ -42,7 +42,12 @@ def test_surface_heads_keep_existing_and_virtual_object_roles_separate() -> None
     assert output.virtual_member_refs == (refs[1], refs[2])
     assert output.virtual_member_batch_indices.tolist() == [0, 1]
     assert tuple(output.virtual_cardinality.shape) == (2,)
-    assert torch.all(output.virtual_cardinality >= 0.0)
+    assert tuple(output.virtual_cardinality_logits.shape) == (2, 2)
+    assert output.virtual_cardinality_valid_mask.tolist() == [
+        [True, True],
+        [True, True],
+    ]
+    assert output.virtual_cardinality.dtype == torch.long
 
 
 def test_acceptable_set_loss_accepts_multiple_correct_classes() -> None:

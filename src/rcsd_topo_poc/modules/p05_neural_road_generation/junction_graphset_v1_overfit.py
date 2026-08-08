@@ -1127,14 +1127,19 @@ def _write_json(path: Path, payload: Any) -> None:
     )
 
 
-def run_t017_r1_readiness(config: T017OverfitConfig) -> Mapping[str, Any]:
-    """Audit T017-R1 forward/loss/gradient wiring without an optimizer step."""
+def _run_t017_readiness(
+    config: T017OverfitConfig,
+    *,
+    schema_version: str,
+    status: str,
+) -> Mapping[str, Any]:
+    """Audit T017 forward/loss/gradient wiring without an optimizer step."""
 
     config.validate()
     output_dir = Path(config.output_dir)
     if output_dir.exists() and any(output_dir.iterdir()):
         raise FileExistsError(
-            f"T017-R1 readiness output directory is not empty: {output_dir}"
+            f"T017 readiness output directory is not empty: {output_dir}"
         )
     started_at = time.perf_counter()
     random.seed(config.seed)
@@ -1160,7 +1165,7 @@ def run_t017_r1_readiness(config: T017OverfitConfig) -> Mapping[str, Any]:
     )
     losses = compute_multitask_loss(output, prepared.overlays)
     if not all(torch.isfinite(value).item() for value in losses.values()):
-        raise JunctionPredictionError("T017-R1 readiness produced a non-finite loss")
+        raise JunctionPredictionError("T017 readiness produced a non-finite loss")
     losses["total"].backward()
 
     gradient_tensors = {
@@ -1170,11 +1175,11 @@ def run_t017_r1_readiness(config: T017OverfitConfig) -> Mapping[str, Any]:
             model.heads.surface_heads.virtual_member_head.pointer.score_head[0].weight.grad
         ),
         "surface_cardinality": (
-            model.heads.surface_heads.virtual_member_head.cardinality_head[0].weight.grad
+            model.heads.surface_heads.virtual_member_head.cardinality_score[0].weight.grad
         ),
         "anchor_pointer": model.heads.member_head.pointer.score_head[0].weight.grad,
         "anchor_cardinality": (
-            model.heads.member_head.cardinality_head[0].weight.grad
+            model.heads.member_head.cardinality_score[0].weight.grad
         ),
         "break_count": model.heads.break_head.count_head.weight.grad,
         "break_fraction": model.heads.break_head.gap_head.weight.grad,
@@ -1185,7 +1190,7 @@ def run_t017_r1_readiness(config: T017OverfitConfig) -> Mapping[str, Any]:
     }
     if not all(value is not None and value > 0.0 for value in gradient_norms.values()):
         raise JunctionPredictionError(
-            "T017-R1 readiness found a disconnected architecture gradient"
+            "T017 readiness found a disconnected architecture gradient"
         )
 
     with torch.no_grad():
@@ -1211,7 +1216,7 @@ def run_t017_r1_readiness(config: T017OverfitConfig) -> Mapping[str, Any]:
                 minimum_distances.append(min(pair_distances))
     if not minimum_distances or min(minimum_distances) <= 1e-5:
         raise JunctionPredictionError(
-            "T017-R1 readiness found collapsed same-Case Road embeddings"
+            "T017 readiness found collapsed same-Case Road embeddings"
         )
 
     stage_role_audit = {
@@ -1232,7 +1237,7 @@ def run_t017_r1_readiness(config: T017OverfitConfig) -> Mapping[str, Any]:
         ),
     }
     if any(stage_role_audit.values()):
-        raise JunctionPredictionError("T017-R1 readiness violated stage visibility")
+        raise JunctionPredictionError("T017 readiness violated stage visibility")
 
     manifest_paths = {
         "derived": config.data_paths.derived_manifest,
@@ -1241,8 +1246,8 @@ def run_t017_r1_readiness(config: T017OverfitConfig) -> Mapping[str, Any]:
         "surface": config.data_paths.surface_manifest,
     }
     summary = {
-        "schema_version": "p05-junction-graphset-v1-t017-r1-readiness-v1",
-        "status": "IMPLEMENTATION_READY_AWAITING_T017_R1_AUTHORIZATION",
+        "schema_version": schema_version,
+        "status": status,
         "training_executed": False,
         "optimizer_created": False,
         "optimizer_step_executed": False,
@@ -1285,6 +1290,15 @@ def run_t017_r1_readiness(config: T017OverfitConfig) -> Mapping[str, Any]:
             overlay.anchor_member_cardinality_target
             for overlay in prepared.overlays
         ],
+        "cardinality_decoder": (
+            "DYNAMIC_CATEGORICAL_0_TO_LOCAL_CANDIDATE_COUNT"
+        ),
+        "surface_cardinality_support_sizes": (
+            output.surface.virtual_cardinality_valid_mask.sum(dim=-1).tolist()
+        ),
+        "anchor_cardinality_support_sizes": (
+            output.anchor_member_cardinality_valid_mask.sum(dim=-1).tolist()
+        ),
         "losses": {name: float(value.detach()) for name, value in losses.items()},
         "gradient_norms": gradient_norms,
         "minimum_intra_case_road_embedding_distance": min(minimum_distances),
@@ -1302,8 +1316,29 @@ def run_t017_r1_readiness(config: T017OverfitConfig) -> Mapping[str, Any]:
     return summary
 
 
-def run_t017_overfit(config: T017OverfitConfig) -> Mapping[str, Any]:
-    """Run an authorized T017-R1 training-fold gate, never the blind test."""
+def run_t017_r1_readiness(config: T017OverfitConfig) -> Mapping[str, Any]:
+    return _run_t017_readiness(
+        config,
+        schema_version="p05-junction-graphset-v1-t017-r1-readiness-v1",
+        status="IMPLEMENTATION_READY_AWAITING_T017_R1_AUTHORIZATION",
+    )
+
+
+def run_t017_r2_readiness(config: T017OverfitConfig) -> Mapping[str, Any]:
+    return _run_t017_readiness(
+        config,
+        schema_version="p05-junction-graphset-v1-t017-r2-readiness-v1",
+        status="IMPLEMENTATION_READY_AWAITING_T017_R2_AUTHORIZATION",
+    )
+
+
+def _run_t017_overfit(
+    config: T017OverfitConfig,
+    *,
+    schema_version: str,
+    task: str,
+) -> Mapping[str, Any]:
+    """Run an authorized T017 training-fold gate, never the blind test."""
 
     config.validate()
     output_dir = Path(config.output_dir)
@@ -1407,13 +1442,13 @@ def run_t017_overfit(config: T017OverfitConfig) -> Mapping[str, Any]:
             break
 
     if not history:
-        raise RuntimeError("T017-R1 produced no evaluation history")
+        raise RuntimeError("T017 produced no evaluation history")
     final = history[-1]
     passed = converged_step is not None
     checkpoint_path = output_dir / "checkpoint.pt"
     torch.save(
         {
-            "schema_version": "p05-junction-graphset-v1-t017-r1-overfit-v1",
+            "schema_version": schema_version,
             "model_state_dict": {
                 name: value.detach().cpu() for name, value in model.state_dict().items()
             },
@@ -1439,9 +1474,9 @@ def run_t017_overfit(config: T017OverfitConfig) -> Mapping[str, Any]:
         "surface": config.data_paths.surface_manifest,
     }
     summary = {
-        "schema_version": "p05-junction-graphset-v1-t017-r1-overfit-v1",
+        "schema_version": schema_version,
         "status": "PASS" if passed else "REPRESENTATION_NO_GO",
-        "task": "T017_R1_TRAINING_FOLD_STRONG_GOLD_OVERFIT",
+        "task": task,
         "training_executed": True,
         "canary_executed": False,
         "blind_test_labels_read": False,
@@ -1457,6 +1492,9 @@ def run_t017_overfit(config: T017OverfitConfig) -> Mapping[str, Any]:
             name: _sha256_file(path) for name, path in manifest_paths.items()
         },
         "candidate_catalog": "TRAINING_ORACLE_ONLY",
+        "cardinality_decoder": (
+            "DYNAMIC_CATEGORICAL_0_TO_LOCAL_CANDIDATE_COUNT"
+        ),
         "candidate_catalog_warning": (
             "Only proves representation/heads can learn bound complete plans; "
             "it is not inference candidate generation and does not authorize canary."
@@ -1494,3 +1532,19 @@ def run_t017_overfit(config: T017OverfitConfig) -> Mapping[str, Any]:
     }
     _write_json(output_dir / "summary.json", summary)
     return summary
+
+
+def run_t017_overfit(config: T017OverfitConfig) -> Mapping[str, Any]:
+    return _run_t017_overfit(
+        config,
+        schema_version="p05-junction-graphset-v1-t017-r1-overfit-v1",
+        task="T017_R1_TRAINING_FOLD_STRONG_GOLD_OVERFIT",
+    )
+
+
+def run_t017_r2_overfit(config: T017OverfitConfig) -> Mapping[str, Any]:
+    return _run_t017_overfit(
+        config,
+        schema_version="p05-junction-graphset-v1-t017-r2-overfit-v1",
+        task="T017_R2_TRAINING_FOLD_STRONG_GOLD_OVERFIT",
+    )

@@ -139,6 +139,15 @@ def test_object_order_is_equivariant_and_query_outputs_are_invariant() -> None:
     assert torch.allclose(first.step1_logits, second.step1_logits, atol=1e-5)
     assert torch.allclose(first.surface.mode_logits, second.surface.mode_logits, atol=1e-5)
     assert torch.allclose(first.anchor_state_logits, second.anchor_state_logits, atol=1e-5)
+    assert torch.allclose(
+        first.surface.virtual_cardinality_logits,
+        second.surface.virtual_cardinality_logits,
+        atol=1e-5,
+    )
+    assert torch.equal(
+        first.surface.virtual_cardinality_valid_mask,
+        second.surface.virtual_cardinality_valid_mask,
+    )
     assert _scores_by_ref(first.anchor_member_refs, first.anchor_member_logits) == pytest.approx(
         _scores_by_ref(second.anchor_member_refs, second.anchor_member_logits), abs=1e-5
     )
@@ -164,6 +173,11 @@ def test_variable_and_empty_examples_emit_every_head_without_padding() -> None:
     assert tuple(output.quality_logits.shape) == (2, 6)
     assert output.anchor_member_refs == (NODE_1, NODE_2, ROAD_1)
     assert tuple(output.anchor_member_logits.shape) == (3,)
+    assert output.anchor_member_cardinality_valid_mask.tolist() == [
+        [True, True, True, True],
+        [True, False, False, False],
+    ]
+    assert int(output.anchor_member_cardinality[1]) == 0
     assert output.node_equivalence.pair_refs == ((NODE_1, NODE_2),)
     assert output.road_break.road_refs == (ROAD_1,)
     assert tuple(output.road_break.fractions.shape) == (1,)
@@ -264,7 +278,7 @@ def test_multitask_loss_supports_separate_surface_and_anchor_gold() -> None:
     assert model.encoder.token_projection.weight.grad is not None
     assert torch.isfinite(model.encoder.token_projection.weight.grad).all().item()
     assert model.encoder.summary_kind_embedding.grad is not None
-    assert model.heads.member_head.cardinality_head[0].weight.grad is not None
+    assert model.heads.member_head.cardinality_score[0].weight.grad is not None
     assert model.heads.break_head.count_head.weight.grad is not None
     assert model.heads.break_head.gap_head.weight.grad is not None
     assert model.heads.complete_plan_scorer.break_point_encoder[0].weight.grad is not None
@@ -317,6 +331,18 @@ def test_only_frozen_source_weights_are_accepted() -> None:
         source_weight=0.3,
     )
     with pytest.raises(JunctionPredictionError, match="source weight"):
+        compute_multitask_loss(output, (overlay,))
+
+
+def test_cardinality_gold_cannot_exceed_visible_candidate_count() -> None:
+    output = JunctionGraphSetModel(hidden_dim=64, dropout=0.0)((_example(),))
+    overlay = JunctionTrainingOverlay(
+        junction_key="T03:fixture|S1",
+        source_weight=1.0,
+        virtual_surface_cardinality_target=4,
+    )
+
+    with pytest.raises(JunctionPredictionError, match="exceeds"):
         compute_multitask_loss(output, (overlay,))
 
 

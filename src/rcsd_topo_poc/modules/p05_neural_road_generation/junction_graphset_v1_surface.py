@@ -59,7 +59,16 @@ class SurfaceHeadOutput:
     virtual_member_logits: torch.Tensor
     virtual_member_refs: tuple[ObjectRef, ...]
     virtual_member_batch_indices: torch.Tensor
-    virtual_cardinality: torch.Tensor
+    virtual_cardinality_logits: torch.Tensor
+    virtual_cardinality_valid_mask: torch.Tensor
+
+    @property
+    def virtual_cardinality(self) -> torch.Tensor:
+        masked = self.virtual_cardinality_logits.masked_fill(
+            ~self.virtual_cardinality_valid_mask,
+            -torch.inf,
+        )
+        return masked.argmax(dim=-1)
 
 
 class SurfaceBranchHeads(nn.Module):
@@ -129,7 +138,8 @@ class SurfaceBranchHeads(nn.Module):
             virtual_member_logits=virtual.logits,
             virtual_member_refs=virtual.object_refs,
             virtual_member_batch_indices=virtual.object_batch_indices,
-            virtual_cardinality=virtual.predicted_cardinality,
+            virtual_cardinality_logits=virtual.cardinality_logits,
+            virtual_cardinality_valid_mask=virtual.cardinality_valid_mask,
         )
 
 

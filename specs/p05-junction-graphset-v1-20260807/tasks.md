@@ -56,6 +56,11 @@
   已证明的 REQUIRED top-k coverage loss 缺口做一次同配置复验；最终 teacher/free 完整
   exact `7/8`、loss `0.0215373375`，仍有一条 surface cardinality 失败，正式结论
   `REPRESENTATION_NO_GO`，不得进入 T021。
+- [x] T017-R2-A [Development] [US3] 将 Softplus 标量 cardinality 回归替换为按当前
+  Junction 合法候选数动态生成 `0..N` 类的离散 decoder；非法 count 类硬 mask，surface/
+  anchor 使用交叉熵训练。真实 8 条强 Gold 无训练 readiness 通过，blind access=0。
+- [ ] T017-R2 [Testing] [US3] 获得单独训练授权后，按与 R1 完全相同的 8 条强 Gold、seed、
+  优化器、学习率、step 与完整 exact 门重新执行表示 overfit；失败仍不得进入 T021。
 
 ## Phase 4：US4 materializer 与安全链
 

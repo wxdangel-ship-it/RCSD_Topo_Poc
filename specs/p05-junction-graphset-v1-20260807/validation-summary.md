@@ -2,10 +2,11 @@
 
 ## 正式状态
 
-`T017_R1_REPRESENTATION_NO_GO`
+`IMPLEMENTATION_READY_AWAITING_T017_R2_AUTHORIZATION`
 
-用户授权的 T017-R1 已完成。固定 8 条训练折强 Gold、固定 seed/学习率/step 上限和 blind
-隔离均按训练前合同执行；没有读取冻结测试，没有启动正式 canary，也没有进入 T021。
+用户授权的 T017-R1 已完成且正式结论仍为 `REPRESENTATION_NO_GO`。T017-R2-A 只针对已证明
+饱和的 cardinality head 完成离散 decoder 修正和无训练 readiness；没有读取冻结测试、
+没有启动正式 canary，也没有进入 T021。
 
 ## 训练合同
 
@@ -67,9 +68,35 @@ T017-R1 未满足任一完整 PASS 序列，正式结论保持 `REPRESENTATION_N
 - 通过追加 epoch、seed 搜索、阈值放宽或只报 `7/8` 将结果解释为 GO；
 - 把 `TRAINING_ORACLE_ONLY` 候选解释为真实推理候选生成能力。
 
-下一轮若继续，技术问题应定义为“重新设计可离散表达 0..N 的 cardinality decoder/loss，
-避免 Softplus 回归分支在单样本上饱和到零”，并重新经过训练前 readiness；这不需要修改
-已确认的 REQUIRED/FORBIDDEN/UNKNOWN 业务语义，但需要单独实现与训练授权。
+## T017-R2-A 离散 cardinality decoder
+
+- 每个 Junction 根据当前合法 RCSD Node/Road 候选数量 N 动态生成 `0..N` count 类，不设
+  固定城市级上限；候选数量不同的 batch 使用 valid mask，`>N` 类不能被选择。
+- count scorer 使用 Junction query、候选对象 mean/max pool 和 count 相对特征；不使用 raw
+  ID，不把终态标签作为推理输入。
+- cardinality loss 从 Softplus 标量 SmoothL1 回归改为合法 count 类上的交叉熵；推理直接
+  argmax 离散 count，再由 pointer top-k 选对象，不再 round 连续值。
+- REQUIRED coverage 排序 loss 保留；UNKNOWN/REVIEW/未裁决对象仍不进入二元正负标签。
+- 无候选 Junction 的支持集只有 `{0}`；Gold count 超出候选数立即硬失败，不截断、不补造。
+
+真实 8 条 readiness 工件：
+`outputs/_work/p05_neural_road_generation/junction_graphset_v1_t017_r2_readiness_20260808/summary.json`
+
+SHA256：`06E7B3C022070D9989DD106A4260D01843A4E92809B0EB544A796B192F384DEE`。
+
+- `training_executed=false`、optimizer/checkpoint 未创建、canary 未启动、blind access `=0`。
+- 8 条 surface/anchor count 支持类数均为 `7/18/8/31/80/14/19/39`，即各自合法 count
+  范围为 `0..6/17/7/30/79/13/18/38`；全部 Gold 均可表达。
+- surface/anchor count scorer 梯度 norm 分别为 `0.8927334547/0.9581764936`；全部 17 项
+  loss finite。
+- Step1 非法 RCSD 角色数 `0`，Surface 非法 Node/Road 角色数 `0`；阶段防火墙未回退。
+- encoder 参数 `6,726,401`，总模型参数 `14,442,536`；CUDA dry-run 约 `5.10` 秒。
+
+## T017-R2 训练授权门
+
+T017-R2 尚未训练。下一步仅允许在用户明确授权后，保持 R1 的 8 条样本、数据哈希、seed、
+优化器、学习率、step 上限和 PASS 条件不变，从零执行一次表示 overfit。T017-R2 失败仍必须
+停在表示层，不追加 seed/epoch/阈值搜索，不读取 blind test，不进入 T021。
 
 ## 未改变边界
 
@@ -80,8 +107,8 @@ T017-R1 未满足任一完整 PASS 序列，正式结论保持 `REPRESENTATION_N
 
 ## 回归验证
 
-- 定向 model/overfit 测试：`14 passed`。
-- P05 实际测试目录全量回归：`960 passed, 1 warning`；warning 为既有 Transformer
+- 离散 decoder 定向 model/surface/object-decoder/overfit 测试：`26 passed`。
+- P05 实际测试目录全量回归：`963 passed, 1 warning`；warning 为既有 Transformer
   `norm_first` nested-tensor 提示，不是测试失败。
 - Python `compileall`、`git diff --check` 通过。
 - P05 正式源码与实际测试目录共 `546` 个 Python 文件，`>=61440 bytes=7`、

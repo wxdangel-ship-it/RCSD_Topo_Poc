@@ -1027,3 +1027,14 @@ callable `junction_graphset_v1_overfit.py` 为 57,533 bytes，低于观察线但
 增至 13,046 bytes。P05 正式源码与实际测试目录仍为 `546` 个 Python 文件，
 `>=61440 bytes=7`、`>=100000 bytes=0`。两次训练只写 ignored `outputs/_work/`，未新增
 入口、依赖、CLI 或 T01–T12 改动；`entrypoint-registry.md` 无需改变。
+
+### P05 Junction GraphSet V1 T017-R2-A 快照（2026-08-08）
+
+动态离散 cardinality decoder 实现后，`junction_graphset_v1_object_decoder.py` 为
+13,351 bytes、`junction_graphset_v1_surface.py` 为 10,651 bytes、
+`junction_graphset_v1_model.py` 为 55,496 bytes；readiness callable 所在
+`junction_graphset_v1_overfit.py` 为 58,973 bytes，仍低于 60KiB 观察线；本轮已补齐独立
+R2 训练 schema/task wrapper，后续训练编排
+不得继续回填该文件。P05 正式源码与实际测试目录仍为 `546` 个 Python 文件，
+`>=61440 bytes=7`、`>=100000 bytes=0`。T017-R2 readiness 只写 ignored `outputs/_work/`，
+未新增 CLI、script、正式入口、依赖或 T01–T12 改动，`entrypoint-registry.md` 无需改变。

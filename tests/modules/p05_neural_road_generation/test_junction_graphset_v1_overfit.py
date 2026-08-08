@@ -5,6 +5,9 @@ from dataclasses import replace
 
 import torch
 
+from rcsd_topo_poc.modules.p05_neural_road_generation import (
+    junction_graphset_v1_overfit as overfit_module,
+)
 from rcsd_topo_poc.modules.p05_neural_road_generation.junction_graphset_v1_firewall import (
     EvidenceStage,
 )
@@ -118,6 +121,23 @@ def test_exact_jsonl_extractor_does_not_decode_unrequested_rows(tmp_path) -> Non
 
     assert extract_exact_jsonl_rows(path, ("selected",)) == {
         "selected": {"sample_id": "selected", "value": 7}
+    }
+
+
+def test_r2_training_wrapper_uses_distinct_artifact_contract(monkeypatch) -> None:
+    captured = {}
+
+    def fake_runner(config, **metadata):
+        captured.update(metadata)
+        return {"config": config}
+
+    sentinel = object()
+    monkeypatch.setattr(overfit_module, "_run_t017_overfit", fake_runner)
+
+    assert overfit_module.run_t017_r2_overfit(sentinel) == {"config": sentinel}
+    assert captured == {
+        "schema_version": "p05-junction-graphset-v1-t017-r2-overfit-v1",
+        "task": "T017_R2_TRAINING_FOLD_STRONG_GOLD_OVERFIT",
     }
 
 

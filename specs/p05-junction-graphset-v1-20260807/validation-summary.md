@@ -1,12 +1,11 @@
-# T017-R1 表示过拟合门验收摘要
+# T017-R2 表示过拟合门验收摘要
 
 ## 正式状态
 
-`IMPLEMENTATION_READY_AWAITING_T017_R2_AUTHORIZATION`
+`T017_R2_REPRESENTATION_PASS_AWAITING_T021_AUTHORIZATION`
 
-用户授权的 T017-R1 已完成且正式结论仍为 `REPRESENTATION_NO_GO`。T017-R2-A 只针对已证明
-饱和的 cardinality head 完成离散 decoder 修正和无训练 readiness；没有读取冻结测试、
-没有启动正式 canary，也没有进入 T021。
+用户授权的 T017-R2 已完成并通过训练折内表示过拟合门。没有读取冻结测试、没有启动正式
+canary，也没有进入尚未授权的 T021。T017-R1 的历史 NO_GO 工件继续保留，不被 R2 覆盖。
 
 ## 训练合同
 
@@ -16,7 +15,8 @@
 - PASS：连续 3 个评价点同时满足 total loss `<=0.02`、teacher-forced 完整 exact `8/8`、
   free-run 完整 exact `8/8`，并且成员集合、cardinality、单/双打断、状态、主锚定、
   等价组和完整方案全部正确。
-- 隔离：两次训练 `blind_test_access_count=0`、`canary_executed=false`。
+- 隔离：T017-R1、R1A、R2 均为 `blind_test_access_count=0`、
+  `canary_executed=false`。
 
 ## T017-R1 原始结果
 
@@ -59,9 +59,10 @@ cardinality 时，所有 REQUIRED pointer 必须排在同 Junction 的其他候�
 - 新增 REQUIRED coverage loss 为 `0.0000121140`，说明 top-k 排序缺口已被修正；剩余问题
   集中在非负 cardinality 回归 head 对该样本饱和到近零，不能解释为一般概率阈值问题。
 
-## 结论与停止边界
+## T017-R1 历史结论与当时停止边界
 
-T017-R1 未满足任一完整 PASS 序列，正式结论保持 `REPRESENTATION_NO_GO`。不得：
+T017-R1 未满足任一完整 PASS 序列，当时正式结论为 `REPRESENTATION_NO_GO`，在完成并通过
+R2 结构修正前不得：
 
 - 进入 T021 或正式 canary；
 - 读取 105 条冻结 blind test；
@@ -92,11 +93,37 @@ SHA256：`06E7B3C022070D9989DD106A4260D01843A4E92809B0EB544A796B192F384DEE`。
 - Step1 非法 RCSD 角色数 `0`，Surface 非法 Node/Road 角色数 `0`；阶段防火墙未回退。
 - encoder 参数 `6,726,401`，总模型参数 `14,442,536`；CUDA dry-run 约 `5.10` 秒。
 
-## T017-R2 训练授权门
+## T017-R2 正式结果
 
-T017-R2 尚未训练。下一步仅允许在用户明确授权后，保持 R1 的 8 条样本、数据哈希、seed、
-优化器、学习率、step 上限和 PASS 条件不变，从零执行一次表示 overfit。T017-R2 失败仍必须
-停在表示层，不追加 seed/epoch/阈值搜索，不读取 blind test，不进入 T021。
+正式工件：
+`outputs/_work/p05_neural_road_generation/junction_graphset_v1_t017_r2_overfit_20260808/`
+
+- schema：`p05-junction-graphset-v1-t017-r2-overfit-v1`；task：
+  `T017_R2_TRAINING_FOLD_STRONG_GOLD_OVERFIT`。
+- step 1350、1375、1400 连续三次满足 total loss `<=0.02`、teacher exact `8/8`、
+  free-run exact `8/8`；runner 在 step 1400 自动提前停止。
+- 最终 total loss `0.0061901738`；surface cardinality `6/6`、surface set `6/6`、surface
+  member `41/41`；anchor cardinality/set `5/5`、anchor member `178/178`。
+- Step1、surface mode、anchor state、quality、完整方案、主锚定、Node 等价组、Road break
+  presence/count、全部单/双 fraction 均为满分；8 条 per-sample exact 全部为 true。
+- 训练用时约 `1427.34` 秒；模型参数 `14,442,536`、encoder 参数 `6,726,401`。
+- blind access `=0`、`canary_executed=false`、`next_gate_authorized=false`。
+- sample IDs、selected-row SHA256 和 source-manifest SHA256 与 R2 readiness 完全一致。
+- checkpoint schema 与 R2 一致，`passed=true`、`converged_step=1400`。
+
+工件 SHA256：
+
+- `summary.json`：`E677083EE97970A2DE2CB6A5C88D6F65D81887C64A122F9C201FDCC969ACB0FE`；
+- `history.json`：`0038813A14DE52BFB1C44B697908ACFE984485D0D5578795FF9F34DFC3AC9ED5`；
+- `checkpoint.pt`：`4509C13B5E5D50C93B850B4EA396D0E2092802F46EE96A06787000DA33341F2C`。
+
+## PASS 的严格含义
+
+T017-R2 只证明当前 encoder、pointer/set、离散 cardinality、锚定、等价组、多打断和完整
+方案 heads 能在固定 8 条强 Gold、绑定的 `TRAINING_ORACLE_ONLY` 候选上共同过拟合。它不
+证明跨 Case 泛化、真实推理候选生成、全量自动接受安全性或城市级性能，也不授权读取 blind
+test。下一步可进入 T021 的设计/训练阶段，但必须另行授权，并继续使用 Case-disjoint split、
+强/T10 权重和 task mask，不得把 R2 checkpoint 当正式模型发布。
 
 ## 未改变边界
 

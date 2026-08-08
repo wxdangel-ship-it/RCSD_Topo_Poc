@@ -5,8 +5,9 @@
 本分支已完成 T001–T020。T017-R1 及 REQUIRED coverage 修正复验的正式结果仍为
 `REPRESENTATION_NO_GO`；T017-R2-A 已将 Softplus 标量 cardinality 回归替换为当前 Junction
 候选数约束下的动态离散 count decoder，并完成无训练 readiness。当前状态为
-`IMPLEMENTATION_READY_AWAITING_T017_R2_AUTHORIZATION`。冻结测试仍未读取、正式 canary
-未启动；T017-R2 通过前不得进入 T021。
+`T017_R2_REPRESENTATION_PASS_AWAITING_T021_AUTHORIZATION`。T017-R2 在 step 1400 连续
+三个评价点满足 loss 与 teacher/free 完整 exact 门；冻结测试仍未读取、正式 canary
+未启动，T021 尚未授权。
 
 ## SpecKit 自检
 
@@ -40,5 +41,9 @@ T017-R1 原始训练和 REQUIRED coverage 修正复验工件分别位于：
 
 T017-R2 无训练 readiness 工件位于
 `outputs/_work/p05_neural_road_generation/junction_graphset_v1_t017_r2_readiness_20260808/`；
-其中 `training_executed=false`、optimizer/checkpoint 均未创建、blind access `=0`。下一步
-只能在用户单独授权后，用相同 8 条强 Gold 执行 T017-R2 表示过拟合门。
+其中 `training_executed=false`、optimizer/checkpoint 均未创建、blind access `=0`。
+
+用户授权的 T017-R2 正式工件位于
+`outputs/_work/p05_neural_road_generation/junction_graphset_v1_t017_r2_overfit_20260808/`；固定
+8 条强 Gold 的 teacher/free 完整 exact 均为 `8/8`，blind access `=0`。该 PASS 只证明
+绑定候选上的表示与完整 heads 可学习，不代表跨 Case 泛化或真实推理候选能力。

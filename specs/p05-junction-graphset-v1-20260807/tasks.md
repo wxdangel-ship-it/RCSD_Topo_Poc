@@ -59,8 +59,10 @@
 - [x] T017-R2-A [Development] [US3] 将 Softplus 标量 cardinality 回归替换为按当前
   Junction 合法候选数动态生成 `0..N` 类的离散 decoder；非法 count 类硬 mask，surface/
   anchor 使用交叉熵训练。真实 8 条强 Gold 无训练 readiness 通过，blind access=0。
-- [ ] T017-R2 [Testing] [US3] 获得单独训练授权后，按与 R1 完全相同的 8 条强 Gold、seed、
-  优化器、学习率、step 与完整 exact 门重新执行表示 overfit；失败仍不得进入 T021。
+- [x] T017-R2 [Testing] [US3] 按授权使用与 R1 完全相同的 8 条强 Gold、seed、优化器、
+  学习率、step 与完整 exact 门执行表示 overfit；step 1350/1375/1400 连续 PASS，最终
+  loss `0.0061901738`、teacher/free 完整 exact `8/8`、blind access=0。表示门通过，T021
+  仍需单独授权。
 
 ## Phase 4：US4 materializer 与安全链
 

@@ -7,6 +7,7 @@ from rcsd_topo_poc.modules.p05_neural_road_generation.junction_graphset_v1_model
     JunctionGraphSetModel,
     JunctionTrainingOverlay,
     PairConstraint,
+    RoadBreakSetTarget,
     RoadBreakTarget,
     compute_multitask_loss,
 )
@@ -125,7 +126,7 @@ def _scores_by_ref(refs, logits) -> dict[ObjectRef, float]:
 def test_encoder_parameter_count_is_in_preregistered_range() -> None:
     model = JunctionGraphSetModel(dropout=0.0)
     assert 5_000_000 <= model.encoder.parameter_count <= 8_000_000
-    assert model.encoder.parameter_count == 6_574_720
+    assert model.encoder.parameter_count == 6_726_401
 
 
 def test_object_order_is_equivariant_and_query_outputs_are_invariant() -> None:
@@ -219,11 +220,13 @@ def test_multitask_loss_supports_separate_surface_and_anchor_gold() -> None:
             SurfaceConstraint(NODE_2, ConstraintState.UNKNOWN, 0.0),
             SurfaceConstraint(ROAD_1, ConstraintState.FORBIDDEN, 1.0),
         ),
+        virtual_surface_cardinality_target=1,
         anchor_member_constraints=(
             SurfaceConstraint(NODE_1, ConstraintState.REQUIRED, 1.0),
             SurfaceConstraint(NODE_2, ConstraintState.REQUIRED, 1.0),
             SurfaceConstraint(ROAD_1, ConstraintState.REQUIRED, 1.0),
         ),
+        anchor_member_cardinality_target=3,
         acceptable_main_anchor_refs=(
             AnchorNodeRef.source_node(NODE_1),
             AnchorNodeRef.source_node(NODE_2),
@@ -232,6 +235,7 @@ def test_multitask_loss_supports_separate_surface_and_anchor_gold() -> None:
             PairConstraint(NODE_1, NODE_2, ConstraintState.REQUIRED, 1.0),
         ),
         road_break_targets=(RoadBreakTarget(ROAD_1, True, 0.5, 1.0),),
+        road_break_set_targets=(RoadBreakSetTarget(ROAD_1, (0.5,), 1.0),),
     )
     losses = compute_multitask_loss(output, (overlay,))
 
@@ -241,11 +245,15 @@ def test_multitask_loss_supports_separate_surface_and_anchor_gold() -> None:
         "anchor_state",
         "quality",
         "virtual_surface_member",
+        "virtual_surface_cardinality",
         "anchor_member",
+        "anchor_member_cardinality",
         "main_anchor",
         "node_equivalence",
         "road_break_presence",
         "road_break_fraction",
+        "road_break_count",
+        "road_break_set_fraction",
         "complete_plan",
         "total",
     }
@@ -253,6 +261,10 @@ def test_multitask_loss_supports_separate_surface_and_anchor_gold() -> None:
     losses["total"].backward()
     assert model.encoder.token_projection.weight.grad is not None
     assert torch.isfinite(model.encoder.token_projection.weight.grad).all().item()
+    assert model.encoder.summary_kind_embedding.grad is not None
+    assert model.heads.member_head.cardinality_head[0].weight.grad is not None
+    assert model.heads.break_head.count_head.weight.grad is not None
+    assert model.heads.break_head.gap_head.weight.grad is not None
     assert model.heads.complete_plan_scorer.break_point_encoder[0].weight.grad is not None
 
 
@@ -275,3 +287,22 @@ def test_only_frozen_source_weights_are_accepted() -> None:
     )
     with pytest.raises(JunctionPredictionError, match="source weight"):
         compute_multitask_loss(output, (overlay,))
+
+
+def test_multi_break_set_target_trains_count_and_every_ordered_fraction() -> None:
+    model = JunctionGraphSetModel(hidden_dim=64, dropout=0.0)
+    output = model((_example(),))
+    overlay = JunctionTrainingOverlay(
+        junction_key="T03:fixture|S1",
+        source_weight=1.0,
+        road_break_set_targets=(
+            RoadBreakSetTarget(ROAD_1, (0.25, 0.75), 1.0),
+        ),
+    )
+    losses = compute_multitask_loss(output, (overlay,))
+
+    assert float(losses["road_break_count"].detach()) > 0.0
+    assert float(losses["road_break_set_fraction"].detach()) >= 0.0
+    (losses["road_break_count"] + losses["road_break_set_fraction"]).backward()
+    assert model.heads.break_head.count_head.weight.grad is not None
+    assert model.heads.break_head.gap_head.weight.grad is not None

@@ -5,6 +5,9 @@ from dataclasses import replace
 
 import torch
 
+from rcsd_topo_poc.modules.p05_neural_road_generation.junction_graphset_v1_firewall import (
+    EvidenceStage,
+)
 from rcsd_topo_poc.modules.p05_neural_road_generation.junction_graphset_v1_model import (
     JunctionGraphSetModel,
 )
@@ -199,3 +202,44 @@ def test_cached_firewall_views_match_regular_forward() -> None:
     assert torch.allclose(regular.surface.mode_logits, cached.surface.mode_logits)
     assert torch.allclose(regular.anchor_state_logits, cached.anchor_state_logits)
     assert torch.allclose(regular.complete_plan.logits, cached.complete_plan.logits)
+
+
+def test_encoder_preserves_road_identity_when_old_mean_pool_would_collide() -> None:
+    road_left = ObjectRef(EvidenceRole.RCSD_ROAD, "RL")
+    road_right = ObjectRef(EvidenceRole.RCSD_ROAD, "RR")
+    refs = (SWSD, DRIVEZONE, road_left, road_right)
+    tokens = torch.zeros((6, 21), dtype=torch.float32)
+    tokens[2, 0] = 0.0
+    tokens[3, 0] = 2.0
+    tokens[4, 0] = 1.0
+    tokens[5, 0] = 1.0
+    assert torch.allclose(tokens[2:4].mean(dim=0), tokens[4:6].mean(dim=0))
+    example = JunctionEvidenceExample(
+        junction_key="T03:identity|S",
+        case_key="T03:identity",
+        semantic_junction_id="S",
+        geometry_tokens=tokens,
+        object_spans=(
+            ObjectTokenSpan(SWSD, 0, 1),
+            ObjectTokenSpan(DRIVEZONE, 1, 2),
+            ObjectTokenSpan(road_left, 2, 4),
+            ObjectTokenSpan(road_right, 4, 6),
+        ),
+        topology_edge_indices=torch.zeros((2, 0), dtype=torch.long),
+        topology_edge_features=torch.zeros((0, 8), dtype=torch.float32),
+        candidate_binding=CandidateBinding(
+            junction_key="T03:identity|S",
+            allowed_object_refs=refs,
+            plans=(),
+        ),
+    )
+    torch.manual_seed(127)
+    model = JunctionGraphSetModel(hidden_dim=64, dropout=0.0).eval()
+    view = model.firewall.build_view(example, EvidenceStage.ANCHOR)
+    encoded = model.encoder((view,))
+    embeddings = {
+        ref: encoded.object_embeddings[index]
+        for index, ref in enumerate(encoded.object_refs)
+    }
+
+    assert not torch.allclose(embeddings[road_left], embeddings[road_right])

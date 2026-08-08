@@ -49,6 +49,12 @@
 - [x] T017 [Testing] [US3] 用训练折内冻结小批强 Gold 执行表示 overfit 门；正式结果
   `REPRESENTATION_NO_GO`：对象成员与 Road 打断 heads 未能过拟合，已停在表征层，未启动
   正式 canary。
+- [x] T017-A [Development] [US3] 修正对象身份表示、surface/anchor pointer-set cardinality
+  和 Road 条件化多打断 count/ordered-fraction decoder；真实 8 条强 Gold 非训练 dry-run
+  通过，blind access=0。
+- [ ] T017-R1 [Testing] [US3] 获得单独训练授权后，按相同 8 条强 Gold 重新执行表示 overfit
+  门；必须同时通过成员集合、cardinality、单/双打断和完整 teacher/free exact，失败仍不得
+  进入 T021。
 
 ## Phase 4：US4 materializer 与安全链
 

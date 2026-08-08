@@ -11,6 +11,9 @@ import torch
 import torch.nn.functional as functional
 from torch import nn
 
+from rcsd_topo_poc.modules.p05_neural_road_generation.junction_graphset_v1_object_decoder import (
+    PointerSetHead,
+)
 from rcsd_topo_poc.modules.p05_neural_road_generation.junction_graphset_v1_prediction import (
     JunctionPredictionError,
     SurfaceMode,
@@ -55,6 +58,8 @@ class SurfaceHeadOutput:
     existing_object_refs: tuple[ObjectRef, ...]
     virtual_member_logits: torch.Tensor
     virtual_member_refs: tuple[ObjectRef, ...]
+    virtual_member_batch_indices: torch.Tensor
+    virtual_cardinality: torch.Tensor
 
 
 class SurfaceBranchHeads(nn.Module):
@@ -70,11 +75,7 @@ class SurfaceBranchHeads(nn.Module):
             nn.GELU(),
             nn.Linear(hidden_dim, 1),
         )
-        self.virtual_member_head = nn.Sequential(
-            nn.Linear(hidden_dim * 2, hidden_dim),
-            nn.GELU(),
-            nn.Linear(hidden_dim, 1),
-        )
+        self.virtual_member_head = PointerSetHead(hidden_dim)
 
     def forward(
         self,
@@ -102,12 +103,6 @@ class SurfaceBranchHeads(nn.Module):
             for index, ref in enumerate(object_refs)
             if ref.role == EvidenceRole.RCSD_INTERSECTION
         )
-        virtual_indices = tuple(
-            index
-            for index, ref in enumerate(object_refs)
-            if ref.role in {EvidenceRole.RCSD_NODE, EvidenceRole.RCSD_ROAD}
-        )
-
         def score(indices: tuple[int, ...], head: nn.Module) -> torch.Tensor:
             if not indices:
                 return object_embeddings.new_zeros((0,))
@@ -120,12 +115,21 @@ class SurfaceBranchHeads(nn.Module):
             query = query_embeddings[object_batch_indices[index_tensor]]
             return head(torch.cat((query, selected), dim=-1)).squeeze(-1)
 
+        virtual = self.virtual_member_head(
+            query_embeddings=query_embeddings,
+            object_embeddings=object_embeddings,
+            object_batch_indices=object_batch_indices,
+            object_refs=object_refs,
+            roles=frozenset({EvidenceRole.RCSD_NODE, EvidenceRole.RCSD_ROAD}),
+        )
         return SurfaceHeadOutput(
             mode_logits=mode_logits,
             existing_object_logits=score(existing_indices, self.existing_head),
             existing_object_refs=tuple(object_refs[index] for index in existing_indices),
-            virtual_member_logits=score(virtual_indices, self.virtual_member_head),
-            virtual_member_refs=tuple(object_refs[index] for index in virtual_indices),
+            virtual_member_logits=virtual.logits,
+            virtual_member_refs=virtual.object_refs,
+            virtual_member_batch_indices=virtual.object_batch_indices,
+            virtual_cardinality=virtual.predicted_cardinality,
         )
 
 

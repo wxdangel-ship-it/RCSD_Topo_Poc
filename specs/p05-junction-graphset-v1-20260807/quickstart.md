@@ -2,10 +2,11 @@
 
 ## 当前状态
 
-本分支已完成 T001–T020。T017 已在训练折内 8 条固定强 Gold 上执行，正式结果为
-`REPRESENTATION_NO_GO`：状态和完整 Oracle 候选选择可以过拟合，但对象成员与 Road 打断
-heads 无法区分多条同角色 Road/Node。冻结测试仍未读取，正式 canary 未启动；在完成对象
-表示架构修正并重新通过 T017 前，不得进入 T021。
+本分支已完成 T001–T020。初次 T017 正式结果为 `REPRESENTATION_NO_GO`；T017-A 已完成
+对象身份表示、pointer-set cardinality 和 Road 多打断 decoder 修正，并在同一 8 条训练折
+强 Gold 上完成无 optimizer 的 forward/loss/gradient dry-run。当前状态为
+`IMPLEMENTATION_READY_AWAITING_T017_R1_AUTHORIZATION`。冻结测试仍未读取、正式 canary
+未启动；重新通过 T017-R1 前不得进入 T021。
 
 ## SpecKit 自检
 
@@ -24,3 +25,7 @@ materializer 和安全 evaluator 已通过训练前合同测试。T017 不得读
 T017 运行工件位于 ignored output
 `outputs/_work/p05_neural_road_generation/junction_graphset_v1_t017_overfit_20260808/`。
 其中候选目录是 `TRAINING_ORACLE_ONLY`，不能解释为真实推理候选生成能力。
+
+T017-R1 训练前 dry-run 工件位于
+`outputs/_work/p05_neural_road_generation/junction_graphset_v1_t017_r1_readiness_20260808/`；
+其中 `training_executed=false`、`optimizer_step_executed=false`、blind access `=0`。

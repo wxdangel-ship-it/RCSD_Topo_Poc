@@ -1000,7 +1000,7 @@ P05 POC 内部研究模块、测试及 SpecKit 归档。
 
 ### P05 Junction GraphSet V1 T017 快照（2026-08-08）
 
-按 `git ls-files --cached --others --exclude-standard` 复扫 P05 正式源码与两处测试目录共
+按 `git ls-files --cached --others --exclude-standard` 复扫 P05 正式源码与实际测试目录共
 `544` 个 Python 文件，`>=61440 bytes=7`、`>=100000 bytes=0`。当前最大文件为
 `target_a_ordinary_road_member_training.py`（87,572 bytes），本轮只读。新增
 `junction_graphset_v1_overfit.py`（45,698 bytes）为 P05 内部 callable，不是 CLI、script、
@@ -1008,3 +1008,14 @@ P05 POC 内部研究模块、测试及 SpecKit 归档。
 `junction_graphset_v1_model.py`（46,279 bytes）和
 `junction_graphset_v1_prediction.py`（31,955 bytes）均低于 60KiB 观察线。未修改 T01–T12、
 正式模块接口或入口 registry；T017 工件仅写入 ignored `outputs/_work/`。
+
+### P05 Junction GraphSet V1 T017-A 快照（2026-08-08）
+
+按 `git ls-files --cached --others --exclude-standard` 复扫 P05 正式源码与两处测试目录共
+`546` 个 Python 文件，`>=61440 bytes=7`、`>=100000 bytes=0`。新增内部对象 decoder
+`junction_graphset_v1_object_decoder.py` 为 9,440 bytes，对应测试 2,841 bytes；修改后的
+`junction_graphset_v1_model.py` 为 50,875 bytes，仍低于 60KiB 观察线。训练/readiness
+callable `junction_graphset_v1_overfit.py` 为 57,533 bytes，低于观察线但已接近，后续新增
+正式 canary/OOF 编排必须另拆模块，不得继续回填。T017-A readiness 只写 ignored
+`outputs/_work/`，未新增 CLI、script、`__main__.py`、正式入口、依赖或 T01–T12 改动，
+`entrypoint-registry.md` 无需改变。

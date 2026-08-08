@@ -25,6 +25,7 @@ from rcsd_topo_poc.modules.p05_neural_road_generation.junction_graphset_v1_model
     JunctionGraphSetRawOutput,
     JunctionTrainingOverlay,
     PairConstraint,
+    RoadBreakSetTarget,
     RoadBreakTarget,
     compute_multitask_loss,
 )
@@ -628,8 +629,13 @@ def _build_example(
         operation.road_ref: operation for operation in anchor.road_break_operations
     }
     road_break_targets: list[RoadBreakTarget] = []
+    road_break_set_targets: list[RoadBreakSetTarget] = []
     for road_ref in anchor.associated_rcsd_road_refs:
         operation = break_by_road.get(road_ref)
+        fractions = operation.fractions if operation is not None else ()
+        road_break_set_targets.append(
+            RoadBreakSetTarget(road_ref, fractions, 1.0)
+        )
         if operation is None:
             road_break_targets.append(RoadBreakTarget(road_ref, False, None, 1.0))
         elif len(operation.fractions) == 1:
@@ -652,10 +658,27 @@ def _build_example(
         quality_acceptable_indices=(tuple(QualityState).index(quality),),
         acceptable_complete_plan_ids=("gold",),
         virtual_surface_constraints=tuple(virtual_constraints),
+        virtual_surface_cardinality_target=(
+            len(surface.virtual_member_refs)
+            if surface_row is not None and bool(surface_row.get("supervised"))
+            and not any(
+                constraint.state
+                in {ConstraintState.UNKNOWN, ConstraintState.REVIEW}
+                for constraint in virtual_constraints
+            )
+            else None
+        ),
         anchor_member_constraints=tuple(anchor_constraints),
+        anchor_member_cardinality_target=(
+            len(anchor.associated_rcsd_node_refs)
+            + len(anchor.associated_rcsd_road_refs)
+            if anchor.state == AnchorState.SUCCESS
+            else None
+        ),
         acceptable_main_anchor_refs=main_refs,
         pair_constraints=tuple(pair_constraints),
         road_break_targets=tuple(road_break_targets),
+        road_break_set_targets=tuple(road_break_set_targets),
     )
     audit = {
         "sample_id": sample_id,
@@ -684,6 +707,7 @@ def _build_example(
         ),
         "surface_constraint_count": len(virtual_constraints),
         "anchor_constraint_count": len(anchor_constraints),
+        "road_break_set_target_count": len(road_break_set_targets),
         "candidate_count": len(plans),
         "candidate_catalog": "TRAINING_ORACLE_ONLY",
         "external_topology_signature": derived["normalized_junctionization_plan"].get(
@@ -882,7 +906,7 @@ def evaluate_t017_output(
         "virtual_surface_member",
         output.surface.virtual_member_logits,
         output.surface.virtual_member_refs,
-        output.anchor_member_batch_indices,
+        output.surface.virtual_member_batch_indices,
         "virtual_surface_constraints",
     )
     member_checks(
@@ -891,6 +915,73 @@ def evaluate_t017_output(
         output.anchor_member_refs,
         output.anchor_member_batch_indices,
         "anchor_member_constraints",
+    )
+
+    def pointer_set_checks(
+        name: str,
+        logits: torch.Tensor,
+        refs: Sequence[ObjectRef],
+        batches: torch.Tensor,
+        cardinality: torch.Tensor,
+        constraint_field: str,
+        target_field: str,
+    ) -> None:
+        for batch_index, overlay in enumerate(normalized):
+            target_count = getattr(overlay, target_field)
+            if target_count is None:
+                continue
+            local = tuple(
+                index
+                for index in range(len(refs))
+                if int(batches[index]) == batch_index
+            )
+            predicted_count = max(
+                0,
+                min(int(round(float(cardinality[batch_index]))), len(local)),
+            )
+            selected = {
+                refs[index]
+                for index in sorted(
+                    local,
+                    key=lambda index: float(logits[index]),
+                    reverse=True,
+                )[:predicted_count]
+            }
+            record(
+                f"{name}_cardinality",
+                batch_index,
+                predicted_count == int(target_count),
+            )
+            set_correct = True
+            for constraint in getattr(overlay, constraint_field):
+                if constraint.state in {
+                    ConstraintState.UNKNOWN,
+                    ConstraintState.REVIEW,
+                }:
+                    continue
+                expected = constraint.state == ConstraintState.REQUIRED
+                set_correct = set_correct and (
+                    (constraint.object_ref in selected) == expected
+                )
+            record(f"{name}_set", batch_index, set_correct)
+
+    pointer_set_checks(
+        "virtual_surface",
+        output.surface.virtual_member_logits,
+        output.surface.virtual_member_refs,
+        output.surface.virtual_member_batch_indices,
+        output.surface.virtual_cardinality,
+        "virtual_surface_constraints",
+        "virtual_surface_cardinality_target",
+    )
+    pointer_set_checks(
+        "anchor_member",
+        output.anchor_member_logits,
+        output.anchor_member_refs,
+        output.anchor_member_batch_indices,
+        output.anchor_member_cardinality,
+        "anchor_member_constraints",
+        "anchor_member_cardinality_target",
     )
 
     main_positions = {
@@ -957,6 +1048,37 @@ def evaluate_t017_output(
             record("road_break_presence_aux", batch_index, presence_correct)
             if target.present and target.fraction is not None:
                 record("road_break_fraction_aux", batch_index, fraction_correct)
+        for target in overlay.road_break_set_targets:
+            position = break_positions.get((batch_index, target.road_ref))
+            count_correct = False
+            fraction_set_correct = not target.fractions
+            if position is not None:
+                target_count = len(target.fractions)
+                expected_count_class = (
+                    target_count
+                    if target_count <= output.road_break.max_break_points
+                    else output.road_break.overflow_class_index
+                )
+                predicted_count_class = int(
+                    output.road_break.count_logits[position].argmax()
+                )
+                count_correct = predicted_count_class == expected_count_class
+                if 0 < target_count <= output.road_break.max_break_points:
+                    fraction_set_correct = all(
+                        abs(
+                            float(output.road_break.fraction_slots[position, rank])
+                            - fraction
+                        )
+                        <= fraction_tolerance
+                        for rank, fraction in enumerate(target.fractions)
+                    )
+            record("road_break_count", batch_index, count_correct)
+            if target.fractions:
+                record(
+                    "road_break_fraction_set",
+                    batch_index,
+                    fraction_set_correct,
+                )
 
     for batch_index, overlay in enumerate(normalized):
         positions = tuple(
@@ -1005,8 +1127,183 @@ def _write_json(path: Path, payload: Any) -> None:
     )
 
 
+def run_t017_r1_readiness(config: T017OverfitConfig) -> Mapping[str, Any]:
+    """Audit T017-R1 forward/loss/gradient wiring without an optimizer step."""
+
+    config.validate()
+    output_dir = Path(config.output_dir)
+    if output_dir.exists() and any(output_dir.iterdir()):
+        raise FileExistsError(
+            f"T017-R1 readiness output directory is not empty: {output_dir}"
+        )
+    started_at = time.perf_counter()
+    random.seed(config.seed)
+    torch.manual_seed(config.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(config.seed)
+    device = _select_device(config.device)
+    if device.type == "cuda":
+        torch.cuda.reset_peak_memory_stats(device)
+
+    prepared = prepare_t017_batch(config)
+    model = JunctionGraphSetModel(
+        hidden_dim=config.hidden_dim,
+        dropout=0.0,
+    ).to(device)
+    views = build_cached_views(model, prepared.examples, device)
+    output = _forward(
+        model,
+        prepared,
+        views,
+        teacher_forced=True,
+        device=device,
+    )
+    losses = compute_multitask_loss(output, prepared.overlays)
+    if not all(torch.isfinite(value).item() for value in losses.values()):
+        raise JunctionPredictionError("T017-R1 readiness produced a non-finite loss")
+    losses["total"].backward()
+
+    gradient_tensors = {
+        "summary_kind": model.encoder.summary_kind_embedding.grad,
+        "object_relative": model.encoder.object_relative_projection.weight.grad,
+        "surface_pointer": (
+            model.heads.surface_heads.virtual_member_head.pointer.score_head[0].weight.grad
+        ),
+        "surface_cardinality": (
+            model.heads.surface_heads.virtual_member_head.cardinality_head[0].weight.grad
+        ),
+        "anchor_pointer": model.heads.member_head.pointer.score_head[0].weight.grad,
+        "anchor_cardinality": (
+            model.heads.member_head.cardinality_head[0].weight.grad
+        ),
+        "break_count": model.heads.break_head.count_head.weight.grad,
+        "break_fraction": model.heads.break_head.gap_head.weight.grad,
+    }
+    gradient_norms = {
+        name: float(tensor.norm()) if tensor is not None else None
+        for name, tensor in gradient_tensors.items()
+    }
+    if not all(value is not None and value > 0.0 for value in gradient_norms.values()):
+        raise JunctionPredictionError(
+            "T017-R1 readiness found a disconnected architecture gradient"
+        )
+
+    with torch.no_grad():
+        encoded = model.encoder(views.anchor)
+        minimum_distances: list[float] = []
+        for batch_index in range(len(prepared.examples)):
+            road_indices = tuple(
+                index
+                for index, ref in enumerate(encoded.object_refs)
+                if int(encoded.object_batch_indices[index]) == batch_index
+                and ref.role == EvidenceRole.RCSD_ROAD
+            )
+            pair_distances = tuple(
+                float(
+                    torch.norm(
+                        encoded.object_embeddings[left]
+                        - encoded.object_embeddings[right]
+                    )
+                )
+                for left, right in combinations(road_indices, 2)
+            )
+            if pair_distances:
+                minimum_distances.append(min(pair_distances))
+    if not minimum_distances or min(minimum_distances) <= 1e-5:
+        raise JunctionPredictionError(
+            "T017-R1 readiness found collapsed same-Case Road embeddings"
+        )
+
+    stage_role_audit = {
+        "step1_forbidden_rcsd_roles": sum(
+            role
+            in {
+                EvidenceRole.RCSD_NODE,
+                EvidenceRole.RCSD_ROAD,
+                EvidenceRole.RCSD_INTERSECTION,
+            }
+            for view in views.step1
+            for role in view.object_roles
+        ),
+        "surface_forbidden_node_road_roles": sum(
+            role in {EvidenceRole.RCSD_NODE, EvidenceRole.RCSD_ROAD}
+            for view in views.surface
+            for role in view.object_roles
+        ),
+    }
+    if any(stage_role_audit.values()):
+        raise JunctionPredictionError("T017-R1 readiness violated stage visibility")
+
+    manifest_paths = {
+        "derived": config.data_paths.derived_manifest,
+        "feature": config.data_paths.feature_manifest,
+        "strong": config.data_paths.strong_manifest,
+        "surface": config.data_paths.surface_manifest,
+    }
+    summary = {
+        "schema_version": "p05-junction-graphset-v1-t017-r1-readiness-v1",
+        "status": "IMPLEMENTATION_READY_AWAITING_T017_R1_AUTHORIZATION",
+        "training_executed": False,
+        "optimizer_created": False,
+        "optimizer_step_executed": False,
+        "checkpoint_written": False,
+        "canary_executed": False,
+        "blind_test_labels_read": False,
+        "blind_test_access_count": 0,
+        "candidate_catalog": "TRAINING_ORACLE_ONLY",
+        "sample_count": len(prepared.examples),
+        "sample_ids": list(config.sample_ids),
+        "sample_audit": list(prepared.sample_audit),
+        "selected_row_sha256": dict(prepared.selected_row_sha256),
+        "source_manifest_sha256": {
+            name: _sha256_file(path) for name, path in manifest_paths.items()
+        },
+        "device": str(device),
+        "device_name": (
+            torch.cuda.get_device_name(device) if device.type == "cuda" else "CPU"
+        ),
+        "torch_version": torch.__version__,
+        "encoder_parameter_count": model.encoder.parameter_count,
+        "model_parameter_count": model.parameter_count,
+        "maximum_explicit_break_points": output.road_break.max_break_points,
+        "break_overflow_behavior": "OVERFLOW_CLASS_THEN_ABSTAIN",
+        "maximum_supervised_break_count": max(
+            len(target.fractions)
+            for overlay in prepared.overlays
+            for target in overlay.road_break_set_targets
+        ),
+        "two_break_target_count": sum(
+            len(target.fractions) == 2
+            for overlay in prepared.overlays
+            for target in overlay.road_break_set_targets
+        ),
+        "surface_cardinality_targets": [
+            overlay.virtual_surface_cardinality_target
+            for overlay in prepared.overlays
+        ],
+        "anchor_cardinality_targets": [
+            overlay.anchor_member_cardinality_target
+            for overlay in prepared.overlays
+        ],
+        "losses": {name: float(value.detach()) for name, value in losses.items()},
+        "gradient_norms": gradient_norms,
+        "minimum_intra_case_road_embedding_distance": min(minimum_distances),
+        "stage_role_audit": stage_role_audit,
+        "elapsed_seconds": time.perf_counter() - started_at,
+        "peak_cuda_memory_bytes": (
+            int(torch.cuda.max_memory_allocated(device))
+            if device.type == "cuda"
+            else 0
+        ),
+        "next_training_authorized": False,
+    }
+    output_dir.mkdir(parents=True, exist_ok=True)
+    _write_json(output_dir / "summary.json", summary)
+    return summary
+
+
 def run_t017_overfit(config: T017OverfitConfig) -> Mapping[str, Any]:
-    """Run the authorized training-fold representation gate, never the blind test."""
+    """Run an authorized T017-R1 training-fold gate, never the blind test."""
 
     config.validate()
     output_dir = Path(config.output_dir)
@@ -1110,13 +1407,13 @@ def run_t017_overfit(config: T017OverfitConfig) -> Mapping[str, Any]:
             break
 
     if not history:
-        raise RuntimeError("T017 produced no evaluation history")
+        raise RuntimeError("T017-R1 produced no evaluation history")
     final = history[-1]
     passed = converged_step is not None
     checkpoint_path = output_dir / "checkpoint.pt"
     torch.save(
         {
-            "schema_version": "p05-junction-graphset-v1-t017-overfit-v1",
+            "schema_version": "p05-junction-graphset-v1-t017-r1-overfit-v1",
             "model_state_dict": {
                 name: value.detach().cpu() for name, value in model.state_dict().items()
             },
@@ -1142,9 +1439,9 @@ def run_t017_overfit(config: T017OverfitConfig) -> Mapping[str, Any]:
         "surface": config.data_paths.surface_manifest,
     }
     summary = {
-        "schema_version": "p05-junction-graphset-v1-t017-overfit-v1",
+        "schema_version": "p05-junction-graphset-v1-t017-r1-overfit-v1",
         "status": "PASS" if passed else "REPRESENTATION_NO_GO",
-        "task": "T017_TRAINING_FOLD_STRONG_GOLD_OVERFIT",
+        "task": "T017_R1_TRAINING_FOLD_STRONG_GOLD_OVERFIT",
         "training_executed": True,
         "canary_executed": False,
         "blind_test_labels_read": False,

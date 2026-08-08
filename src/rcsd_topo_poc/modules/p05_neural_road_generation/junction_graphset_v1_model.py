@@ -14,6 +14,12 @@ from rcsd_topo_poc.modules.p05_neural_road_generation.junction_graphset_v1_firew
     StageEvidenceView,
     StageFirewall,
 )
+from rcsd_topo_poc.modules.p05_neural_road_generation.junction_graphset_v1_object_decoder import (
+    ObjectPointerScorer,
+    PointerSetHead,
+    RoadBreakSetHead,
+    RoadBreakSetOutput,
+)
 from rcsd_topo_poc.modules.p05_neural_road_generation.junction_graphset_v1_prediction import (
     AnchorNodeRef,
     AnchorState,
@@ -115,6 +121,9 @@ class RoleSeparatedGraphSetEncoder(nn.Module):
             raise ValueError("hidden_dim must be divisible by heads")
         self.hidden_dim = hidden_dim
         self.token_projection = nn.Linear(21, hidden_dim)
+        self.summary_kind_embedding = nn.Parameter(torch.zeros(5, hidden_dim))
+        self.summary_score = nn.Linear(hidden_dim, 1)
+        self.token_count_projection = nn.Linear(1, hidden_dim)
         self.role_embedding = nn.Embedding(len(EvidenceRole), hidden_dim)
         self.graph_message = GraphMessageBlock(hidden_dim)
         encoder_layer = nn.TransformerEncoderLayer(
@@ -138,6 +147,8 @@ class RoleSeparatedGraphSetEncoder(nn.Module):
             batch_first=True,
         )
         self.query_norm = nn.LayerNorm(hidden_dim)
+        self.object_relative_projection = nn.Linear(hidden_dim, hidden_dim)
+        self.object_identity_norm = nn.LayerNorm(hidden_dim)
         self.empty_query = nn.Parameter(torch.zeros(hidden_dim))
 
     @property
@@ -153,34 +164,55 @@ class RoleSeparatedGraphSetEncoder(nn.Module):
         if not object_refs:
             return self.empty_query, self.empty_query.new_zeros((0, self.hidden_dim)), ()
 
-        token_roles = torch.empty(
+        token_to_object = torch.empty(
             (int(view.geometry_tokens.shape[0]),),
             dtype=torch.long,
             device=view.geometry_tokens.device,
         )
-        token_to_object = torch.empty_like(token_roles)
         for object_index, span in enumerate(view.object_spans):
-            token_roles[span.start : span.end] = ROLE_INDEX[span.object_ref.role]
             token_to_object[span.start : span.end] = object_index
-        token_embeddings = self.token_projection(view.geometry_tokens) + self.role_embedding(
-            token_roles
-        )
-        object_embeddings = torch.stack(
-            [
-                token_embeddings[span.start : span.end].mean(dim=0)
-                for span in view.object_spans
-            ]
-        )
+        local_parts: list[torch.Tensor] = []
+        for span in view.object_spans:
+            tokens = view.geometry_tokens[span.start : span.end]
+            summaries = torch.stack(
+                (
+                    tokens.mean(dim=0),
+                    tokens.max(dim=0).values,
+                    tokens[0],
+                    tokens[-1],
+                    tokens.std(dim=0, unbiased=False),
+                )
+            )
+            summary_embeddings = (
+                self.token_projection(summaries) + self.summary_kind_embedding
+            )
+            summary_weights = torch.softmax(
+                self.summary_score(summary_embeddings).squeeze(-1),
+                dim=0,
+            )
+            pooled = (summary_embeddings * summary_weights.unsqueeze(-1)).sum(dim=0)
+            pooled = pooled + self.token_count_projection(
+                pooled.new_tensor((math.log1p(int(tokens.shape[0])),))
+            )
+            role_index = torch.tensor(
+                ROLE_INDEX[span.object_ref.role],
+                dtype=torch.long,
+                device=pooled.device,
+            )
+            local_parts.append(pooled + self.role_embedding(role_index))
+        local_object_embeddings = torch.stack(local_parts)
         if int(view.topology_edge_indices.shape[1]):
             edge_object_indices = token_to_object[view.topology_edge_indices]
         else:
             edge_object_indices = view.topology_edge_indices
-        object_embeddings = self.graph_message(
-            object_embeddings,
+        graph_embeddings = self.graph_message(
+            local_object_embeddings,
             edge_object_indices,
             view.topology_edge_features,
         )
-        object_embeddings = self.set_encoder(object_embeddings.unsqueeze(0)).squeeze(0)
+        global_object_embeddings = self.set_encoder(
+            graph_embeddings.unsqueeze(0)
+        ).squeeze(0)
 
         swsd_indices = tuple(
             index
@@ -188,22 +220,28 @@ class RoleSeparatedGraphSetEncoder(nn.Module):
             if ref.role in SWSD_ROLES
         )
         if swsd_indices:
-            query = object_embeddings[
+            query = global_object_embeddings[
                 torch.tensor(
                     swsd_indices,
                     dtype=torch.long,
-                    device=object_embeddings.device,
+                    device=global_object_embeddings.device,
                 )
             ].mean(dim=0)
         else:
             query = self.empty_query
         attended, _ = self.cross_attention(
             query.reshape(1, 1, -1),
-            object_embeddings.unsqueeze(0),
-            object_embeddings.unsqueeze(0),
+            global_object_embeddings.unsqueeze(0),
+            global_object_embeddings.unsqueeze(0),
             need_weights=False,
         )
         query = self.query_norm(query + attended.reshape(-1))
+        relative = local_object_embeddings - query.unsqueeze(0)
+        object_embeddings = self.object_identity_norm(
+            global_object_embeddings
+            + local_object_embeddings
+            + self.object_relative_projection(relative)
+        )
         return query, object_embeddings, object_refs
 
     def forward(self, views: Sequence[StageEvidenceView]) -> EncodedStageBatch:
@@ -260,14 +298,6 @@ class PairScoreOutput:
 
 
 @dataclass(frozen=True)
-class BreakScoreOutput:
-    road_refs: tuple[ObjectRef, ...]
-    road_batch_indices: torch.Tensor
-    presence_logits: torch.Tensor
-    fractions: torch.Tensor
-
-
-@dataclass(frozen=True)
 class CompletePlanScoreOutput:
     plan_ids: tuple[str, ...]
     plan_batch_indices: torch.Tensor
@@ -286,11 +316,12 @@ class JunctionGraphSetRawOutput:
     anchor_member_refs: tuple[ObjectRef, ...]
     anchor_member_batch_indices: torch.Tensor
     anchor_member_logits: torch.Tensor
+    anchor_member_cardinality: torch.Tensor
     main_anchor_refs: tuple[AnchorNodeRef, ...]
     main_anchor_batch_indices: torch.Tensor
     main_anchor_logits: torch.Tensor
     node_equivalence: PairScoreOutput
-    road_break: BreakScoreOutput
+    road_break: RoadBreakSetOutput
     complete_plan: CompletePlanScoreOutput
 
 
@@ -564,18 +595,14 @@ class StagedMultiTaskHeads(nn.Module):
         )
         self.anchor_state_head = nn.Linear(hidden_dim, len(AnchorState))
         self.quality_head = nn.Linear(hidden_dim, len(QualityState))
-        self.member_head = self._object_head(hidden_dim)
-        self.main_anchor_head = self._object_head(hidden_dim)
+        self.member_head = PointerSetHead(hidden_dim)
+        self.main_anchor_head = ObjectPointerScorer(hidden_dim)
         self.node_pair_head = nn.Sequential(
             nn.Linear(hidden_dim * 4, hidden_dim),
             nn.GELU(),
             nn.Linear(hidden_dim, 1),
         )
-        self.break_head = nn.Sequential(
-            nn.Linear(hidden_dim * 2, hidden_dim),
-            nn.GELU(),
-            nn.Linear(hidden_dim, 2),
-        )
+        self.break_head = RoadBreakSetHead(hidden_dim, max_break_points=4)
         self.complete_plan_scorer = CompletePlanScorer(hidden_dim)
 
     @staticmethod
@@ -600,51 +627,6 @@ class StagedMultiTaskHeads(nn.Module):
         ):
             raise JunctionPredictionError(f"{name} teacher condition is out of range")
         return normalized
-
-    @staticmethod
-    def _object_head(hidden_dim: int) -> nn.Module:
-        return nn.Sequential(
-            nn.Linear(hidden_dim * 2, hidden_dim),
-            nn.GELU(),
-            nn.Linear(hidden_dim, 1),
-        )
-
-    @staticmethod
-    def _selected_object_scores(
-        encoded: EncodedStageBatch,
-        conditioned_queries: torch.Tensor,
-        roles: frozenset[EvidenceRole],
-        head: nn.Module,
-    ) -> tuple[tuple[ObjectRef, ...], torch.Tensor, torch.Tensor]:
-        indices = tuple(
-            index
-            for index, ref in enumerate(encoded.object_refs)
-            if ref.role in roles
-        )
-        if not indices:
-            return (
-                (),
-                torch.zeros(
-                    (0,), dtype=torch.long, device=conditioned_queries.device
-                ),
-                conditioned_queries.new_zeros((0,)),
-            )
-        index_tensor = torch.tensor(
-            indices,
-            dtype=torch.long,
-            device=conditioned_queries.device,
-        )
-        batch_indices = encoded.object_batch_indices[index_tensor]
-        scores = head(
-            torch.cat(
-                (
-                    conditioned_queries[batch_indices],
-                    encoded.object_embeddings[index_tensor],
-                ),
-                dim=-1,
-            )
-        ).squeeze(-1)
-        return tuple(encoded.object_refs[index] for index in indices), batch_indices, scores
 
     def forward(
         self,
@@ -706,47 +688,29 @@ class StagedMultiTaskHeads(nn.Module):
                 dim=-1,
             )
         )
-        member_refs, member_batches, member_logits = self._selected_object_scores(
-            anchor,
-            conditioned_queries,
-            frozenset({EvidenceRole.RCSD_NODE, EvidenceRole.RCSD_ROAD}),
-            self.member_head,
+        member_output = self.member_head(
+            query_embeddings=conditioned_queries,
+            object_embeddings=anchor.object_embeddings,
+            object_batch_indices=anchor.object_batch_indices,
+            object_refs=anchor.object_refs,
+            roles=frozenset({EvidenceRole.RCSD_NODE, EvidenceRole.RCSD_ROAD}),
         )
-        main_object_refs, main_batches, main_logits = self._selected_object_scores(
-            anchor,
-            conditioned_queries,
-            frozenset({EvidenceRole.RCSD_NODE}),
-            self.main_anchor_head,
+        main_output = self.main_anchor_head(
+            query_embeddings=conditioned_queries,
+            object_embeddings=anchor.object_embeddings,
+            object_batch_indices=anchor.object_batch_indices,
+            object_refs=anchor.object_refs,
+            roles=frozenset({EvidenceRole.RCSD_NODE}),
         )
-        main_refs = tuple(AnchorNodeRef.source_node(ref) for ref in main_object_refs)
-        road_indices = tuple(
-            index
-            for index, ref in enumerate(anchor.object_refs)
-            if ref.role == EvidenceRole.RCSD_ROAD
+        main_refs = tuple(
+            AnchorNodeRef.source_node(ref) for ref in main_output.object_refs
         )
-        if road_indices:
-            road_index_tensor = torch.tensor(
-                road_indices,
-                dtype=torch.long,
-                device=conditioned_queries.device,
-            )
-            road_batches = anchor.object_batch_indices[road_index_tensor]
-            road_raw_two = self.break_head(
-                torch.cat(
-                    (
-                        conditioned_queries[road_batches],
-                        anchor.object_embeddings[road_index_tensor],
-                    ),
-                    dim=-1,
-                )
-            )
-            road_refs = tuple(anchor.object_refs[index] for index in road_indices)
-        else:
-            road_refs = ()
-            road_batches = torch.zeros(
-                (0,), dtype=torch.long, device=conditioned_queries.device
-            )
-            road_raw_two = conditioned_queries.new_zeros((0, 2))
+        road_break_output = self.break_head(
+            query_embeddings=conditioned_queries,
+            object_embeddings=anchor.object_embeddings,
+            object_batch_indices=anchor.object_batch_indices,
+            object_refs=anchor.object_refs,
+        )
 
         pair_refs: list[tuple[ObjectRef, ObjectRef]] = []
         pair_batches: list[int] = []
@@ -784,6 +748,10 @@ class StagedMultiTaskHeads(nn.Module):
             existing_object_refs=surface_stage_output.existing_object_refs,
             virtual_member_logits=anchor_member_output.virtual_member_logits,
             virtual_member_refs=anchor_member_output.virtual_member_refs,
+            virtual_member_batch_indices=(
+                anchor_member_output.virtual_member_batch_indices
+            ),
+            virtual_cardinality=anchor_member_output.virtual_cardinality,
         )
         return JunctionGraphSetRawOutput(
             junction_keys=anchor.junction_keys,
@@ -793,12 +761,13 @@ class StagedMultiTaskHeads(nn.Module):
             conditioned_surface_mode_indices=conditioned_surface_mode_indices,
             anchor_state_logits=self.anchor_state_head(conditioned_queries),
             quality_logits=self.quality_head(conditioned_queries),
-            anchor_member_refs=member_refs,
-            anchor_member_batch_indices=member_batches,
-            anchor_member_logits=member_logits,
+            anchor_member_refs=member_output.object_refs,
+            anchor_member_batch_indices=member_output.object_batch_indices,
+            anchor_member_logits=member_output.logits,
+            anchor_member_cardinality=member_output.predicted_cardinality,
             main_anchor_refs=main_refs,
-            main_anchor_batch_indices=main_batches,
-            main_anchor_logits=main_logits,
+            main_anchor_batch_indices=main_output.object_batch_indices,
+            main_anchor_logits=main_output.logits,
             node_equivalence=PairScoreOutput(
                 pair_refs=tuple(pair_refs),
                 pair_batch_indices=torch.tensor(
@@ -808,12 +777,7 @@ class StagedMultiTaskHeads(nn.Module):
                 ),
                 logits=pair_logits,
             ),
-            road_break=BreakScoreOutput(
-                road_refs=road_refs,
-                road_batch_indices=road_batches,
-                presence_logits=road_raw_two[:, 0],
-                fractions=torch.sigmoid(road_raw_two[:, 1]),
-            ),
+            road_break=road_break_output,
             complete_plan=self.complete_plan_scorer(
                 encoded=anchor,
                 conditioned_queries=conditioned_queries,
@@ -946,6 +910,33 @@ class RoadBreakTarget:
 
 
 @dataclass(frozen=True)
+class RoadBreakSetTarget:
+    road_ref: ObjectRef
+    fractions: tuple[float, ...]
+    weight: float
+
+    def validate(self) -> None:
+        if self.road_ref.role != EvidenceRole.RCSD_ROAD:
+            raise JunctionPredictionError(
+                "Road-break set target must refer to an RCSD Road"
+            )
+        if not math.isfinite(self.weight) or self.weight < 0.0:
+            raise JunctionPredictionError("Road-break set weight is negative")
+        normalized = tuple(float(value) for value in self.fractions)
+        if tuple(sorted(set(normalized))) != normalized:
+            raise JunctionPredictionError(
+                "Road-break set fractions must be unique and sorted"
+            )
+        if any(
+            not math.isfinite(value) or not 0.0 < value < 1.0
+            for value in normalized
+        ):
+            raise JunctionPredictionError(
+                "Road-break set fraction must be within (0, 1)"
+            )
+
+
+@dataclass(frozen=True)
 class JunctionTrainingOverlay:
     junction_key: str
     source_weight: float
@@ -955,10 +946,13 @@ class JunctionTrainingOverlay:
     quality_acceptable_indices: tuple[int, ...] = ()
     acceptable_complete_plan_ids: tuple[str, ...] = ()
     virtual_surface_constraints: tuple[SurfaceConstraint, ...] = ()
+    virtual_surface_cardinality_target: int | None = None
     anchor_member_constraints: tuple[SurfaceConstraint, ...] = ()
+    anchor_member_cardinality_target: int | None = None
     acceptable_main_anchor_refs: tuple[AnchorNodeRef, ...] = ()
     pair_constraints: tuple[PairConstraint, ...] = ()
     road_break_targets: tuple[RoadBreakTarget, ...] = ()
+    road_break_set_targets: tuple[RoadBreakSetTarget, ...] = ()
 
 
 def _class_loss(
@@ -1001,6 +995,35 @@ def _grouped_object_loss(
     return torch.stack(terms).sum() / max(sum(weights), 1e-12)
 
 
+def _cardinality_loss(
+    predicted: torch.Tensor,
+    overlays: Sequence[JunctionTrainingOverlay],
+    *,
+    target_getter,
+) -> torch.Tensor:
+    terms: list[torch.Tensor] = []
+    weights: list[float] = []
+    for batch_index, overlay in enumerate(overlays):
+        target = target_getter(overlay)
+        if target is None or overlay.source_weight <= 0.0:
+            continue
+        if int(target) < 0:
+            raise JunctionPredictionError("set-cardinality target is negative")
+        scale = float(int(target) + 1)
+        terms.append(
+            functional.smooth_l1_loss(
+                predicted[batch_index] / scale,
+                predicted.new_tensor(float(target) / scale),
+                reduction="none",
+            )
+            * overlay.source_weight
+        )
+        weights.append(overlay.source_weight)
+    if not terms:
+        return predicted.sum() * 0.0
+    return torch.stack(terms).sum() / max(sum(weights), 1e-12)
+
+
 def compute_multitask_loss(
     output: JunctionGraphSetRawOutput,
     overlays: Sequence[JunctionTrainingOverlay],
@@ -1039,9 +1062,14 @@ def compute_multitask_loss(
     losses["virtual_surface_member"] = _grouped_object_loss(
         logits=output.surface.virtual_member_logits,
         refs=output.surface.virtual_member_refs,
-        batch_indices=output.anchor_member_batch_indices,
+        batch_indices=output.surface.virtual_member_batch_indices,
         overlays=normalized,
         constraints_getter=lambda overlay: overlay.virtual_surface_constraints,
+    )
+    losses["virtual_surface_cardinality"] = _cardinality_loss(
+        output.surface.virtual_cardinality,
+        normalized,
+        target_getter=lambda overlay: overlay.virtual_surface_cardinality_target,
     )
     losses["anchor_member"] = _grouped_object_loss(
         logits=output.anchor_member_logits,
@@ -1049,6 +1077,11 @@ def compute_multitask_loss(
         batch_indices=output.anchor_member_batch_indices,
         overlays=normalized,
         constraints_getter=lambda overlay: overlay.anchor_member_constraints,
+    )
+    losses["anchor_member_cardinality"] = _cardinality_loss(
+        output.anchor_member_cardinality,
+        normalized,
+        target_getter=lambda overlay: overlay.anchor_member_cardinality_target,
     )
 
     main_terms: list[torch.Tensor] = []
@@ -1166,6 +1199,67 @@ def compute_multitask_loss(
         torch.stack(fraction_terms).sum() / max(sum(fraction_weights), 1e-12)
         if fraction_terms
         else output.road_break.fractions.sum() * 0.0
+    )
+    break_set_by_key: dict[tuple[int, ObjectRef], RoadBreakSetTarget] = {}
+    for batch_index, overlay in enumerate(normalized):
+        for target in overlay.road_break_set_targets:
+            target.validate()
+            key = (batch_index, target.road_ref)
+            if key in break_set_by_key:
+                raise JunctionPredictionError("duplicate Road-break set target")
+            break_set_by_key[key] = target
+    count_terms: list[torch.Tensor] = []
+    count_weights: list[float] = []
+    set_fraction_terms: list[torch.Tensor] = []
+    set_fraction_weights: list[float] = []
+    for index, road_ref in enumerate(output.road_break.road_refs):
+        batch_index = int(output.road_break.road_batch_indices[index])
+        target = break_set_by_key.get((batch_index, road_ref))
+        if target is None:
+            continue
+        weight = target.weight * normalized[batch_index].source_weight
+        target_count = len(target.fractions)
+        count_class = (
+            target_count
+            if target_count <= output.road_break.max_break_points
+            else output.road_break.overflow_class_index
+        )
+        count_terms.append(
+            functional.cross_entropy(
+                output.road_break.count_logits[index].unsqueeze(0),
+                torch.tensor(
+                    (count_class,),
+                    dtype=torch.long,
+                    device=output.road_break.count_logits.device,
+                ),
+                reduction="none",
+            ).squeeze(0)
+            * weight
+        )
+        count_weights.append(weight)
+        if 0 < target_count <= output.road_break.max_break_points:
+            target_tensor = output.road_break.fraction_slots.new_tensor(
+                target.fractions
+            )
+            set_fraction_terms.append(
+                functional.smooth_l1_loss(
+                    output.road_break.fraction_slots[index, :target_count],
+                    target_tensor,
+                    reduction="mean",
+                )
+                * weight
+            )
+            set_fraction_weights.append(weight)
+    losses["road_break_count"] = (
+        torch.stack(count_terms).sum() / max(sum(count_weights), 1e-12)
+        if count_terms
+        else output.road_break.count_logits.sum() * 0.0
+    )
+    losses["road_break_set_fraction"] = (
+        torch.stack(set_fraction_terms).sum()
+        / max(sum(set_fraction_weights), 1e-12)
+        if set_fraction_terms
+        else output.road_break.fraction_slots.sum() * 0.0
     )
     plan_terms: list[torch.Tensor] = []
     plan_weights: list[float] = []

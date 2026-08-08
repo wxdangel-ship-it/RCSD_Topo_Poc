@@ -52,9 +52,10 @@
 - [x] T017-A [Development] [US3] 修正对象身份表示、surface/anchor pointer-set cardinality
   和 Road 条件化多打断 count/ordered-fraction decoder；真实 8 条强 Gold 非训练 dry-run
   通过，blind access=0。
-- [ ] T017-R1 [Testing] [US3] 获得单独训练授权后，按相同 8 条强 Gold 重新执行表示 overfit
-  门；必须同时通过成员集合、cardinality、单/双打断和完整 teacher/free exact，失败仍不得
-  进入 T021。
+- [x] T017-R1 [Testing] [US3] 按授权在相同 8 条强 Gold 上执行表示 overfit 门，并针对
+  已证明的 REQUIRED top-k coverage loss 缺口做一次同配置复验；最终 teacher/free 完整
+  exact `7/8`、loss `0.0215373375`，仍有一条 surface cardinality 失败，正式结论
+  `REPRESENTATION_NO_GO`，不得进入 T021。
 
 ## Phase 4：US4 materializer 与安全链
 

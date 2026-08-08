@@ -1024,6 +1024,81 @@ def _cardinality_loss(
     return torch.stack(terms).sum() / max(sum(weights), 1e-12)
 
 
+def _required_coverage_ranking_loss(
+    *,
+    logits: torch.Tensor,
+    refs: Sequence[ObjectRef],
+    batch_indices: torch.Tensor,
+    overlays: Sequence[JunctionTrainingOverlay],
+    constraints_getter,
+    cardinality_getter,
+    margin: float = 1.0,
+) -> torch.Tensor:
+    """Keep every REQUIRED object ahead of unresolved pointer competitors.
+
+    UNKNOWN, REVIEW, and absent constraints remain outside the binary member
+    target.  They only compete in the relative ranking needed to guarantee
+    REQUIRED recall under the supervised top-k cardinality decoder.
+    """
+
+    terms: list[torch.Tensor] = []
+    weights: list[float] = []
+    for batch_index, overlay in enumerate(overlays):
+        target_count = cardinality_getter(overlay)
+        if target_count is None or overlay.source_weight <= 0.0:
+            continue
+        required_refs = {
+            constraint.object_ref
+            for constraint in constraints_getter(overlay)
+            if constraint.state == ConstraintState.REQUIRED
+        }
+        if int(target_count) < len(required_refs):
+            raise JunctionPredictionError(
+                "set cardinality is smaller than REQUIRED object count"
+            )
+        if not required_refs:
+            continue
+        local_indices = tuple(
+            index
+            for index, ref in enumerate(refs)
+            if int(batch_indices[index]) == batch_index
+        )
+        required_indices = tuple(
+            index for index in local_indices if refs[index] in required_refs
+        )
+        if len(required_indices) != len(required_refs):
+            raise JunctionPredictionError(
+                "REQUIRED pointer object is absent from the candidate domain"
+            )
+        competitor_indices = tuple(
+            index for index in local_indices if refs[index] not in required_refs
+        )
+        if not competitor_indices:
+            continue
+        required_tensor = torch.tensor(
+            required_indices,
+            dtype=torch.long,
+            device=logits.device,
+        )
+        competitor_tensor = torch.tensor(
+            competitor_indices,
+            dtype=torch.long,
+            device=logits.device,
+        )
+        pairwise_gap = (
+            logits[competitor_tensor].unsqueeze(1)
+            - logits[required_tensor].unsqueeze(0)
+            + margin
+        )
+        terms.append(
+            functional.softplus(pairwise_gap).mean() * overlay.source_weight
+        )
+        weights.append(overlay.source_weight)
+    if not terms:
+        return logits.sum() * 0.0
+    return torch.stack(terms).sum() / max(sum(weights), 1e-12)
+
+
 def compute_multitask_loss(
     output: JunctionGraphSetRawOutput,
     overlays: Sequence[JunctionTrainingOverlay],
@@ -1070,6 +1145,14 @@ def compute_multitask_loss(
         output.surface.virtual_cardinality,
         normalized,
         target_getter=lambda overlay: overlay.virtual_surface_cardinality_target,
+    )
+    losses["virtual_surface_required_coverage"] = _required_coverage_ranking_loss(
+        logits=output.surface.virtual_member_logits,
+        refs=output.surface.virtual_member_refs,
+        batch_indices=output.surface.virtual_member_batch_indices,
+        overlays=normalized,
+        constraints_getter=lambda overlay: overlay.virtual_surface_constraints,
+        cardinality_getter=lambda overlay: overlay.virtual_surface_cardinality_target,
     )
     losses["anchor_member"] = _grouped_object_loss(
         logits=output.anchor_member_logits,

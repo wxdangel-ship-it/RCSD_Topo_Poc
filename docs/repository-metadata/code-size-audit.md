@@ -1019,3 +1019,11 @@ callable `junction_graphset_v1_overfit.py` 为 57,533 bytes，低于观察线但
 正式 canary/OOF 编排必须另拆模块，不得继续回填。T017-A readiness 只写 ignored
 `outputs/_work/`，未新增 CLI、script、`__main__.py`、正式入口、依赖或 T01–T12 改动，
 `entrypoint-registry.md` 无需改变。
+
+### P05 Junction GraphSet V1 T017-R1 快照（2026-08-08）
+
+本轮在 `junction_graphset_v1_model.py` 增加 REQUIRED coverage 相对排序 loss，文件由
+50,875 bytes 增至 53,961 bytes，仍低于 60KiB 观察线；对应 model 测试由 11,945 bytes
+增至 13,046 bytes。P05 正式源码与实际测试目录仍为 `546` 个 Python 文件，
+`>=61440 bytes=7`、`>=100000 bytes=0`。两次训练只写 ignored `outputs/_work/`，未新增
+入口、依赖、CLI 或 T01–T12 改动；`entrypoint-registry.md` 无需改变。

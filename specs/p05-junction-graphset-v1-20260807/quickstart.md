@@ -2,11 +2,10 @@
 
 ## 当前状态
 
-本分支已完成 T001–T020。初次 T017 正式结果为 `REPRESENTATION_NO_GO`；T017-A 已完成
-对象身份表示、pointer-set cardinality 和 Road 多打断 decoder 修正，并在同一 8 条训练折
-强 Gold 上完成无 optimizer 的 forward/loss/gradient dry-run。当前状态为
-`IMPLEMENTATION_READY_AWAITING_T017_R1_AUTHORIZATION`。冻结测试仍未读取、正式 canary
-未启动；重新通过 T017-R1 前不得进入 T021。
+本分支已完成 T001–T020。T017-A 完成对象身份表示、pointer-set cardinality 和 Road
+多打断 decoder 修正；用户授权的 T017-R1 及其 REQUIRED coverage loss 修正复验均已执行。
+当前状态为 `T017_R1_REPRESENTATION_NO_GO`：最终 teacher/free 完整 exact 为 `7/8`，仍有
+一条虚拟面 cardinality 未过拟合。冻结测试仍未读取、正式 canary 未启动；不得进入 T021。
 
 ## SpecKit 自检
 
@@ -29,3 +28,11 @@ T017 运行工件位于 ignored output
 T017-R1 训练前 dry-run 工件位于
 `outputs/_work/p05_neural_road_generation/junction_graphset_v1_t017_r1_readiness_20260808/`；
 其中 `training_executed=false`、`optimizer_step_executed=false`、blind access `=0`。
+
+T017-R1 原始训练和 REQUIRED coverage 修正复验工件分别位于：
+
+- `outputs/_work/p05_neural_road_generation/junction_graphset_v1_t017_r1_overfit_20260808/`；
+- `outputs/_work/p05_neural_road_generation/junction_graphset_v1_t017_r1a_overfit_20260808/`。
+
+两次结果均为 `REPRESENTATION_NO_GO`，blind access 均为 `0`；不得用追加 epoch、seed 或
+阈值搜索把它解释为 PASS。

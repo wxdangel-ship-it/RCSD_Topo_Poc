@@ -9,6 +9,7 @@ from rcsd_topo_poc.modules.p05_neural_road_generation.junction_graphset_v1_model
     PairConstraint,
     RoadBreakSetTarget,
     RoadBreakTarget,
+    _required_coverage_ranking_loss,
     compute_multitask_loss,
 )
 from rcsd_topo_poc.modules.p05_neural_road_generation.junction_graphset_v1_prediction import (
@@ -246,6 +247,7 @@ def test_multitask_loss_supports_separate_surface_and_anchor_gold() -> None:
         "quality",
         "virtual_surface_member",
         "virtual_surface_cardinality",
+        "virtual_surface_required_coverage",
         "anchor_member",
         "anchor_member_cardinality",
         "main_anchor",
@@ -266,6 +268,35 @@ def test_multitask_loss_supports_separate_surface_and_anchor_gold() -> None:
     assert model.heads.break_head.count_head.weight.grad is not None
     assert model.heads.break_head.gap_head.weight.grad is not None
     assert model.heads.complete_plan_scorer.break_point_encoder[0].weight.grad is not None
+
+
+def test_required_coverage_ranking_keeps_unknown_out_of_binary_gold() -> None:
+    logits = torch.tensor((0.0, 3.0, -2.0), requires_grad=True)
+    overlay = JunctionTrainingOverlay(
+        junction_key="T03:fixture|S1",
+        source_weight=1.0,
+        virtual_surface_constraints=(
+            SurfaceConstraint(NODE_1, ConstraintState.REQUIRED, 1.0),
+            SurfaceConstraint(NODE_2, ConstraintState.UNKNOWN, 0.0),
+            SurfaceConstraint(ROAD_1, ConstraintState.FORBIDDEN, 1.0),
+        ),
+        virtual_surface_cardinality_target=1,
+    )
+
+    loss = _required_coverage_ranking_loss(
+        logits=logits,
+        refs=(NODE_1, NODE_2, ROAD_1),
+        batch_indices=torch.zeros((3,), dtype=torch.long),
+        overlays=(overlay,),
+        constraints_getter=lambda row: row.virtual_surface_constraints,
+        cardinality_getter=lambda row: row.virtual_surface_cardinality_target,
+    )
+
+    assert float(loss.detach()) > 0.0
+    loss.backward()
+    assert float(logits.grad[0]) < 0.0
+    assert float(logits.grad[1]) > 0.0
+    assert float(logits.grad[2]) > 0.0
 
 
 def test_missing_tasks_and_zero_weight_rows_have_zero_loss() -> None:

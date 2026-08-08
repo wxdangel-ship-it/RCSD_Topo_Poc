@@ -1,6 +1,53 @@
-# T017-R2 与 T021 训练前验收摘要
+# T017-R2 与 T021 P1 验收摘要
 
 ## 当前正式状态
+
+`T021_P1_COMPLETE_AWAITING_T022_AUTHORIZATION`
+
+固定 seed `20260821` 的 T021 P1 teacher-forcing 已完成。训练在 epoch 9 由 patience `4`
+自动 early-stop，best checkpoint 为 epoch 5；没有读取冻结 blind test，也没有执行 T022、
+正式 free-run 或 canary。完成工件位于：
+`outputs/_work/p05_neural_road_generation/junction_graphset_v1_t021_teacher_forcing_seed_20260821/`。
+
+### T021 P1 完整性与收敛
+
+- 9 个 epoch 均完整覆盖 train `3,645`、validation `643`；所有 loss finite，运行时无
+  OOM/NaN，blind access `=0`。
+- best epoch 5 的 validation teacher total 为 `5.00013260374173`；summary、history 与
+  checkpoint epoch 严格一致。checkpoint 使用 hidden dim `384`、seed `20260821`，scope 为
+  `T021_TEACHER_FORCED_COMPONENT_ONLY`，`formal_release_eligible=false`。
+- 同 seed 初始化 validation teacher/free-condition total 分别为
+  `19.6856497524/20.1567138083`；best 分别为 `5.0001325185/6.6191701199`，相对下降
+  `74.60%/67.16%`。P1 teacher-forcing 可学习性通过，但 teacher/free 差距仍为
+  `1.6190376015`。
+- 强 Gold 105 条：teacher `21.2261906124 -> 6.5905783199`，free
+  `21.5562456767 -> 8.8208365122`；T10 538 条：teacher
+  `19.3849865734 -> 4.6897295275`，free `19.8835709715 -> 6.1894768649`。
+  强 Gold 不是已解决子集，其绝对 loss 和条件传播差距均高于 T10。
+- 主要条件传播缺口为：T10 `surface_mode +1.2398706832`，强 Gold
+  `anchor_state +1.1324645904`、`quality +1.0977901099`。Road-break fraction 在训练历史中
+  几乎没有改善；teacher-oracle 下的 `complete_plan` 近零不能解释为完整业务正确。
+
+### T021 P1 结论与边界
+
+T021 的正式结论为：`P1_LEARNABILITY_PASS_AWAITING_T022`。这证明共享 encoder/分层 head
+能从现有强/弱标签中学习，但不证明真实候选生成、free-run 整体 exact、安全自动接受或
+城市级 RoadGraph 正确。下一步只有一个授权点：是否按预注册边界进入 T022 scheduled
+sampling，针对 teacher/free 条件传播差距训练并逐阶段报告断联；禁止借此启动阈值/seed
+搜索、正式 canary 或 blind test。
+
+完成审计 SHA256：
+
+- `summary.json`：`C52891D00ABF4C795D2C5EAD5887B263F21252092551085204249387C2FB86B9`；
+- `history.json`：`28B090D76EBA750FA274AC309AAB75ACCA7578E43A61F0703AC1F1600033229D`；
+- `best-checkpoint.pt`：`28028E4D2CF7CEA1BDEA23BB3AB7A7E2EA70EBB2E13BE0010CAD2042572603FB`；
+- `initial-validation-source-audit.json`：
+  `18728F3B9FD005808E3423204A136BC05945738611C5F9972C734C0601144916`；
+- `best-validation-source-audit.json`：
+  `A3EE494B5860B3A096426B936BA02D23685FDD6D99C299515CA2DEEB419D518E`；
+- `completion-audit.json`：`D64A9E6C020565699FDC35546B12A4CF7D9769925FAE8DE944CA2223E6E771BA`。
+
+## T021 训练前历史状态
 
 `T021_READY_FOR_TRAINING_AUTHORIZATION`
 

@@ -38,9 +38,13 @@ class SurfaceConstraint:
     weight: float
 
     def validate(self) -> None:
-        if self.object_ref.role not in {EvidenceRole.RCSD_NODE, EvidenceRole.RCSD_ROAD}:
+        if self.object_ref.role not in {
+            EvidenceRole.RCSD_INTERSECTION,
+            EvidenceRole.RCSD_NODE,
+            EvidenceRole.RCSD_ROAD,
+        }:
             raise JunctionPredictionError(
-                "virtual-surface constraint must target an RCSD Node or Road"
+                "surface constraint must target an RCSDIntersection, Node, or Road"
             )
         if not math.isfinite(self.weight) or self.weight < 0.0:
             raise JunctionPredictionError("surface constraint weight is invalid")
@@ -56,6 +60,7 @@ class SurfaceHeadOutput:
     mode_logits: torch.Tensor
     existing_object_logits: torch.Tensor
     existing_object_refs: tuple[ObjectRef, ...]
+    existing_object_batch_indices: torch.Tensor
     virtual_member_logits: torch.Tensor
     virtual_member_refs: tuple[ObjectRef, ...]
     virtual_member_batch_indices: torch.Tensor
@@ -135,6 +140,13 @@ class SurfaceBranchHeads(nn.Module):
             mode_logits=mode_logits,
             existing_object_logits=score(existing_indices, self.existing_head),
             existing_object_refs=tuple(object_refs[index] for index in existing_indices),
+            existing_object_batch_indices=object_batch_indices[
+                torch.tensor(
+                    existing_indices,
+                    dtype=torch.long,
+                    device=object_batch_indices.device,
+                )
+            ],
             virtual_member_logits=virtual.logits,
             virtual_member_refs=virtual.object_refs,
             virtual_member_batch_indices=virtual.object_batch_indices,

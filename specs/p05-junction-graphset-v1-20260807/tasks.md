@@ -77,9 +77,12 @@
 
 - [ ] T021 [Development] 完成 P1 teacher forcing，使用强 1.0、T10 0.7、task mask、
   acceptable-set loss；来源不得进网络输入。
+  - 训练前准备已完成：4,288 条非 blind cache、`3,645/643` 固定 train/validation、
+    source/split 物理分片、完整 task mask/权重/三态约束、内部 trainer 与 CUDA preflight
+    均为 READY；尚未创建 optimizer、执行 backward 或启动 T021 训练，因此本项保持未完成。
 - [ ] T022 [Development] 完成预注册 scheduled sampling，报告 teacher/free 差距和每个
   断联阶段；不做局部 threshold/head 搜索。
-- [ ] T023 [QA] 使用固定 Case-disjoint train/validation，核验输入 fingerprint、语义
+- [x] T023 [QA] 使用固定 Case-disjoint train/validation，核验输入 fingerprint、语义
   Junction 和多版本 Case 零跨 split。
 - [ ] T024 [Testing] 运行全 P05/T07 回归、模型合同测试、静态泄漏扫描和确定性双跑。
 - [ ] T025 [Architecture] 若连续三个预注册 seed 同现结构性失败，停止训练并形成架构

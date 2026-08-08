@@ -1038,3 +1038,17 @@ R2 训练 schema/task wrapper，后续训练编排
 不得继续回填该文件。P05 正式源码与实际测试目录仍为 `546` 个 Python 文件，
 `>=61440 bytes=7`、`>=100000 bytes=0`。T017-R2 readiness 只写 ignored `outputs/_work/`，
 未新增 CLI、script、正式入口、依赖或 T01–T12 改动，`entrypoint-registry.md` 无需改变。
+
+### P05 Junction GraphSet V1 T021 训练前快照（2026-08-08）
+
+按 `git ls-files --cached --others --exclude-standard` 复扫 P05 正式源码与两处实际测试目录共
+`551` 个 Python 文件，`>=61440 bytes=7`、`>=100000 bytes=0`，当前最大文件仍为只读的
+`target_a_ordinary_road_member_training.py`（87,572 bytes）。本轮没有继续向 58,973 bytes
+的 `junction_graphset_v1_overfit.py` 回填训练编排；新增独立数据/cache 模块
+`junction_graphset_v1_t021_data.py` 为 50,656 bytes、readiness 模块
+`junction_graphset_v1_t021_readiness.py` 为 19,627 bytes、尚未执行的内部 trainer
+`junction_graphset_v1_t021_training.py` 为 17,019 bytes。修改后的
+`junction_graphset_v1_model.py` 为 57,030 bytes，仍低于 60KiB 观察线；新增/修改源码与测试
+均低于 100KB 硬阈值。未新增 CLI、script、`__main__.py`、正式入口、依赖或 T01–T12
+接口，`entrypoint-registry.md` 无需改变；全量 cache/readiness 仅写入 ignored
+`outputs/_work/`。

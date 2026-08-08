@@ -230,6 +230,9 @@ def test_multitask_loss_supports_separate_surface_and_anchor_gold() -> None:
         anchor_state_acceptable_indices=(0,),
         quality_acceptable_indices=(0,),
         acceptable_complete_plan_ids=("plan:a",),
+        existing_surface_constraints=(
+            SurfaceConstraint(INTERSECTION, ConstraintState.REQUIRED, 1.0),
+        ),
         virtual_surface_constraints=(
             SurfaceConstraint(NODE_1, ConstraintState.REQUIRED, 1.0),
             SurfaceConstraint(NODE_2, ConstraintState.UNKNOWN, 0.0),
@@ -259,6 +262,7 @@ def test_multitask_loss_supports_separate_surface_and_anchor_gold() -> None:
         "surface_mode",
         "anchor_state",
         "quality",
+        "existing_surface_object",
         "virtual_surface_member",
         "virtual_surface_cardinality",
         "virtual_surface_required_coverage",
@@ -303,7 +307,11 @@ def test_required_coverage_ranking_keeps_unknown_out_of_binary_gold() -> None:
         batch_indices=torch.zeros((3,), dtype=torch.long),
         overlays=(overlay,),
         constraints_getter=lambda row: row.virtual_surface_constraints,
-        cardinality_getter=lambda row: row.virtual_surface_cardinality_target,
+        acceptable_cardinality_getter=lambda row: (
+            (row.virtual_surface_cardinality_target,)
+            if row.virtual_surface_cardinality_target is not None
+            else ()
+        ),
     )
 
     assert float(loss.detach()) > 0.0
@@ -344,6 +352,24 @@ def test_cardinality_gold_cannot_exceed_visible_candidate_count() -> None:
 
     with pytest.raises(JunctionPredictionError, match="exceeds"):
         compute_multitask_loss(output, (overlay,))
+
+
+def test_virtual_surface_cardinality_accepts_unknown_member_range() -> None:
+    output = JunctionGraphSetModel(hidden_dim=64, dropout=0.0)((_example(),))
+    overlay = JunctionTrainingOverlay(
+        junction_key="T03:fixture|S1",
+        source_weight=1.0,
+        virtual_surface_constraints=(
+            SurfaceConstraint(NODE_1, ConstraintState.REQUIRED, 1.0),
+            SurfaceConstraint(NODE_2, ConstraintState.UNKNOWN, 0.0),
+            SurfaceConstraint(ROAD_1, ConstraintState.FORBIDDEN, 1.0),
+        ),
+        virtual_surface_acceptable_cardinalities=(1, 2),
+    )
+
+    losses = compute_multitask_loss(output, (overlay,))
+    assert torch.isfinite(losses["virtual_surface_cardinality"]).item()
+    assert torch.isfinite(losses["virtual_surface_required_coverage"]).item()
 
 
 def test_multi_break_set_target_trains_count_and_every_ordered_fraction() -> None:

@@ -755,6 +755,9 @@ class StagedMultiTaskHeads(nn.Module):
             mode_logits=surface_stage_output.mode_logits,
             existing_object_logits=surface_stage_output.existing_object_logits,
             existing_object_refs=surface_stage_output.existing_object_refs,
+            existing_object_batch_indices=(
+                surface_stage_output.existing_object_batch_indices
+            ),
             virtual_member_logits=anchor_member_output.virtual_member_logits,
             virtual_member_refs=anchor_member_output.virtual_member_refs,
             virtual_member_batch_indices=(
@@ -962,10 +965,13 @@ class JunctionTrainingOverlay:
     anchor_state_acceptable_indices: tuple[int, ...] = ()
     quality_acceptable_indices: tuple[int, ...] = ()
     acceptable_complete_plan_ids: tuple[str, ...] = ()
+    existing_surface_constraints: tuple[SurfaceConstraint, ...] = ()
     virtual_surface_constraints: tuple[SurfaceConstraint, ...] = ()
     virtual_surface_cardinality_target: int | None = None
+    virtual_surface_acceptable_cardinalities: tuple[int, ...] = ()
     anchor_member_constraints: tuple[SurfaceConstraint, ...] = ()
     anchor_member_cardinality_target: int | None = None
+    anchor_member_acceptable_cardinalities: tuple[int, ...] = ()
     acceptable_main_anchor_refs: tuple[AnchorNodeRef, ...] = ()
     pair_constraints: tuple[PairConstraint, ...] = ()
     road_break_targets: tuple[RoadBreakTarget, ...] = ()
@@ -1017,7 +1023,7 @@ def _cardinality_loss(
     valid_mask: torch.Tensor,
     overlays: Sequence[JunctionTrainingOverlay],
     *,
-    target_getter,
+    acceptable_getter,
 ) -> torch.Tensor:
     if logits.ndim != 2 or valid_mask.shape != logits.shape:
         raise JunctionPredictionError("cardinality logits/mask shape is invalid")
@@ -1026,13 +1032,17 @@ def _cardinality_loss(
     terms: list[torch.Tensor] = []
     weights: list[float] = []
     for batch_index, overlay in enumerate(overlays):
-        target = target_getter(overlay)
-        if target is None or overlay.source_weight <= 0.0:
+        acceptable = tuple(
+            sorted(set(int(value) for value in acceptable_getter(overlay)))
+        )
+        if not acceptable or overlay.source_weight <= 0.0:
             continue
-        if int(target) < 0:
+        if acceptable[0] < 0:
             raise JunctionPredictionError("set-cardinality target is negative")
-        if int(target) >= int(logits.shape[1]) or not bool(
-            valid_mask[batch_index, int(target)]
+        if any(
+            value >= int(logits.shape[1])
+            or not bool(valid_mask[batch_index, value])
+            for value in acceptable
         ):
             raise JunctionPredictionError(
                 "set-cardinality target exceeds the legal candidate count"
@@ -1042,16 +1052,11 @@ def _cardinality_loss(
             -torch.inf,
         )
         terms.append(
-            functional.cross_entropy(
+            acceptable_set_cross_entropy(
                 local_logits.unsqueeze(0),
-                torch.tensor(
-                    (int(target),),
-                    dtype=torch.long,
-                    device=logits.device,
-                ),
-                reduction="none",
+                (acceptable,),
+                logits.new_tensor((overlay.source_weight,)),
             )
-            .squeeze(0)
             * overlay.source_weight
         )
         weights.append(overlay.source_weight)
@@ -1067,7 +1072,7 @@ def _required_coverage_ranking_loss(
     batch_indices: torch.Tensor,
     overlays: Sequence[JunctionTrainingOverlay],
     constraints_getter,
-    cardinality_getter,
+    acceptable_cardinality_getter,
     margin: float = 1.0,
 ) -> torch.Tensor:
     """Keep every REQUIRED object ahead of unresolved pointer competitors.
@@ -1080,15 +1085,22 @@ def _required_coverage_ranking_loss(
     terms: list[torch.Tensor] = []
     weights: list[float] = []
     for batch_index, overlay in enumerate(overlays):
-        target_count = cardinality_getter(overlay)
-        if target_count is None or overlay.source_weight <= 0.0:
+        acceptable_counts = tuple(
+            sorted(
+                set(
+                    int(value)
+                    for value in acceptable_cardinality_getter(overlay)
+                )
+            )
+        )
+        if not acceptable_counts or overlay.source_weight <= 0.0:
             continue
         required_refs = {
             constraint.object_ref
             for constraint in constraints_getter(overlay)
             if constraint.state == ConstraintState.REQUIRED
         }
-        if int(target_count) < len(required_refs):
+        if acceptable_counts[0] < len(required_refs):
             raise JunctionPredictionError(
                 "set cardinality is smaller than REQUIRED object count"
             )
@@ -1170,6 +1182,13 @@ def compute_multitask_loss(
             weights,
         ),
     }
+    losses["existing_surface_object"] = _grouped_object_loss(
+        logits=output.surface.existing_object_logits,
+        refs=output.surface.existing_object_refs,
+        batch_indices=output.surface.existing_object_batch_indices,
+        overlays=normalized,
+        constraints_getter=lambda overlay: overlay.existing_surface_constraints,
+    )
     losses["virtual_surface_member"] = _grouped_object_loss(
         logits=output.surface.virtual_member_logits,
         refs=output.surface.virtual_member_refs,
@@ -1181,7 +1200,14 @@ def compute_multitask_loss(
         output.surface.virtual_cardinality_logits,
         output.surface.virtual_cardinality_valid_mask,
         normalized,
-        target_getter=lambda overlay: overlay.virtual_surface_cardinality_target,
+        acceptable_getter=lambda overlay: (
+            overlay.virtual_surface_acceptable_cardinalities
+            or (
+                (overlay.virtual_surface_cardinality_target,)
+                if overlay.virtual_surface_cardinality_target is not None
+                else ()
+            )
+        ),
     )
     losses["virtual_surface_required_coverage"] = _required_coverage_ranking_loss(
         logits=output.surface.virtual_member_logits,
@@ -1189,7 +1215,14 @@ def compute_multitask_loss(
         batch_indices=output.surface.virtual_member_batch_indices,
         overlays=normalized,
         constraints_getter=lambda overlay: overlay.virtual_surface_constraints,
-        cardinality_getter=lambda overlay: overlay.virtual_surface_cardinality_target,
+        acceptable_cardinality_getter=lambda overlay: (
+            overlay.virtual_surface_acceptable_cardinalities
+            or (
+                (overlay.virtual_surface_cardinality_target,)
+                if overlay.virtual_surface_cardinality_target is not None
+                else ()
+            )
+        ),
     )
     losses["anchor_member"] = _grouped_object_loss(
         logits=output.anchor_member_logits,
@@ -1202,7 +1235,14 @@ def compute_multitask_loss(
         output.anchor_member_cardinality_logits,
         output.anchor_member_cardinality_valid_mask,
         normalized,
-        target_getter=lambda overlay: overlay.anchor_member_cardinality_target,
+        acceptable_getter=lambda overlay: (
+            overlay.anchor_member_acceptable_cardinalities
+            or (
+                (overlay.anchor_member_cardinality_target,)
+                if overlay.anchor_member_cardinality_target is not None
+                else ()
+            )
+        ),
     )
 
     main_terms: list[torch.Tensor] = []

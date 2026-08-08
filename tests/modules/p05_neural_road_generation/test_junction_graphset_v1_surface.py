@@ -39,6 +39,7 @@ def test_surface_heads_keep_existing_and_virtual_object_roles_separate() -> None
     )
     assert tuple(output.mode_logits.shape) == (2, 5)
     assert output.existing_object_refs == (refs[0],)
+    assert output.existing_object_batch_indices.tolist() == [0]
     assert output.virtual_member_refs == (refs[1], refs[2])
     assert output.virtual_member_batch_indices.tolist() == [0, 1]
     assert tuple(output.virtual_cardinality.shape) == (2,)
@@ -104,6 +105,16 @@ def test_required_and_forbidden_constraints_train_opposite_targets() -> None:
     )
     assert float(good) < 0.001
     assert float(bad) > 7.9
+
+
+def test_existing_surface_constraint_accepts_rcsdintersection() -> None:
+    intersection = ObjectRef(EvidenceRole.RCSD_INTERSECTION, "I1")
+    loss = masked_tristate_member_loss(
+        torch.tensor((8.0,)),
+        (intersection,),
+        (SurfaceConstraint(intersection, ConstraintState.REQUIRED, 1.0),),
+    )
+    assert float(loss) < 0.001
 
 
 def test_unknown_constraint_with_positive_weight_is_rejected() -> None:

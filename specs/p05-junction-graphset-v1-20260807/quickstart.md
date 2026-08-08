@@ -2,12 +2,11 @@
 
 ## 当前状态
 
-本分支已完成 T001–T020。T017-R1 及 REQUIRED coverage 修正复验的正式结果仍为
-`REPRESENTATION_NO_GO`；T017-R2-A 已将 Softplus 标量 cardinality 回归替换为当前 Junction
-候选数约束下的动态离散 count decoder，并完成无训练 readiness。当前状态为
-`T017_R2_REPRESENTATION_PASS_AWAITING_T021_AUTHORIZATION`。T017-R2 在 step 1400 连续
-三个评价点满足 loss 与 teacher/free 完整 exact 门；冻结测试仍未读取、正式 canary
-未启动，T021 尚未授权。
+本分支已完成 T001–T020、T023，并完成 T021 的训练前数据、loss、IO、trainer 与 CUDA
+preflight。当前状态为 `T021_READY_FOR_TRAINING_AUTHORIZATION`：4,288 条非 blind 开发记录
+已形成 feature/label 物理分离缓存，固定 split 为 `3,645/643`，Case-group 跨 split 为 0；
+训练尚未启动，optimizer/backward/checkpoint 均为 0。T017-R2 在 step 1400 通过固定 8 条
+表示门，继续只作为历史表示证据；冻结 105 条 blind test 仍未读取，正式 canary 未启动。
 
 ## SpecKit 自检
 
@@ -22,6 +21,17 @@ data-model.md / contracts/ / analysis.md` 完整性、占位符清零和 `git di
 审计、Step1 防火墙、blind-test 隔离、完整输出 schema、候选约束 decoder、确定性
 materializer 和安全 evaluator 已通过训练前合同测试。T017 不得读取冻结测试或扩展到
 正式 canary；失败即停在表示/合同层。
+
+T021 训练前工件位于
+`outputs/_work/p05_neural_road_generation/junction_graphset_v1_t021_readiness_20260808/`：
+
+- `manifest.json`：136 对 source/split 分片，4,288 条 feature/label 物理隔离 cache；
+- `readiness-summary.json`：全量 Step1 防火墙与真实 CUDA 前向/loss；
+- `training-preflight.json`：固定 seed `20260821`、hidden dim `384`、动态 token batch 和
+  训练输出目录，只校验配置，不创建 optimizer。
+
+下一步只能在用户明确授权后调用内部 `run_t021_training`。该 P1 候选目录仍为
+`T021_TEACHER_ORACLE_ONLY`，不能解释为真实推理候选生成或正式 free-run 能力。
 
 T017 运行工件位于 ignored output
 `outputs/_work/p05_neural_road_generation/junction_graphset_v1_t017_overfit_20260808/`。

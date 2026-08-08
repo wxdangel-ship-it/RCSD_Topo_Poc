@@ -1,6 +1,73 @@
-# T017-R2 表示过拟合门验收摘要
+# T017-R2 与 T021 训练前验收摘要
 
-## 正式状态
+## 当前正式状态
+
+`T021_READY_FOR_TRAINING_AUTHORIZATION`
+
+用户授权的范围是“按 T021 推进至训练前”。本轮已完成全量非 blind 数据链、loss 缺口、
+固定 split、训练缓存、内部 trainer 和锁定 CUDA 环境，不启动训练。最终工件为：
+`outputs/_work/p05_neural_road_generation/junction_graphset_v1_t021_readiness_20260808/`。
+
+### T021 数据与 IO 合同
+
+- 开发记录 `4,288`：强 Gold `602`、T10 弱标签 `3,686`；train `3,645`、validation
+  `643`。
+- train/validation Case-group 分别 `501/106`，跨 split `0`；强 Gold 多版本仍按基础
+  Case-group 锁在同一 split，forward identity 使用输入 fingerprint 版本后缀保持唯一。
+- 强 Gold 全部按已确认口径使用权重 `1.0`；旧 joint store 中 14 条遗留 `0.5` 已显式
+  归一化并计入 audit。T10 全部保持 `0.7`。
+- feature 与 label 分为 136 对 `.features.pt/.labels.pt`，并按 source/split 物理分区：
+  strong train/validation `16/4`，T10 train/validation `99/17`。训练每 epoch 只读目标 split
+  分片一次；validation 在同一遍读取中同时计算 teacher/free-condition 诊断。
+- 20 个上游输入文件在最终 cache 构建中各顺序读取一次；未重开原始 GIS，未读取 blind。
+
+### T021 标签覆盖与 loss 修正
+
+- `EXISTING_RCSD_INTERSECTION` 对象监督 `1,514` 条；补齐了原模型存在输出但没有对象 loss
+  的结构缺口。
+- 虚拟面三态监督 `1,680` 条；cardinality 使用从 REQUIRED 数量到排除 FORBIDDEN 后上限
+  的 acceptable set，不再把 UNKNOWN 错当负例。5 条冲突 Review 保持零成员/完整方案 loss。
+- 完整 anchor Node/Road set `2,973` 条；主锚定、Node 等价关系和 Road break 继续分别监督。
+- 可监督完整 teacher plan `3,454` 条。旧 derived oracle 的 `3,459` 中 5 条与正式 surface
+  Review 冲突，按冻结合同屏蔽，不用旧 exact member 结果覆盖 Review。
+- 68 条 T10 旧 candidate 多解记录完整保留在 audit；其中非 preferred 候选没有独立完整
+  Road-break/Node-equivalence Gold，故不补造成完整 plan。训练采用已有规范化完整方案；
+  acceptable-set loss 继续用于真实存在的多类/多 cardinality 监督。
+
+### 无训练 readiness 结果
+
+- 全量 cache `4,288/4,288` 可加载；Step1 view `4,288/4,288`，非法 RCSD/
+  RCSDIntersection 角色 `0`。
+- 10 条真实 probe 覆盖 strong/T10、train/validation、existing/virtual surface、UNKNOWN
+  cardinality、完整 anchor、等价组、Road break、NO_EVIDENCE、QUALITY 和 masked plan。
+- 所有 18 项 loss finite；真实 Road-break presence/count/fraction/set-fraction 均进入 probe。
+- RTX 5090 CUDA 双前向最大绝对差 `5.3644180e-7`，低于 `1e-6` 数值重复容差；峰值
+  CUDA memory `14,098,432` bytes。
+- 标准环境：Python `3.10.12`、Torch `2.9.1+cu128`、CUDA 可用。
+- `training_executed=false`、`optimizer_created=false`、`backward_executed=false`、
+  `checkpoint_written=false`、blind access `=0`。
+
+预注册 trainer 配置为 seed `20260821`、hidden dim `384`、AdamW learning rate `3e-4`、
+weight decay `1e-4`、最多 24 epoch、early-stopping patience `4`、minimum improvement
+`1e-4`、gradient clip `1.0`。动态 batch 上限为 8 个 Junction 或 12,000 个 geometry token；
+真实 cache dry iteration 为 train `3,645` 条/489 batch、validation `643` 条/103 batch，
+最大 batch token 分别 `11,969/11,997`，没有截断超大 Junction。
+
+训练前回归：GraphSet 专项 `88 passed`；P05 实际测试目录全量 `972 passed, 1 warning`；
+T07 正式相关测试 `21 passed`。warning 仍为既有 Transformer `norm_first` nested-tensor
+提示，不是本轮失败。P05 与 T07 因各自存在同名 `test_runner.py` 必须分目录运行；联合
+collection 的模块名冲突不计业务测试失败。
+
+工件 SHA256：
+
+- `manifest.json`：`98BFBC0BB705FFEF145EA2A0A73B053149FEB1A8785E1EA03500499045EF81E6`；
+- `readiness-summary.json`：`316FB83227ABD3428CA517F42A5A9371A4B092C0F76F46ECD9DB9307964921A4`；
+- `training-preflight.json`：`B7541FFDEAC7488E97F9217BDCE897AFD098930D5513F0167C08728644C7E20A`。
+
+下一步只有一个授权点：是否启动固定配置的 T021 P1 teacher-forcing 训练。T022 scheduled
+sampling、正式 free-run/canary、阈值/seed 搜索和 blind test 均未获授权。
+
+## T017-R2 历史正式状态
 
 `T017_R2_REPRESENTATION_PASS_AWAITING_T021_AUTHORIZATION`
 

@@ -619,10 +619,15 @@ class StagedMultiTaskHeads(nn.Module):
         *,
         logits: torch.Tensor,
         provided: torch.Tensor | None,
+        teacher_mask: torch.Tensor | None,
         class_count: int,
         name: str,
     ) -> torch.Tensor:
         if provided is None:
+            if teacher_mask is not None:
+                raise JunctionPredictionError(
+                    f"{name} teacher mask requires teacher condition indices"
+                )
             return logits.detach().argmax(dim=-1)
         normalized = provided.to(device=logits.device)
         if normalized.dtype != torch.long or tuple(normalized.shape) != (
@@ -635,7 +640,17 @@ class StagedMultiTaskHeads(nn.Module):
             int(normalized.min()) < 0 or int(normalized.max()) >= class_count
         ):
             raise JunctionPredictionError(f"{name} teacher condition is out of range")
-        return normalized
+        if teacher_mask is None:
+            return normalized
+        normalized_mask = teacher_mask.to(device=logits.device)
+        if normalized_mask.dtype != torch.bool or tuple(normalized_mask.shape) != (
+            int(logits.shape[0]),
+        ):
+            raise JunctionPredictionError(
+                f"{name} teacher mask must be a BoolTensor with batch shape"
+            )
+        predicted = logits.detach().argmax(dim=-1)
+        return torch.where(normalized_mask, normalized, predicted)
 
     def forward(
         self,
@@ -646,6 +661,8 @@ class StagedMultiTaskHeads(nn.Module):
         candidate_bindings: Sequence[CandidateBinding],
         step1_state_indices: torch.Tensor | None,
         surface_mode_indices: torch.Tensor | None,
+        step1_teacher_mask: torch.Tensor | None,
+        surface_teacher_mask: torch.Tensor | None,
     ) -> JunctionGraphSetRawOutput:
         if not (
             step1.junction_keys == surface.junction_keys == anchor.junction_keys
@@ -655,6 +672,7 @@ class StagedMultiTaskHeads(nn.Module):
         conditioned_step1_indices = self._condition_indices(
             logits=step1_logits,
             provided=step1_state_indices,
+            teacher_mask=step1_teacher_mask,
             class_count=len(Step1DriveZoneState),
             name="Step1",
         )
@@ -682,6 +700,7 @@ class StagedMultiTaskHeads(nn.Module):
         conditioned_surface_mode_indices = self._condition_indices(
             logits=surface_stage_output.mode_logits,
             provided=surface_mode_indices,
+            teacher_mask=surface_teacher_mask,
             class_count=len(SurfaceMode),
             name="Surface",
         )
@@ -826,6 +845,8 @@ class JunctionGraphSetModel(nn.Module):
         *,
         step1_state_indices: torch.Tensor | None = None,
         surface_mode_indices: torch.Tensor | None = None,
+        step1_teacher_mask: torch.Tensor | None = None,
+        surface_teacher_mask: torch.Tensor | None = None,
     ) -> JunctionGraphSetRawOutput:
         normalized = tuple(examples)
         return self.forward_stage_views(
@@ -846,6 +867,8 @@ class JunctionGraphSetModel(nn.Module):
             ),
             step1_state_indices=step1_state_indices,
             surface_mode_indices=surface_mode_indices,
+            step1_teacher_mask=step1_teacher_mask,
+            surface_teacher_mask=surface_teacher_mask,
         )
 
     def forward_stage_views(
@@ -857,6 +880,8 @@ class JunctionGraphSetModel(nn.Module):
         candidate_bindings: Sequence[CandidateBinding],
         step1_state_indices: torch.Tensor | None = None,
         surface_mode_indices: torch.Tensor | None = None,
+        step1_teacher_mask: torch.Tensor | None = None,
+        surface_teacher_mask: torch.Tensor | None = None,
     ) -> JunctionGraphSetRawOutput:
         """Forward prebuilt firewall views without rebuilding their audit hashes."""
 
@@ -881,6 +906,8 @@ class JunctionGraphSetModel(nn.Module):
             candidate_bindings=normalized_bindings,
             step1_state_indices=step1_state_indices,
             surface_mode_indices=surface_mode_indices,
+            step1_teacher_mask=step1_teacher_mask,
+            surface_teacher_mask=surface_teacher_mask,
         )
 
 

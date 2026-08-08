@@ -219,6 +219,64 @@ def test_teacher_conditions_follow_step1_then_surface_then_anchor_order() -> Non
     assert first.conditioned_surface_mode_indices.tolist() == [0]
 
 
+def test_scheduled_masks_mix_teacher_and_model_conditions_per_record() -> None:
+    torch.manual_seed(29)
+    model = JunctionGraphSetModel(hidden_dim=64, dropout=0.0).eval()
+    examples = (
+        _example(case_key="T03:scheduled-a"),
+        _example(case_key="T03:scheduled-b"),
+    )
+    free = model(examples)
+    step1_gold = torch.tensor(
+        (
+            (int(free.conditioned_step1_indices[0]) + 1)
+            % len(Step1DriveZoneState),
+            (int(free.conditioned_step1_indices[1]) + 1)
+            % len(Step1DriveZoneState),
+        ),
+        dtype=torch.long,
+    )
+    surface_gold = torch.tensor(
+        (
+            (int(free.conditioned_surface_mode_indices[0]) + 1)
+            % len(SurfaceMode),
+            (int(free.conditioned_surface_mode_indices[1]) + 1)
+            % len(SurfaceMode),
+        ),
+        dtype=torch.long,
+    )
+    mixed = model(
+        examples,
+        step1_state_indices=step1_gold,
+        surface_mode_indices=surface_gold,
+        step1_teacher_mask=torch.tensor((True, False)),
+        surface_teacher_mask=torch.tensor((True, False)),
+    )
+
+    assert int(mixed.conditioned_step1_indices[0]) == int(step1_gold[0])
+    assert int(mixed.conditioned_step1_indices[1]) == int(
+        free.conditioned_step1_indices[1]
+    )
+    assert int(mixed.conditioned_surface_mode_indices[0]) == int(surface_gold[0])
+    assert int(mixed.conditioned_surface_mode_indices[1]) == int(
+        free.conditioned_surface_mode_indices[1]
+    )
+
+
+def test_scheduled_mask_requires_bool_batch_shape_and_teacher_indices() -> None:
+    model = JunctionGraphSetModel(hidden_dim=64, dropout=0.0).eval()
+    example = (_example(case_key="T03:scheduled-invalid"),)
+
+    with pytest.raises(JunctionPredictionError, match="requires teacher"):
+        model(example, step1_teacher_mask=torch.tensor((True,)))
+    with pytest.raises(JunctionPredictionError, match="BoolTensor"):
+        model(
+            example,
+            step1_state_indices=torch.tensor((0,), dtype=torch.long),
+            step1_teacher_mask=torch.tensor((1,), dtype=torch.long),
+        )
+
+
 def test_multitask_loss_supports_separate_surface_and_anchor_gold() -> None:
     model = JunctionGraphSetModel(hidden_dim=64, dropout=0.0)
     output = model((_example(),))

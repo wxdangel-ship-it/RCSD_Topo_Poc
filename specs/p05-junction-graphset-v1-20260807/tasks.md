@@ -84,6 +84,11 @@
     `T021_TEACHER_FORCED_COMPONENT_ONLY`，不具备正式发布资格。下一步等待 T022 单独授权。
 - [ ] T022 [Development] 完成预注册 scheduled sampling，报告 teacher/free 差距和每个
   断联阶段；不做局部 threshold/head 搜索。
+  - 用户已于 2026-08-09 授权执行。训练前实现与真实 preflight 已通过：从固定 T021
+    epoch 5 checkpoint 初始化，新建 AdamW `lr=1e-4`；epoch 1–7 teacher ratio 固定为
+    `0.875/0.75/0.625/0.5/0.375/0.25/0.125`，epoch 8–12 为 `0`。模型选择只看
+    validation full-free total，patience `4` 只在 full-free 阶段生效；epoch 0 checkpoint
+    作为不退化基线。当前 optimizer/backward 仍为 0，blind/canary 均未读取或执行。
 - [x] T023 [QA] 使用固定 Case-disjoint train/validation，核验输入 fingerprint、语义
   Junction 和多版本 Case 零跨 split。
 - [ ] T024 [Testing] 运行全 P05/T07 回归、模型合同测试、静态泄漏扫描和确定性双跑。

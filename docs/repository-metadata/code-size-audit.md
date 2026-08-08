@@ -1052,3 +1052,15 @@ R2 训练 schema/task wrapper，后续训练编排
 均低于 100KB 硬阈值。未新增 CLI、script、`__main__.py`、正式入口、依赖或 T01–T12
 接口，`entrypoint-registry.md` 无需改变；全量 cache/readiness 仅写入 ignored
 `outputs/_work/`。
+
+### P05 Junction GraphSet V1 T022 训练前快照（2026-08-09）
+
+按 `git ls-files --cached --others --exclude-standard` 复扫 P05 正式源码与实际测试目录共
+`553` 个 Python 文件，`>=61440 bytes=7`、`>=100000 bytes=0`，当前最大文件仍为只读的
+`target_a_ordinary_road_member_training.py`（87,572 bytes）。新增独立 scheduled-sampling
+trainer `junction_graphset_v1_t022_training.py` 为 27,895 bytes；修改后的
+`junction_graphset_v1_model.py` 为 58,371 bytes，仍低于 60KiB 观察线；对应两个测试文件
+分别为 17,154 与 2,299 bytes。新增内容只提供 P05 内部 callable、逐记录 teacher mask、
+固定日程和分阶段条件传播诊断；未新增 CLI、script、`__main__.py`、依赖、正式入口或
+T01–T12 接口，`entrypoint-registry.md` 无需改变。T022 preflight 和后续训练工件只写入
+ignored `outputs/_work/`。

@@ -2,7 +2,31 @@
 
 ## 当前正式状态
 
-`T021_P1_COMPLETE_AWAITING_T022_AUTHORIZATION`
+`T022_SCHEDULED_SAMPLING_CONFIG_READY`
+
+用户于 2026-08-09 授权执行 T022。独立 trainer、逐记录 teacher mask、三模式 validation
+诊断（teacher / Step1-teacher+Surface-free / full-free）和真实 checkpoint preflight 已通过；
+当前尚未创建 optimizer 或执行 backward。
+
+### T022 训练前固定口径
+
+- 初始化：固定 T021 epoch 5 checkpoint，SHA256
+  `28028E4D2CF7CEA1BDEA23BB3AB7A7E2EA70EBB2E13BE0010CAD2042572603FB`；summary SHA256
+  `C52891D00ABF4C795D2C5EAD5887B263F21252092551085204249387C2FB86B9`。
+- 数据与环境：仅 4,288 条非 blind 开发记录，split `3,645/643`；seed `20260821`、hidden
+  dim `384`、RTX 5090 CUDA。candidate catalog 保持 `T021_TEACHER_ORACLE_ONLY`。
+- 优化：从固定模型权重新建 AdamW，`lr=1e-4`、weight decay `1e-4`、gradient clip `1.0`；
+  不恢复 T021 optimizer，不搜索 seed、head、loss 或 threshold。
+- 日程：epoch 1–7 teacher ratio 固定为
+  `0.875/0.75/0.625/0.5/0.375/0.25/0.125`，epoch 8–12 为 `0`；patience `4` 只在
+  full-free 阶段生效。
+- 选择：只按 validation full-free total 保存 best；训练前 epoch 0 checkpoint 作为不退化
+  基线。同时报告 Step1→Surface、Surface→Anchor/Quality/Member/Break/Plan 的分阶段 loss
+  差距、条件错误数和 strong/T10 分层。
+- 隔离：blind access `=0`，正式 free-run evaluator/canary `=false`；T022 不能作为发布
+  checkpoint。
+
+### T021 P1 已完成基线
 
 固定 seed `20260821` 的 T021 P1 teacher-forcing 已完成。训练在 epoch 9 由 patience `4`
 自动 early-stop，best checkpoint 为 epoch 5；没有读取冻结 blind test，也没有执行 T022、

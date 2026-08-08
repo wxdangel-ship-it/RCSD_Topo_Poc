@@ -2,12 +2,13 @@
 
 ## 当前状态
 
-本分支已完成 T001–T021、T023。当前状态为
-`T021_P1_COMPLETE_AWAITING_T022_AUTHORIZATION`：固定 seed `20260821` 在 4,288 条非 blind
-开发记录上完成 9 epoch teacher-forcing 训练并由 patience `4` 自动 early-stop；best 为
-epoch 5，validation teacher total `5.0001326037`。固定 split 为 `3,645/643`、Case-group
-跨 split 为 0、blind access 为 0。该 checkpoint 仍为 `T021_TEACHER_FORCED_COMPONENT_ONLY`，
-正式 free-run/canary 未启动，冻结 105 条 blind test 仍未读取。
+本分支已完成 T001–T021、T023，并获授权执行 T022。当前状态为
+`T022_SCHEDULED_SAMPLING_CONFIG_READY`：真实 preflight 已固定 T021 epoch 5 checkpoint、
+seed `20260821`、hidden dim `384`、`3,645/643` train/validation 和 RTX 5090 CUDA 环境；
+optimizer/backward 仍为 0，blind access 为 0。T022 将从新建 AdamW `lr=1e-4` 开始，
+teacher ratio 在 epoch 1–7 由 `0.875` 降至 `0.125`，epoch 8 起为 `0`，最多 12 epoch；
+选择指标只使用 validation full-free total。正式 free-run/canary 未启动，冻结 105 条 blind
+test 仍未读取。
 
 ## SpecKit 自检
 
@@ -35,8 +36,10 @@ T021 训练与完成审计工件位于
 `outputs/_work/p05_neural_road_generation/junction_graphset_v1_t021_teacher_forcing_seed_20260821/`。
 同 seed 初始化到 best checkpoint，validation teacher/free-condition total 分别下降
 `74.60%/67.16%`，证明 P1 可学习；best 的 teacher/free 差距仍为 `1.6190376015`，且强 Gold
-free total 为 `8.8208365122`。下一步只能在用户明确授权后进入 T022 scheduled sampling；
-候选目录仍为 `T021_TEACHER_ORACLE_ONLY`，不能解释为真实推理候选生成或正式 free-run 能力。
+free total 为 `8.8208365122`。T022 输出目录预注册为
+`outputs/_work/p05_neural_road_generation/junction_graphset_v1_t022_scheduled_sampling_seed_20260821/`。
+候选目录仍为 `T021_TEACHER_ORACLE_ONLY`，因此 T022 只验证条件传播收口，不能解释为真实
+候选生成或正式 free-run 能力。
 
 T017 运行工件位于 ignored output
 `outputs/_work/p05_neural_road_generation/junction_graphset_v1_t017_overfit_20260808/`。
